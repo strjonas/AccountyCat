@@ -301,6 +301,50 @@ struct ContentView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11, design: .monospaced))
                     }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Monitoring algorithm")
+                            .font(.ac(12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("Monitoring algorithm", selection: Binding(
+                            get: { controller.state.monitoringConfiguration.algorithmID },
+                            set: { controller.updateMonitoringAlgorithm($0) }
+                        )) {
+                            ForEach(controller.availableMonitoringAlgorithms, id: \.id) { algorithm in
+                                Text(algorithm.displayName).tag(algorithm.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        if let selected = controller.availableMonitoringAlgorithms.first(where: {
+                            $0.id == controller.state.monitoringConfiguration.algorithmID
+                        }) {
+                            Text(selected.summary)
+                                .font(.ac(11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Monitoring prompt profile")
+                            .font(.ac(12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("Monitoring prompt profile", selection: Binding(
+                            get: { controller.state.monitoringConfiguration.promptProfileID },
+                            set: { controller.updateMonitoringPromptProfile($0) }
+                        )) {
+                            ForEach(controller.availableMonitoringPromptProfiles, id: \.id) { profile in
+                                Text(profile.displayName).tag(profile.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        if let selected = controller.availableMonitoringPromptProfiles.first(where: {
+                            $0.id == controller.state.monitoringConfiguration.promptProfileID
+                        }) {
+                            Text(selected.summary)
+                                .font(.ac(11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
 

@@ -14,6 +14,12 @@ struct ACStateResetTests {
     @Test
     func resetAlgorithmProfileClearsModelFacingState() {
         var state = ACState()
+        state.monitoringConfiguration = MonitoringConfiguration(
+            algorithmID: "legacy_focus_v1",
+            promptProfileID: "focus_default_v2",
+            selectionMode: .fixed,
+            experimentArmOverride: "manual:test"
+        )
         state.goalsText = "Temporary experiment goal"
         state.recentActions = [
             ActionRecord(kind: .nudge, message: "test", timestamp: Date(timeIntervalSince1970: 1))
@@ -39,7 +45,11 @@ struct ACStateResetTests {
         #expect(state.recentActions.isEmpty)
         #expect(state.recentSwitches.isEmpty)
         #expect(state.usageByDay.isEmpty)
+        #expect(state.algorithmState == AlgorithmStateEnvelope())
         #expect(state.distraction == DistractionMetadata())
         #expect(state.memory.isEmpty)
+        #expect(state.monitoringConfiguration.algorithmID == "legacy_focus_v1")
+        #expect(state.monitoringConfiguration.promptProfileID == "focus_default_v2")
+        #expect(state.monitoringConfiguration.experimentArm == "manual:test")
     }
 }

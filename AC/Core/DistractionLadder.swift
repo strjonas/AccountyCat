@@ -23,6 +23,10 @@ struct DistractionLadder: Sendable {
     let secondFollowUp: TimeInterval = 10 * 60
     let thirdFollowUp: TimeInterval = 20 * 60
 
+    init(metadata: DistractionMetadata = DistractionMetadata()) {
+        self.metadata = metadata
+    }
+
     mutating func noteContext(_ key: String?, at now: Date) -> Bool {
         guard metadata.contextKey != key else {
             return false
@@ -95,4 +99,3 @@ struct DistractionLadder: Sendable {
         }
     }
 }
-

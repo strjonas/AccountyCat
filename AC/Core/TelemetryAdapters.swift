@@ -8,7 +8,7 @@
 import Foundation
 
 extension AppSwitchRecord {
-    var telemetryRecord: TelemetryAppSwitchRecord {
+    nonisolated var telemetryRecord: TelemetryAppSwitchRecord {
         TelemetryAppSwitchRecord(
             fromAppName: fromAppName,
             toAppName: toAppName,
@@ -19,13 +19,13 @@ extension AppSwitchRecord {
 }
 
 extension AppUsageRecord {
-    var telemetryRecord: TelemetryUsageRecord {
+    nonisolated var telemetryRecord: TelemetryUsageRecord {
         TelemetryUsageRecord(appName: appName, seconds: seconds)
     }
 }
 
 extension ActionRecord {
-    var telemetrySummary: TelemetryActionSummary {
+    nonisolated var telemetrySummary: TelemetryActionSummary {
         TelemetryActionSummary(
             kind: kind.rawValue,
             message: message,
@@ -35,13 +35,24 @@ extension ActionRecord {
 }
 
 extension DistractionMetadata {
-    var telemetryState: TelemetryDistractionState {
+    nonisolated var telemetryState: TelemetryDistractionState {
         CompanionPolicy.telemetryState(from: self)
     }
 }
 
+extension MonitoringExecutionMetadata {
+    nonisolated var telemetryRecord: MonitoringExecutionMetadataRecord {
+        MonitoringExecutionMetadataRecord(
+            algorithmID: algorithmID,
+            algorithmVersion: algorithmVersion,
+            promptProfileID: promptProfileID,
+            experimentArm: experimentArm
+        )
+    }
+}
+
 extension FrontmostContext {
-    func telemetryContext(
+    nonisolated func telemetryContext(
         idleSeconds: TimeInterval,
         recentSwitches: [AppSwitchRecord],
         perAppDurations: [AppUsageRecord],
@@ -63,7 +74,7 @@ extension FrontmostContext {
 }
 
 extension MonitoringHeuristics {
-    static func telemetrySnapshot(for context: FrontmostContext) -> TelemetryHeuristicSnapshot {
+    nonisolated static func telemetrySnapshot(for context: FrontmostContext) -> TelemetryHeuristicSnapshot {
         let helpfulWindowTitle: Bool
         if let title = context.windowTitle {
             helpfulWindowTitle = !isUnhelpfulWindowTitle(title, appName: context.appName)

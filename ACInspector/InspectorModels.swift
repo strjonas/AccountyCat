@@ -24,12 +24,21 @@ struct IndexedEpisode: Identifiable, Hashable, Sendable {
     var promptPayloadPath: String?
     var modelOutputJSON: String?
     var reactionSummary: String?
+    var algorithmID: String?
+    var algorithmVersion: String?
+    var promptProfileID: String?
+    var experimentArm: String?
 
     var title: String {
         if let windowTitle, !windowTitle.isEmpty {
             return windowTitle
         }
         return appName
+    }
+
+    var strategySummary: String? {
+        guard let algorithmID else { return nil }
+        return [algorithmID, promptProfileID].compactMap { $0 }.joined(separator: " • ")
     }
 
     var episodeRecord: EpisodeRecord {

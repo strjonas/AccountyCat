@@ -27,9 +27,9 @@
 		007DA56E2F8BEEE90050179A /* AC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AC.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		007DA57B2F8BEEEA0050179A /* ACTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ACTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		007DA5852F8BEEEA0050179A /* ACUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ACUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000112F8C00010050179A /* ACInspector.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ACInspector.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000112F8C10010050179A /* ProjectDefaults.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ProjectDefaults.xcconfig; sourceTree = "<group>"; };
 		A20000122F8C10010050179A /* LocalOverrides.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = LocalOverrides.xcconfig.example; sourceTree = "<group>"; };
-		A10000112F8C00010050179A /* ACInspector.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ACInspector.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */

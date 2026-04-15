@@ -551,6 +551,8 @@ enum TrainingDatasetExporter {
         var latestScreenshotByEpisode: [String: ArtifactRef] = [:]
         var latestPromptPayloadByEpisode: [String: ArtifactRef] = [:]
         var latestRenderedPromptByEpisode: [String: ArtifactRef] = [:]
+        var strategyByEpisode: [String: MonitoringExecutionMetadataRecord] = [:]
+        var shortTermOutcomeLabelsByEpisode: [String: Set<String>] = [:]
 
         for event in events {
             if let episodeID = event.episodeID,
@@ -570,6 +572,16 @@ enum TrainingDatasetExporter {
                 if let renderedPromptArtifact = modelInput.renderedPromptArtifact {
                     latestRenderedPromptByEpisode[episodeID] = renderedPromptArtifact
                 }
+            }
+            if let episodeID = event.episodeID,
+               let strategy = event.evaluation?.strategy ??
+                    event.policy?.strategy ??
+                    event.action?.strategy {
+                strategyByEpisode[episodeID] = strategy
+            }
+            if let episodeID = event.episodeID,
+               let reaction = event.reaction {
+                shortTermOutcomeLabelsByEpisode[episodeID, default: []].insert(reaction.kind.rawValue)
             }
         }
 
@@ -597,13 +609,16 @@ enum TrainingDatasetExporter {
                 TrainingEpisodeExportRecord(
                     sessionID: first.sessionID,
                     episodeID: episodeID,
+                    strategy: strategyByEpisode[episodeID],
                     labels: labels,
                     note: note,
                     source: first.source,
                     screenshot: latestScreenshotByEpisode[episodeID],
                     promptPayload: latestPromptPayloadByEpisode[episodeID],
                     renderedPrompt: latestRenderedPromptByEpisode[episodeID],
-                    modelOutput: latestModelOutputByEpisode[episodeID]
+                    modelOutput: latestModelOutputByEpisode[episodeID],
+                    shortTermOutcomeLabels: Array(shortTermOutcomeLabelsByEpisode[episodeID] ?? []).sorted(),
+                    longTermOutcomeLabels: labels.map(\.rawValue)
                 )
             )
         }
@@ -616,7 +631,7 @@ enum TrainingDatasetExporter {
         }
 
         return TrainingExportManifest(
-            version: 1,
+            version: 2,
             generatedAt: Date(),
             sessionIDs: sessionIDs.sorted(),
             episodeCount: exports.count,
