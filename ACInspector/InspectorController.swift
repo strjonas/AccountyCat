@@ -22,6 +22,14 @@ final class InspectorController: ObservableObject {
     private let indexStore = TelemetryIndexStore()
     private let telemetryStore = TelemetryStore.shared
     private var refreshTask: Task<Void, Never>?
+    private var lastLoadedDraft: AnnotationDraft?
+    private var lastLoadedEpisodeID: String?
+
+    private struct AnnotationDraft: Equatable {
+        var note: String
+        var labels: Set<EpisodeAnnotationLabel>
+        var pinned: Bool
+    }
 
     deinit {
         refreshTask?.cancel()
@@ -53,12 +61,9 @@ final class InspectorController: ObservableObject {
             }
 
             if let selectedEpisodeID {
-                try await loadEpisodeDetails(episodeID: selectedEpisodeID)
+                try await loadEpisodeDetails(episodeID: selectedEpisodeID, preserveDraftIfDirty: true)
             } else {
-                selectedEpisodeEvents = []
-                annotationNote = ""
-                selectedLabels = []
-                pinEpisode = false
+                clearSelectionState()
             }
 
             statusText = episodes.isEmpty ? "No telemetry episodes yet." : "Loaded \(episodes.count) episodes."
@@ -69,15 +74,12 @@ final class InspectorController: ObservableObject {
 
     func selectionDidChange() async {
         guard let selectedEpisodeID else {
-            selectedEpisodeEvents = []
-            annotationNote = ""
-            selectedLabels = []
-            pinEpisode = false
+            clearSelectionState()
             return
         }
 
         do {
-            try await loadEpisodeDetails(episodeID: selectedEpisodeID)
+            try await loadEpisodeDetails(episodeID: selectedEpisodeID, preserveDraftIfDirty: false)
         } catch {
             statusText = error.localizedDescription
         }
@@ -95,11 +97,25 @@ final class InspectorController: ObservableObject {
             source: .human,
             createdAt: Date()
         )
+        let savedDraft = AnnotationDraft(
+            note: annotation.note,
+            labels: Set(annotation.labels),
+            pinned: annotation.pinned
+        )
+        applyAnnotationDraft(savedDraft)
+        lastLoadedDraft = savedDraft
+        lastLoadedEpisodeID = selectedEpisode.id
+        statusText = "Saving annotation."
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await self.telemetryStore.appendAnnotation(annotation, episode: selectedEpisode.episodeRecord)
-            await self.refresh()
+            do {
+                try await self.telemetryStore.appendAnnotation(annotation, episode: selectedEpisode.episodeRecord)
+                await self.refresh()
+                self.statusText = "Annotation saved."
+            } catch {
+                self.statusText = error.localizedDescription
+            }
         }
     }
 
@@ -112,12 +128,44 @@ final class InspectorController: ObservableObject {
         episodes.first { $0.id == selectedEpisodeID }
     }
 
-    private func loadEpisodeDetails(episodeID: String) async throws {
+    private func loadEpisodeDetails(episodeID: String, preserveDraftIfDirty: Bool) async throws {
         selectedEpisodeEvents = try await indexStore.loadEvents(for: episodeID)
         if let selectedEpisode = episodes.first(where: { $0.id == episodeID }) {
-            annotationNote = selectedEpisode.note
-            selectedLabels = Set(selectedEpisode.labels)
-            pinEpisode = selectedEpisode.pinned
+            let loadedDraft = AnnotationDraft(
+                note: selectedEpisode.note,
+                labels: Set(selectedEpisode.labels),
+                pinned: selectedEpisode.pinned
+            )
+            let sameEpisode = lastLoadedEpisodeID == episodeID
+            let hasUnsavedLocalChanges = sameEpisode && currentDraft != lastLoadedDraft
+
+            if preserveDraftIfDirty == false || hasUnsavedLocalChanges == false {
+                applyAnnotationDraft(loadedDraft)
+            }
+
+            lastLoadedDraft = loadedDraft
+            lastLoadedEpisodeID = episodeID
         }
+    }
+
+    private var currentDraft: AnnotationDraft {
+        AnnotationDraft(
+            note: annotationNote,
+            labels: selectedLabels,
+            pinned: pinEpisode
+        )
+    }
+
+    private func applyAnnotationDraft(_ draft: AnnotationDraft) {
+        annotationNote = draft.note
+        selectedLabels = draft.labels
+        pinEpisode = draft.pinned
+    }
+
+    private func clearSelectionState() {
+        selectedEpisodeEvents = []
+        applyAnnotationDraft(AnnotationDraft(note: "", labels: Set<EpisodeAnnotationLabel>(), pinned: false))
+        lastLoadedDraft = nil
+        lastLoadedEpisodeID = nil
     }
 }

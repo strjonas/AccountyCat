@@ -29,17 +29,33 @@ struct LLMEvaluationResult: Sendable {
     var failureMessage: String?
 }
 
-private struct VisionPromptPayload: Codable, Sendable {
+nonisolated struct VisionInterventionHistoryItem: Codable, Hashable, Sendable {
+    var kind: String
+    var message: String?
+    var timestamp: Date
+}
+
+nonisolated struct VisionInterventionHistorySummary: Codable, Hashable, Sendable {
+    var recentInterventions: [VisionInterventionHistoryItem]
+    var recentNudgeMessages: [String]
+    var lastInterventionKind: String?
+    var nudgeCount: Int
+    var overlayCount: Int
+    var backToWorkCount: Int
+    var dismissOverlayCount: Int
+}
+
+nonisolated struct VisionPromptPayload: Codable, Sendable {
     var goals: String
+    var memory: String?
     var frontmostApp: String
     var windowTitle: String?
     var timestamp: Date
     var recentSwitches: [TelemetryAppSwitchRecord]
     var timeByApp: [TelemetryUsageRecord]
-    var recentActions: [TelemetryActionSummary]
+    var interventionHistory: VisionInterventionHistorySummary
     var heuristics: TelemetryHeuristicSnapshot
     var distraction: TelemetryDistractionState
-    var responseSchema: [String: String]
 }
 
 protocol MonitoringLLMEvaluating: Sendable {
@@ -156,6 +172,10 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             let fallbackAttempt = makeFallbackAttempt(
                 snapshot: snapshot,
                 goals: goals,
+                recentActions: recentActions,
+                heuristics: heuristics,
+                distraction: distraction,
+                memory: memory,
                 promptProfile: promptProfile
             )
             attempts.append(fallbackAttempt)
@@ -242,7 +262,8 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             goals: goals,
             recentActions: recentActions,
             heuristics: heuristics,
-            distraction: distraction
+            distraction: distraction,
+            memory: memory
         )
         let payloadJSON = Self.encodePayload(payload)
         let template = PromptTemplateRecord(
@@ -266,19 +287,25 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
     private func makeFallbackAttempt(
         snapshot: AppSnapshot,
         goals: String,
+        recentActions: [ActionRecord],
+        heuristics: TelemetryHeuristicSnapshot,
+        distraction: DistractionMetadata,
+        memory: String,
         promptProfile: MonitoringPromptProfile
     ) -> LLMEvaluationAttempt {
         let prompt = PromptCatalog.loadMonitoringPrompt(
             profileID: promptProfile.descriptor.id,
             variant: .fallback
         )
-        let renderedPrompt = Self.makeFallbackPrompt(snapshot: snapshot, goals: goals)
-        let payload = [
-            "goals": goals.cleanedSingleLine,
-            "app": snapshot.appName,
-            "window": snapshot.windowTitle ?? "None",
-            "timestamp": snapshot.timestamp.ISO8601Format(),
-        ]
+        let payload = Self.makeVisionPayload(
+            snapshot: snapshot,
+            goals: goals,
+            recentActions: recentActions,
+            heuristics: heuristics,
+            distraction: distraction,
+            memory: memory
+        )
+        let renderedPrompt = Self.makeFallbackPrompt(payload: payload)
         let payloadJSON = Self.encodePayload(payload)
         let template = PromptTemplateRecord(
             id: prompt.asset.id,
@@ -298,35 +325,130 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
     }
 
-    nonisolated private static func makeVisionPayload(
+    nonisolated static func makeVisionPayload(
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
         heuristics: TelemetryHeuristicSnapshot,
-        distraction: DistractionMetadata
+        distraction: DistractionMetadata,
+        memory: String = ""
     ) -> VisionPromptPayload {
-        VisionPromptPayload(
+        let relevantActions = monitoringRelevantActions(
+            from: recentActions,
+            at: snapshot.timestamp
+        )
+        let trimmedMemory = condensedMonitoringMemory(
+            memory,
+            goals: goals
+        )
+        return VisionPromptPayload(
             goals: goals.cleanedSingleLine,
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory,
             frontmostApp: snapshot.appName,
             windowTitle: snapshot.windowTitle,
             timestamp: snapshot.timestamp,
-            recentSwitches: snapshot.recentSwitches.prefix(4).map(\.telemetryRecord),
-            timeByApp: snapshot.perAppDurations.prefix(8).map(\.telemetryRecord),
-            recentActions: recentActions.prefix(6).map(\.telemetrySummary),
+            recentSwitches: snapshot.recentSwitches.prefix(2).map(\.telemetryRecord),
+            timeByApp: snapshot.perAppDurations.prefix(4).map(\.telemetryRecord),
+            interventionHistory: makeInterventionHistorySummary(from: relevantActions),
             heuristics: heuristics,
-            distraction: distraction.telemetryState,
-            responseSchema: [
-                "assessment": "focused|distracted|unclear",
-                "suggested_action": "none|nudge|overlay|abstain",
-                "confidence": "0.0-1.0 optional",
-                "reason_tags": "array of short snake_case strings",
-                "nudge": "short optional nudge under 18 words",
-                "abstain_reason": "optional short explanation when unsure or declining to act",
-            ]
+            distraction: distraction.telemetryState
         )
     }
 
-    nonisolated private static func makeUserPrompt(
+    nonisolated static func monitoringRelevantActions(
+        from recentActions: [ActionRecord],
+        at now: Date
+    ) -> [ActionRecord] {
+        let relevanceWindow: TimeInterval = 90 * 60
+        let filtered = recentActions.filter { action in
+            guard now.timeIntervalSince(action.timestamp) <= relevanceWindow else {
+                return false
+            }
+            if action.kind == .nudge,
+               action.message?.lowercased().contains("debug nudge") == true {
+                return false
+            }
+            return true
+        }
+
+        return Array(filtered.prefix(4))
+    }
+
+    nonisolated static func condensedMonitoringMemory(
+        _ memory: String,
+        goals: String
+    ) -> String {
+        let goalTokens = Set(
+            goals.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 4 }
+        )
+
+        var seen = Set<String>()
+        var selected: [String] = []
+
+        for line in memory.components(separatedBy: .newlines) {
+            let trimmed = line.cleanedSingleLine
+            guard !trimmed.isEmpty else { continue }
+
+            let normalized = trimmed.lowercased()
+            guard seen.insert(normalized).inserted else { continue }
+
+            let lineTokens = Set(
+                normalized
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { $0.count >= 4 }
+            )
+
+            if !lineTokens.isEmpty {
+                let overlap = lineTokens.intersection(goalTokens).count
+                if overlap >= min(4, lineTokens.count) {
+                    continue
+                }
+            }
+
+            selected.append(trimmed)
+            if selected.count == 3 {
+                break
+            }
+        }
+
+        return selected.joined(separator: "\n")
+    }
+
+    nonisolated static func makeInterventionHistorySummary(
+        from recentActions: [ActionRecord]
+    ) -> VisionInterventionHistorySummary {
+        let recentInterventions = recentActions
+            .prefix(3)
+            .map {
+                VisionInterventionHistoryItem(
+                    kind: $0.kind.rawValue,
+                    message: $0.message?.cleanedSingleLine,
+                    timestamp: $0.timestamp
+                )
+            }
+
+        let recentNudgeMessages = recentActions
+            .lazy
+            .filter { $0.kind == .nudge }
+            .compactMap { $0.message?.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+            .prefix(2)
+            .map { $0 }
+
+        return VisionInterventionHistorySummary(
+            recentInterventions: recentInterventions,
+            recentNudgeMessages: Array(recentNudgeMessages),
+            lastInterventionKind: recentInterventions.first?.kind,
+            nudgeCount: recentActions.filter { $0.kind == .nudge }.count,
+            overlayCount: recentActions.filter { $0.kind == .overlay }.count,
+            backToWorkCount: recentActions.filter { $0.kind == .backToWork }.count,
+            dismissOverlayCount: recentActions.filter { $0.kind == .dismissOverlay }.count
+        )
+    }
+
+    nonisolated static func makeUserPrompt(
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
@@ -339,19 +461,23 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             goals: goals,
             recentActions: recentActions,
             heuristics: heuristics,
-            distraction: distraction
+            distraction: distraction,
+            memory: memory
         )
-
-        let memorySection = memory.isEmpty ? "" : """
-
-        User rules/memory (always honour):
-        \(memory)
-        """
 
         return """
         Task:
         Judge whether the user is focused, distracted, or unclear in this exact moment.
-        The screenshot is attached.\(memorySection)
+        The screenshot is attached.
+
+        Use the payload before deciding:
+        - Honour `memory`.
+        - `interventionHistory` shows what AC already tried recently.
+        - `distraction.consecutiveDistractedCount` is the current streak before this decision.
+        - If you nudge on a first distraction, make it a light awareness check.
+        - If recent nudges already happened, do not repeat the same wording or tactic.
+        - Suggest `overlay` only for clear repeated distraction.
+        - Never mention payload fields or hidden counters.
 
         Dynamic payload:
         \(encodePayload(payload))
@@ -361,11 +487,19 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         """
     }
 
-    nonisolated private static func makeFallbackPrompt(snapshot: AppSnapshot, goals: String) -> String {
+    nonisolated static func makeFallbackPrompt(payload: VisionPromptPayload) -> String {
         """
-        Goals: \(goals.cleanedSingleLine)
-        App: \(snapshot.appName)
-        Window: \(snapshot.windowTitle ?? "None")
+        Task:
+        Judge whether the user is focused, distracted, or unclear in this exact moment.
+        The screenshot is attached.
+
+        Read the payload carefully. Honour `memory`. Use `interventionHistory` and `distraction` so you do not repeat recent nudges.
+        If you nudge on a first distraction, keep it as a light awareness check. If recent nudges already happened, change tactic and wording.
+        Only suggest `overlay` for clearly repeated distraction.
+
+        Dynamic payload:
+        \(encodePayload(payload))
+
         Return exactly:
         {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional","abstain_reason":"optional"}
         """
