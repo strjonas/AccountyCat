@@ -15,7 +15,7 @@ final class BrainService: NSObject {
     var moodSink: ((CompanionMood) -> Void)?
     var statusSink: ((String) -> Void)?
 
-    private let llmService: LLMService
+    private let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
     private let executiveArm: ExecutiveArm
     private let storageService: StorageService
     private let telemetryStore: TelemetryStore
@@ -26,9 +26,7 @@ final class BrainService: NSObject {
     private var lastObservedContext: FrontmostContext?
     private var lastObservedAt = Date()
     private var recentSwitches: [AppSwitchRecord] = []
-    private var ladder = DistractionLadder()
     private var lastPersistAt = Date.distantPast
-    private var lastVisualCheckByContext: [String: Date] = [:]
     private var activeEpisode: EpisodeRecord?
     private var pendingReaction: PendingReaction?
 
@@ -40,12 +38,12 @@ final class BrainService: NSObject {
     }
 
     init(
-        llmService: LLMService,
+        monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry,
         executiveArm: ExecutiveArm,
         storageService: StorageService,
         telemetryStore: TelemetryStore
     ) {
-        self.llmService = llmService
+        self.monitoringAlgorithmRegistry = monitoringAlgorithmRegistry
         self.executiveArm = executiveArm
         self.storageService = storageService
         self.telemetryStore = telemetryStore
@@ -76,20 +74,28 @@ final class BrainService: NSObject {
     }
 
     func resetDistractionState() {
-        ladder.reset()
-        var state = stateProvider?() ?? ACState()
-        state.distraction = ladder.metadata
+        guard var state = stateProvider?() else { return }
+        monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
+            configuration: state.monitoringConfiguration,
+            state: &state.algorithmState
+        )
         stateSink?(state)
     }
 
     func resetAlgorithmProfile() {
         recentSwitches = []
-        pendingReaction = nil
-        activeEpisode = nil
-        lastObservedContext = nil
-        lastObservedAt = Date()
-        lastVisualCheckByContext = [:]
+        resetRuntimeContext()
         resetDistractionState()
+    }
+
+    func handleMonitoringConfigurationChange() {
+        guard var state = stateProvider?() else { return }
+        monitoringAlgorithmRegistry.resetSelectedAlgorithmState(
+            configuration: state.monitoringConfiguration,
+            state: &state.algorithmState
+        )
+        stateSink?(state)
+        resetRuntimeContext()
     }
 
     func recordUserReaction(_ reaction: UserReactionRecord, endEpisodeReason: EpisodeEndReason? = nil) {
@@ -237,8 +243,10 @@ final class BrainService: NSObject {
                 idleSeconds: idleSeconds,
                 at: now
             )
-            ladder.reset()
-            state.distraction = ladder.metadata
+            monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
+                configuration: state.monitoringConfiguration,
+                state: &state.algorithmState
+            )
             stateSink?(state)
             moodSink?(.idle)
             statusSink?("You look idle, so AC backed off.")
@@ -254,7 +262,12 @@ final class BrainService: NSObject {
 
         updateUsageDurations(state: &state, with: context, now: now)
 
-        let didChangeContext = ladder.noteContext(context.contextKey, at: now)
+        let didChangeContext = monitoringAlgorithmRegistry.noteContext(
+            configuration: state.monitoringConfiguration,
+            contextKey: context.contextKey,
+            at: now,
+            state: &state.algorithmState
+        )
         if didChangeContext {
             await handleContextChange(
                 from: lastObservedContext,
@@ -277,19 +290,28 @@ final class BrainService: NSObject {
 
         lastObservedContext = context
         state.recentSwitches = recentSwitches
-        state.distraction = ladder.metadata
         maybePersist(state: state, at: now)
 
         await resolvePendingReactionIfNeeded(now: now, context: context)
 
         let heuristics = MonitoringHeuristics.telemetrySnapshot(for: context)
-        let periodicVisualReason = heuristics.periodicVisualReason
-        let visualContextKey = context.bundleIdentifier ?? context.appName.lowercased()
-        let lastVisualCheckAt = lastVisualCheckByContext[visualContextKey] ?? .distantPast
-        let periodicVisualCheckDue = periodicVisualReason != nil && now.timeIntervalSince(lastVisualCheckAt) >= MonitoringHeuristics.periodicVisualCheckInterval
-        let shouldEvaluateNow = ladder.shouldEvaluate(at: now) || periodicVisualCheckDue
 
-        guard shouldEvaluateNow, !isEvaluating else {
+        guard !isEvaluating else {
+            moodSink?(.watching)
+            statusSink?("Watching \(context.appName) quietly.")
+            stateSink?(state)
+            return
+        }
+
+        let evaluationPlan = monitoringAlgorithmRegistry.evaluationPlan(
+            configuration: state.monitoringConfiguration,
+            context: context,
+            heuristics: heuristics,
+            now: now,
+            state: &state.algorithmState
+        )
+
+        guard evaluationPlan.shouldEvaluate else {
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")
             stateSink?(state)
@@ -299,9 +321,8 @@ final class BrainService: NSObject {
         isEvaluating = true
         defer { isEvaluating = false }
 
-        if periodicVisualCheckDue, let periodicVisualReason {
+        if let visualCheckReason = evaluationPlan.visualCheckReason {
             statusSink?("Running periodic visual check for \(context.appName).")
-            lastVisualCheckByContext[visualContextKey] = now
             await appendObservationEvent(
                 context: context,
                 state: state,
@@ -311,7 +332,11 @@ final class BrainService: NSObject {
                 transition: activeEpisode?.contextKey == context.contextKey ? .continuedObserving : .started,
                 endReason: nil
             )
-            try? await appendFailureIfNeeded(domain: "decision", message: "periodic_visual_reason=\(periodicVisualReason)", evaluationID: nil)
+            await appendFailureIfNeeded(
+                domain: "decision",
+                message: "periodic_visual_reason=\(visualCheckReason)",
+                evaluationID: nil
+            )
         } else {
             statusSink?("Evaluating \(context.appName) with a local snapshot.")
         }
@@ -319,6 +344,12 @@ final class BrainService: NSObject {
         let session = try? await telemetryStore.ensureCurrentSession(reason: "runtime")
         let episodeTransition = ensureEpisode(for: context, sessionID: session?.id ?? "unknown", at: now)
         let evaluationEpisode = activeEpisode
+        let executionMetadata = MonitoringExecutionMetadata(
+            algorithmID: monitoringAlgorithmRegistry.descriptor(for: state.monitoringConfiguration.algorithmID).id,
+            algorithmVersion: monitoringAlgorithmRegistry.descriptor(for: state.monitoringConfiguration.algorithmID).version,
+            promptProfileID: PromptCatalog.monitoringDescriptor(id: state.monitoringConfiguration.promptProfileID).id,
+            experimentArm: state.monitoringConfiguration.experimentArm
+        )
 
         await appendObservationEvent(
             context: context,
@@ -335,9 +366,10 @@ final class BrainService: NSObject {
             sessionID: session?.id,
             evaluationID: evaluationID,
             episode: evaluationEpisode,
-            reason: periodicVisualCheckDue ? "periodic_visual_check" : "stable_context",
-            promptMode: periodicVisualCheckDue ? "vision_primary" : "vision_primary",
-            promptVersion: "focus.v2"
+            reason: evaluationPlan.reason ?? "stable_context",
+            promptMode: evaluationPlan.promptMode,
+            promptVersion: evaluationPlan.promptVersion,
+            execution: executionMetadata
         )
 
         let snapshot: AppSnapshot
@@ -363,48 +395,41 @@ final class BrainService: NSObject {
             return
         }
 
-        let evaluation = await llmService.evaluate(
-            snapshot: snapshot,
-            goals: state.goalsText,
-            recentActions: state.recentActions,
-            distraction: ladder.metadata,
-            heuristics: heuristics,
-            memory: state.memory,
-            runtimeOverride: state.runtimePathOverride
+        let preEvaluationDistraction = currentDistractionMetadata(from: state)
+        let decisionResult = await monitoringAlgorithmRegistry.evaluate(
+            input: MonitoringDecisionInput(
+                now: now,
+                evaluationID: evaluationID,
+                snapshot: snapshot,
+                goals: state.goalsText,
+                recentActions: state.recentActions,
+                heuristics: heuristics,
+                memory: state.memory,
+                runtimeOverride: state.runtimePathOverride,
+                configuration: state.monitoringConfiguration,
+                algorithmState: state.algorithmState
+            )
         )
 
         await appendEvaluationArtifacts(
-            evaluation,
+            decisionResult.evaluation,
             evaluationID: evaluationID,
             sessionID: session?.id,
             episode: evaluationEpisode,
             snapshot: snapshot,
             state: state,
-            heuristics: heuristics
+            heuristics: heuristics,
+            distraction: preEvaluationDistraction
         )
 
-        let decision = evaluation.finalDecision ?? .unclear
-        let distractionBefore = ladder.metadata
-        let ladderSignal = ladder.record(assessment: decision.assessment, at: now)
-        state.distraction = ladder.metadata
-        let policy = CompanionPolicy.decide(
-            evaluationID: evaluationID,
-            modelDecision: decision,
-            ladderSignal: ladderSignal,
-            distractionBefore: distractionBefore,
-            distractionAfter: ladder.metadata
-        )
+        state.algorithmState = decisionResult.updatedAlgorithmState
 
         await appendPolicyDecisionEvent(
             sessionID: session?.id,
             episode: evaluationEpisode,
-            policy: policy.record
+            policy: decisionResult.policy.record
         )
 
-        // ── Stale-context guard ──────────────────────────────────────────
-        // The LLM call can take 30-45 s. If the user switched apps while we
-        // were waiting, the context that triggered evaluation is no longer
-        // frontmost, so any nudge would fire on the wrong app.
         guard lastObservedContext?.contextKey == context.contextKey else {
             moodSink?(.watching)
             statusSink?("Context changed during evaluation — action discarded.")
@@ -419,14 +444,14 @@ final class BrainService: NSObject {
                 sessionID: session?.id,
                 episode: evaluationEpisode,
                 evaluationID: evaluationID,
-                action: .none
+                action: .none,
+                execution: decisionResult.execution
             )
             maybePersist(state: state, at: now, force: true)
             return
         }
-        // ─────────────────────────────────────────────────────────────────
 
-        switch policy.action {
+        switch decisionResult.policy.action {
         case let .showNudge(message):
             state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: now), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
@@ -465,7 +490,8 @@ final class BrainService: NSObject {
             sessionID: session?.id,
             episode: evaluationEpisode,
             evaluationID: evaluationID,
-            action: policy.action
+            action: decisionResult.policy.action,
+            execution: decisionResult.execution
         )
 
         maybePersist(state: state, at: now, force: true)
@@ -642,7 +668,7 @@ final class BrainService: NSObject {
                     timestamp: now
                 ),
                 heuristics: heuristics,
-                distraction: ladder.metadata.telemetryState,
+                distraction: currentDistractionMetadata(from: state).telemetryState,
                 visualCheckReason: heuristics.periodicVisualReason,
                 shouldEvaluateNow: false,
                 transition: .ended,
@@ -704,7 +730,7 @@ final class BrainService: NSObject {
                     timestamp: Date()
                 ),
                 heuristics: heuristics,
-                distraction: ladder.metadata.telemetryState,
+                distraction: currentDistractionMetadata(from: state).telemetryState,
                 visualCheckReason: heuristics.periodicVisualReason,
                 shouldEvaluateNow: shouldEvaluateNow,
                 transition: transition,
@@ -730,7 +756,8 @@ final class BrainService: NSObject {
         episode: EpisodeRecord?,
         reason: String,
         promptMode: String,
-        promptVersion: String
+        promptVersion: String,
+        execution: MonitoringExecutionMetadata
     ) async {
         guard let sessionID else { return }
         try? await telemetryStore.appendEvent(
@@ -747,7 +774,8 @@ final class BrainService: NSObject {
                     evaluationID: evaluationID,
                     reason: reason,
                     promptMode: promptMode,
-                    promptVersion: promptVersion
+                    promptVersion: promptVersion,
+                    strategy: execution.telemetryRecord
                 ),
                 modelInput: nil,
                 modelOutput: nil,
@@ -769,7 +797,8 @@ final class BrainService: NSObject {
         episode: EpisodeRecord?,
         snapshot: AppSnapshot,
         state: ACState,
-        heuristics: TelemetryHeuristicSnapshot
+        heuristics: TelemetryHeuristicSnapshot,
+        distraction: DistractionMetadata
     ) async {
         guard let sessionID else { return }
 
@@ -827,7 +856,7 @@ final class BrainService: NSObject {
                         renderedPromptArtifact: renderedPromptArtifact,
                         context: contextRecord,
                         heuristics: heuristics,
-                        distraction: ladder.metadata.telemetryState
+                        distraction: distraction.telemetryState
                     ),
                     modelOutput: nil,
                     parsedOutput: nil,
@@ -957,7 +986,8 @@ final class BrainService: NSObject {
         sessionID: String?,
         episode: EpisodeRecord?,
         evaluationID: String,
-        action: CompanionAction
+        action: CompanionAction,
+        execution: MonitoringExecutionMetadata
     ) async {
         guard let sessionID else { return }
         guard action != .none else { return }
@@ -978,6 +1008,7 @@ final class BrainService: NSObject {
                 policy: nil,
                 action: ActionExecutionRecord(
                     evaluationID: evaluationID,
+                    strategy: execution.telemetryRecord,
                     action: CompanionPolicy.telemetryActionRecord(for: action),
                     source: "policy",
                     succeeded: true
@@ -1075,5 +1106,19 @@ final class BrainService: NSObject {
         return dayUsage
             .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
             .sorted { $0.seconds > $1.seconds }
+    }
+
+    private func currentDistractionMetadata(from state: ACState) -> DistractionMetadata {
+        monitoringAlgorithmRegistry.distractionMetadata(
+            configuration: state.monitoringConfiguration,
+            state: state.algorithmState
+        )
+    }
+
+    private func resetRuntimeContext() {
+        pendingReaction = nil
+        activeEpisode = nil
+        lastObservedContext = nil
+        lastObservedAt = Date()
     }
 }

@@ -240,10 +240,11 @@ struct ACState: Codable, Sendable {
     var goalsText = Self.defaultGoalsText
     var rescueApp = RescueAppTarget.xcode
     var runtimePathOverride: String?
+    var monitoringConfiguration = MonitoringConfiguration()
+    var algorithmState = AlgorithmStateEnvelope()
     var recentActions: [ActionRecord] = []
     var recentSwitches: [AppSwitchRecord] = []
     var usageByDay: [String: [String: TimeInterval]] = [:]
-    var distraction = DistractionMetadata()
     /// Persistent memory of user preferences, rules, and important context.
     var memory: String = ""
     /// Persistent chat history excluding the synthetic system opener.
@@ -257,12 +258,33 @@ struct ACState: Codable, Sendable {
         case goalsText
         case rescueApp
         case runtimePathOverride
+        case monitoringConfiguration
+        case algorithmState
         case recentActions
         case recentSwitches
         case usageByDay
         case distraction
         case memory
         case chatHistory
+    }
+
+    var distraction: DistractionMetadata {
+        get {
+            switch monitoringConfiguration.algorithmID {
+            case MonitoringConfiguration.defaultAlgorithmID:
+                return algorithmState.legacyFocus.distraction
+            default:
+                return algorithmState.legacyFocus.distraction
+            }
+        }
+        set {
+            switch monitoringConfiguration.algorithmID {
+            case MonitoringConfiguration.defaultAlgorithmID:
+                algorithmState.legacyFocus.distraction = newValue
+            default:
+                algorithmState.legacyFocus.distraction = newValue
+            }
+        }
     }
 
     init() {}
@@ -276,10 +298,16 @@ struct ACState: Codable, Sendable {
         goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
         rescueApp = try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
         runtimePathOverride = try container.decodeIfPresent(String.self, forKey: .runtimePathOverride)
+        monitoringConfiguration = try container.decodeIfPresent(MonitoringConfiguration.self, forKey: .monitoringConfiguration) ?? MonitoringConfiguration()
+        algorithmState = try container.decodeIfPresent(AlgorithmStateEnvelope.self, forKey: .algorithmState) ?? AlgorithmStateEnvelope()
         recentActions = try container.decodeIfPresent([ActionRecord].self, forKey: .recentActions) ?? []
         recentSwitches = try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
         usageByDay = try container.decodeIfPresent([String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
-        distraction = try container.decodeIfPresent(DistractionMetadata.self, forKey: .distraction) ?? DistractionMetadata()
+        let legacyDistraction = try container.decodeIfPresent(DistractionMetadata.self, forKey: .distraction)
+        if algorithmState.legacyFocus.distraction == DistractionMetadata(),
+           let legacyDistraction {
+            algorithmState.legacyFocus.distraction = legacyDistraction
+        }
         memory = try container.decodeIfPresent(String.self, forKey: .memory) ?? ""
         chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
     }
@@ -293,6 +321,8 @@ struct ACState: Codable, Sendable {
         try container.encode(goalsText, forKey: .goalsText)
         try container.encode(rescueApp, forKey: .rescueApp)
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
+        try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
+        try container.encode(algorithmState, forKey: .algorithmState)
         try container.encode(recentActions, forKey: .recentActions)
         try container.encode(recentSwitches, forKey: .recentSwitches)
         try container.encode(usageByDay, forKey: .usageByDay)
@@ -306,7 +336,7 @@ struct ACState: Codable, Sendable {
         recentActions = []
         recentSwitches = []
         usageByDay = [:]
-        distraction = DistractionMetadata()
+        algorithmState = AlgorithmStateEnvelope()
         memory = ""
         chatHistory = []
     }

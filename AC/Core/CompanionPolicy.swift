@@ -20,7 +20,8 @@ enum CompanionPolicy {
         modelDecision: LLMDecision,
         ladderSignal: DistractionSignal,
         distractionBefore: DistractionMetadata,
-        distractionAfter: DistractionMetadata
+        distractionAfter: DistractionMetadata,
+        strategy: MonitoringExecutionMetadataRecord? = nil
     ) -> CompanionPolicyResult {
         let sanitizedNudge = modelDecision.nudge?.cleanedSingleLine
         let normalizedDecision = normalized(modelDecision, sanitizedNudge: sanitizedNudge)
@@ -77,6 +78,7 @@ enum CompanionPolicy {
             record: PolicyDecisionRecord(
                 evaluationID: evaluationID,
                 model: normalizedDecision.parsedRecord,
+                strategy: strategy,
                 ladderSignal: signalName(ladderSignal),
                 allowIntervention: allowIntervention,
                 allowEscalation: allowEscalation,

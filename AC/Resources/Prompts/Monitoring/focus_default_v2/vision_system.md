@@ -14,4 +14,3 @@ Rules:
 - `nudge` is optional. Keep it under 18 words.
 - If the user appears focused, use `suggested_action="none"` and omit `nudge`.
 - If you are unsure, use `assessment="unclear"` and `suggested_action="abstain"`.
-

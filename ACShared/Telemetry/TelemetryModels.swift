@@ -196,12 +196,20 @@ nonisolated struct EvaluationRequestRecord: Codable, Hashable, Sendable {
     var reason: String
     var promptMode: String
     var promptVersion: String
+    var strategy: MonitoringExecutionMetadataRecord?
 }
 
 nonisolated struct PromptTemplateRecord: Codable, Hashable, Sendable {
     var id: String
     var version: String
     var sha256: String
+}
+
+nonisolated struct MonitoringExecutionMetadataRecord: Codable, Hashable, Sendable {
+    var algorithmID: String
+    var algorithmVersion: String
+    var promptProfileID: String
+    var experimentArm: String?
 }
 
 nonisolated struct ModelInputRecord: Codable, Hashable, Sendable {
@@ -266,6 +274,7 @@ nonisolated struct TelemetryCompanionActionRecord: Codable, Hashable, Sendable {
 nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
     var evaluationID: String
     var model: ModelOutputParsedRecord
+    var strategy: MonitoringExecutionMetadataRecord?
     var ladderSignal: String
     var allowIntervention: Bool
     var allowEscalation: Bool
@@ -277,6 +286,7 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
 
 nonisolated struct ActionExecutionRecord: Codable, Hashable, Sendable {
     var evaluationID: String?
+    var strategy: MonitoringExecutionMetadataRecord?
     var action: TelemetryCompanionActionRecord
     var source: String
     var succeeded: Bool
@@ -321,6 +331,7 @@ nonisolated struct TrainingExportManifest: Codable, Hashable, Sendable {
 nonisolated struct TrainingEpisodeExportRecord: Codable, Hashable, Sendable {
     var sessionID: String
     var episodeID: String
+    var strategy: MonitoringExecutionMetadataRecord?
     var labels: [EpisodeAnnotationLabel]
     var note: String
     var source: AnnotationSource
@@ -328,4 +339,6 @@ nonisolated struct TrainingEpisodeExportRecord: Codable, Hashable, Sendable {
     var promptPayload: ArtifactRef?
     var renderedPrompt: ArtifactRef?
     var modelOutput: ModelOutputParsedRecord?
+    var shortTermOutcomeLabels: [String]
+    var longTermOutcomeLabels: [String]
 }

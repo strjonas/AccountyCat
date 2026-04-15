@@ -29,7 +29,7 @@ actor TelemetryIndexStore {
 
         let db = try openDatabase()
         defer { sqlite3_close(db) }
-        try createTables(in: db)
+        try prepareSchema(in: db)
 
         try execute("BEGIN IMMEDIATE TRANSACTION;", db: db)
         try execute("DELETE FROM sessions;", db: db)
@@ -48,9 +48,10 @@ actor TelemetryIndexStore {
     func loadEpisodes() throws -> [IndexedEpisode] {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
+        try prepareSchema(in: db)
 
         let sql = """
-        SELECT id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary
+        SELECT id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm
         FROM episodes
         ORDER BY started_at DESC;
         """
@@ -91,7 +92,11 @@ actor TelemetryIndexStore {
                     renderedPromptPath: string(at: 12, statement: statement),
                     promptPayloadPath: string(at: 13, statement: statement),
                     modelOutputJSON: string(at: 14, statement: statement),
-                    reactionSummary: string(at: 15, statement: statement)
+                    reactionSummary: string(at: 15, statement: statement),
+                    algorithmID: string(at: 16, statement: statement),
+                    algorithmVersion: string(at: 17, statement: statement),
+                    promptProfileID: string(at: 18, statement: statement),
+                    experimentArm: string(at: 19, statement: statement)
                 )
             )
         }
@@ -102,6 +107,7 @@ actor TelemetryIndexStore {
     func loadEvents(for episodeID: String) throws -> [IndexedEvent] {
         let db = try openDatabase()
         defer { sqlite3_close(db) }
+        try prepareSchema(in: db)
 
         let sql = """
         SELECT id, session_id, episode_id, kind, timestamp, summary, raw_json
@@ -146,6 +152,7 @@ actor TelemetryIndexStore {
             var promptPayloadPath: String?
             var modelOutputJSON: String?
             var reactions: [String] = []
+            var strategy: MonitoringExecutionMetadataRecord?
         }
 
         var accumulators: [String: EpisodeAccumulator] = [:]
@@ -228,6 +235,12 @@ actor TelemetryIndexStore {
                 accumulator.reactions.append(reaction.kind.rawValue)
             }
 
+            if let strategy = event.evaluation?.strategy ??
+                event.policy?.strategy ??
+                event.action?.strategy {
+                accumulator.strategy = strategy
+            }
+
             accumulators[episodeID] = accumulator
         }
 
@@ -252,7 +265,11 @@ actor TelemetryIndexStore {
                     renderedPromptPath: accumulator.renderedPromptPath,
                     promptPayloadPath: accumulator.promptPayloadPath,
                     modelOutputJSON: accumulator.modelOutputJSON,
-                    reactionSummary: accumulator.reactions.joined(separator: ", ")
+                    reactionSummary: accumulator.reactions.joined(separator: ", "),
+                    algorithmID: accumulator.strategy?.algorithmID,
+                    algorithmVersion: accumulator.strategy?.algorithmVersion,
+                    promptProfileID: accumulator.strategy?.promptProfileID,
+                    experimentArm: accumulator.strategy?.experimentArm
                 ),
                 db: db
             )
@@ -296,6 +313,9 @@ actor TelemetryIndexStore {
         case .observation:
             return event.observation?.context.appName ?? "Observation"
         case .evaluationRequested:
+            if let strategy = event.evaluation?.strategy {
+                return "Evaluation requested (\(strategy.algorithmID), \(strategy.promptProfileID))"
+            }
             return "Evaluation requested"
         case .modelInputSaved:
             return "Model input saved"
@@ -304,8 +324,16 @@ actor TelemetryIndexStore {
         case .modelOutputParsed:
             return event.parsedOutput?.assessment.rawValue ?? "Parsed output"
         case .policyDecided:
+            if let policy = event.policy,
+               let strategy = policy.strategy {
+                return "\(policy.finalAction.kind.rawValue) (\(strategy.algorithmID))"
+            }
             return event.policy?.finalAction.kind.rawValue ?? "Policy decided"
         case .actionExecuted:
+            if let action = event.action,
+               let strategy = action.strategy {
+                return "\(action.action.kind.rawValue) (\(strategy.algorithmID))"
+            }
             return event.action?.action.kind.rawValue ?? "Action executed"
         case .userReaction:
             return event.reaction?.kind.rawValue ?? "Reaction"
@@ -324,6 +352,11 @@ actor TelemetryIndexStore {
             throw SQLiteError.openFailed(message: currentErrorMessage(db))
         }
         return db
+    }
+
+    private func prepareSchema(in db: OpaquePointer?) throws {
+        try createTables(in: db)
+        try migrateSchema(in: db)
     }
 
     private func createTables(in db: OpaquePointer?) throws {
@@ -356,7 +389,11 @@ actor TelemetryIndexStore {
                 rendered_prompt_path TEXT,
                 prompt_payload_path TEXT,
                 model_output_json TEXT,
-                reaction_summary TEXT
+                reaction_summary TEXT,
+                algorithm_id TEXT,
+                algorithm_version TEXT,
+                prompt_profile_id TEXT,
+                experiment_arm TEXT
             );
             """,
             db: db
@@ -375,6 +412,50 @@ actor TelemetryIndexStore {
             """,
             db: db
         )
+    }
+
+    private func migrateSchema(in db: OpaquePointer?) throws {
+        try ensureColumns(
+            in: db,
+            table: "episodes",
+            columns: [
+                ("algorithm_id", "TEXT"),
+                ("algorithm_version", "TEXT"),
+                ("prompt_profile_id", "TEXT"),
+                ("experiment_arm", "TEXT"),
+            ]
+        )
+    }
+
+    private func ensureColumns(
+        in db: OpaquePointer?,
+        table: String,
+        columns: [(name: String, definition: String)]
+    ) throws {
+        let existingColumns = try columnNames(in: db, table: table)
+        for column in columns where existingColumns.contains(column.name) == false {
+            try execute(
+                "ALTER TABLE \(table) ADD COLUMN \(column.name) \(column.definition);",
+                db: db
+            )
+        }
+    }
+
+    private func columnNames(in db: OpaquePointer?, table: String) throws -> Set<String> {
+        var statement: OpaquePointer?
+        let sql = "PRAGMA table_info(\(table));"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteError.prepareFailed(message: currentErrorMessage(db))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var names = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let name = string(at: 1, statement: statement) {
+                names.insert(name)
+            }
+        }
+        return names
     }
 
     private func insertSession(_ session: TelemetrySessionDescriptor, db: OpaquePointer?) throws {
@@ -397,8 +478,8 @@ actor TelemetryIndexStore {
 
     private func insertEpisode(_ episode: IndexedEpisode, db: OpaquePointer?) throws {
         let sql = """
-        INSERT INTO episodes (id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO episodes (id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
         var statement: OpaquePointer?
@@ -442,6 +523,10 @@ actor TelemetryIndexStore {
         }
         sqlite3_bind_text(statement, 15, episode.modelOutputJSON ?? "", -1, sqliteTransient())
         sqlite3_bind_text(statement, 16, episode.reactionSummary ?? "", -1, sqliteTransient())
+        sqlite3_bind_text(statement, 17, episode.algorithmID ?? "", -1, sqliteTransient())
+        sqlite3_bind_text(statement, 18, episode.algorithmVersion ?? "", -1, sqliteTransient())
+        sqlite3_bind_text(statement, 19, episode.promptProfileID ?? "", -1, sqliteTransient())
+        sqlite3_bind_text(statement, 20, episode.experimentArm ?? "", -1, sqliteTransient())
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw SQLiteError.stepFailed(message: currentErrorMessage(db))

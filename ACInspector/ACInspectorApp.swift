@@ -44,6 +44,12 @@ private struct InspectorRootView: View {
                         Text(episode.startedAt.formatted(date: .abbreviated, time: .standard))
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
+                        if let strategySummary = episode.strategySummary, !strategySummary.isEmpty {
+                            Text(strategySummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     .tag(episode.id)
                 }
@@ -117,6 +123,20 @@ private struct InspectorDetailView: View {
             if let reactionSummary = episode.reactionSummary, !reactionSummary.isEmpty {
                 Text("Reactions: \(reactionSummary)")
                     .font(.callout)
+            }
+            if let strategySummary = episode.strategySummary, !strategySummary.isEmpty {
+                Text("Strategy: \(strategySummary)")
+                    .font(.callout)
+            }
+            if let algorithmVersion = episode.algorithmVersion, !algorithmVersion.isEmpty {
+                Text("Algorithm version: \(algorithmVersion)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            if let experimentArm = episode.experimentArm, !experimentArm.isEmpty {
+                Text("Experiment arm: \(experimentArm)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
             }
         }
     }

@@ -40,8 +40,12 @@ final class AppController: ObservableObject {
     static let memoryCompressionThreshold = 1000
 
     let storageService = StorageService()
-    let llmService = LLMService()
     let telemetryStore = TelemetryStore.shared
+    let localModelRuntime: LocalModelRuntime
+    let monitoringLLMClient: MonitoringLLMClient
+    let companionChatService: CompanionChatService
+    let memoryService: MemoryService
+    let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
 
     private(set) var executiveArm: ExecutiveArm?
     private(set) var brainService: BrainService?
@@ -51,6 +55,17 @@ final class AppController: ObservableObject {
     private var lastPromptedDependencySignature: String?
 
     private init() {
+        let runtime = LocalModelRuntime()
+        let monitoringLLMClient = MonitoringLLMClient(runtime: runtime)
+        let companionChatService = CompanionChatService(runtime: runtime)
+        let memoryService = MemoryService(runtime: runtime)
+        self.localModelRuntime = runtime
+        self.monitoringLLMClient = monitoringLLMClient
+        self.companionChatService = companionChatService
+        self.memoryService = memoryService
+        self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
+            monitoringLLMClient: monitoringLLMClient
+        )
         let loadedState = storageService.loadState()
         self.state = loadedState
         self.setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: loadedState.runtimePathOverride)
@@ -126,6 +141,24 @@ final class AppController: ObservableObject {
     func updateRuntimeOverride(_ path: String) {
         state.runtimePathOverride = path.isEmpty ? nil : path
         refreshSystemState()
+    }
+
+    func updateMonitoringAlgorithm(_ algorithmID: String) {
+        let descriptor = monitoringAlgorithmRegistry.descriptor(for: algorithmID)
+        guard state.monitoringConfiguration.algorithmID != descriptor.id else { return }
+        state.monitoringConfiguration.algorithmID = descriptor.id
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Selected algorithm: \(descriptor.id)")
+    }
+
+    func updateMonitoringPromptProfile(_ promptProfileID: String) {
+        let descriptor = PromptCatalog.monitoringDescriptor(id: promptProfileID)
+        guard state.monitoringConfiguration.promptProfileID != descriptor.id else { return }
+        state.monitoringConfiguration.promptProfileID = descriptor.id
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Selected prompt profile: \(descriptor.id)")
     }
 
     func togglePause() {
@@ -357,6 +390,14 @@ final class AppController: ObservableObject {
         }
     }
 
+    var availableMonitoringAlgorithms: [MonitoringAlgorithmDescriptor] {
+        monitoringAlgorithmRegistry.availableAlgorithms
+    }
+
+    var availableMonitoringPromptProfiles: [MonitoringPromptProfileDescriptor] {
+        PromptCatalog.availableMonitoringPromptProfiles.map(\.descriptor)
+    }
+
     var shouldPresentOnboarding: Bool {
         showingOnboardingCompletion || (state.setupStatus != .ready && !onboardingDismissed)
     }
@@ -440,7 +481,7 @@ final class AppController: ObservableObject {
             let reply: String
             if state.setupStatus != .ready || !setupDiagnostics.runtimePresent {
                 reply = "Finish setup first, then I can answer from the local runtime."
-            } else if let response = await llmService.chat(
+            } else if let response = await companionChatService.chat(
                 userMessage: trimmedDraft,
                 goals: state.goalsText,
                 recentActions: state.recentActions,
@@ -522,7 +563,7 @@ final class AppController: ObservableObject {
     private func extractAndUpdateMemory(userMessage: String, reply: String) async {
         guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
 
-        if let bullet = await llmService.extractMemoryUpdate(
+        if let bullet = await memoryService.extractMemoryUpdate(
             userMessage: userMessage,
             reply: reply,
             currentMemory: state.memory,
@@ -536,7 +577,7 @@ final class AppController: ObservableObject {
 
         // Compress only when over threshold
         guard state.memory.count > Self.memoryCompressionThreshold else { return }
-        if let compressed = await llmService.compressMemory(
+        if let compressed = await memoryService.compressMemory(
             memory: state.memory,
             runtimeOverride: state.runtimePathOverride
         ) {
@@ -555,7 +596,7 @@ final class AppController: ObservableObject {
 
         if brainService == nil {
             let brainService = BrainService(
-                llmService: llmService,
+                monitoringAlgorithmRegistry: monitoringAlgorithmRegistry,
                 executiveArm: executiveArm,
                 storageService: storageService,
                 telemetryStore: telemetryStore
