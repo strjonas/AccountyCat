@@ -1,0 +1,661 @@
+//
+//  AppController.swift
+//  AC
+//
+//  Created by Codex on 12.04.26.
+//
+
+import AppKit
+import Combine
+import Foundation
+import UniformTypeIdentifiers
+
+@MainActor
+final class AppController: ObservableObject {
+    static let shared = AppController()
+
+    @Published var state: ACState
+    @Published var setupDiagnostics: RuntimeDiagnostics
+    @Published var setupLog = ""
+    @Published var activityLog = ""
+    @Published var companionMood: CompanionMood = .setup
+    @Published var latestNudge: String?
+    @Published var overlayVisible = false
+    @Published var installingRuntime = false
+    @Published var installingDependencies = false
+    @Published var setupErrorMessage: String?
+    @Published var dependencyInstallPromptVisible = false
+    @Published var showingOnboardingCompletion = false
+    @Published var activityStatusText = "Checking permissions and local runtime."
+    @Published var chatMessages: [ChatMessage]
+    @Published var sendingChatMessage = false
+    @Published var onboardingDismissed = false
+    @Published var telemetrySessionID: String?
+    /// Set by WindowCoordinator when the orb is snapped to a screen edge (peek mode).
+    @Published var peekingEdge: NSRectEdge? = nil
+
+    /// How many recent messages (non-system) are sent to the LLM for context.
+    static let chatContextWindow = 6
+    /// Compress memory when it exceeds this character count.
+    static let memoryCompressionThreshold = 1000
+
+    let storageService = StorageService()
+    let llmService = LLMService()
+    let telemetryStore = TelemetryStore.shared
+
+    private(set) var executiveArm: ExecutiveArm?
+    private(set) var brainService: BrainService?
+    private var hasBootstrapped = false
+    private var hasPerformedInitialRefresh = false
+    private var onboardingCompletionTask: DispatchWorkItem?
+    private var lastPromptedDependencySignature: String?
+
+    private init() {
+        let loadedState = storageService.loadState()
+        self.state = loadedState
+        self.setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: loadedState.runtimePathOverride)
+        self.chatMessages = Self.makeChatMessages(from: loadedState.chatHistory)
+
+        Task { @MainActor [weak self] in
+            self?.activityLog = await ActivityLogService.shared.loadRecentContents()
+        }
+    }
+
+    func bootstrap() {
+        guard !hasBootstrapped else { return }
+        hasBootstrapped = true
+        logActivity("app", "Bootstrapping AccountyCat")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let session = try? await self.telemetryStore.startSession(reason: "app_launch") {
+                self.telemetrySessionID = session.id
+            }
+        }
+        refreshSystemState(persist: false)
+        configureBrainIfNeeded()
+    }
+
+    func shutdown() {
+        persistState()
+        Task { @MainActor [weak self] in
+            await self?.telemetryStore.endCurrentSession(reason: "app_termination")
+        }
+    }
+
+    func attachExecutiveArm(_ executiveArm: ExecutiveArm) {
+        self.executiveArm = executiveArm
+        configureBrainIfNeeded()
+    }
+
+    func refreshSystemState(persist: Bool = true) {
+        let previousStatus = state.setupStatus
+        state.permissions = PermissionService.currentSnapshot()
+        setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
+
+        if installingRuntime || installingDependencies {
+            state.setupStatus = .installing
+        } else if !state.permissions.isReady {
+            state.setupStatus = .needsPermissions
+        } else if setupDiagnostics.isReady {
+            state.setupStatus = .ready
+        } else if !setupDiagnostics.canInstall {
+            state.setupStatus = .blocked
+        } else {
+            state.setupStatus = .needsRuntime
+        }
+
+        updateActivityStatusLine()
+        handleSetupStatusTransition(from: previousStatus, to: state.setupStatus)
+        maybePromptForMissingDependencies()
+
+        if persist {
+            persistState()
+        }
+    }
+
+    func persistState() {
+        state.chatHistory = persistedChatHistory()
+        storageService.saveState(state)
+    }
+
+    func updateGoals(_ text: String) {
+        state.goalsText = text
+        persistState()
+    }
+
+    func updateRuntimeOverride(_ path: String) {
+        state.runtimePathOverride = path.isEmpty ? nil : path
+        refreshSystemState()
+    }
+
+    func togglePause() {
+        state.isPaused.toggle()
+        logActivity("app", state.isPaused ? "Monitoring paused" : "Monitoring resumed")
+        persistState()
+        refreshSystemState()
+    }
+
+    func setDebugMode(_ enabled: Bool) {
+        state.debugMode = enabled
+        logActivity("app", enabled ? "Debug mode enabled" : "Debug mode disabled")
+        persistState()
+    }
+
+    func sendTestNudge() {
+        let message = "Debug nudge: time to check that the panel is visible."
+        state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: Date()), at: 0)
+        state.recentActions = Array(state.recentActions.prefix(12))
+        latestNudge = message
+        companionMood = .nudging
+        logActivity("debug", "Triggered test nudge")
+        executiveArm?.perform(.showNudge(message))
+        persistState()
+    }
+
+    /// Called when the user taps 👍 or 👎 on the nudge speech bubble.
+    func rateNudge(positive: Bool, nudgeText: String) {
+        let kind: UserReactionKind = positive ? .nudgeRatedPositive : .nudgeRatedNegative
+        brainService?.recordUserReaction(
+            UserReactionRecord(
+                kind: kind,
+                relatedAction: TelemetryCompanionActionRecord(kind: .nudge, message: nudgeText),
+                positive: positive,
+                details: nudgeText.cleanedSingleLine
+            )
+        )
+        // Write to persistent memory so future nudges adapt
+        let note = positive
+            ? "• User liked nudge: \"\(nudgeText.cleanedSingleLine)\""
+            : "• User disliked nudge: \"\(nudgeText.cleanedSingleLine)\""
+        appendMemoryLine(note)
+        logActivity("feedback", positive ? "👍 nudge: \(nudgeText)" : "👎 nudge: \(nudgeText)")
+
+        // Dismiss the nudge after rating
+        clearTransientUI()
+    }
+
+    func clearChatHistory() {
+        chatMessages = Self.makeChatMessages(from: [])
+        persistState()
+        logActivity("chat", "Chat history cleared")
+    }
+
+    func clearMemory() {
+        state.memory = ""
+        persistState()
+        logActivity("memory", "Memory cleared")
+    }
+
+    func resetAlgorithmProfile() {
+        state.resetAlgorithmProfile()
+        clearChatHistory()
+        brainService?.resetAlgorithmProfile()
+        persistState()
+        updateActivityStatusLine()
+        logActivity("memory", "Algorithm profile reset to defaults")
+    }
+
+    func showTestOverlay() {
+        state.recentActions.insert(ActionRecord(kind: .overlay, message: "debug", timestamp: Date()), at: 0)
+        state.recentActions = Array(state.recentActions.prefix(12))
+        overlayVisible = true
+        companionMood = .escalated
+        logActivity("debug", "Triggered test overlay")
+        executiveArm?.perform(.showOverlay)
+        persistState()
+    }
+
+    func requestAccessibilityPermission() {
+        logActivity("permissions", "Requested Accessibility permission")
+        PermissionService.requestAccessibility()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.refreshSystemState()
+        }
+    }
+
+    func requestScreenRecordingPermission() {
+        logActivity("permissions", "Requested Screen Recording permission")
+        PermissionService.requestScreenRecording()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.refreshSystemState()
+        }
+    }
+
+    func installMissingDependencies() {
+        guard !installingDependencies else { return }
+
+        let missingTools = setupDiagnostics.missingTools
+        guard !missingTools.isEmpty else {
+            refreshSystemState()
+            return
+        }
+
+        dependencyInstallPromptVisible = false
+        installingDependencies = true
+        setupErrorMessage = nil
+        appendSetupLog("Preparing dependency install for: \(missingTools.joined(separator: ", "))")
+        logActivity("setup", "Installing missing dependencies: \(missingTools.joined(separator: ", "))")
+        refreshSystemState()
+
+        Task {
+            do {
+                try await DependencyInstallerService.installMissingTools(missingTools) { [weak self] chunk in
+                    self?.appendSetupLog(chunk)
+                }
+                logActivity("setup", "Dependency install finished")
+            } catch {
+                setupErrorMessage = error.localizedDescription
+                logActivity("setup", "Dependency install failed: \(error.localizedDescription)")
+            }
+
+            installingDependencies = false
+            refreshSystemState()
+        }
+    }
+
+    func installRuntime() {
+        guard !installingRuntime else { return }
+
+        refreshSystemState()
+        guard setupDiagnostics.canInstall else {
+            setupErrorMessage = "Missing tools: \(setupDiagnostics.missingTools.joined(separator: ", "))"
+            dependencyInstallPromptVisible = true
+            return
+        }
+
+        installingRuntime = true
+        setupLog = ""
+        setupErrorMessage = nil
+        logActivity("setup", "Runtime install started")
+        refreshSystemState()
+
+        Task {
+            do {
+                try await RuntimeSetupService.installRuntime { [weak self] chunk in
+                    self?.appendSetupLog(chunk)
+                }
+
+                let diagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
+                try await RuntimeSetupService.warmUpRuntime(runtimePath: diagnostics.runtimePath) { [weak self] chunk in
+                    self?.appendSetupLog(chunk)
+                }
+                logActivity("setup", "Runtime install and warm-up finished")
+            } catch {
+                setupErrorMessage = error.localizedDescription
+                logActivity("setup", "Runtime install failed: \(error.localizedDescription)")
+            }
+
+            installingRuntime = false
+            refreshSystemState()
+        }
+    }
+
+    func chooseRescueApp() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            let bundle = Bundle(url: url)
+            state.rescueApp = RescueAppTarget(
+                displayName: url.deletingPathExtension().lastPathComponent,
+                bundleIdentifier: bundle?.bundleIdentifier ?? state.rescueApp.bundleIdentifier,
+                applicationPath: url.path
+            )
+            logActivity("app", "Selected rescue app: \(state.rescueApp.displayName)")
+            persistState()
+        }
+    }
+
+    func openRescueApp() {
+        logActivity("action", "Opened rescue app: \(state.rescueApp.displayName)")
+        executiveArm?.openRescueApp(state.rescueApp)
+    }
+
+    func handleBackToWork() {
+        executiveArm?.dismissOverlay()
+        overlayVisible = false
+        brainService?.recordUserReaction(
+            UserReactionRecord(
+                kind: .backToWorkSelected,
+                relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: nil),
+                positive: true,
+                details: state.rescueApp.displayName
+            ),
+            endEpisodeReason: .rescueReturn
+        )
+        openRescueApp()
+        state.recentActions.insert(ActionRecord(kind: .backToWork, message: state.rescueApp.displayName, timestamp: Date()), at: 0)
+        state.recentActions = Array(state.recentActions.prefix(12))
+        logActivity("action", "Back to Work selected")
+        persistState()
+    }
+
+    func dismissOverlay() {
+        executiveArm?.dismissOverlay()
+        overlayVisible = false
+        brainService?.recordUserReaction(
+            UserReactionRecord(
+                kind: .overlayDismissed,
+                relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: nil),
+                positive: false,
+                details: nil
+            )
+        )
+        state.recentActions.insert(ActionRecord(kind: .dismissOverlay, message: nil, timestamp: Date()), at: 0)
+        state.recentActions = Array(state.recentActions.prefix(12))
+        logActivity("action", "Overlay dismissed")
+        persistState()
+    }
+
+    func clearTransientUI() {
+        latestNudge = nil
+        if !overlayVisible {
+            companionMood = state.isPaused ? .paused : .watching
+        }
+    }
+
+    var shouldPresentOnboarding: Bool {
+        showingOnboardingCompletion || (state.setupStatus != .ready && !onboardingDismissed)
+    }
+
+    var shouldPresentChatAsAvailable: Bool {
+        state.setupStatus == .ready
+    }
+
+    func dismissOnboarding() {
+        onboardingDismissed = true
+    }
+
+    func resumeOnboarding() {
+        onboardingDismissed = false
+    }
+
+    func openActivityLog() {
+        Task {
+            let logURL = await ActivityLogService.shared.fileURL()
+            _ = await MainActor.run {
+                NSWorkspace.shared.open(logURL)
+            }
+        }
+    }
+
+    func refreshActivityLog() {
+        Task { @MainActor [weak self] in
+            self?.activityLog = await ActivityLogService.shared.loadRecentContents()
+        }
+    }
+
+    func openTelemetryRoot() {
+        Task {
+            let url = await telemetryStore.rootDirectoryURL()
+            _ = await MainActor.run {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    func openCurrentTelemetrySession() {
+        Task {
+            guard let session = await telemetryStore.currentSessionDescriptor() else { return }
+            let rootURL = await telemetryStore.rootDirectoryURL()
+            let sessionURL = rootURL.appendingPathComponent(session.id, isDirectory: true)
+            _ = await MainActor.run {
+                NSWorkspace.shared.open(sessionURL)
+            }
+        }
+    }
+
+    func sendChatMessage(_ draft: String) {
+        let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDraft.isEmpty, !sendingChatMessage else { return }
+
+        chatMessages.append(ChatMessage(role: .user, text: trimmedDraft))
+        persistState()
+        sendingChatMessage = true
+        logActivity("chat", "User: \(trimmedDraft)")
+
+        if Self.looksLikeNegativeChatFeedback(trimmedDraft) {
+            brainService?.recordUserReaction(
+                UserReactionRecord(
+                    kind: .negativeChatFeedback,
+                    relatedAction: nil,
+                    positive: false,
+                    details: trimmedDraft.cleanedSingleLine
+                )
+            )
+        }
+
+        // Rolling context window: last N non-system messages
+        let historyWindow = chatMessages
+            .filter { $0.role != .system }
+            .suffix(Self.chatContextWindow)
+            .dropLast()  // exclude the message we just appended (it's the userMessage arg)
+            .map { $0 }
+        let currentMemory = state.memory
+
+        Task {
+            let reply: String
+            if state.setupStatus != .ready || !setupDiagnostics.runtimePresent {
+                reply = "Finish setup first, then I can answer from the local runtime."
+            } else if let response = await llmService.chat(
+                userMessage: trimmedDraft,
+                goals: state.goalsText,
+                recentActions: state.recentActions,
+                context: makeChatContext(),
+                history: Array(historyWindow),
+                memory: currentMemory,
+                runtimeOverride: state.runtimePathOverride
+            ) {
+                reply = response
+            } else {
+                reply = "I couldn't answer just now. Check the logs and local runtime status."
+            }
+
+            await MainActor.run {
+                self.chatMessages.append(ChatMessage(role: .assistant, text: reply))
+                self.persistState()
+                self.sendingChatMessage = false
+            }
+            self.logActivity("chat", "Assistant: \(reply)")
+
+            // Async memory extraction — non-blocking, runs after reply is shown
+            await self.extractAndUpdateMemory(userMessage: trimmedDraft, reply: reply)
+        }
+    }
+
+    private func appendSetupLog(_ chunk: String) {
+        let sanitizedChunk = chunk.trimmingCharacters(in: .newlines)
+        guard !sanitizedChunk.isEmpty else { return }
+        if setupLog.isEmpty {
+            setupLog = sanitizedChunk
+        } else {
+            setupLog += "\n" + sanitizedChunk
+        }
+        logActivity("setup-output", sanitizedChunk)
+    }
+
+    private func makeChatContext() -> ChatContext {
+        let now = Date()
+        let frontmost = SnapshotService.frontmostContext()
+        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
+        let perAppDurations = dayUsage
+            .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
+            .sorted { $0.seconds > $1.seconds }
+
+        return ChatContext(
+            frontmostAppName: frontmost?.appName ?? "Unknown App",
+            frontmostWindowTitle: frontmost?.windowTitle,
+            idleSeconds: SnapshotService.idleSeconds(),
+            timestamp: now,
+            recentSwitches: Array(state.recentSwitches.prefix(6)),
+            perAppDurations: Array(perAppDurations.prefix(8))
+        )
+    }
+
+    private func persistedChatHistory() -> [ChatMessage] {
+        chatMessages.filter { $0.role != .system }
+    }
+
+    private static func makeChatMessages(from persistedHistory: [ChatMessage]) -> [ChatMessage] {
+        [ChatMessage(role: .system, text: "Ask me what I am watching, why I nudged, or what to improve.")]
+            + persistedHistory.filter { $0.role != .system }
+    }
+
+    // MARK: - Memory helpers
+
+    private func appendMemoryLine(_ line: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if state.memory.isEmpty {
+            state.memory = trimmed
+        } else {
+            state.memory += "\n" + trimmed
+        }
+        persistState()
+    }
+
+    /// Runs after each chat exchange to extract memorable rules/preferences.
+    /// Compresses only when memory exceeds the threshold.
+    private func extractAndUpdateMemory(userMessage: String, reply: String) async {
+        guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
+
+        if let bullet = await llmService.extractMemoryUpdate(
+            userMessage: userMessage,
+            reply: reply,
+            currentMemory: state.memory,
+            runtimeOverride: state.runtimePathOverride
+        ) {
+            await MainActor.run {
+                self.appendMemoryLine(bullet)
+                self.logActivity("memory", "Extracted: \(bullet)")
+            }
+        }
+
+        // Compress only when over threshold
+        guard state.memory.count > Self.memoryCompressionThreshold else { return }
+        if let compressed = await llmService.compressMemory(
+            memory: state.memory,
+            runtimeOverride: state.runtimePathOverride
+        ) {
+            await MainActor.run {
+                self.state.memory = compressed
+                self.persistState()
+                self.logActivity("memory", "Compressed memory to \(compressed.count) chars")
+            }
+        }
+    }
+
+    private func configureBrainIfNeeded() {
+        guard let executiveArm else {
+            return
+        }
+
+        if brainService == nil {
+            let brainService = BrainService(
+                llmService: llmService,
+                executiveArm: executiveArm,
+                storageService: storageService,
+                telemetryStore: telemetryStore
+            )
+
+            brainService.stateProvider = { [weak self] in
+                self?.state ?? ACState()
+            }
+            brainService.stateSink = { [weak self] updatedState in
+                self?.state = updatedState
+            }
+            brainService.moodSink = { [weak self] mood in
+                self?.companionMood = mood
+            }
+            brainService.statusSink = { [weak self] status in
+                self?.activityStatusText = status
+            }
+
+            self.brainService = brainService
+            brainService.start()
+        }
+
+        refreshSystemState()
+    }
+
+    private func handleSetupStatusTransition(from previousStatus: SetupStatus, to newStatus: SetupStatus) {
+        defer { hasPerformedInitialRefresh = true }
+
+        guard previousStatus != newStatus else { return }
+        logActivity("setup", "Setup state changed: \(previousStatus.rawValue) -> \(newStatus.rawValue)")
+
+        guard hasPerformedInitialRefresh else { return }
+
+        if newStatus == .ready {
+            onboardingCompletionTask?.cancel()
+            onboardingDismissed = false
+            showingOnboardingCompletion = true
+
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.showingOnboardingCompletion = false
+            }
+            onboardingCompletionTask = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.8, execute: workItem)
+        } else {
+            onboardingCompletionTask?.cancel()
+            showingOnboardingCompletion = false
+            onboardingDismissed = false
+        }
+    }
+
+    private func maybePromptForMissingDependencies() {
+        let signature = setupDiagnostics.missingTools.sorted().joined(separator: ",")
+        if signature.isEmpty {
+            lastPromptedDependencySignature = nil
+            dependencyInstallPromptVisible = false
+            return
+        }
+
+        guard state.setupStatus == .blocked, !installingDependencies else { return }
+        guard signature != lastPromptedDependencySignature else { return }
+
+        lastPromptedDependencySignature = signature
+        dependencyInstallPromptVisible = true
+    }
+
+    private func updateActivityStatusLine() {
+        if installingDependencies {
+            activityStatusText = "Installing missing dependencies."
+        } else if installingRuntime {
+            activityStatusText = "Building and warming the local runtime."
+        } else if !state.permissions.isReady {
+            activityStatusText = "Waiting for Screen Recording and Accessibility permissions."
+        } else if !setupDiagnostics.missingTools.isEmpty {
+            activityStatusText = "Install the missing build tools before AC can finish setup."
+        } else if !setupDiagnostics.runtimePresent || !setupDiagnostics.modelCachePresent {
+            activityStatusText = "Install and warm up the local runtime before AC can watch or chat."
+        } else if state.isPaused {
+            activityStatusText = "Monitoring is paused."
+        } else {
+            activityStatusText = "Monitoring is active."
+        }
+    }
+
+    private static func looksLikeNegativeChatFeedback(_ text: String) -> Bool {
+        let lowered = text.cleanedSingleLine.lowercased()
+        let markers = [
+            "annoying",
+            "stop nudging",
+            "too much",
+            "interrupt",
+            "leave me alone",
+            "not helpful",
+            "wrong",
+        ]
+        return markers.contains { lowered.contains($0) }
+    }
+
+    private func logActivity(_ category: String, _ message: String) {
+        Task {
+            await ActivityLogService.shared.append(category: category, message: message)
+        }
+    }
+}

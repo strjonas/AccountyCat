@@ -1,0 +1,5 @@
+ACCOUNTYCAT_BUNDLE_ID_PREFIX = dev.accountycat
+ACCOUNTYCAT_DEVELOPMENT_TEAM =
+
+#include? "LocalOverrides.xcconfig"
+

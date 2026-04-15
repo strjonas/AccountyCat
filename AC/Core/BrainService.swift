@@ -1,0 +1,1079 @@
+//
+//  BrainService.swift
+//  AC
+//
+//  Created by Codex on 12.04.26.
+//
+
+import AppKit
+import Foundation
+
+@MainActor
+final class BrainService: NSObject {
+    var stateProvider: (() -> ACState)?
+    var stateSink: ((ACState) -> Void)?
+    var moodSink: ((CompanionMood) -> Void)?
+    var statusSink: ((String) -> Void)?
+
+    private let llmService: LLMService
+    private let executiveArm: ExecutiveArm
+    private let storageService: StorageService
+    private let telemetryStore: TelemetryStore
+
+    private var timer: Timer?
+    private var isEvaluating = false
+    private var isSessionAvailable = true
+    private var lastObservedContext: FrontmostContext?
+    private var lastObservedAt = Date()
+    private var recentSwitches: [AppSwitchRecord] = []
+    private var ladder = DistractionLadder()
+    private var lastPersistAt = Date.distantPast
+    private var lastVisualCheckByContext: [String: Date] = [:]
+    private var activeEpisode: EpisodeRecord?
+    private var pendingReaction: PendingReaction?
+
+    private struct PendingReaction: Sendable {
+        var episodeID: String
+        var action: CompanionAction
+        var issuedAt: Date
+        var sourceContextKey: String
+    }
+
+    init(
+        llmService: LLMService,
+        executiveArm: ExecutiveArm,
+        storageService: StorageService,
+        telemetryStore: TelemetryStore
+    ) {
+        self.llmService = llmService
+        self.executiveArm = executiveArm
+        self.storageService = storageService
+        self.telemetryStore = telemetryStore
+    }
+
+    func start() {
+        guard timer == nil else { return }
+
+        let notificationCenter = NSWorkspace.shared.notificationCenter
+        notificationCenter.addObserver(self, selector: #selector(handleWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(handleDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(handleSessionInactive), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(handleSessionActive), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.tick()
+            }
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    func resetDistractionState() {
+        ladder.reset()
+        var state = stateProvider?() ?? ACState()
+        state.distraction = ladder.metadata
+        stateSink?(state)
+    }
+
+    func resetAlgorithmProfile() {
+        recentSwitches = []
+        pendingReaction = nil
+        activeEpisode = nil
+        lastObservedContext = nil
+        lastObservedAt = Date()
+        lastVisualCheckByContext = [:]
+        resetDistractionState()
+    }
+
+    func recordUserReaction(_ reaction: UserReactionRecord, endEpisodeReason: EpisodeEndReason? = nil) {
+        Task {
+            let sessionID = (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
+            if let sessionID {
+                try? await telemetryStore.appendEvent(
+                    TelemetryEvent(
+                        id: UUID().uuidString,
+                        kind: .userReaction,
+                        timestamp: Date(),
+                        sessionID: sessionID,
+                        episodeID: activeEpisode?.id,
+                        episode: activeEpisode,
+                        session: nil,
+                        observation: nil,
+                        evaluation: nil,
+                        modelInput: nil,
+                        modelOutput: nil,
+                        parsedOutput: nil,
+                        policy: nil,
+                        action: nil,
+                        reaction: reaction,
+                        annotation: nil,
+                        failure: nil
+                    ),
+                    sessionID: sessionID
+                )
+            }
+        }
+
+        pendingReaction = nil
+
+        guard let endEpisodeReason else {
+            return
+        }
+
+        Task { @MainActor in
+            guard let state = self.stateProvider?() else { return }
+            await self.endActiveEpisode(
+                reason: endEpisodeReason,
+                context: self.lastObservedContext,
+                state: state,
+                idleSeconds: SnapshotService.idleSeconds(),
+                at: Date()
+            )
+        }
+    }
+
+    @objc private func handleWillSleep() {
+        isSessionAvailable = false
+        Task {
+            await ActivityLogService.shared.append(category: "app", message: "System will sleep. Monitoring is standing by.")
+        }
+        Task { @MainActor in
+            guard let state = self.stateProvider?() else { return }
+            await self.endActiveEpisode(
+                reason: .sessionInactive,
+                context: self.lastObservedContext,
+                state: state,
+                idleSeconds: SnapshotService.idleSeconds(),
+                at: Date()
+            )
+        }
+        resetDistractionState()
+        moodSink?(.idle)
+    }
+
+    @objc private func handleDidWake() {
+        isSessionAvailable = true
+        Task {
+            await ActivityLogService.shared.append(category: "app", message: "System woke up. Monitoring resumed.")
+        }
+    }
+
+    @objc private func handleSessionInactive() {
+        isSessionAvailable = false
+        Task {
+            await ActivityLogService.shared.append(category: "app", message: "User session became inactive. Monitoring is standing by.")
+        }
+        Task { @MainActor in
+            guard let state = self.stateProvider?() else { return }
+            await self.endActiveEpisode(
+                reason: .sessionInactive,
+                context: self.lastObservedContext,
+                state: state,
+                idleSeconds: SnapshotService.idleSeconds(),
+                at: Date()
+            )
+        }
+        resetDistractionState()
+        moodSink?(.idle)
+    }
+
+    @objc private func handleSessionActive() {
+        isSessionAvailable = true
+        Task {
+            await ActivityLogService.shared.append(category: "app", message: "User session became active. Monitoring resumed.")
+        }
+    }
+
+    private func tick() async {
+        guard let stateProvider, var state = Optional(stateProvider()) else {
+            return
+        }
+
+        if state.setupStatus != .ready {
+            moodSink?(.setup)
+            statusSink?("Waiting for setup to finish.")
+            return
+        }
+
+        if state.isPaused {
+            await endActiveEpisode(
+                reason: .paused,
+                context: lastObservedContext,
+                state: state,
+                idleSeconds: SnapshotService.idleSeconds(),
+                at: Date()
+            )
+            moodSink?(.paused)
+            statusSink?("Monitoring paused.")
+            return
+        }
+
+        if !state.permissions.isReady {
+            moodSink?(.setup)
+            statusSink?("Required permissions are still missing.")
+            return
+        }
+
+        if !isSessionAvailable {
+            moodSink?(.idle)
+            statusSink?("Session inactive. AC is standing by.")
+            return
+        }
+
+        let now = Date()
+        let idleSeconds = SnapshotService.idleSeconds()
+        if idleSeconds >= 60 {
+            await endActiveEpisode(
+                reason: .idleReset,
+                context: lastObservedContext,
+                state: state,
+                idleSeconds: idleSeconds,
+                at: now
+            )
+            ladder.reset()
+            state.distraction = ladder.metadata
+            stateSink?(state)
+            moodSink?(.idle)
+            statusSink?("You look idle, so AC backed off.")
+            lastObservedAt = now
+            return
+        }
+
+        guard let context = SnapshotService.frontmostContext() else {
+            moodSink?(.idle)
+            statusSink?("Could not read the active app yet.")
+            return
+        }
+
+        updateUsageDurations(state: &state, with: context, now: now)
+
+        let didChangeContext = ladder.noteContext(context.contextKey, at: now)
+        if didChangeContext {
+            await handleContextChange(
+                from: lastObservedContext,
+                to: context,
+                state: state,
+                idleSeconds: idleSeconds,
+                now: now
+            )
+            recentSwitches.insert(
+                AppSwitchRecord(
+                    fromAppName: lastObservedContext?.appName,
+                    toAppName: context.appName,
+                    toWindowTitle: context.windowTitle,
+                    timestamp: now
+                ),
+                at: 0
+            )
+            recentSwitches = Array(recentSwitches.prefix(6))
+        }
+
+        lastObservedContext = context
+        state.recentSwitches = recentSwitches
+        state.distraction = ladder.metadata
+        maybePersist(state: state, at: now)
+
+        await resolvePendingReactionIfNeeded(now: now, context: context)
+
+        let heuristics = MonitoringHeuristics.telemetrySnapshot(for: context)
+        let periodicVisualReason = heuristics.periodicVisualReason
+        let visualContextKey = context.bundleIdentifier ?? context.appName.lowercased()
+        let lastVisualCheckAt = lastVisualCheckByContext[visualContextKey] ?? .distantPast
+        let periodicVisualCheckDue = periodicVisualReason != nil && now.timeIntervalSince(lastVisualCheckAt) >= MonitoringHeuristics.periodicVisualCheckInterval
+        let shouldEvaluateNow = ladder.shouldEvaluate(at: now) || periodicVisualCheckDue
+
+        guard shouldEvaluateNow, !isEvaluating else {
+            moodSink?(.watching)
+            statusSink?("Watching \(context.appName) quietly.")
+            stateSink?(state)
+            return
+        }
+
+        isEvaluating = true
+        defer { isEvaluating = false }
+
+        if periodicVisualCheckDue, let periodicVisualReason {
+            statusSink?("Running periodic visual check for \(context.appName).")
+            lastVisualCheckByContext[visualContextKey] = now
+            await appendObservationEvent(
+                context: context,
+                state: state,
+                idleSeconds: idleSeconds,
+                heuristics: heuristics,
+                shouldEvaluateNow: true,
+                transition: activeEpisode?.contextKey == context.contextKey ? .continuedObserving : .started,
+                endReason: nil
+            )
+            try? await appendFailureIfNeeded(domain: "decision", message: "periodic_visual_reason=\(periodicVisualReason)", evaluationID: nil)
+        } else {
+            statusSink?("Evaluating \(context.appName) with a local snapshot.")
+        }
+
+        let session = try? await telemetryStore.ensureCurrentSession(reason: "runtime")
+        let episodeTransition = ensureEpisode(for: context, sessionID: session?.id ?? "unknown", at: now)
+        let evaluationEpisode = activeEpisode
+
+        await appendObservationEvent(
+            context: context,
+            state: state,
+            idleSeconds: idleSeconds,
+            heuristics: heuristics,
+            shouldEvaluateNow: true,
+            transition: episodeTransition,
+            endReason: nil
+        )
+
+        let evaluationID = UUID().uuidString
+        await appendEvaluationRequestedEvent(
+            sessionID: session?.id,
+            evaluationID: evaluationID,
+            episode: evaluationEpisode,
+            reason: periodicVisualCheckDue ? "periodic_visual_check" : "stable_context",
+            promptMode: periodicVisualCheckDue ? "vision_primary" : "vision_primary",
+            promptVersion: "focus.v2"
+        )
+
+        let snapshot: AppSnapshot
+        do {
+            snapshot = try await buildSnapshot(
+                from: context,
+                state: state,
+                idle: false,
+                now: now,
+                sessionID: session?.id,
+                evaluationID: evaluationID
+            )
+        } catch {
+            statusSink?("Snapshot capture failed. Trying again later.")
+            stateSink?(state)
+            await ActivityLogService.shared.append(category: "snapshot-error", message: error.localizedDescription)
+            await appendFailureIfNeeded(
+                domain: "snapshot",
+                message: error.localizedDescription,
+                evaluationID: evaluationID,
+                episode: evaluationEpisode
+            )
+            return
+        }
+
+        let evaluation = await llmService.evaluate(
+            snapshot: snapshot,
+            goals: state.goalsText,
+            recentActions: state.recentActions,
+            distraction: ladder.metadata,
+            heuristics: heuristics,
+            memory: state.memory,
+            runtimeOverride: state.runtimePathOverride
+        )
+
+        await appendEvaluationArtifacts(
+            evaluation,
+            evaluationID: evaluationID,
+            sessionID: session?.id,
+            episode: evaluationEpisode,
+            snapshot: snapshot,
+            state: state,
+            heuristics: heuristics
+        )
+
+        let decision = evaluation.finalDecision ?? .unclear
+        let distractionBefore = ladder.metadata
+        let ladderSignal = ladder.record(assessment: decision.assessment, at: now)
+        state.distraction = ladder.metadata
+        let policy = CompanionPolicy.decide(
+            evaluationID: evaluationID,
+            modelDecision: decision,
+            ladderSignal: ladderSignal,
+            distractionBefore: distractionBefore,
+            distractionAfter: ladder.metadata
+        )
+
+        await appendPolicyDecisionEvent(
+            sessionID: session?.id,
+            episode: evaluationEpisode,
+            policy: policy.record
+        )
+
+        // ── Stale-context guard ──────────────────────────────────────────
+        // The LLM call can take 30-45 s. If the user switched apps while we
+        // were waiting, the context that triggered evaluation is no longer
+        // frontmost, so any nudge would fire on the wrong app.
+        guard lastObservedContext?.contextKey == context.contextKey else {
+            moodSink?(.watching)
+            statusSink?("Context changed during evaluation — action discarded.")
+            stateSink?(state)
+            await appendFailureIfNeeded(
+                domain: "policy",
+                message: "stale_context: evaluation started in \(context.appName) but user has since moved away",
+                evaluationID: evaluationID,
+                episode: evaluationEpisode
+            )
+            await appendActionExecutedEvent(
+                sessionID: session?.id,
+                episode: evaluationEpisode,
+                evaluationID: evaluationID,
+                action: .none
+            )
+            maybePersist(state: state, at: now, force: true)
+            return
+        }
+        // ─────────────────────────────────────────────────────────────────
+
+        switch policy.action {
+        case let .showNudge(message):
+            state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: now), at: 0)
+            state.recentActions = Array(state.recentActions.prefix(12))
+            stateSink?(state)
+            moodSink?(.nudging)
+            statusSink?("Nudged while you were in \(context.appName).")
+            executiveArm.perform(.showNudge(message))
+            pendingReaction = PendingReaction(
+                episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
+                action: .showNudge(message),
+                issuedAt: now,
+                sourceContextKey: context.contextKey
+            )
+
+        case .showOverlay:
+            state.recentActions.insert(ActionRecord(kind: .overlay, message: nil, timestamp: now), at: 0)
+            state.recentActions = Array(state.recentActions.prefix(12))
+            stateSink?(state)
+            moodSink?(.escalated)
+            statusSink?("Escalated after repeated distraction signals.")
+            executiveArm.perform(.showOverlay)
+            pendingReaction = PendingReaction(
+                episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
+                action: .showOverlay,
+                issuedAt: now,
+                sourceContextKey: context.contextKey
+            )
+
+        case .none:
+            moodSink?(.watching)
+            statusSink?("No action needed in \(context.appName).")
+            stateSink?(state)
+        }
+
+        await appendActionExecutedEvent(
+            sessionID: session?.id,
+            episode: evaluationEpisode,
+            evaluationID: evaluationID,
+            action: policy.action
+        )
+
+        maybePersist(state: state, at: now, force: true)
+    }
+
+    private func buildSnapshot(
+        from context: FrontmostContext,
+        state: ACState,
+        idle: Bool,
+        now: Date,
+        sessionID: String?,
+        evaluationID: String
+    ) async throws -> AppSnapshot {
+        let screenshotURL = try await SnapshotService.captureScreenshot()
+
+        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
+        let perAppDurations = dayUsage
+            .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
+            .sorted { $0.seconds > $1.seconds }
+
+        let screenshotArtifacts: StoredImageArtifacts?
+        if let sessionID {
+            screenshotArtifacts = try? await telemetryStore.writeScreenshotArtifacts(
+                from: screenshotURL,
+                sessionID: sessionID,
+                stem: "eval-\(evaluationID)-screenshot"
+            )
+        } else {
+            screenshotArtifacts = nil
+        }
+
+        let fallbackArtifact = ArtifactRef(
+            id: UUID().uuidString,
+            kind: .screenshotOriginal,
+            relativePath: screenshotArtifacts?.absoluteOriginalURL.path ?? screenshotURL.path,
+            sha256: nil,
+            byteCount: (try? Data(contentsOf: screenshotURL).count) ?? 0,
+            width: nil,
+            height: nil,
+            createdAt: now
+        )
+
+        return AppSnapshot(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            windowTitle: context.windowTitle,
+            recentSwitches: recentSwitches,
+            perAppDurations: perAppDurations,
+            screenshotArtifact: screenshotArtifacts?.original ?? fallbackArtifact,
+            screenshotThumbnail: screenshotArtifacts?.thumbnail,
+            screenshotPath: screenshotArtifacts?.absoluteOriginalURL.path ?? screenshotURL.path,
+            idle: idle,
+            timestamp: now
+        )
+    }
+
+    private func updateUsageDurations(state: inout ACState, with context: FrontmostContext, now: Date) {
+        let delta = now.timeIntervalSince(lastObservedAt)
+        defer { lastObservedAt = now }
+
+        guard delta > 0, let previousContext = lastObservedContext else {
+            return
+        }
+
+        var usageForDay = state.usageByDay[now.acDayKey] ?? [:]
+        usageForDay[previousContext.appName, default: 0] += delta
+        state.usageByDay[now.acDayKey] = usageForDay
+    }
+
+    private func maybePersist(state: ACState, at now: Date, force: Bool = false) {
+        guard force || now.timeIntervalSince(lastPersistAt) >= 30 else {
+            return
+        }
+
+        storageService.saveState(state)
+        lastPersistAt = now
+    }
+
+    private func ensureEpisode(for context: FrontmostContext, sessionID: String, at now: Date) -> ObservationTransition {
+        if let activeEpisode, activeEpisode.contextKey == context.contextKey {
+            return .continuedObserving
+        }
+
+        activeEpisode = EpisodeRecord(
+            id: UUID().uuidString,
+            sessionID: sessionID,
+            contextKey: context.contextKey,
+            appName: context.appName,
+            windowTitle: context.windowTitle,
+            startedAt: now,
+            endedAt: nil,
+            status: .active,
+            endReason: nil,
+            pinned: false
+        )
+        return .started
+    }
+
+    private func handleContextChange(
+        from previousContext: FrontmostContext?,
+        to context: FrontmostContext,
+        state: ACState,
+        idleSeconds: TimeInterval,
+        now: Date
+    ) async {
+        let endReason: EpisodeEndReason
+        if let pendingReaction,
+           pendingReaction.episodeID == activeEpisode?.id,
+           now.timeIntervalSince(pendingReaction.issuedAt) <= 150,
+           context.bundleIdentifier == state.rescueApp.bundleIdentifier {
+            await recordImplicitReaction(
+                UserReactionRecord(
+                    kind: .postNudgeRescueReturn,
+                    relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
+                    positive: true,
+                    details: context.appName
+                ),
+                at: now
+            )
+            endReason = .rescueReturn
+        } else if let pendingReaction,
+                  pendingReaction.episodeID == activeEpisode?.id,
+                  now.timeIntervalSince(pendingReaction.issuedAt) <= 150,
+                  MonitoringHeuristics.isClearlyProductive(bundleIdentifier: context.bundleIdentifier, appName: context.appName) {
+            await recordImplicitReaction(
+                UserReactionRecord(
+                    kind: .postNudgeAppSwitch,
+                    relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
+                    positive: true,
+                    details: context.appName
+                ),
+                at: now
+            )
+            endReason = .contextChange
+        } else {
+            endReason = .contextChange
+        }
+
+        pendingReaction = nil
+
+        await endActiveEpisode(
+            reason: endReason,
+            context: previousContext,
+            state: state,
+            idleSeconds: idleSeconds,
+            at: now
+        )
+    }
+
+    private func endActiveEpisode(
+        reason: EpisodeEndReason,
+        context: FrontmostContext?,
+        state: ACState,
+        idleSeconds: TimeInterval,
+        at now: Date
+    ) async {
+        guard var episode = activeEpisode else {
+            return
+        }
+
+        episode.status = .ended
+        episode.endedAt = now
+        episode.endReason = reason
+        activeEpisode = nil
+
+        if let context {
+            let heuristics = MonitoringHeuristics.telemetrySnapshot(for: context)
+            let observation = ObservationRecord(
+                context: context.telemetryContext(
+                    idleSeconds: idleSeconds,
+                    recentSwitches: recentSwitches,
+                    perAppDurations: currentUsageRecords(from: state, now: now),
+                    recentActions: state.recentActions,
+                    timestamp: now
+                ),
+                heuristics: heuristics,
+                distraction: ladder.metadata.telemetryState,
+                visualCheckReason: heuristics.periodicVisualReason,
+                shouldEvaluateNow: false,
+                transition: .ended,
+                endReason: reason
+            )
+            let sessionID = (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id) ?? episode.sessionID
+            try? await telemetryStore.appendEvent(
+                TelemetryEvent(
+                    id: UUID().uuidString,
+                    kind: .observation,
+                    timestamp: now,
+                    sessionID: sessionID,
+                    episodeID: episode.id,
+                    episode: episode,
+                    session: nil,
+                    observation: observation,
+                    evaluation: nil,
+                    modelInput: nil,
+                    modelOutput: nil,
+                    parsedOutput: nil,
+                    policy: nil,
+                    action: nil,
+                    reaction: nil,
+                    annotation: nil,
+                    failure: nil
+                ),
+                sessionID: sessionID
+            )
+        }
+    }
+
+    private func appendObservationEvent(
+        context: FrontmostContext,
+        state: ACState,
+        idleSeconds: TimeInterval,
+        heuristics: TelemetryHeuristicSnapshot,
+        shouldEvaluateNow: Bool,
+        transition: ObservationTransition,
+        endReason: EpisodeEndReason?
+    ) async {
+        guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
+            return
+        }
+
+        let event = TelemetryEvent(
+            id: UUID().uuidString,
+            kind: .observation,
+            timestamp: Date(),
+            sessionID: sessionID,
+            episodeID: activeEpisode?.id,
+            episode: activeEpisode,
+            session: nil,
+            observation: ObservationRecord(
+                context: context.telemetryContext(
+                    idleSeconds: idleSeconds,
+                    recentSwitches: recentSwitches,
+                    perAppDurations: currentUsageRecords(from: state, now: Date()),
+                    recentActions: state.recentActions,
+                    timestamp: Date()
+                ),
+                heuristics: heuristics,
+                distraction: ladder.metadata.telemetryState,
+                visualCheckReason: heuristics.periodicVisualReason,
+                shouldEvaluateNow: shouldEvaluateNow,
+                transition: transition,
+                endReason: endReason
+            ),
+            evaluation: nil,
+            modelInput: nil,
+            modelOutput: nil,
+            parsedOutput: nil,
+            policy: nil,
+            action: nil,
+            reaction: nil,
+            annotation: nil,
+            failure: nil
+        )
+
+        try? await telemetryStore.appendEvent(event, sessionID: sessionID)
+    }
+
+    private func appendEvaluationRequestedEvent(
+        sessionID: String?,
+        evaluationID: String,
+        episode: EpisodeRecord?,
+        reason: String,
+        promptMode: String,
+        promptVersion: String
+    ) async {
+        guard let sessionID else { return }
+        try? await telemetryStore.appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .evaluationRequested,
+                timestamp: Date(),
+                sessionID: sessionID,
+                episodeID: episode?.id,
+                episode: episode,
+                session: nil,
+                observation: nil,
+                evaluation: EvaluationRequestRecord(
+                    evaluationID: evaluationID,
+                    reason: reason,
+                    promptMode: promptMode,
+                    promptVersion: promptVersion
+                ),
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                reaction: nil,
+                annotation: nil,
+                failure: nil
+            ),
+            sessionID: sessionID
+        )
+    }
+
+    private func appendEvaluationArtifacts(
+        _ evaluation: LLMEvaluationResult,
+        evaluationID: String,
+        sessionID: String?,
+        episode: EpisodeRecord?,
+        snapshot: AppSnapshot,
+        state: ACState,
+        heuristics: TelemetryHeuristicSnapshot
+    ) async {
+        guard let sessionID else { return }
+
+        let contextRecord = TelemetryContextRecord(
+            bundleIdentifier: snapshot.bundleIdentifier,
+            appName: snapshot.appName,
+            windowTitle: snapshot.windowTitle,
+            contextKey: [snapshot.bundleIdentifier ?? "unknown", snapshot.windowTitle?.normalizedForContextKey ?? ""].joined(separator: "|"),
+            idleSeconds: SnapshotService.idleSeconds(),
+            recentSwitches: snapshot.recentSwitches.map(\.telemetryRecord),
+            perAppDurations: snapshot.perAppDurations.map(\.telemetryRecord),
+            recentActions: state.recentActions.map(\.telemetrySummary),
+            timestamp: snapshot.timestamp
+        )
+
+        for attempt in evaluation.attempts {
+            let templateArtifact = try? await telemetryStore.writePromptTemplateArtifact(
+                contents: attempt.templateContents,
+                sessionID: sessionID,
+                template: attempt.template
+            )
+            let payloadArtifact = try? await telemetryStore.writeTextArtifact(
+                attempt.payloadJSON,
+                sessionID: sessionID,
+                prefix: "eval-\(evaluationID)-payload-\(attempt.promptMode)",
+                kind: .promptPayload
+            )
+            let renderedPromptArtifact = try? await telemetryStore.writeTextArtifact(
+                attempt.renderedPrompt,
+                sessionID: sessionID,
+                prefix: "eval-\(evaluationID)-prompt-\(attempt.promptMode)",
+                kind: .renderedPrompt
+            )
+
+            try? await telemetryStore.appendEvent(
+                TelemetryEvent(
+                    id: UUID().uuidString,
+                    kind: .modelInputSaved,
+                    timestamp: Date(),
+                    sessionID: sessionID,
+                    episodeID: episode?.id,
+                    episode: episode,
+                    session: nil,
+                    observation: nil,
+                    evaluation: nil,
+                    modelInput: ModelInputRecord(
+                        evaluationID: evaluationID,
+                        goalsSummary: state.goalsText.cleanedSingleLine,
+                        screenshot: snapshot.screenshotArtifact,
+                        screenshotThumbnail: snapshot.screenshotThumbnail,
+                        promptMode: attempt.promptMode,
+                        promptTemplate: attempt.template,
+                        promptTemplateArtifact: templateArtifact,
+                        promptPayloadArtifact: payloadArtifact,
+                        renderedPromptArtifact: renderedPromptArtifact,
+                        context: contextRecord,
+                        heuristics: heuristics,
+                        distraction: ladder.metadata.telemetryState
+                    ),
+                    modelOutput: nil,
+                    parsedOutput: nil,
+                    policy: nil,
+                    action: nil,
+                    reaction: nil,
+                    annotation: nil,
+                    failure: nil
+                ),
+                sessionID: sessionID
+            )
+
+            if let output = attempt.runtimeOutput {
+                let stdoutArtifact = output.stdout.isEmpty ? nil : try? await telemetryStore.writeTextArtifact(
+                    output.stdout,
+                    sessionID: sessionID,
+                    prefix: "eval-\(evaluationID)-stdout-\(attempt.promptMode)",
+                    kind: .rawStdout
+                )
+                let stderrArtifact = output.stderr.isEmpty ? nil : try? await telemetryStore.writeTextArtifact(
+                    output.stderr,
+                    sessionID: sessionID,
+                    prefix: "eval-\(evaluationID)-stderr-\(attempt.promptMode)",
+                    kind: .rawStderr
+                )
+
+                try? await telemetryStore.appendEvent(
+                    TelemetryEvent(
+                        id: UUID().uuidString,
+                        kind: .modelOutputReceived,
+                        timestamp: Date(),
+                        sessionID: sessionID,
+                        episodeID: episode?.id,
+                        episode: episode,
+                        session: nil,
+                        observation: nil,
+                        evaluation: nil,
+                        modelInput: nil,
+                        modelOutput: ModelOutputRecord(
+                            evaluationID: evaluationID,
+                            runtimePath: evaluation.runtimePath,
+                            modelIdentifier: evaluation.modelIdentifier,
+                            promptMode: attempt.promptMode,
+                            stdoutArtifact: stdoutArtifact,
+                            stderrArtifact: stderrArtifact,
+                            stdoutPreview: output.stdout.cleanedSingleLine.prefix(220).description,
+                            stderrPreview: output.stderr.cleanedSingleLine.prefix(220).description
+                        ),
+                        parsedOutput: nil,
+                        policy: nil,
+                        action: nil,
+                        reaction: nil,
+                        annotation: nil,
+                        failure: nil
+                    ),
+                    sessionID: sessionID
+                )
+            }
+
+            if let parsedDecision = attempt.parsedDecision {
+                try? await telemetryStore.appendEvent(
+                    TelemetryEvent(
+                        id: UUID().uuidString,
+                        kind: .modelOutputParsed,
+                        timestamp: Date(),
+                        sessionID: sessionID,
+                        episodeID: episode?.id,
+                        episode: episode,
+                        session: nil,
+                        observation: nil,
+                        evaluation: nil,
+                        modelInput: nil,
+                        modelOutput: nil,
+                        parsedOutput: parsedDecision.parsedRecord,
+                        policy: nil,
+                        action: nil,
+                        reaction: nil,
+                        annotation: nil,
+                        failure: nil
+                    ),
+                    sessionID: sessionID
+                )
+            }
+        }
+
+        if let failureMessage = evaluation.failureMessage {
+            await appendFailureIfNeeded(
+                domain: "llm",
+                message: failureMessage,
+                evaluationID: evaluationID,
+                episode: episode
+            )
+        }
+    }
+
+    private func appendPolicyDecisionEvent(
+        sessionID: String?,
+        episode: EpisodeRecord?,
+        policy: PolicyDecisionRecord
+    ) async {
+        guard let sessionID else { return }
+        try? await telemetryStore.appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .policyDecided,
+                timestamp: Date(),
+                sessionID: sessionID,
+                episodeID: episode?.id,
+                episode: episode,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: policy,
+                action: nil,
+                reaction: nil,
+                annotation: nil,
+                failure: nil
+            ),
+            sessionID: sessionID
+        )
+    }
+
+    private func appendActionExecutedEvent(
+        sessionID: String?,
+        episode: EpisodeRecord?,
+        evaluationID: String,
+        action: CompanionAction
+    ) async {
+        guard let sessionID else { return }
+        guard action != .none else { return }
+        try? await telemetryStore.appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .actionExecuted,
+                timestamp: Date(),
+                sessionID: sessionID,
+                episodeID: episode?.id,
+                episode: episode,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: ActionExecutionRecord(
+                    evaluationID: evaluationID,
+                    action: CompanionPolicy.telemetryActionRecord(for: action),
+                    source: "policy",
+                    succeeded: true
+                ),
+                reaction: nil,
+                annotation: nil,
+                failure: nil
+            ),
+            sessionID: sessionID
+        )
+    }
+
+    private func recordImplicitReaction(_ reaction: UserReactionRecord, at now: Date) async {
+        guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
+            return
+        }
+
+        try? await telemetryStore.appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .userReaction,
+                timestamp: now,
+                sessionID: sessionID,
+                episodeID: activeEpisode?.id,
+                episode: activeEpisode,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                reaction: reaction,
+                annotation: nil,
+                failure: nil
+            ),
+            sessionID: sessionID
+        )
+    }
+
+    private func resolvePendingReactionIfNeeded(now: Date, context: FrontmostContext) async {
+        guard let pendingReaction else { return }
+        guard now.timeIntervalSince(pendingReaction.issuedAt) > 150 else { return }
+        guard context.contextKey == pendingReaction.sourceContextKey else { return }
+
+        await recordImplicitReaction(
+            UserReactionRecord(
+                kind: .nudgeIgnored,
+                relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
+                positive: false,
+                details: context.appName
+            ),
+            at: now
+        )
+        self.pendingReaction = nil
+    }
+
+    private func appendFailureIfNeeded(
+        domain: String,
+        message: String,
+        evaluationID: String?,
+        episode: EpisodeRecord? = nil
+    ) async {
+        guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
+            return
+        }
+        let resolvedEpisode = episode ?? activeEpisode
+        try? await telemetryStore.appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .failure,
+                timestamp: Date(),
+                sessionID: sessionID,
+                episodeID: resolvedEpisode?.id,
+                episode: resolvedEpisode,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                reaction: nil,
+                annotation: nil,
+                failure: FailureRecord(domain: domain, message: message, evaluationID: evaluationID)
+            ),
+            sessionID: sessionID
+        )
+    }
+
+    private func currentUsageRecords(from state: ACState, now: Date) -> [AppUsageRecord] {
+        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
+        return dayUsage
+            .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
+            .sorted { $0.seconds > $1.seconds }
+    }
+}

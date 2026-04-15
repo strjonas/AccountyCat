@@ -1,0 +1,12 @@
+.DS_Store
+DerivedData/
+build/
+.build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+Config/LocalOverrides.xcconfig
+MD/
+
