@@ -272,17 +272,21 @@ struct ACState: Codable, Sendable {
         get {
             switch monitoringConfiguration.algorithmID {
             case MonitoringConfiguration.defaultAlgorithmID:
-                return algorithmState.legacyFocus.distraction
+                return algorithmState.llmFocus.distraction
+            case MonitoringConfiguration.banditAlgorithmID:
+                return algorithmState.banditFocus.distraction
             default:
-                return algorithmState.legacyFocus.distraction
+                return algorithmState.llmFocus.distraction
             }
         }
         set {
             switch monitoringConfiguration.algorithmID {
             case MonitoringConfiguration.defaultAlgorithmID:
-                algorithmState.legacyFocus.distraction = newValue
+                algorithmState.llmFocus.distraction = newValue
+            case MonitoringConfiguration.banditAlgorithmID:
+                algorithmState.banditFocus.distraction = newValue
             default:
-                algorithmState.legacyFocus.distraction = newValue
+                algorithmState.llmFocus.distraction = newValue
             }
         }
     }
@@ -304,9 +308,9 @@ struct ACState: Codable, Sendable {
         recentSwitches = try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
         usageByDay = try container.decodeIfPresent([String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
         let legacyDistraction = try container.decodeIfPresent(DistractionMetadata.self, forKey: .distraction)
-        if algorithmState.legacyFocus.distraction == DistractionMetadata(),
+        if algorithmState.llmFocus.distraction == DistractionMetadata(),
            let legacyDistraction {
-            algorithmState.legacyFocus.distraction = legacyDistraction
+            algorithmState.llmFocus.distraction = legacyDistraction
         }
         memory = try container.decodeIfPresent(String.self, forKey: .memory) ?? ""
         chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []

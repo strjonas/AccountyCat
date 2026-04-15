@@ -14,6 +14,7 @@ enum MonitoringSelectionMode: String, Codable, CaseIterable, Sendable {
 struct MonitoringConfiguration: Codable, Hashable, Sendable {
     static let defaultAlgorithmID = "legacy_focus_v1"
     static let defaultPromptProfileID = "focus_default_v2"
+    static let banditAlgorithmID = "bandit_focus_v1"
 
     var algorithmID: String = Self.defaultAlgorithmID
     var promptProfileID: String = Self.defaultPromptProfileID
@@ -50,13 +51,38 @@ struct MonitoringExecutionMetadata: Hashable, Sendable {
     var experimentArm: String?
 }
 
-struct LegacyFocusAlgorithmState: Codable, Sendable, Equatable {
+struct LLMFocusAlgorithmState: Codable, Sendable, Equatable {
     var distraction = DistractionMetadata()
     var lastVisualCheckByContext: [String: Date] = [:]
 }
 
 struct AlgorithmStateEnvelope: Codable, Sendable, Equatable {
-    // Future algorithms should add their own state slices here instead of
-    // extending ACState directly.
-    var legacyFocus = LegacyFocusAlgorithmState()
+    // Each algorithm owns its own state slice. Adding a new algorithm = add a new property here.
+    var llmFocus = LLMFocusAlgorithmState()
+    var banditFocus = BanditFocusAlgorithmState()
+
+    // MARK: - Codable (with migration from old "legacyFocus" key)
+
+    enum CodingKeys: String, CodingKey {
+        case llmFocus
+        case legacyFocus // read-only migration key for state.json files written before the rename
+        case banditFocus
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        llmFocus = try c.decodeIfPresent(LLMFocusAlgorithmState.self, forKey: .llmFocus)
+               ?? c.decodeIfPresent(LLMFocusAlgorithmState.self, forKey: .legacyFocus)
+               ?? LLMFocusAlgorithmState()
+        banditFocus = try c.decodeIfPresent(BanditFocusAlgorithmState.self, forKey: .banditFocus)
+               ?? BanditFocusAlgorithmState()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(llmFocus, forKey: .llmFocus)
+        try c.encode(banditFocus, forKey: .banditFocus)
+    }
 }

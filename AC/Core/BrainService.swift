@@ -32,9 +32,25 @@ final class BrainService: NSObject {
 
     private struct PendingReaction: Sendable {
         var episodeID: String
+        var evaluationID: String
         var action: CompanionAction
         var issuedAt: Date
         var sourceContextKey: String
+    }
+
+    /// Maps a user reaction kind to a bandit reward value.
+    /// Returns nil for reactions unrelated to nudge quality (e.g. negativeChatFeedback).
+    private static func rewardValue(for kind: UserReactionKind) -> Double? {
+        switch kind {
+        case .nudgeRatedPositive:    return +1.0
+        case .nudgeRatedNegative:    return -0.8
+        case .postNudgeAppSwitch:    return +0.6
+        case .postNudgeRescueReturn: return +0.6
+        case .backToWorkSelected:    return +0.6
+        case .nudgeIgnored:          return -0.3
+        case .overlayDismissed:      return -1.5
+        case .negativeChatFeedback:  return nil
+        }
     }
 
     init(
@@ -125,6 +141,24 @@ final class BrainService: NSObject {
                     sessionID: sessionID
                 )
             }
+        }
+
+        // Feed reward signal to the active algorithm (bandit learns; LLM algorithm is a no-op).
+        if let reward = Self.rewardValue(for: reaction.kind),
+           let captured = pendingReaction,
+           var state = stateProvider?() {
+            let signal = MonitoringRewardSignal(
+                evaluationID: captured.evaluationID,
+                kind: reaction.kind,
+                value: reward
+            )
+            monitoringAlgorithmRegistry.observeReward(
+                signal,
+                configuration: state.monitoringConfiguration,
+                state: &state.algorithmState
+            )
+            stateSink?(state)
+            maybePersist(state: state, at: Date(), force: true)
         }
 
         pendingReaction = nil
@@ -461,6 +495,7 @@ final class BrainService: NSObject {
             executiveArm.perform(.showNudge(message))
             pendingReaction = PendingReaction(
                 episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
+                evaluationID: evaluationID,
                 action: .showNudge(message),
                 issuedAt: now,
                 sourceContextKey: context.contextKey
@@ -475,6 +510,7 @@ final class BrainService: NSObject {
             executiveArm.perform(.showOverlay)
             pendingReaction = PendingReaction(
                 episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
+                evaluationID: evaluationID,
                 action: .showOverlay,
                 issuedAt: now,
                 sourceContextKey: context.contextKey

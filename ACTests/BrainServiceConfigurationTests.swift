@@ -16,7 +16,8 @@ struct BrainServiceConfigurationTests {
     func configurationChangeResetsSelectedAlgorithmState() {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
-            monitoringLLMClient: MonitoringLLMClient(runtime: runtime)
+            monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime)
         )
         let brainService = BrainService(
             monitoringAlgorithmRegistry: registry,
@@ -29,7 +30,7 @@ struct BrainServiceConfigurationTests {
         )
         var state = ACState()
         state.monitoringConfiguration.promptProfileID = "focus_default_v2"
-        state.algorithmState.legacyFocus.distraction = DistractionMetadata(
+        state.algorithmState.llmFocus.distraction = DistractionMetadata(
             contextKey: "com.google.Chrome|feed",
             stableSince: Date(timeIntervalSince1970: 1),
             lastAssessment: .distracted,

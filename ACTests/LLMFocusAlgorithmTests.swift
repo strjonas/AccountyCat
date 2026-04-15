@@ -1,8 +1,6 @@
 //
-//  LegacyMonitoringAlgorithmTests.swift
+//  LLMFocusAlgorithmTests.swift
 //  ACTests
-//
-//  Created by Codex on 15.04.26.
 //
 
 import Foundation
@@ -32,11 +30,11 @@ private actor StubMonitoringLLMClient: MonitoringLLMEvaluating {
     }
 }
 
-struct LegacyMonitoringAlgorithmTests {
+struct LLMFocusAlgorithmTests {
 
     @Test
     func respectsStableWindowBeforeEvaluating() {
-        let algorithm = LegacyMonitoringAlgorithm(
+        let algorithm = LLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: .unclear))
         )
         var state = AlgorithmStateEnvelope()
@@ -71,7 +69,7 @@ struct LegacyMonitoringAlgorithmTests {
 
     @Test
     func periodicVisualChecksUsePromptProfileWithoutTouchingLadder() {
-        let algorithm = LegacyMonitoringAlgorithm(
+        let algorithm = LLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: .unclear))
         )
         var state = AlgorithmStateEnvelope()
@@ -94,7 +92,7 @@ struct LegacyMonitoringAlgorithmTests {
         #expect(plan.shouldEvaluate == true)
         #expect(plan.reason == "periodic_visual_check")
         #expect(plan.visualCheckReason == "browser")
-        #expect(state.legacyFocus.lastVisualCheckByContext.isEmpty == false)
+        #expect(state.llmFocus.lastVisualCheckByContext.isEmpty == false)
     }
 
     @Test
@@ -107,7 +105,7 @@ struct LegacyMonitoringAlgorithmTests {
             nudge: "back to it",
             abstainReason: nil
         )
-        let algorithm = LegacyMonitoringAlgorithm(
+        let algorithm = LLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: decision))
         )
         let result = await algorithm.evaluate(
@@ -126,13 +124,13 @@ struct LegacyMonitoringAlgorithmTests {
         )
 
         #expect(result.policy.action == .showNudge("back to it"))
-        #expect(result.updatedAlgorithmState.legacyFocus.distraction.consecutiveDistractedCount == 1)
+        #expect(result.updatedAlgorithmState.llmFocus.distraction.consecutiveDistractedCount == 1)
         #expect(result.execution.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
         #expect(result.execution.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
     }
 
     @Test
-    func blocksOverlayUnlessLegacyDecisionExplicitlyRequestsIt() async {
+    func blocksOverlayUnlessDecisionExplicitlyRequestsIt() async {
         let decision = LLMDecision(
             assessment: .distracted,
             suggestedAction: .nudge,
@@ -142,14 +140,14 @@ struct LegacyMonitoringAlgorithmTests {
             abstainReason: nil
         )
         var state = AlgorithmStateEnvelope()
-        state.legacyFocus.distraction = DistractionMetadata(
+        state.llmFocus.distraction = DistractionMetadata(
             contextKey: "com.google.Chrome|feed",
             stableSince: Date(timeIntervalSince1970: 1),
             lastAssessment: .distracted,
             consecutiveDistractedCount: 3,
             nextEvaluationAt: Date(timeIntervalSince1970: 2)
         )
-        let algorithm = LegacyMonitoringAlgorithm(
+        let algorithm = LLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: decision))
         )
 

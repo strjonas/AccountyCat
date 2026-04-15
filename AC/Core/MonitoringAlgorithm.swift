@@ -44,6 +44,15 @@ struct MonitoringDecisionResult: Sendable {
     var updatedAlgorithmState: AlgorithmStateEnvelope
 }
 
+/// Signal passed to `observeReward` after a nudge receives user feedback.
+struct MonitoringRewardSignal: Sendable {
+    /// The evaluation that triggered the nudge.
+    var evaluationID: String
+    var kind: UserReactionKind
+    /// Pre-computed reward value (positive = good, negative = bad).
+    var value: Double
+}
+
 protocol MonitoringAlgorithm: Sendable {
     var descriptor: MonitoringAlgorithmDescriptor { get }
 
@@ -63,20 +72,37 @@ protocol MonitoringAlgorithm: Sendable {
     ) -> MonitoringEvaluationPlan
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult
+    /// Called when the system receives a reward signal for a prior nudge.
+    /// Algorithms that do not learn (e.g. LLMFocusAlgorithm) inherit the default no-op.
+    func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope)
+}
+
+extension MonitoringAlgorithm {
+    /// Default no-op: algorithms that do not learn from rewards implement nothing.
+    func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope) {}
 }
 
 final class MonitoringAlgorithmRegistry {
-    private let legacyFocusAlgorithm: LegacyMonitoringAlgorithm
+    private let llmFocusAlgorithm: LLMFocusAlgorithm
+    private let banditFocusAlgorithm: BanditMonitoringAlgorithm
 
-    init(monitoringLLMClient: MonitoringLLMClient) {
-        self.legacyFocusAlgorithm = LegacyMonitoringAlgorithm(
+    init(
+        monitoringLLMClient: MonitoringLLMClient,
+        screenStateExtractor: some ScreenStateExtracting
+    ) {
+        self.llmFocusAlgorithm = LLMFocusAlgorithm(
             monitoringLLMClient: monitoringLLMClient
+        )
+        self.banditFocusAlgorithm = BanditMonitoringAlgorithm(
+            monitoringLLMClient: monitoringLLMClient,
+            screenStateExtractor: screenStateExtractor
         )
     }
 
     var availableAlgorithms: [MonitoringAlgorithmDescriptor] {
         [
-            legacyFocusAlgorithm.descriptor,
+            llmFocusAlgorithm.descriptor,
+            banditFocusAlgorithm.descriptor,
         ]
     }
 
@@ -138,12 +164,22 @@ final class MonitoringAlgorithmRegistry {
         await resolve(id: input.configuration.algorithmID).evaluate(input: input)
     }
 
+    func observeReward(
+        _ signal: MonitoringRewardSignal,
+        configuration: MonitoringConfiguration,
+        state: inout AlgorithmStateEnvelope
+    ) {
+        resolve(id: configuration.algorithmID).observeReward(signal, state: &state)
+    }
+
     private func resolve(id: String) -> any MonitoringAlgorithm {
         switch id {
-        case legacyFocusAlgorithm.descriptor.id:
-            return legacyFocusAlgorithm
+        case llmFocusAlgorithm.descriptor.id:
+            return llmFocusAlgorithm
+        case banditFocusAlgorithm.descriptor.id:
+            return banditFocusAlgorithm
         default:
-            return legacyFocusAlgorithm
+            return llmFocusAlgorithm
         }
     }
 }

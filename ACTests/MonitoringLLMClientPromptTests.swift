@@ -53,7 +53,7 @@ struct MonitoringLLMClientPromptTests {
             consecutiveDistractedCount: 1,
             nextEvaluationAt: Date(timeIntervalSince1970: 200)
         )
-        let userPrompt = MonitoringLLMClient.makeUserPrompt(
+        let payload = MonitoringLLMClient.makeVisionPayload(
             snapshot: makeSnapshot(),
             goals: "Ship focused work",
             recentActions: actions,
@@ -61,15 +61,17 @@ struct MonitoringLLMClientPromptTests {
             distraction: distraction,
             memory: "Instagram should stay short."
         )
-        let fallbackPrompt = MonitoringLLMClient.makeFallbackPrompt(
-            payload: MonitoringLLMClient.makeVisionPayload(
-                snapshot: makeSnapshot(),
-                goals: "Ship focused work",
-                recentActions: actions,
-                heuristics: heuristics,
-                distraction: distraction,
-                memory: "Instagram should stay short."
-            )
+        let payloadJSON = MonitoringLLMClient.encodePayload(payload)
+        let profile = PromptCatalog.defaultMonitoringPromptProfile
+        let userPrompt = MonitoringLLMClient.makeUserPrompt(
+            payloadJSON: payloadJSON,
+            promptProfile: profile,
+            variant: .visionPrimaryUser
+        )
+        let fallbackPrompt = MonitoringLLMClient.makeUserPrompt(
+            payloadJSON: payloadJSON,
+            promptProfile: profile,
+            variant: .fallbackUser
         )
 
         #expect(userPrompt.contains("interventionHistory"))

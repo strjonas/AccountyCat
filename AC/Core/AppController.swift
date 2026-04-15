@@ -64,7 +64,8 @@ final class AppController: ObservableObject {
         self.companionChatService = companionChatService
         self.memoryService = memoryService
         self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
-            monitoringLLMClient: monitoringLLMClient
+            monitoringLLMClient: monitoringLLMClient,
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime)
         )
         let loadedState = storageService.loadState()
         self.state = loadedState

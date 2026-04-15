@@ -255,7 +255,8 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             recentActions: recentActions,
             heuristics: heuristics,
             distraction: distraction,
-            memory: memory
+            memory: memory,
+            promptProfile: promptProfile
         )
         let payload = Self.makeVisionPayload(
             snapshot: snapshot,
@@ -305,7 +306,11 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             distraction: distraction,
             memory: memory
         )
-        let renderedPrompt = Self.makeFallbackPrompt(payload: payload)
+        let renderedPrompt = Self.makeUserPrompt(
+            payloadJSON: Self.encodePayload(payload),
+            promptProfile: promptProfile,
+            variant: .fallbackUser
+        )
         let payloadJSON = Self.encodePayload(payload)
         let template = PromptTemplateRecord(
             id: prompt.asset.id,
@@ -448,13 +453,16 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
     }
 
+    /// Renders the user-turn prompt for a monitoring attempt by loading the `.md` template from
+    /// `PromptCatalog` and substituting `{{PAYLOAD_JSON}}` with the serialised payload.
     nonisolated static func makeUserPrompt(
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
         heuristics: TelemetryHeuristicSnapshot,
         distraction: DistractionMetadata,
-        memory: String
+        memory: String,
+        promptProfile: MonitoringPromptProfile = PromptCatalog.defaultMonitoringPromptProfile
     ) -> String {
         let payload = makeVisionPayload(
             snapshot: snapshot,
@@ -464,48 +472,23 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             distraction: distraction,
             memory: memory
         )
-
-        return """
-        Task:
-        Judge whether the user is focused, distracted, or unclear in this exact moment.
-        The screenshot is attached.
-
-        Use the payload before deciding:
-        - Honour `memory`.
-        - `interventionHistory` shows what AC already tried recently.
-        - `distraction.consecutiveDistractedCount` is the current streak before this decision.
-        - If you nudge on a first distraction, make it a light awareness check.
-        - If recent nudges already happened, do not repeat the same wording or tactic.
-        - Suggest `overlay` only for clear repeated distraction.
-        - Never mention payload fields or hidden counters.
-
-        Dynamic payload:
-        \(encodePayload(payload))
-
-        Return exactly one JSON object with this schema:
-        {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional short reason"}
-        """
+        return makeUserPrompt(payloadJSON: encodePayload(payload), promptProfile: promptProfile, variant: .visionPrimaryUser)
     }
 
-    nonisolated static func makeFallbackPrompt(payload: VisionPromptPayload) -> String {
-        """
-        Task:
-        Judge whether the user is focused, distracted, or unclear in this exact moment.
-        The screenshot is attached.
-
-        Read the payload carefully. Honour `memory`. Use `interventionHistory` and `distraction` so you do not repeat recent nudges.
-        If you nudge on a first distraction, keep it as a light awareness check. If recent nudges already happened, change tactic and wording.
-        Only suggest `overlay` for clearly repeated distraction.
-
-        Dynamic payload:
-        \(encodePayload(payload))
-
-        Return exactly:
-        {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional","abstain_reason":"optional"}
-        """
+    /// Core render: injects `payloadJSON` into the template identified by `variant`.
+    nonisolated static func makeUserPrompt(
+        payloadJSON: String,
+        promptProfile: MonitoringPromptProfile,
+        variant: MonitoringPromptVariant
+    ) -> String {
+        PromptCatalog.renderMonitoringUserPrompt(
+            profileID: promptProfile.descriptor.id,
+            variant: variant,
+            payloadJSON: payloadJSON
+        )
     }
 
-    nonisolated private static func encodePayload<T: Encodable>(_ payload: T) -> String {
+    nonisolated static func encodePayload<T: Encodable>(_ payload: T) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

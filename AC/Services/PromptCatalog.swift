@@ -10,6 +10,8 @@ import Foundation
 enum MonitoringPromptVariant: String, Sendable {
     case visionPrimary = "vision_primary"
     case fallback
+    case visionPrimaryUser = "vision_primary_user"
+    case fallbackUser = "fallback_user"
 }
 
 struct PromptAsset: Hashable, Sendable {
@@ -25,6 +27,10 @@ struct MonitoringPromptProfile: Hashable, Sendable {
     var descriptor: MonitoringPromptProfileDescriptor
     var visionPrimarySystemPrompt: PromptAsset
     var fallbackSystemPrompt: PromptAsset
+    /// User-turn template for the primary (vision) attempt. Contains `{{PAYLOAD_JSON}}` placeholder.
+    var visionPrimaryUserTemplate: PromptAsset
+    /// User-turn template for the fallback attempt. Contains `{{PAYLOAD_JSON}}` placeholder.
+    var fallbackUserTemplate: PromptAsset
 }
 
 enum PromptCatalog {
@@ -84,12 +90,116 @@ enum PromptCatalog {
             If prior nudges already happened, change wording and tactic instead of repeating the same suggestion.
             Only suggest `overlay` for clearly repeated distraction.
             """
+        ),
+        visionPrimaryUserTemplate: PromptAsset(
+            id: "monitoring.focus_default_v2.vision_user",
+            version: "focus_default_v2",
+            resourceName: "vision_user",
+            fileExtension: "md",
+            subdirectory: "Prompts/Monitoring/focus_default_v2",
+            fallbackContents: """
+            The screenshot is attached. Judge whether the user is focused, distracted, or unclear right now.
+
+            Use the payload before deciding:
+            - Honour `memory`.
+            - `interventionHistory` shows what AC already tried recently.
+            - `distraction.consecutiveDistractedCount` is the current streak before this decision.
+            - If you nudge on a first distraction, make it a light awareness check.
+            - If recent nudges already happened, do not repeat the same wording or tactic.
+            - Suggest `overlay` only for clear repeated distraction.
+            - Never mention payload fields or hidden counters.
+
+            Dynamic payload:
+            {{PAYLOAD_JSON}}
+
+            Return exactly one JSON object — nothing else:
+            {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional ≤18 words","abstain_reason":"optional"}
+            """
+        ),
+        fallbackUserTemplate: PromptAsset(
+            id: "monitoring.focus_default_v2.fallback_user",
+            version: "focus_default_v2",
+            resourceName: "fallback_user",
+            fileExtension: "md",
+            subdirectory: "Prompts/Monitoring/focus_default_v2",
+            fallbackContents: """
+            The screenshot is attached. Judge whether the user is focused, distracted, or unclear right now.
+
+            Read the payload carefully. Honour `memory`. Use `interventionHistory` and `distraction` so you do not repeat recent nudges.
+            First distraction in a run: keep the nudge a light awareness check. Repeated: change wording and tactic.
+            Only suggest `overlay` for clearly repeated distraction.
+
+            Dynamic payload:
+            {{PAYLOAD_JSON}}
+
+            Return exactly one JSON object — nothing else:
+            {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional","abstain_reason":"optional"}
+            """
         )
     )
 
     nonisolated static let availableMonitoringPromptProfiles: [MonitoringPromptProfile] = [
         defaultMonitoringPromptProfile,
     ]
+
+    // MARK: - Extraction prompts (Brain 1 — screen state extraction for bandit algorithm)
+
+    nonisolated private static let extractionSystemPrompt = PromptAsset(
+        id: "extraction.screen_state_v1.system",
+        version: "screen_state_v1",
+        resourceName: "system",
+        fileExtension: "md",
+        subdirectory: "Prompts/Extraction/screen_state_v1",
+        fallbackContents: """
+        You are AccountyCat's perception layer. Your only job is to analyze the screenshot and structured context, then return a single JSON object describing what is on screen.
+
+        You are NOT deciding whether to nudge. You are reporting observations. Do not add commentary or explanation — output only the JSON object.
+
+        Output schema — return exactly this structure and nothing else:
+        {
+          "app_category": "<productivity|communication|browser|entertainment|social|development|reference|other>",
+          "productivity_score": <float 0.0–1.0, where 1.0 = clearly aligned with the user's stated goals>,
+          "on_task": <true|false>,
+          "content_summary": "<what is on screen in 12 words or fewer — no names, no URLs, no personal data>",
+          "confidence": <float 0.0–1.0, your confidence in this classification>,
+          "candidate_nudge": "<optional — a warm, witty nudge ≤18 words if the user appears off-task; omit or set to null if on_task is true>"
+        }
+
+        Rules:
+        - productivity_score reflects alignment with the user's stated goals, not generic productivity.
+        - on_task is true even for research, reading, or planning that plausibly serves the user's goals.
+        - Be conservative: when in doubt, set productivity_score higher and on_task to true. False positives are more costly than missed distractions.
+        - content_summary must be neutral, brief, and free of personal data, names, and URLs.
+        - candidate_nudge: write directly to the user. Warm, human, never preachy or threatening. Tone of a trusted friend, not a manager. A first-suspected-distraction nudge should be a gentle awareness check, not a lecture.
+        - If you cannot determine the content with reasonable confidence, set confidence ≤ 0.4 and use app_category "other".
+        - Output exactly one JSON object. No markdown fences, no prose, no commentary.
+        """
+    )
+
+    nonisolated private static let extractionUserTemplate = PromptAsset(
+        id: "extraction.screen_state_v1.user",
+        version: "screen_state_v1",
+        resourceName: "user_prompt",
+        fileExtension: "md",
+        subdirectory: "Prompts/Extraction/screen_state_v1",
+        fallbackContents: """
+        Analyze the screenshot. The user's context is below.
+
+        {{PAYLOAD_JSON}}
+
+        Return the JSON object.
+        """
+    )
+
+    /// Loads the Brain 1 extraction system prompt.
+    nonisolated static func loadExtractionSystemPrompt() -> String {
+        load(asset: extractionSystemPrompt)
+    }
+
+    /// Loads the Brain 1 extraction user prompt template and replaces `{{PAYLOAD_JSON}}`.
+    nonisolated static func loadExtractionUserPrompt(replacingPayloadWith payloadJSON: String) -> String {
+        load(asset: extractionUserTemplate).replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
+    }
 
     nonisolated private static let chatSystemPrompt = PromptAsset(
         id: "chat.companion_chat_v1.system",
@@ -158,7 +268,21 @@ enum PromptCatalog {
             return profile.visionPrimarySystemPrompt
         case .fallback:
             return profile.fallbackSystemPrompt
+        case .visionPrimaryUser:
+            return profile.visionPrimaryUserTemplate
+        case .fallbackUser:
+            return profile.fallbackUserTemplate
         }
+    }
+
+    /// Loads the user-turn template for a monitoring prompt and injects the payload JSON.
+    nonisolated static func renderMonitoringUserPrompt(
+        profileID: String,
+        variant: MonitoringPromptVariant,
+        payloadJSON: String
+    ) -> String {
+        let asset = promptAsset(for: profileID, variant: variant)
+        return load(asset: asset).replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
     }
 
     nonisolated static func loadMonitoringPrompt(

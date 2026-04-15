@@ -27,8 +27,8 @@ struct MonitoringConfigurationTests {
 
         #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
         #expect(state.monitoringConfiguration.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
-        #expect(state.algorithmState.legacyFocus.distraction.contextKey == "com.google.Chrome|youtube")
-        #expect(state.algorithmState.legacyFocus.distraction.consecutiveDistractedCount == 2)
-        #expect(state.algorithmState.legacyFocus.distraction.lastAssessment == .distracted)
+        #expect(state.algorithmState.llmFocus.distraction.contextKey == "com.google.Chrome|youtube")
+        #expect(state.algorithmState.llmFocus.distraction.consecutiveDistractedCount == 2)
+        #expect(state.algorithmState.llmFocus.distraction.lastAssessment == .distracted)
     }
 }

@@ -1,18 +1,23 @@
 //
-//  LegacyMonitoringAlgorithm.swift
+//  LLMFocusAlgorithm.swift
 //  AC
-//
-//  Created by Codex on 15.04.26.
 //
 
 import Foundation
 
-final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
+/// The LLM-brain monitoring algorithm.
+///
+/// The VLM assesses the screen, decides if the user is distracted, and generates nudge text — all in
+/// a single inference call. The DistractionLadder enforces spam-prevention timing; CompanionPolicy
+/// applies the confidence threshold and escalation rules.
+///
+/// Algorithm ID: "legacy_focus_v1" (kept stable for state persistence and telemetry continuity)
+final class LLMFocusAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
         id: MonitoringConfiguration.defaultAlgorithmID,
         version: "1.0",
-        displayName: "Legacy Focus",
-        summary: "Current ladder plus prompt-driven nudge policy."
+        displayName: "LLM Focus",
+        summary: "VLM-driven nudge policy with DistractionLadder spam prevention."
     )
 
     private let monitoringLLMClient: any MonitoringLLMEvaluating
@@ -22,11 +27,11 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
     }
 
     func resetState(_ state: inout AlgorithmStateEnvelope) {
-        state.legacyFocus = LegacyFocusAlgorithmState()
+        state.llmFocus = LLMFocusAlgorithmState()
     }
 
     func resetTransientState(_ state: inout AlgorithmStateEnvelope) {
-        state.legacyFocus.distraction = DistractionMetadata()
+        state.llmFocus.distraction = DistractionMetadata()
     }
 
     func noteContext(
@@ -34,9 +39,9 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
         at now: Date,
         state: inout AlgorithmStateEnvelope
     ) -> Bool {
-        var ladder = DistractionLadder(metadata: state.legacyFocus.distraction)
+        var ladder = DistractionLadder(metadata: state.llmFocus.distraction)
         let didChange = ladder.noteContext(contextKey, at: now)
-        state.legacyFocus.distraction = ladder.metadata
+        state.llmFocus.distraction = ladder.metadata
         return didChange
     }
 
@@ -49,11 +54,11 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
     ) -> MonitoringEvaluationPlan {
         let promptProfile = PromptCatalog.monitoringProfile(id: configuration.promptProfileID)
         let visualContextKey = context.bundleIdentifier ?? context.appName.lowercased()
-        let lastVisualCheckAt = state.legacyFocus.lastVisualCheckByContext[visualContextKey] ?? .distantPast
+        let lastVisualCheckAt = state.llmFocus.lastVisualCheckByContext[visualContextKey] ?? .distantPast
         let periodicVisualCheckDue = heuristics.periodicVisualReason != nil &&
             now.timeIntervalSince(lastVisualCheckAt) >= MonitoringHeuristics.periodicVisualCheckInterval
 
-        let ladder = DistractionLadder(metadata: state.legacyFocus.distraction)
+        let ladder = DistractionLadder(metadata: state.llmFocus.distraction)
         let shouldEvaluateNow = ladder.shouldEvaluate(at: now) || periodicVisualCheckDue
 
         guard shouldEvaluateNow else {
@@ -61,7 +66,7 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
         }
 
         if periodicVisualCheckDue {
-            state.legacyFocus.lastVisualCheckByContext[visualContextKey] = now
+            state.llmFocus.lastVisualCheckByContext[visualContextKey] = now
         }
 
         return MonitoringEvaluationPlan(
@@ -74,7 +79,7 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
     }
 
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata {
-        state.legacyFocus.distraction
+        state.llmFocus.distraction
     }
 
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
@@ -82,7 +87,7 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
             snapshot: input.snapshot,
             goals: input.goals,
             recentActions: input.recentActions,
-            distraction: input.algorithmState.legacyFocus.distraction,
+            distraction: input.algorithmState.llmFocus.distraction,
             heuristics: input.heuristics,
             memory: input.memory,
             promptProfileID: input.configuration.promptProfileID,
@@ -90,11 +95,11 @@ final class LegacyMonitoringAlgorithm: MonitoringAlgorithm {
         )
 
         let decision = evaluation.finalDecision ?? .unclear
-        let distractionBefore = input.algorithmState.legacyFocus.distraction
+        let distractionBefore = input.algorithmState.llmFocus.distraction
         var updatedState = input.algorithmState
         var ladder = DistractionLadder(metadata: distractionBefore)
         let ladderSignal = ladder.record(assessment: decision.assessment, at: input.now)
-        updatedState.legacyFocus.distraction = ladder.metadata
+        updatedState.llmFocus.distraction = ladder.metadata
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
