@@ -209,13 +209,15 @@ nonisolated struct MonitoringExecutionMetadataRecord: Codable, Hashable, Sendabl
     var algorithmID: String
     var algorithmVersion: String
     var promptProfileID: String
+    var pipelineProfileID: String? = nil
+    var runtimeProfileID: String? = nil
     var experimentArm: String?
 }
 
 nonisolated struct ModelInputRecord: Codable, Hashable, Sendable {
     var evaluationID: String
     var goalsSummary: String
-    var screenshot: ArtifactRef
+    var screenshot: ArtifactRef?
     var screenshotThumbnail: ArtifactRef?
     var promptMode: String
     var promptTemplate: PromptTemplateRecord
@@ -276,12 +278,93 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
     var model: ModelOutputParsedRecord
     var strategy: MonitoringExecutionMetadataRecord?
     var ladderSignal: String
+    var interventionSignal: String?
     var allowIntervention: Bool
     var allowEscalation: Bool
     var blockReason: String?
     var finalAction: TelemetryCompanionActionRecord
     var distractionBefore: TelemetryDistractionState
     var distractionAfter: TelemetryDistractionState
+
+    enum CodingKeys: String, CodingKey {
+        case evaluationID
+        case model
+        case strategy
+        case ladderSignal
+        case interventionSignal
+        case allowIntervention
+        case allowEscalation
+        case blockReason
+        case finalAction
+        case distractionBefore
+        case distractionAfter
+    }
+
+    init(
+        evaluationID: String,
+        model: ModelOutputParsedRecord,
+        strategy: MonitoringExecutionMetadataRecord?,
+        ladderSignal: String,
+        interventionSignal: String? = nil,
+        allowIntervention: Bool,
+        allowEscalation: Bool,
+        blockReason: String?,
+        finalAction: TelemetryCompanionActionRecord,
+        distractionBefore: TelemetryDistractionState,
+        distractionAfter: TelemetryDistractionState
+    ) {
+        self.evaluationID = evaluationID
+        self.model = model
+        self.strategy = strategy
+        self.ladderSignal = ladderSignal
+        self.interventionSignal = interventionSignal
+        self.allowIntervention = allowIntervention
+        self.allowEscalation = allowEscalation
+        self.blockReason = blockReason
+        self.finalAction = finalAction
+        self.distractionBefore = distractionBefore
+        self.distractionAfter = distractionAfter
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        evaluationID = try c.decode(String.self, forKey: .evaluationID)
+        model = try c.decode(ModelOutputParsedRecord.self, forKey: .model)
+        strategy = try c.decodeIfPresent(MonitoringExecutionMetadataRecord.self, forKey: .strategy)
+        let decodedLadderSignal = try c.decode(String.self, forKey: .ladderSignal)
+        let decodedInterventionSignal = try c.decodeIfPresent(String.self, forKey: .interventionSignal)
+        if let decodedInterventionSignal {
+            ladderSignal = decodedLadderSignal
+            interventionSignal = decodedInterventionSignal
+        } else if decodedLadderSignal.hasPrefix("bandit:") {
+            ladderSignal = "none"
+            interventionSignal = decodedLadderSignal
+        } else {
+            ladderSignal = decodedLadderSignal
+            interventionSignal = nil
+        }
+        allowIntervention = try c.decode(Bool.self, forKey: .allowIntervention)
+        allowEscalation = try c.decode(Bool.self, forKey: .allowEscalation)
+        blockReason = try c.decodeIfPresent(String.self, forKey: .blockReason)
+        finalAction = try c.decode(TelemetryCompanionActionRecord.self, forKey: .finalAction)
+        distractionBefore = try c.decode(TelemetryDistractionState.self, forKey: .distractionBefore)
+        distractionAfter = try c.decode(TelemetryDistractionState.self, forKey: .distractionAfter)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(evaluationID, forKey: .evaluationID)
+        try c.encode(model, forKey: .model)
+        try c.encodeIfPresent(strategy, forKey: .strategy)
+        try c.encode(ladderSignal, forKey: .ladderSignal)
+        try c.encodeIfPresent(interventionSignal, forKey: .interventionSignal)
+        try c.encode(allowIntervention, forKey: .allowIntervention)
+        try c.encode(allowEscalation, forKey: .allowEscalation)
+        try c.encodeIfPresent(blockReason, forKey: .blockReason)
+        try c.encode(finalAction, forKey: .finalAction)
+        try c.encode(distractionBefore, forKey: .distractionBefore)
+        try c.encode(distractionAfter, forKey: .distractionAfter)
+    }
 }
 
 nonisolated struct ActionExecutionRecord: Codable, Hashable, Sendable {

@@ -21,6 +21,9 @@ final class AppController: ObservableObject {
     @Published var companionMood: CompanionMood = .setup
     @Published var latestNudge: String?
     @Published var overlayVisible = false
+    @Published var activeOverlay: OverlayPresentation?
+    @Published var overlayAppealDraft = ""
+    @Published var sendingOverlayAppeal = false
     @Published var installingRuntime = false
     @Published var installingDependencies = false
     @Published var setupErrorMessage: String?
@@ -45,6 +48,7 @@ final class AppController: ObservableObject {
     let monitoringLLMClient: MonitoringLLMClient
     let companionChatService: CompanionChatService
     let memoryService: MemoryService
+    let policyMemoryService: PolicyMemoryService
     let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
 
     private(set) var executiveArm: ExecutiveArm?
@@ -59,14 +63,18 @@ final class AppController: ObservableObject {
         let monitoringLLMClient = MonitoringLLMClient(runtime: runtime)
         let companionChatService = CompanionChatService(runtime: runtime)
         let memoryService = MemoryService(runtime: runtime)
+        let policyMemoryService = PolicyMemoryService(runtime: runtime)
         self.localModelRuntime = runtime
         self.monitoringLLMClient = monitoringLLMClient
         self.companionChatService = companionChatService
         self.memoryService = memoryService
+        self.policyMemoryService = policyMemoryService
         self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: monitoringLLMClient,
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
-            nudgeCopywriter: NudgeCopywriterService(runtime: runtime)
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
+            runtime: runtime,
+            policyMemoryService: policyMemoryService
         )
         let loadedState = storageService.loadState()
         self.state = loadedState
@@ -110,10 +118,11 @@ final class AppController: ObservableObject {
         let previousStatus = state.setupStatus
         state.permissions = PermissionService.currentSnapshot()
         setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
+        let permissionRequirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
 
         if installingRuntime || installingDependencies {
             state.setupStatus = .installing
-        } else if !state.permissions.isReady {
+        } else if !state.permissions.satisfies(permissionRequirements) {
             state.setupStatus = .needsPermissions
         } else if setupDiagnostics.isReady {
             state.setupStatus = .ready
@@ -169,6 +178,25 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Selected prompt profile: \(descriptor.id)")
     }
 
+    func updateMonitoringPipelineProfile(_ pipelineProfileID: String) {
+        let descriptor = LLMPolicyCatalog.pipelineProfile(id: pipelineProfileID).descriptor
+        guard state.monitoringConfiguration.pipelineProfileID != descriptor.id else { return }
+        state.monitoringConfiguration.pipelineProfileID = descriptor.id
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Selected pipeline profile: \(descriptor.id)")
+    }
+
+    func updateMonitoringRuntimeProfile(_ runtimeProfileID: String) {
+        let descriptor = LLMPolicyCatalog.runtimeProfile(id: runtimeProfileID).descriptor
+        guard state.monitoringConfiguration.runtimeProfileID != descriptor.id else { return }
+        state.monitoringConfiguration.runtimeProfileID = descriptor.id
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Selected runtime profile: \(descriptor.id)")
+    }
+
     func togglePause() {
         state.isPaused.toggle()
         logActivity("app", state.isPaused ? "Monitoring paused" : "Monitoring resumed")
@@ -209,6 +237,12 @@ final class AppController: ObservableObject {
             ? "• User liked nudge: \"\(nudgeText.cleanedSingleLine)\""
             : "• User disliked nudge: \"\(nudgeText.cleanedSingleLine)\""
         appendMemoryLine(note)
+        schedulePolicyMemoryUpdate(
+            eventSummary: positive
+                ? "User explicitly liked this nudge: \(nudgeText.cleanedSingleLine)"
+                : "User explicitly disliked this nudge: \(nudgeText.cleanedSingleLine)",
+            context: SnapshotService.frontmostContext()
+        )
         logActivity("feedback", positive ? "👍 nudge: \(nudgeText)" : "👎 nudge: \(nudgeText)")
 
         // Dismiss the nudge after rating
@@ -223,6 +257,7 @@ final class AppController: ObservableObject {
 
     func clearMemory() {
         state.memory = ""
+        state.policyMemory = PolicyMemory()
         persistState()
         logActivity("memory", "Memory cleared")
     }
@@ -239,10 +274,21 @@ final class AppController: ObservableObject {
     func showTestOverlay() {
         state.recentActions.insert(ActionRecord(kind: .overlay, message: "debug", timestamp: Date()), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
+        activeOverlay = OverlayPresentation(
+            headline: "Pause for a second.",
+            body: "Debug overlay for \(state.rescueApp.displayName).",
+            prompt: "Why should I let you continue here?",
+            appName: "Debug",
+            evaluationID: nil,
+            submitButtonTitle: "Submit",
+            secondaryButtonTitle: "Back to work"
+        )
         overlayVisible = true
         companionMood = .escalated
         logActivity("debug", "Triggered test overlay")
-        executiveArm?.perform(.showOverlay)
+        if let activeOverlay {
+            executiveArm?.perform(.showOverlay(activeOverlay))
+        }
         persistState()
     }
 
@@ -358,10 +404,13 @@ final class AppController: ObservableObject {
     func handleBackToWork() {
         executiveArm?.dismissOverlay()
         overlayVisible = false
+        let overlayMessage = activeOverlay.map { "\($0.headline) — \($0.body)" }
+        activeOverlay = nil
+        overlayAppealDraft = ""
         brainService?.recordUserReaction(
             UserReactionRecord(
                 kind: .backToWorkSelected,
-                relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: nil),
+                relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: overlayMessage),
                 positive: true,
                 details: state.rescueApp.displayName
             ),
@@ -377,10 +426,13 @@ final class AppController: ObservableObject {
     func dismissOverlay() {
         executiveArm?.dismissOverlay()
         overlayVisible = false
+        let overlayMessage = activeOverlay.map { "\($0.headline) — \($0.body)" }
+        activeOverlay = nil
+        overlayAppealDraft = ""
         brainService?.recordUserReaction(
             UserReactionRecord(
                 kind: .overlayDismissed,
-                relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: nil),
+                relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: overlayMessage),
                 positive: false,
                 details: nil
             )
@@ -398,12 +450,80 @@ final class AppController: ObservableObject {
         }
     }
 
+    func submitOverlayAppeal() {
+        guard !sendingOverlayAppeal,
+              let presentation = activeOverlay else { return }
+
+        let trimmedAppeal = overlayAppealDraft.cleanedSingleLine
+        guard !trimmedAppeal.isEmpty else { return }
+
+        sendingOverlayAppeal = true
+
+        Task {
+            let reviewInput = MonitoringAppealReviewInput(
+                now: Date(),
+                appealText: trimmedAppeal,
+                snapshot: nil,
+                goals: state.goalsText,
+                recentActions: state.recentActions,
+                memory: state.memory,
+                policyMemory: state.policyMemory,
+                configuration: state.monitoringConfiguration,
+                algorithmState: state.algorithmState,
+                runtimeOverride: state.runtimePathOverride
+            )
+
+            let output = try? await monitoringAlgorithmRegistry.reviewAppeal(input: reviewInput)
+
+            await MainActor.run {
+                self.sendingOverlayAppeal = false
+
+                guard let output else {
+                    self.activeOverlay = OverlayPresentation(
+                        headline: presentation.headline,
+                        body: "I couldn't review that just now. Try again or head back to work.",
+                        prompt: presentation.prompt,
+                        appName: presentation.appName,
+                        evaluationID: presentation.evaluationID,
+                        submitButtonTitle: presentation.submitButtonTitle,
+                        secondaryButtonTitle: presentation.secondaryButtonTitle
+                    )
+                    return
+                }
+
+                self.state.policyMemory = output.updatedPolicyMemory
+                self.state.algorithmState = output.updatedAlgorithmState
+                self.activeOverlay = OverlayPresentation(
+                    headline: output.result.decision == .allow ? "Okay." : "Not convinced yet.",
+                    body: output.result.message,
+                    prompt: output.result.decision == .deferDecision ? presentation.prompt : nil,
+                    appName: presentation.appName,
+                    evaluationID: presentation.evaluationID,
+                    submitButtonTitle: output.result.decision == .deferDecision ? "Submit" : "Back to work",
+                    secondaryButtonTitle: "Dismiss"
+                )
+                self.overlayAppealDraft = ""
+                self.persistState()
+            }
+
+            self.logActivity("appeal", "Overlay appeal reviewed: \(trimmedAppeal)")
+        }
+    }
+
     var availableMonitoringAlgorithms: [MonitoringAlgorithmDescriptor] {
         monitoringAlgorithmRegistry.availableAlgorithms
     }
 
     var availableMonitoringPromptProfiles: [MonitoringPromptProfileDescriptor] {
         PromptCatalog.availableMonitoringPromptProfiles.map(\.descriptor)
+    }
+
+    var availablePipelineProfiles: [MonitoringPipelineProfileDescriptor] {
+        LLMPolicyCatalog.availablePipelineProfiles.map(\.descriptor)
+    }
+
+    var availableRuntimeProfiles: [MonitoringRuntimeProfileDescriptor] {
+        LLMPolicyCatalog.availableRuntimeProfiles.map(\.descriptor)
     }
 
     var shouldPresentOnboarding: Bool {
@@ -509,6 +629,10 @@ final class AppController: ObservableObject {
                 self.sendingChatMessage = false
             }
             self.logActivity("chat", "Assistant: \(reply)")
+            self.schedulePolicyMemoryUpdate(
+                eventSummary: "User chat feedback: \(trimmedDraft.cleanedSingleLine)\nAssistant reply: \(reply.cleanedSingleLine)",
+                context: SnapshotService.frontmostContext()
+            )
 
             // Async memory extraction — non-blocking, runs after reply is shown
             await self.extractAndUpdateMemory(userMessage: trimmedDraft, reply: reply)
@@ -543,6 +667,34 @@ final class AppController: ObservableObject {
     private func appendMemoryLine(_ line: String) {
         state.memory = AppControllerChatSupport.appendingMemoryLine(line, to: state.memory)
         persistState()
+    }
+
+    private func schedulePolicyMemoryUpdate(
+        eventSummary: String,
+        context: FrontmostContext?
+    ) {
+        let request = PolicyMemoryUpdateRequest(
+            now: Date(),
+            goals: state.goalsText,
+            freeFormMemory: state.memory,
+            policyMemory: state.policyMemory,
+            eventSummary: eventSummary,
+            recentActions: state.recentActions,
+            context: context,
+            runtimeProfileID: state.monitoringConfiguration.runtimeProfileID
+        )
+
+        Task {
+            guard let response = await policyMemoryService.deriveUpdate(
+                request: request,
+                runtimeOverride: state.runtimePathOverride
+            ) else { return }
+
+            await MainActor.run {
+                self.state.policyMemory.apply(response, now: request.now)
+                self.persistState()
+            }
+        }
     }
 
     /// Runs after each chat exchange to extract memorable rules/preferences.
@@ -612,6 +764,12 @@ final class AppController: ObservableObject {
     private func repairInvalidMonitoringConfigurationIfNeeded() {
         let algorithmID = state.monitoringConfiguration.algorithmID
         guard !monitoringAlgorithmRegistry.containsAlgorithm(id: algorithmID) else {
+            if !LLMPolicyCatalog.availablePipelineProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID }) {
+                state.monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
+            }
+            if !LLMPolicyCatalog.availableRuntimeProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.runtimeProfileID }) {
+                state.monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
+            }
             return
         }
 
@@ -684,12 +842,16 @@ private enum AppControllerSetupSupport {
         installingRuntime: Bool,
         installingDependencies: Bool
     ) -> String {
+        let requirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
         if installingDependencies {
             return "Installing missing dependencies."
         } else if installingRuntime {
             return "Building and warming the local runtime."
-        } else if !state.permissions.isReady {
-            return "Waiting for Screen Recording and Accessibility permissions."
+        } else if !state.permissions.satisfies(requirements) {
+            if requirements.requiresScreenRecording {
+                return "Waiting for Screen Recording and Accessibility permissions."
+            }
+            return "Waiting for Accessibility permission."
         } else if !diagnostics.missingTools.isEmpty {
             return "Install the missing build tools before AC can finish setup."
         } else if !diagnostics.runtimePresent || !diagnostics.modelCachePresent {

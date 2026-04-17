@@ -28,7 +28,7 @@ final class BrainService: NSObject {
     private var recentSwitches: [AppSwitchRecord] = []
     private var lastPersistAt = Date.distantPast
     private var activeEpisode: EpisodeRecord?
-    private var pendingReaction: PendingReaction?
+    private var pendingReactionsByEvaluationID: [String: PendingReaction] = [:]
 
     private struct PendingReaction: Sendable {
         var episodeID: String
@@ -110,14 +110,7 @@ final class BrainService: NSObject {
 
     func handleMonitoringConfigurationChange() {
         guard var state = stateProvider?() else { return }
-        do {
-            try monitoringAlgorithmRegistry.resetSelectedAlgorithmState(
-                configuration: state.monitoringConfiguration,
-                state: &state.algorithmState
-            )
-        } catch {
-            handleMonitoringConfigurationError(error)
-        }
+        state.algorithmState = AlgorithmStateEnvelope()
         stateSink?(state)
         resetRuntimeContext()
     }
@@ -153,7 +146,7 @@ final class BrainService: NSObject {
 
         // Feed reward signal to the active algorithm (bandit learns; LLM algorithm is a no-op).
         if let reward = Self.rewardValue(for: reaction.kind),
-           let captured = pendingReaction,
+           let captured = matchingPendingReaction(for: reaction),
            var state = stateProvider?() {
             let signal = MonitoringRewardSignal(
                 evaluationID: captured.evaluationID,
@@ -171,9 +164,8 @@ final class BrainService: NSObject {
             }
             stateSink?(state)
             maybePersist(state: state, at: Date(), force: true)
+            pendingReactionsByEvaluationID.removeValue(forKey: captured.evaluationID)
         }
-
-        pendingReaction = nil
 
         guard let endEpisodeReason else {
             return
@@ -267,7 +259,7 @@ final class BrainService: NSObject {
             return
         }
 
-        if !state.permissions.isReady {
+        if !state.permissions.satisfies(LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)) {
             moodSink?(.setup)
             statusSink?("Required permissions are still missing.")
             return
@@ -401,7 +393,9 @@ final class BrainService: NSObject {
                 evaluationID: nil
             )
         } else {
-            statusSink?("Evaluating \(context.appName) with a local snapshot.")
+            statusSink?(evaluationPlan.requiresScreenshot
+                ? "Evaluating \(context.appName) with a local snapshot."
+                : "Evaluating \(context.appName) from title and usage context.")
         }
 
         let session = try? await telemetryStore.ensureCurrentSession(reason: "runtime")
@@ -418,6 +412,8 @@ final class BrainService: NSObject {
             algorithmID: algorithmDescriptor.id,
             algorithmVersion: algorithmDescriptor.version,
             promptProfileID: PromptCatalog.monitoringDescriptor(id: state.monitoringConfiguration.promptProfileID).id,
+            pipelineProfileID: state.monitoringConfiguration.pipelineProfileID,
+            runtimeProfileID: state.monitoringConfiguration.runtimeProfileID,
             experimentArm: state.monitoringConfiguration.experimentArm
         )
 
@@ -450,7 +446,8 @@ final class BrainService: NSObject {
                 idle: false,
                 now: now,
                 sessionID: session?.id,
-                evaluationID: evaluationID
+                evaluationID: evaluationID,
+                requiresScreenshot: evaluationPlan.requiresScreenshot
             )
         } catch {
             statusSink?("Snapshot capture failed. Trying again later.")
@@ -475,12 +472,13 @@ final class BrainService: NSObject {
                     snapshot: snapshot,
                     goals: state.goalsText,
                     recentActions: state.recentActions,
-                    heuristics: heuristics,
-                    memory: state.memory,
-                    runtimeOverride: state.runtimePathOverride,
-                    configuration: state.monitoringConfiguration,
-                    algorithmState: state.algorithmState
-                )
+                heuristics: heuristics,
+                memory: state.memory,
+                policyMemory: state.policyMemory,
+                runtimeOverride: state.runtimePathOverride,
+                configuration: state.monitoringConfiguration,
+                algorithmState: state.algorithmState
+            )
             )
         } catch {
             handleMonitoringConfigurationError(error)
@@ -535,7 +533,7 @@ final class BrainService: NSObject {
             moodSink?(.nudging)
             statusSink?("Nudged while you were in \(context.appName).")
             executiveArm.perform(.showNudge(message))
-            pendingReaction = PendingReaction(
+            pendingReactionsByEvaluationID[evaluationID] = PendingReaction(
                 episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
                 evaluationID: evaluationID,
                 action: .showNudge(message),
@@ -543,17 +541,17 @@ final class BrainService: NSObject {
                 sourceContextKey: context.contextKey
             )
 
-        case .showOverlay:
+        case let .showOverlay(presentation):
             state.recentActions.insert(ActionRecord(kind: .overlay, message: nil, timestamp: now), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             stateSink?(state)
             moodSink?(.escalated)
             statusSink?("Escalated after repeated distraction signals.")
-            executiveArm.perform(.showOverlay)
-            pendingReaction = PendingReaction(
+            executiveArm.perform(.showOverlay(presentation))
+            pendingReactionsByEvaluationID[evaluationID] = PendingReaction(
                 episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
                 evaluationID: evaluationID,
-                action: .showOverlay,
+                action: .showOverlay(presentation),
                 issuedAt: now,
                 sourceContextKey: context.contextKey
             )
@@ -581,9 +579,15 @@ final class BrainService: NSObject {
         idle: Bool,
         now: Date,
         sessionID: String?,
-        evaluationID: String
+        evaluationID: String,
+        requiresScreenshot: Bool
     ) async throws -> AppSnapshot {
-        let screenshotURL = try await SnapshotService.captureScreenshot()
+        let screenshotURL: URL?
+        if requiresScreenshot {
+            screenshotURL = try await SnapshotService.captureScreenshot()
+        } else {
+            screenshotURL = nil
+        }
 
         let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
         let perAppDurations = dayUsage
@@ -591,7 +595,7 @@ final class BrainService: NSObject {
             .sorted { $0.seconds > $1.seconds }
 
         let screenshotArtifacts: StoredImageArtifacts?
-        if let sessionID {
+        if let sessionID, let screenshotURL {
             screenshotArtifacts = try? await telemetryStore.writeScreenshotArtifacts(
                 from: screenshotURL,
                 sessionID: sessionID,
@@ -601,16 +605,21 @@ final class BrainService: NSObject {
             screenshotArtifacts = nil
         }
 
-        let fallbackArtifact = ArtifactRef(
-            id: UUID().uuidString,
-            kind: .screenshotOriginal,
-            relativePath: screenshotArtifacts?.absoluteOriginalURL.path ?? screenshotURL.path,
-            sha256: nil,
-            byteCount: (try? Data(contentsOf: screenshotURL).count) ?? 0,
-            width: nil,
-            height: nil,
-            createdAt: now
-        )
+        let fallbackArtifact: ArtifactRef?
+        if let screenshotURL {
+            fallbackArtifact = ArtifactRef(
+                id: UUID().uuidString,
+                kind: .screenshotOriginal,
+                relativePath: screenshotArtifacts?.absoluteOriginalURL.path ?? screenshotURL.path,
+                sha256: nil,
+                byteCount: (try? Data(contentsOf: screenshotURL).count) ?? 0,
+                width: nil,
+                height: nil,
+                createdAt: now
+            )
+        } else {
+            fallbackArtifact = nil
+        }
 
         return AppSnapshot(
             bundleIdentifier: context.bundleIdentifier,
@@ -620,7 +629,7 @@ final class BrainService: NSObject {
             perAppDurations: perAppDurations,
             screenshotArtifact: screenshotArtifacts?.original ?? fallbackArtifact,
             screenshotThumbnail: screenshotArtifacts?.thumbnail,
-            screenshotPath: screenshotArtifacts?.absoluteOriginalURL.path ?? screenshotURL.path,
+            screenshotPath: screenshotArtifacts?.absoluteOriginalURL.path ?? screenshotURL?.path,
             idle: idle,
             timestamp: now
         )
@@ -676,10 +685,13 @@ final class BrainService: NSObject {
         now: Date
     ) async {
         let endReason: EpisodeEndReason
-        if let pendingReaction,
-           pendingReaction.episodeID == activeEpisode?.id,
-           now.timeIntervalSince(pendingReaction.issuedAt) <= 150,
-           context.bundleIdentifier == state.rescueApp.bundleIdentifier {
+        if let pendingReaction = mostRecentPendingReaction(
+            where: { pending in
+                pending.episodeID == activeEpisode?.id
+                && now.timeIntervalSince(pending.issuedAt) <= 150
+                && context.bundleIdentifier == state.rescueApp.bundleIdentifier
+            }
+        ) {
             await recordImplicitReaction(
                 UserReactionRecord(
                     kind: .postNudgeRescueReturn,
@@ -690,10 +702,17 @@ final class BrainService: NSObject {
                 at: now
             )
             endReason = .rescueReturn
-        } else if let pendingReaction,
-                  pendingReaction.episodeID == activeEpisode?.id,
-                  now.timeIntervalSince(pendingReaction.issuedAt) <= 150,
-                  MonitoringHeuristics.isClearlyProductive(bundleIdentifier: context.bundleIdentifier, appName: context.appName) {
+            pendingReactionsByEvaluationID.removeValue(forKey: pendingReaction.evaluationID)
+        } else if let pendingReaction = mostRecentPendingReaction(
+            where: { pending in
+                pending.episodeID == activeEpisode?.id
+                && now.timeIntervalSince(pending.issuedAt) <= 150
+                && MonitoringHeuristics.isClearlyProductive(
+                    bundleIdentifier: context.bundleIdentifier,
+                    appName: context.appName
+                )
+            }
+        ) {
             await recordImplicitReaction(
                 UserReactionRecord(
                     kind: .postNudgeAppSwitch,
@@ -707,8 +726,6 @@ final class BrainService: NSObject {
         } else {
             endReason = .contextChange
         }
-
-        pendingReaction = nil
 
         await endActiveEpisode(
             reason: endReason,
@@ -1129,20 +1146,25 @@ final class BrainService: NSObject {
     }
 
     private func resolvePendingReactionIfNeeded(now: Date, context: FrontmostContext) async {
-        guard let pendingReaction else { return }
-        guard now.timeIntervalSince(pendingReaction.issuedAt) > 150 else { return }
-        guard context.contextKey == pendingReaction.sourceContextKey else { return }
+        let expiredReactions = pendingReactionsByEvaluationID.values
+            .filter {
+                now.timeIntervalSince($0.issuedAt) > 150
+                && context.contextKey == $0.sourceContextKey
+            }
+            .sorted { $0.issuedAt < $1.issuedAt }
 
-        await recordImplicitReaction(
-            UserReactionRecord(
-                kind: .nudgeIgnored,
-                relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
-                positive: false,
-                details: context.appName
-            ),
-            at: now
-        )
-        self.pendingReaction = nil
+        for pendingReaction in expiredReactions {
+            await recordImplicitReaction(
+                UserReactionRecord(
+                    kind: .nudgeIgnored,
+                    relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
+                    positive: false,
+                    details: context.appName
+                ),
+                at: now
+            )
+            pendingReactionsByEvaluationID.removeValue(forKey: pendingReaction.evaluationID)
+        }
     }
 
     private func appendFailureIfNeeded(
@@ -1202,9 +1224,45 @@ final class BrainService: NSObject {
     }
 
     private func resetRuntimeContext() {
-        pendingReaction = nil
+        pendingReactionsByEvaluationID = [:]
         activeEpisode = nil
         lastObservedContext = nil
         lastObservedAt = Date()
+    }
+
+    private func matchingPendingReaction(for reaction: UserReactionRecord) -> PendingReaction? {
+        mostRecentPendingReaction { pending in
+            guard Self.matches(action: pending.action, reaction: reaction) else { return false }
+            if !pending.episodeID.isEmpty, pending.episodeID != activeEpisode?.id {
+                return false
+            }
+            return true
+        }
+    }
+
+    private func mostRecentPendingReaction(
+        where predicate: (PendingReaction) -> Bool
+    ) -> PendingReaction? {
+        pendingReactionsByEvaluationID.values
+            .filter(predicate)
+            .max { $0.issuedAt < $1.issuedAt }
+    }
+
+    private static func matches(action: CompanionAction, reaction: UserReactionRecord) -> Bool {
+        guard let relatedAction = reaction.relatedAction else { return true }
+
+        switch (action, relatedAction.kind) {
+        case let (.showNudge(message), .nudge):
+            if let relatedMessage = relatedAction.message?.cleanedSingleLine, !relatedMessage.isEmpty {
+                return message.cleanedSingleLine == relatedMessage
+            }
+            return true
+        case (.showOverlay(_), .overlay):
+            return true
+        case (.none, .none):
+            return true
+        default:
+            return false
+        }
     }
 }

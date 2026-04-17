@@ -117,6 +117,7 @@ struct LLMFocusAlgorithmTests {
                 recentActions: [],
                 heuristics: makeHeuristics(),
                 memory: "",
+                policyMemory: PolicyMemory(),
                 runtimeOverride: nil,
                 configuration: MonitoringConfiguration(),
                 algorithmState: AlgorithmStateEnvelope()
@@ -125,7 +126,7 @@ struct LLMFocusAlgorithmTests {
 
         #expect(result.policy.action == .showNudge("back to it"))
         #expect(result.updatedAlgorithmState.llmFocus.distraction.consecutiveDistractedCount == 1)
-        #expect(result.execution.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
+        #expect(result.execution.algorithmID == MonitoringConfiguration.llmAlgorithmID)
         #expect(result.execution.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
     }
 
@@ -160,6 +161,7 @@ struct LLMFocusAlgorithmTests {
                 recentActions: [],
                 heuristics: makeHeuristics(),
                 memory: "",
+                policyMemory: PolicyMemory(),
                 runtimeOverride: nil,
                 configuration: MonitoringConfiguration(),
                 algorithmState: state

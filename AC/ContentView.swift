@@ -345,6 +345,50 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pipeline profile")
+                            .font(.ac(12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("Pipeline profile", selection: Binding(
+                            get: { controller.state.monitoringConfiguration.pipelineProfileID },
+                            set: { controller.updateMonitoringPipelineProfile($0) }
+                        )) {
+                            ForEach(controller.availablePipelineProfiles, id: \.id) { profile in
+                                Text(profile.displayName).tag(profile.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        if let selected = controller.availablePipelineProfiles.first(where: {
+                            $0.id == controller.state.monitoringConfiguration.pipelineProfileID
+                        }) {
+                            Text(selected.summary)
+                                .font(.ac(11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Runtime profile")
+                            .font(.ac(12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("Runtime profile", selection: Binding(
+                            get: { controller.state.monitoringConfiguration.runtimeProfileID },
+                            set: { controller.updateMonitoringRuntimeProfile($0) }
+                        )) {
+                            ForEach(controller.availableRuntimeProfiles, id: \.id) { profile in
+                                Text(profile.displayName).tag(profile.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        if let selected = controller.availableRuntimeProfiles.first(where: {
+                            $0.id == controller.state.monitoringConfiguration.runtimeProfileID
+                        }) {
+                            Text(selected.summary)
+                                .font(.ac(11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
 

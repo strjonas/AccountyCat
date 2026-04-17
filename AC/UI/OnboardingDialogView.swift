@@ -36,11 +36,15 @@ struct OnboardingDialogView: View {
             VStack(spacing: 6) {
                 SetupStepRow(
                     title: "Screen Recording",
-                    state: controller.state.permissions.screenRecording == .granted ? .done : .needed
+                    state: permissionRequirements.requiresScreenRecording == false
+                        ? .done
+                        : (controller.state.permissions.screenRecording == .granted ? .done : .needed)
                 )
                 SetupStepRow(
                     title: "Accessibility",
-                    state: controller.state.permissions.accessibility == .granted ? .done : .needed
+                    state: permissionRequirements.requiresAccessibility == false
+                        ? .done
+                        : (controller.state.permissions.accessibility == .granted ? .done : .needed)
                 )
                 SetupStepRow(
                     title: "Build tools",
@@ -80,14 +84,16 @@ struct OnboardingDialogView: View {
     private var actionButtons: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if controller.state.permissions.screenRecording != .granted {
+                if permissionRequirements.requiresScreenRecording &&
+                    controller.state.permissions.screenRecording != .granted {
                     Button("Screen Recording") {
                         controller.requestScreenRecordingPermission()
                     }
                     .buttonStyle(ACPrimaryButton())
                 }
 
-                if controller.state.permissions.accessibility != .granted {
+                if permissionRequirements.requiresAccessibility &&
+                    controller.state.permissions.accessibility != .granted {
                     Button("Accessibility") {
                         controller.requestAccessibilityPermission()
                     }
@@ -127,6 +133,10 @@ struct OnboardingDialogView: View {
             return "Running locally — fully private."
         }
         return "Everything stays on-device. One-time setup."
+    }
+
+    private var permissionRequirements: MonitoringPermissionRequirements {
+        LLMPolicyCatalog.permissionRequirements(for: controller.state.monitoringConfiguration)
     }
 
     private var runtimeState: SetupStepState {

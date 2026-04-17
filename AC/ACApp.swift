@@ -39,7 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let arm = ExecutiveArm(
             showNudge:   { [weak self] msg in self?.windowCoordinator?.showNudge(message: msg) },
-            showOverlay: { [weak self] in     self?.windowCoordinator?.showOverlay() },
+            showOverlay: { [weak self] presentation in
+                self?.windowCoordinator?.showOverlay(presentation: presentation)
+            },
             hideOverlay: { [weak self] in     self?.windowCoordinator?.hideOverlay() }
         )
         controller.attachExecutiveArm(arm)

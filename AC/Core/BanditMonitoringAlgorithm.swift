@@ -58,10 +58,7 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
 
     func resetTransientState(_ state: inout AlgorithmStateEnvelope) {
         state.banditFocus.lastInterventionByContext = [:]
-        state.banditFocus.pendingNudgeContext = nil
-        state.banditFocus.pendingNudgeEvaluationID = nil
-        state.banditFocus.pendingNudgeIssuedAt = nil
-        state.banditFocus.pendingArm = nil
+        state.banditFocus.pendingInterventionsByEvaluationID = [:]
     }
 
     /// Returns true if the frontmost context changed — caller uses this to record a
@@ -110,6 +107,7 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             shouldEvaluate: true,
             reason: "bandit_stable_context",
             visualCheckReason: heuristics.periodicVisualReason,
+            requiresScreenshot: true,
             promptMode: "extraction",
             promptVersion: "screen_state_v1"
         )
@@ -206,7 +204,17 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             }
 
         case .overlay:
-            action = .showOverlay
+            action = .showOverlay(
+                OverlayPresentation(
+                    headline: "Pause for a second.",
+                    body: "You still look off-track in \(input.snapshot.appName).",
+                    prompt: "Why should I let you keep going here?",
+                    appName: input.snapshot.appName,
+                    evaluationID: input.evaluationID,
+                    submitButtonTitle: "Submit",
+                    secondaryButtonTitle: "Back to work"
+                )
+            )
         }
 
         // Build the synthetic decision that appears in telemetry (no LLM decision was made).
@@ -230,15 +238,18 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
             promptProfileID: "screen_state_v1",
+            pipelineProfileID: nil,
+            runtimeProfileID: nil,
             experimentArm: input.configuration.experimentArm
         )
 
         // If we're firing an intervention, record the cooldown timestamp and pending arm.
         if action != .none {
-            updatedState.banditFocus.pendingNudgeContext = context
-            updatedState.banditFocus.pendingNudgeEvaluationID = input.evaluationID
-            updatedState.banditFocus.pendingNudgeIssuedAt = input.now
-            updatedState.banditFocus.pendingArm = effectiveArm
+            updatedState.banditFocus.pendingInterventionsByEvaluationID[input.evaluationID] = BanditPendingIntervention(
+                context: context,
+                issuedAt: input.now,
+                arm: effectiveArm
+            )
             updatedState.banditFocus.lastNudgeAt = input.now
             updatedState.banditFocus.lastInterventionByContext[contextKey] = input.now
         }
@@ -257,9 +268,13 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             evaluationID: input.evaluationID,
             model: syntheticDecision.parsedRecord,
             strategy: execution.telemetryRecord,
-            ladderSignal: "bandit:\(effectiveArm.rawValue)",
+            ladderSignal: "none",
+            interventionSignal: "bandit:\(effectiveArm.rawValue)",
             allowIntervention: action != .none,
-            allowEscalation: action == .showOverlay,
+            allowEscalation: {
+                if case .showOverlay = action { return true }
+                return false
+            }(),
             blockReason: blockReason,
             finalAction: CompanionPolicy.telemetryActionRecord(for: action),
             distractionBefore: CompanionPolicy.telemetryState(from: DistractionMetadata()),
@@ -278,20 +293,12 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
     // MARK: - Reward
 
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope) {
-        guard
-            let pendingContext = state.banditFocus.pendingNudgeContext,
-            let pendingID = state.banditFocus.pendingNudgeEvaluationID,
-            let arm = state.banditFocus.pendingArm,
-            pendingID == signal.evaluationID
-        else { return }
+        guard let pending = state.banditFocus.pendingInterventionsByEvaluationID[signal.evaluationID] else { return }
 
-        state.banditFocus.engine.update(arm: arm, context: pendingContext, reward: signal.value)
+        state.banditFocus.engine.update(arm: pending.arm, context: pending.context, reward: signal.value)
         state.banditFocus.lastNudgeWasPositive = signal.value > 0
 
-        state.banditFocus.pendingNudgeContext = nil
-        state.banditFocus.pendingNudgeEvaluationID = nil
-        state.banditFocus.pendingNudgeIssuedAt = nil
-        state.banditFocus.pendingArm = nil
+        state.banditFocus.pendingInterventionsByEvaluationID.removeValue(forKey: signal.evaluationID)
     }
 
     // MARK: - Helpers
@@ -315,6 +322,8 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
             promptProfileID: "screen_state_v1",
+            pipelineProfileID: nil,
+            runtimeProfileID: nil,
             experimentArm: input.configuration.experimentArm
         )
         let evaluation = LLMEvaluationResult(
@@ -330,7 +339,8 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             evaluationID: input.evaluationID,
             model: decision.parsedRecord,
             strategy: execution.telemetryRecord,
-            ladderSignal: "bandit:none",
+            ladderSignal: "none",
+            interventionSignal: "bandit:none",
             allowIntervention: false,
             allowEscalation: false,
             blockReason: reason,
@@ -347,4 +357,3 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
         )
     }
 }
-

@@ -20,6 +20,12 @@ struct PermissionsSnapshot: Codable, Sendable {
     var isReady: Bool {
         screenRecording == .granted && accessibility == .granted
     }
+
+    func satisfies(_ requirements: MonitoringPermissionRequirements) -> Bool {
+        let accessibilityReady = !requirements.requiresAccessibility || accessibility == .granted
+        let screenReady = !requirements.requiresScreenRecording || screenRecording == .granted
+        return accessibilityReady && screenReady
+    }
 }
 
 enum SetupStatus: String, Codable, Sendable {
@@ -70,7 +76,7 @@ struct LLMDecision: Codable, Sendable, Equatable {
 enum CompanionAction: Equatable, Sendable {
     case none
     case showNudge(String)
-    case showOverlay
+    case showOverlay(OverlayPresentation)
 }
 
 enum CompanionMood: String, Sendable {
@@ -119,6 +125,37 @@ struct ActionRecord: Codable, Hashable, Sendable {
     var timestamp: Date
 }
 
+struct OverlayPresentation: Codable, Hashable, Equatable, Sendable {
+    var headline: String
+    var body: String
+    var prompt: String?
+    var appName: String
+    var evaluationID: String?
+    var submitButtonTitle: String
+    var secondaryButtonTitle: String
+}
+
+enum AppealReviewDecision: String, Codable, Sendable {
+    case allow
+    case deny
+    case deferDecision = "defer"
+}
+
+struct AppealReviewResult: Codable, Hashable, Equatable, Sendable {
+    var decision: AppealReviewDecision
+    var message: String
+}
+
+struct MonitoringAppealSession: Codable, Hashable, Equatable, Sendable {
+    var evaluationID: String
+    var contextKey: String
+    var appName: String
+    var prompt: String
+    var createdAt: Date
+    var lastSubmittedAt: Date?
+    var lastResult: AppealReviewResult?
+}
+
 enum ChatRole: String, Codable, Sendable {
     case system
     case user
@@ -150,9 +187,9 @@ struct AppSnapshot: Codable, Sendable {
     var windowTitle: String?
     var recentSwitches: [AppSwitchRecord]
     var perAppDurations: [AppUsageRecord]
-    var screenshotArtifact: ArtifactRef
+    var screenshotArtifact: ArtifactRef?
     var screenshotThumbnail: ArtifactRef?
-    var screenshotPath: String
+    var screenshotPath: String?
     var idle: Bool
     var timestamp: Date
 }
@@ -166,7 +203,7 @@ struct ChatContext: Sendable {
     var perAppDurations: [AppUsageRecord]
 }
 
-struct FrontmostContext: Hashable, Sendable {
+struct FrontmostContext: Hashable, Sendable, Codable {
     var bundleIdentifier: String?
     var appName: String
     var windowTitle: String?
@@ -247,6 +284,8 @@ struct ACState: Codable, Sendable {
     var usageByDay: [String: [String: TimeInterval]] = [:]
     /// Persistent memory of user preferences, rules, and important context.
     var memory: String = ""
+    /// Structured monitoring rules that the model can update deterministically.
+    var policyMemory = PolicyMemory()
     /// Persistent chat history excluding the synthetic system opener.
     var chatHistory: [ChatMessage] = []
 
@@ -265,6 +304,7 @@ struct ACState: Codable, Sendable {
         case usageByDay
         case distraction
         case memory
+        case policyMemory
         case chatHistory
     }
 
@@ -273,23 +313,27 @@ struct ACState: Codable, Sendable {
     /// empty record (its anti-spam is timestamp-based, not ladder-based).
     var distraction: DistractionMetadata {
         get {
-            switch monitoringConfiguration.algorithmID {
-            case MonitoringConfiguration.defaultAlgorithmID:
+            switch MonitoringConfiguration.normalizedAlgorithmID(monitoringConfiguration.algorithmID) {
+            case MonitoringConfiguration.llmAlgorithmID:
                 return algorithmState.llmFocus.distraction
+            case MonitoringConfiguration.llmPolicyAlgorithmID:
+                return algorithmState.llmPolicy.distraction
             case MonitoringConfiguration.banditAlgorithmID:
                 return DistractionMetadata()
             default:
-                return algorithmState.llmFocus.distraction
+                return algorithmState.llmPolicy.distraction
             }
         }
         set {
-            switch monitoringConfiguration.algorithmID {
-            case MonitoringConfiguration.defaultAlgorithmID:
+            switch MonitoringConfiguration.normalizedAlgorithmID(monitoringConfiguration.algorithmID) {
+            case MonitoringConfiguration.llmAlgorithmID:
                 algorithmState.llmFocus.distraction = newValue
+            case MonitoringConfiguration.llmPolicyAlgorithmID:
+                algorithmState.llmPolicy.distraction = newValue
             case MonitoringConfiguration.banditAlgorithmID:
                 break
             default:
-                algorithmState.llmFocus.distraction = newValue
+                algorithmState.llmPolicy.distraction = newValue
             }
         }
     }
@@ -316,6 +360,7 @@ struct ACState: Codable, Sendable {
             algorithmState.llmFocus.distraction = legacyDistraction
         }
         memory = try container.decodeIfPresent(String.self, forKey: .memory) ?? ""
+        policyMemory = try container.decodeIfPresent(PolicyMemory.self, forKey: .policyMemory) ?? PolicyMemory()
         chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
     }
 
@@ -335,6 +380,7 @@ struct ACState: Codable, Sendable {
         try container.encode(usageByDay, forKey: .usageByDay)
         try container.encode(distraction, forKey: .distraction)
         try container.encode(memory, forKey: .memory)
+        try container.encode(policyMemory, forKey: .policyMemory)
         try container.encode(chatHistory, forKey: .chatHistory)
     }
 
@@ -343,8 +389,13 @@ struct ACState: Codable, Sendable {
         recentActions = []
         recentSwitches = []
         usageByDay = [:]
+        monitoringConfiguration.algorithmID = MonitoringConfiguration.defaultAlgorithmID
+        monitoringConfiguration.promptProfileID = MonitoringConfiguration.defaultPromptProfileID
+        monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
+        monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
         algorithmState = AlgorithmStateEnvelope()
         memory = ""
+        policyMemory = PolicyMemory()
         chatHistory = []
     }
 }

@@ -37,6 +37,9 @@ actor ScreenStateExtractorService: ScreenStateExtracting {
         recentNudgeMessages: [String],
         runtimePath: String
     ) async -> BanditScreenState? {
+        guard let screenshotPath = snapshot.screenshotPath else {
+            return nil
+        }
         let systemPrompt = PromptCatalog.loadExtractionSystemPrompt()
         let payloadJSON = makePayloadJSON(
             snapshot: snapshot,
@@ -50,7 +53,7 @@ actor ScreenStateExtractorService: ScreenStateExtracting {
             output = try await runtime.runVisionInference(
                 runtimePath: runtimePath,
                 modelIdentifier: modelIdentifier,
-                snapshotPath: snapshot.screenshotPath,
+                snapshotPath: screenshotPath,
                 systemPrompt: systemPrompt,
                 userPrompt: userPrompt
             )
@@ -103,7 +106,7 @@ actor ScreenStateExtractorService: ScreenStateExtracting {
 // MARK: - Raw decoding helper
 
 /// Bridges the snake_case VLM JSON output to `BanditScreenState`.
-private struct BanditScreenStateRaw: Decodable {
+private struct BanditScreenStateRaw: Decodable, Sendable {
     var app_category: String
     var productivity_score: Double
     var on_task: Bool
@@ -111,7 +114,7 @@ private struct BanditScreenStateRaw: Decodable {
     var confidence: Double
     var candidate_nudge: String?
 
-    func toBanditScreenState() -> BanditScreenState {
+    nonisolated func toBanditScreenState() -> BanditScreenState {
         BanditScreenState(
             appCategory: BanditScreenState.AppCategory(rawValue: app_category) ?? .other,
             productivityScore: max(0, min(1, productivity_score)),

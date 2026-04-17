@@ -27,7 +27,7 @@ flowchart TB
         Exec["ExecutiveArm<br/>showNudge / showOverlay / openRescueApp"]
     end
 
-    subgraph LLMPath["LLM algorithm (legacy_focus_v1 — default)"]
+    subgraph LLMPath["LLM algorithm (llm_focus_v1 — default)"]
         LLMAlgo["LLMFocusAlgorithm"]
         Ladder["DistractionLadder<br/>spam-prevention FSM (LLM-only)"]
         Policy["CompanionPolicy<br/>confidence gate (0.60) → action"]
@@ -208,7 +208,7 @@ flowchart LR
         Act["ExecutiveArm.perform(action)"]
     end
 
-    subgraph LLM["LLMFocusAlgorithm (legacy_focus_v1) — default"]
+    subgraph LLM["LLMFocusAlgorithm (llm_focus_v1) — default"]
         L0["evaluationPlan()<br/>ladder 20s stability + 5/10/20 min follow-up"]
         L1["MonitoringLLMClient<br/>vision prompt → JSON"]
         L2["LLMDecision<br/>{assessment, suggestedAction, confidence, nudge}"]
@@ -306,37 +306,24 @@ sequenceDiagram
     participant Band as BanditMonitoringAlgorithm
     participant Eng as ContextualBanditEngine
 
-    Note over BS: a nudge was issued earlier.<br/>state.banditFocus.pendingArm / pendingNudgeContext / pendingNudgeEvaluationID were saved.
+    Note over BS: a nudge was issued earlier.<br/>state.banditFocus.pendingInterventionsByEvaluationID[evaluationID] was saved.
     User->>UI: 👍 / 👎 / ignore / back-to-work
     UI->>AC: rateNudge(kind)
     AC->>BS: recordUserReaction(kind)
     BS->>BS: map kind → reward r (+1.0 / −0.8 / +0.6 / −1.5 / 0)
     BS->>Reg: observeReward(signal{ evaluationID, kind, value })
     Reg->>Band: observeReward(signal, state)
-    Band->>Eng: update(arm: pendingArm, context: pendingContext, reward: r)
+    Band->>Eng: update(arm: pending.arm, context: pending.context, reward: r)
     Note over Eng: A_arm ← A_arm + xxᵀ<br/>b_arm ← b_arm + r·x<br/>(rank-1 BLAS update, other arms unchanged)
     Band->>Band: clear pending state
     BS->>BS: persist AlgorithmStateEnvelope.banditFocus
 ```
 
-The `evaluationID` is the single source of truth for reward attribution: `observeReward` is a no-op unless it matches the saved `pendingNudgeEvaluationID`. No other arms' weights change — only the fired arm learns from its outcome.
+The `evaluationID` is the single source of truth for reward attribution: `observeReward` is a no-op unless it matches a saved pending intervention entry. No other pending entries are cleared, and only the fired arm learns from its own outcome.
 
 ---
 
-## 3. Design notes & future work
+## 3. future work
 
-**What's clean now**
-
-- Algorithm paths are fully decoupled: no cross-dependencies, no fallback across the seam. Swapping algorithms at runtime changes one resolver lookup.
-- The bandit's "decide how to intervene" and "write the nudge" responsibilities are split between `ContextualBanditEngine` (arm selection) and `NudgeCopywriterService` (text generation). The arm encodes tone; the LLM fills in words.
-- `DistractionLadder` state is gone from `BanditFocusAlgorithmState` — the bandit's only anti-spam state is `lastInterventionByContext` (per-context timestamps) and `currentContextKey` / `currentContextEnteredAt` (stability window).
-- Prompts live on disk under [AC/Resources/Prompts](AC/Resources/Prompts). Nudge copywriter prompts are the newest asset family (`Nudge/{tone}_{system,user}.md`) and have no inline fallback — the caller degrades gracefully to the VLM's `candidateNudge`.
-- Unit tests cover: engine math (exploration, per-arm learning, JSON round-trip, feature layout), bandit decision path (cooldown, copywriter success / failure, extraction failure, reward attribution), and registry behaviour (unknown-id rejection, configuration reset).
-
-**Still open**
-
-1. **`legacy_focus_v1` naming.** Renaming to `llm_focus_v1` with a decoder shim is still pending.
-2. **Reward attribution concurrency.** Only one `PendingReaction` at a time. Overlapping nudges (unlikely but possible) would mis-credit.
-3. **Arm set sizing.** Three learnable arms is a sensible starting point but we have no production data yet. The cooldown (60 s) limits per-context learning rate — worth revisiting once we have reward data.
-4. **Cold-start exploration.** Fresh `A=λI, b=0` means every arm's UCB is exploration-dominated and > 0 — the engine picks the arm with the largest `x`-aligned ball, not a randomly chosen one. Consider an explicit ε-greedy tiebreak for the very-early regime.
-5. **Telemetry schema.** `PolicyDecisionRecord.ladderSignal` now carries strings like `"bandit:challenging_nudge"` for bandit decisions. Consumers that parse the ladder signal should be aware of this dual usage (or we can split the field).
+1. **Arm set sizing.** Three learnable arms is a sensible starting point but we have no production data yet. The cooldown (60 s) limits per-context learning rate — worth revisiting once we have reward data.
+2. **Cold-start exploration.** Fresh `A=λI, b=0` means every arm's UCB is exploration-dominated and > 0 — the engine picks the arm with the largest `x`-aligned ball, not a randomly chosen one. Consider an explicit ε-greedy tiebreak for the very-early regime.

@@ -26,10 +26,18 @@ struct TelemetryMetadataTests {
             pinned: false
         )
         let strategy = MonitoringExecutionMetadataRecord(
-            algorithmID: "legacy_focus_v1",
+            algorithmID: MonitoringConfiguration.defaultAlgorithmID,
             algorithmVersion: "1.0",
             promptProfileID: "focus_default_v2",
-            experimentArm: "fixed:legacy_focus_v1:focus_default_v2"
+            pipelineProfileID: MonitoringConfiguration.defaultPipelineProfileID,
+            runtimeProfileID: MonitoringConfiguration.defaultRuntimeProfileID,
+            experimentArm: [
+                "fixed",
+                MonitoringConfiguration.defaultAlgorithmID,
+                MonitoringConfiguration.defaultPipelineProfileID,
+                MonitoringConfiguration.defaultRuntimeProfileID,
+                "focus_default_v2",
+            ].joined(separator: ":")
         )
         let events = [
             TelemetryEvent(
