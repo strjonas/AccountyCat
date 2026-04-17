@@ -47,4 +47,17 @@ struct BrainServiceConfigurationTests {
         #expect(state.monitoringConfiguration.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
         #expect(state.algorithmState == AlgorithmStateEnvelope())
     }
+
+    @Test
+    func registryRejectsUnknownAlgorithmIDs() {
+        let runtime = LocalModelRuntime()
+        let registry = MonitoringAlgorithmRegistry(
+            monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime)
+        )
+
+        #expect(throws: MonitoringAlgorithmResolutionError.self) {
+            _ = try registry.descriptor(for: "corrupted_algorithm_id")
+        }
+    }
 }

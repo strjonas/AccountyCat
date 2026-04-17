@@ -16,7 +16,7 @@ The current default path is:
 - monitoring algorithm: `legacy_focus_v1`
 - monitoring prompt profile: `focus_default_v2`
 
-Those defaults are behavior-preserving wrappers around the pre-refactor implementation.
+That algorithm ID is kept stable for telemetry/state compatibility, but the implementation now lives in `LLMFocusAlgorithm.swift`.
 
 ## Top-Level Layout
 
@@ -78,7 +78,7 @@ Key types:
 
 The current production behavior is wrapped in:
 
-- [AC/Core/LegacyMonitoringAlgorithm.swift](/Users/jonas/Code/AC/AC/AC/Core/LegacyMonitoringAlgorithm.swift:10)
+- [AC/Core/LLMFocusAlgorithm.swift](/Users/jonas/Code/AC/AC/AC/Core/LLMFocusAlgorithm.swift:10)
 
 This algorithm preserves the existing ladder-based flow:
 
@@ -99,7 +99,7 @@ File:
 
 Current slices:
 
-- `legacyFocus`
+- `llmFocus`
   Holds the distraction ladder state and last periodic visual-check timestamps.
 
 Shared user state still lives in `ACState`:
@@ -180,7 +180,7 @@ Training export also distinguishes:
 - short-term outcome labels
 - long-term outcome labels
 
-This is deliberate preparation for future algorithm comparison. The runtime does not yet perform automatic assignment or online bandit learning.
+This is deliberate preparation for future algorithm comparison. The runtime now includes bandit-based learning, but still does not perform automatic experiment assignment across users.
 
 ## Inspector
 

@@ -50,9 +50,11 @@ enum SnapshotService {
         var focusedWindowValue: CFTypeRef?
 
         if AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedWindowValue) == .success,
-           let focusedWindow = focusedWindowValue {
+           let focusedWindowValue,
+           CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() {
+            let focusedWindow = unsafeBitCast(focusedWindowValue, to: AXUIElement.self)
             var titleValue: CFTypeRef?
-            if AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, kAXTitleAttribute as CFString, &titleValue) == .success,
+            if AXUIElementCopyAttributeValue(focusedWindow, kAXTitleAttribute as CFString, &titleValue) == .success,
                let title = titleValue as? String,
                !title.cleanedSingleLine.isEmpty {
                 return title.cleanedSingleLine

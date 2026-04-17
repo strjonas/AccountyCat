@@ -7,6 +7,17 @@
 
 import Foundation
 
+enum MonitoringAlgorithmResolutionError: LocalizedError, Equatable {
+    case unknownAlgorithmID(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unknownAlgorithmID(id):
+            return "Unknown monitoring algorithm id: \(id)"
+        }
+    }
+}
+
 struct MonitoringEvaluationPlan: Sendable {
     static let none = MonitoringEvaluationPlan(
         shouldEvaluate: false,
@@ -106,8 +117,12 @@ final class MonitoringAlgorithmRegistry {
         ]
     }
 
-    func descriptor(for id: String) -> MonitoringAlgorithmDescriptor {
-        resolve(id: id).descriptor
+    func containsAlgorithm(id: String) -> Bool {
+        availableAlgorithms.contains { $0.id == id }
+    }
+
+    func descriptor(for id: String) throws -> MonitoringAlgorithmDescriptor {
+        try resolve(id: id).descriptor
     }
 
     func noteContext(
@@ -115,8 +130,8 @@ final class MonitoringAlgorithmRegistry {
         contextKey: String?,
         at now: Date,
         state: inout AlgorithmStateEnvelope
-    ) -> Bool {
-        resolve(id: configuration.algorithmID).noteContext(
+    ) throws -> Bool {
+        try resolve(id: configuration.algorithmID).noteContext(
             contextKey,
             at: now,
             state: &state
@@ -129,8 +144,8 @@ final class MonitoringAlgorithmRegistry {
         heuristics: TelemetryHeuristicSnapshot,
         now: Date,
         state: inout AlgorithmStateEnvelope
-    ) -> MonitoringEvaluationPlan {
-        resolve(id: configuration.algorithmID).evaluationPlan(
+    ) throws -> MonitoringEvaluationPlan {
+        try resolve(id: configuration.algorithmID).evaluationPlan(
             state: &state,
             context: context,
             heuristics: heuristics,
@@ -142,44 +157,44 @@ final class MonitoringAlgorithmRegistry {
     func distractionMetadata(
         configuration: MonitoringConfiguration,
         state: AlgorithmStateEnvelope
-    ) -> DistractionMetadata {
-        resolve(id: configuration.algorithmID).distractionMetadata(from: state)
+    ) throws -> DistractionMetadata {
+        try resolve(id: configuration.algorithmID).distractionMetadata(from: state)
     }
 
     func resetSelectedAlgorithmState(
         configuration: MonitoringConfiguration,
         state: inout AlgorithmStateEnvelope
-    ) {
-        resolve(id: configuration.algorithmID).resetState(&state)
+    ) throws {
+        try resolve(id: configuration.algorithmID).resetState(&state)
     }
 
     func resetSelectedAlgorithmTransientState(
         configuration: MonitoringConfiguration,
         state: inout AlgorithmStateEnvelope
-    ) {
-        resolve(id: configuration.algorithmID).resetTransientState(&state)
+    ) throws {
+        try resolve(id: configuration.algorithmID).resetTransientState(&state)
     }
 
-    func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
-        await resolve(id: input.configuration.algorithmID).evaluate(input: input)
+    func evaluate(input: MonitoringDecisionInput) async throws -> MonitoringDecisionResult {
+        try await resolve(id: input.configuration.algorithmID).evaluate(input: input)
     }
 
     func observeReward(
         _ signal: MonitoringRewardSignal,
         configuration: MonitoringConfiguration,
         state: inout AlgorithmStateEnvelope
-    ) {
-        resolve(id: configuration.algorithmID).observeReward(signal, state: &state)
+    ) throws {
+        try resolve(id: configuration.algorithmID).observeReward(signal, state: &state)
     }
 
-    private func resolve(id: String) -> any MonitoringAlgorithm {
+    private func resolve(id: String) throws -> any MonitoringAlgorithm {
         switch id {
         case llmFocusAlgorithm.descriptor.id:
             return llmFocusAlgorithm
         case banditFocusAlgorithm.descriptor.id:
             return banditFocusAlgorithm
         default:
-            return llmFocusAlgorithm
+            throw MonitoringAlgorithmResolutionError.unknownAlgorithmID(id)
         }
     }
 }

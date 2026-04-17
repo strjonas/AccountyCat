@@ -8,7 +8,9 @@
 import Foundation
 
 enum RuntimeSetupService {
-    private static let modelCacheRelativePath = "unsloth/gemma-4-E2B-it-GGUF/models--unsloth--gemma-4-E2B-it-GGUF"
+    nonisolated private static let modelCacheRelativePath = "unsloth/gemma-4-E2B-it-GGUF/models--unsloth--gemma-4-E2B-it-GGUF"
+    nonisolated private static let runtimeRepositoryRemote = "https://github.com/ggml-org/llama.cpp.git"
+    nonisolated private static let pinnedLlamaCommit = "a279d0f0f4e746d1ef3429d8e9d02d2990b2daa7"
 
     nonisolated private static var preferredBaseDirectory: URL {
         TelemetryPaths.applicationSupportURL()
@@ -55,13 +57,27 @@ enum RuntimeSetupService {
         if !FileManager.default.fileExists(atPath: repoURL.path) {
             try await runStreaming(
                 launchPath: "/usr/bin/git",
-                arguments: ["clone", "https://github.com/ggml-org/llama.cpp.git"],
+                arguments: ["clone", runtimeRepositoryRemote],
                 currentDirectory: baseDirectory,
                 log: log
             )
         } else {
             log("$ git clone skipped, repo already exists at \(repoURL.path)")
         }
+
+        try await runStreaming(
+            launchPath: "/usr/bin/git",
+            arguments: ["fetch", "--depth", "1", "origin", pinnedLlamaCommit],
+            currentDirectory: repoURL,
+            log: log
+        )
+
+        try await runStreaming(
+            launchPath: "/usr/bin/git",
+            arguments: ["checkout", "--detach", pinnedLlamaCommit],
+            currentDirectory: repoURL,
+            log: log
+        )
 
         try await runStreaming(
             launchPath: "/usr/bin/env",

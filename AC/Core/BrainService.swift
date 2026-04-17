@@ -91,10 +91,14 @@ final class BrainService: NSObject {
 
     func resetDistractionState() {
         guard var state = stateProvider?() else { return }
-        monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
-            configuration: state.monitoringConfiguration,
-            state: &state.algorithmState
-        )
+        do {
+            try monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
+                configuration: state.monitoringConfiguration,
+                state: &state.algorithmState
+            )
+        } catch {
+            handleMonitoringConfigurationError(error)
+        }
         stateSink?(state)
     }
 
@@ -106,10 +110,14 @@ final class BrainService: NSObject {
 
     func handleMonitoringConfigurationChange() {
         guard var state = stateProvider?() else { return }
-        monitoringAlgorithmRegistry.resetSelectedAlgorithmState(
-            configuration: state.monitoringConfiguration,
-            state: &state.algorithmState
-        )
+        do {
+            try monitoringAlgorithmRegistry.resetSelectedAlgorithmState(
+                configuration: state.monitoringConfiguration,
+                state: &state.algorithmState
+            )
+        } catch {
+            handleMonitoringConfigurationError(error)
+        }
         stateSink?(state)
         resetRuntimeContext()
     }
@@ -152,11 +160,15 @@ final class BrainService: NSObject {
                 kind: reaction.kind,
                 value: reward
             )
-            monitoringAlgorithmRegistry.observeReward(
-                signal,
-                configuration: state.monitoringConfiguration,
-                state: &state.algorithmState
-            )
+            do {
+                try monitoringAlgorithmRegistry.observeReward(
+                    signal,
+                    configuration: state.monitoringConfiguration,
+                    state: &state.algorithmState
+                )
+            } catch {
+                handleMonitoringConfigurationError(error)
+            }
             stateSink?(state)
             maybePersist(state: state, at: Date(), force: true)
         }
@@ -277,10 +289,15 @@ final class BrainService: NSObject {
                 idleSeconds: idleSeconds,
                 at: now
             )
-            monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
-                configuration: state.monitoringConfiguration,
-                state: &state.algorithmState
-            )
+            do {
+                try monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
+                    configuration: state.monitoringConfiguration,
+                    state: &state.algorithmState
+                )
+            } catch {
+                handleMonitoringConfigurationError(error)
+                return
+            }
             stateSink?(state)
             moodSink?(.idle)
             statusSink?("You look idle, so AC backed off.")
@@ -296,12 +313,18 @@ final class BrainService: NSObject {
 
         updateUsageDurations(state: &state, with: context, now: now)
 
-        let didChangeContext = monitoringAlgorithmRegistry.noteContext(
-            configuration: state.monitoringConfiguration,
-            contextKey: context.contextKey,
-            at: now,
-            state: &state.algorithmState
-        )
+        let didChangeContext: Bool
+        do {
+            didChangeContext = try monitoringAlgorithmRegistry.noteContext(
+                configuration: state.monitoringConfiguration,
+                contextKey: context.contextKey,
+                at: now,
+                state: &state.algorithmState
+            )
+        } catch {
+            handleMonitoringConfigurationError(error)
+            return
+        }
         if didChangeContext {
             await handleContextChange(
                 from: lastObservedContext,
@@ -337,13 +360,19 @@ final class BrainService: NSObject {
             return
         }
 
-        let evaluationPlan = monitoringAlgorithmRegistry.evaluationPlan(
-            configuration: state.monitoringConfiguration,
-            context: context,
-            heuristics: heuristics,
-            now: now,
-            state: &state.algorithmState
-        )
+        let evaluationPlan: MonitoringEvaluationPlan
+        do {
+            evaluationPlan = try monitoringAlgorithmRegistry.evaluationPlan(
+                configuration: state.monitoringConfiguration,
+                context: context,
+                heuristics: heuristics,
+                now: now,
+                state: &state.algorithmState
+            )
+        } catch {
+            handleMonitoringConfigurationError(error)
+            return
+        }
 
         guard evaluationPlan.shouldEvaluate else {
             moodSink?(.watching)
@@ -378,9 +407,16 @@ final class BrainService: NSObject {
         let session = try? await telemetryStore.ensureCurrentSession(reason: "runtime")
         let episodeTransition = ensureEpisode(for: context, sessionID: session?.id ?? "unknown", at: now)
         let evaluationEpisode = activeEpisode
+        let algorithmDescriptor: MonitoringAlgorithmDescriptor
+        do {
+            algorithmDescriptor = try monitoringAlgorithmRegistry.descriptor(for: state.monitoringConfiguration.algorithmID)
+        } catch {
+            handleMonitoringConfigurationError(error)
+            return
+        }
         let executionMetadata = MonitoringExecutionMetadata(
-            algorithmID: monitoringAlgorithmRegistry.descriptor(for: state.monitoringConfiguration.algorithmID).id,
-            algorithmVersion: monitoringAlgorithmRegistry.descriptor(for: state.monitoringConfiguration.algorithmID).version,
+            algorithmID: algorithmDescriptor.id,
+            algorithmVersion: algorithmDescriptor.version,
             promptProfileID: PromptCatalog.monitoringDescriptor(id: state.monitoringConfiguration.promptProfileID).id,
             experimentArm: state.monitoringConfiguration.experimentArm
         )
@@ -430,20 +466,26 @@ final class BrainService: NSObject {
         }
 
         let preEvaluationDistraction = currentDistractionMetadata(from: state)
-        let decisionResult = await monitoringAlgorithmRegistry.evaluate(
-            input: MonitoringDecisionInput(
-                now: now,
-                evaluationID: evaluationID,
-                snapshot: snapshot,
-                goals: state.goalsText,
-                recentActions: state.recentActions,
-                heuristics: heuristics,
-                memory: state.memory,
-                runtimeOverride: state.runtimePathOverride,
-                configuration: state.monitoringConfiguration,
-                algorithmState: state.algorithmState
+        let decisionResult: MonitoringDecisionResult
+        do {
+            decisionResult = try await monitoringAlgorithmRegistry.evaluate(
+                input: MonitoringDecisionInput(
+                    now: now,
+                    evaluationID: evaluationID,
+                    snapshot: snapshot,
+                    goals: state.goalsText,
+                    recentActions: state.recentActions,
+                    heuristics: heuristics,
+                    memory: state.memory,
+                    runtimeOverride: state.runtimePathOverride,
+                    configuration: state.monitoringConfiguration,
+                    algorithmState: state.algorithmState
+                )
             )
-        )
+        } catch {
+            handleMonitoringConfigurationError(error)
+            return
+        }
 
         await appendEvaluationArtifacts(
             decisionResult.evaluation,
@@ -1145,10 +1187,18 @@ final class BrainService: NSObject {
     }
 
     private func currentDistractionMetadata(from state: ACState) -> DistractionMetadata {
-        monitoringAlgorithmRegistry.distractionMetadata(
+        (try? monitoringAlgorithmRegistry.distractionMetadata(
             configuration: state.monitoringConfiguration,
             state: state.algorithmState
-        )
+        )) ?? DistractionMetadata()
+    }
+
+    private func handleMonitoringConfigurationError(_ error: Error) {
+        moodSink?(.setup)
+        statusSink?("Monitoring configuration is invalid. Reset it in the app settings.")
+        Task {
+            await ActivityLogService.shared.append(category: "monitoring-config", message: error.localizedDescription)
+        }
     }
 
     private func resetRuntimeContext() {

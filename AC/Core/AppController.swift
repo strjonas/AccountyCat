@@ -104,6 +104,8 @@ final class AppController: ObservableObject {
     }
 
     func refreshSystemState(persist: Bool = true) {
+        repairInvalidMonitoringConfigurationIfNeeded()
+
         let previousStatus = state.setupStatus
         state.permissions = PermissionService.currentSnapshot()
         setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
@@ -145,7 +147,11 @@ final class AppController: ObservableObject {
     }
 
     func updateMonitoringAlgorithm(_ algorithmID: String) {
-        let descriptor = monitoringAlgorithmRegistry.descriptor(for: algorithmID)
+        guard let descriptor = try? monitoringAlgorithmRegistry.descriptor(for: algorithmID) else {
+            setupErrorMessage = "Unknown monitoring algorithm: \(algorithmID)"
+            logActivity("monitoring", "Rejected unknown algorithm: \(algorithmID)")
+            return
+        }
         guard state.monitoringConfiguration.algorithmID != descriptor.id else { return }
         state.monitoringConfiguration.algorithmID = descriptor.id
         brainService?.handleMonitoringConfigurationChange()
@@ -459,7 +465,7 @@ final class AppController: ObservableObject {
         sendingChatMessage = true
         logActivity("chat", "User: \(trimmedDraft)")
 
-        if Self.looksLikeNegativeChatFeedback(trimmedDraft) {
+        if AppControllerChatSupport.looksLikeNegativeChatFeedback(trimmedDraft) {
             brainService?.recordUserReaction(
                 UserReactionRecord(
                     kind: .negativeChatFeedback,
@@ -520,42 +526,21 @@ final class AppController: ObservableObject {
     }
 
     private func makeChatContext() -> ChatContext {
-        let now = Date()
-        let frontmost = SnapshotService.frontmostContext()
-        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
-        let perAppDurations = dayUsage
-            .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
-            .sorted { $0.seconds > $1.seconds }
-
-        return ChatContext(
-            frontmostAppName: frontmost?.appName ?? "Unknown App",
-            frontmostWindowTitle: frontmost?.windowTitle,
-            idleSeconds: SnapshotService.idleSeconds(),
-            timestamp: now,
-            recentSwitches: Array(state.recentSwitches.prefix(6)),
-            perAppDurations: Array(perAppDurations.prefix(8))
-        )
+        AppControllerChatSupport.makeChatContext(from: state)
     }
 
     private func persistedChatHistory() -> [ChatMessage] {
-        chatMessages.filter { $0.role != .system }
+        AppControllerChatSupport.persistedChatHistory(from: chatMessages)
     }
 
     private static func makeChatMessages(from persistedHistory: [ChatMessage]) -> [ChatMessage] {
-        [ChatMessage(role: .system, text: "Ask me what I am watching, why I nudged, or what to improve.")]
-            + persistedHistory.filter { $0.role != .system }
+        AppControllerChatSupport.makeChatMessages(from: persistedHistory)
     }
 
     // MARK: - Memory helpers
 
     private func appendMemoryLine(_ line: String) {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if state.memory.isEmpty {
-            state.memory = trimmed
-        } else {
-            state.memory += "\n" + trimmed
-        }
+        state.memory = AppControllerChatSupport.appendingMemoryLine(line, to: state.memory)
         persistState()
     }
 
@@ -623,6 +608,18 @@ final class AppController: ObservableObject {
         refreshSystemState()
     }
 
+    private func repairInvalidMonitoringConfigurationIfNeeded() {
+        let algorithmID = state.monitoringConfiguration.algorithmID
+        guard !monitoringAlgorithmRegistry.containsAlgorithm(id: algorithmID) else {
+            return
+        }
+
+        state.monitoringConfiguration.algorithmID = MonitoringConfiguration.defaultAlgorithmID
+        state.algorithmState = AlgorithmStateEnvelope()
+        setupErrorMessage = "Saved monitoring algorithm '\(algorithmID)' was invalid. AC reset it to '\(MonitoringConfiguration.defaultAlgorithmID)'."
+        logActivity("monitoring", "Reset invalid monitoring algorithm: \(algorithmID)")
+    }
+
     private func handleSetupStatusTransition(from previousStatus: SetupStatus, to newStatus: SetupStatus) {
         defer { hasPerformedInitialRefresh = true }
 
@@ -664,24 +661,84 @@ final class AppController: ObservableObject {
     }
 
     private func updateActivityStatusLine() {
-        if installingDependencies {
-            activityStatusText = "Installing missing dependencies."
-        } else if installingRuntime {
-            activityStatusText = "Building and warming the local runtime."
-        } else if !state.permissions.isReady {
-            activityStatusText = "Waiting for Screen Recording and Accessibility permissions."
-        } else if !setupDiagnostics.missingTools.isEmpty {
-            activityStatusText = "Install the missing build tools before AC can finish setup."
-        } else if !setupDiagnostics.runtimePresent || !setupDiagnostics.modelCachePresent {
-            activityStatusText = "Install and warm up the local runtime before AC can watch or chat."
-        } else if state.isPaused {
-            activityStatusText = "Monitoring is paused."
-        } else {
-            activityStatusText = "Monitoring is active."
-        }
+        activityStatusText = AppControllerSetupSupport.activityStatusText(
+            state: state,
+            diagnostics: setupDiagnostics,
+            installingRuntime: installingRuntime,
+            installingDependencies: installingDependencies
+        )
     }
 
-    private static func looksLikeNegativeChatFeedback(_ text: String) -> Bool {
+    private func logActivity(_ category: String, _ message: String) {
+        Task {
+            await ActivityLogService.shared.append(category: category, message: message)
+        }
+    }
+}
+
+private enum AppControllerSetupSupport {
+    static func activityStatusText(
+        state: ACState,
+        diagnostics: RuntimeDiagnostics,
+        installingRuntime: Bool,
+        installingDependencies: Bool
+    ) -> String {
+        if installingDependencies {
+            return "Installing missing dependencies."
+        } else if installingRuntime {
+            return "Building and warming the local runtime."
+        } else if !state.permissions.isReady {
+            return "Waiting for Screen Recording and Accessibility permissions."
+        } else if !diagnostics.missingTools.isEmpty {
+            return "Install the missing build tools before AC can finish setup."
+        } else if !diagnostics.runtimePresent || !diagnostics.modelCachePresent {
+            return "Install and warm up the local runtime before AC can watch or chat."
+        } else if state.isPaused {
+            return "Monitoring is paused."
+        } else {
+            return "Monitoring is active."
+        }
+    }
+}
+
+private enum AppControllerChatSupport {
+    private static let systemMessage = "Ask me what I am watching, why I nudged, or what to improve."
+
+    static func makeChatMessages(from persistedHistory: [ChatMessage]) -> [ChatMessage] {
+        [ChatMessage(role: .system, text: systemMessage)]
+            + persistedHistory.filter { $0.role != .system }
+    }
+
+    static func persistedChatHistory(from messages: [ChatMessage]) -> [ChatMessage] {
+        messages.filter { $0.role != .system }
+    }
+
+    static func appendingMemoryLine(_ line: String, to memory: String) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return memory }
+        guard !memory.isEmpty else { return trimmed }
+        return memory + "\n" + trimmed
+    }
+
+    static func makeChatContext(from state: ACState) -> ChatContext {
+        let now = Date()
+        let frontmost = SnapshotService.frontmostContext()
+        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
+        let perAppDurations = dayUsage
+            .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
+            .sorted { $0.seconds > $1.seconds }
+
+        return ChatContext(
+            frontmostAppName: frontmost?.appName ?? "Unknown App",
+            frontmostWindowTitle: frontmost?.windowTitle,
+            idleSeconds: SnapshotService.idleSeconds(),
+            timestamp: now,
+            recentSwitches: Array(state.recentSwitches.prefix(6)),
+            perAppDurations: Array(perAppDurations.prefix(8))
+        )
+    }
+
+    static func looksLikeNegativeChatFeedback(_ text: String) -> Bool {
         let lowered = text.cleanedSingleLine.lowercased()
         let markers = [
             "annoying",
@@ -693,11 +750,5 @@ final class AppController: ObservableObject {
             "wrong",
         ]
         return markers.contains { lowered.contains($0) }
-    }
-
-    private func logActivity(_ category: String, _ message: String) {
-        Task {
-            await ActivityLogService.shared.append(category: category, message: message)
-        }
     }
 }
