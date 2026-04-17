@@ -305,6 +305,41 @@ enum PromptCatalog {
         load(asset: memoryCompressionSystemPrompt)
     }
 
+    // MARK: - Nudge copywriter prompts (per tone — live only on disk)
+
+    /// Asset for `<Nudge/<tone>_system.md>`. Loaded straight from the bundle. Tone is
+    /// encoded into the filename (e.g. "supportive_system.md", "challenging_system.md")
+    /// because the build system flattens bundled resources. No inline fallback — if
+    /// the .md file is missing the loaded string will be empty and the copywriter will
+    /// return nil, letting the bandit fall back to the VLM's `candidateNudge`.
+    nonisolated static func loadNudgeCopywriterSystemPrompt(tone: String) -> String {
+        let asset = PromptAsset(
+            id: "nudge.\(tone).system",
+            version: "nudge_copywriter_v1",
+            resourceName: "\(tone)_system",
+            fileExtension: "md",
+            subdirectory: "Prompts/Nudge",
+            fallbackContents: ""
+        )
+        return load(asset: asset)
+    }
+
+    /// User-turn template for the nudge copywriter — injects `{{PAYLOAD_JSON}}`.
+    nonisolated static func loadNudgeCopywriterUserPrompt(
+        tone: String,
+        replacingPayloadWith payloadJSON: String
+    ) -> String {
+        let asset = PromptAsset(
+            id: "nudge.\(tone).user",
+            version: "nudge_copywriter_v1",
+            resourceName: "\(tone)_user",
+            fileExtension: "md",
+            subdirectory: "Prompts/Nudge",
+            fallbackContents: ""
+        )
+        return load(asset: asset).replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
+    }
+
     nonisolated private static func load(asset: PromptAsset) -> String {
         if let url = Bundle.main.url(
             forResource: asset.resourceName,

@@ -7,66 +7,85 @@ import Foundation
 
 // MARK: - BanditMonitoringAlgorithm
 
-/// Two-brain monitoring algorithm.
+/// Two-brain monitoring algorithm — independent of `LLMFocusAlgorithm`.
 ///
 /// **Brain 1** (VLM): `ScreenStateExtractorService` takes a screenshot and returns a
 /// `BanditScreenState` — a structured observation including `productivityScore`, `onTask`,
-/// `appCategory`, and a pre-written `candidateNudge`.
+/// `appCategory`, and an optional `candidateNudge`.
 ///
-/// **Brain 2** (LinUCB): `ContextualBanditEngine` decides *whether* to show the candidate nudge
-/// based on a 16-dimensional context vector and accumulated per-user reward history.
+/// **Brain 2** (multi-arm LinUCB): `ContextualBanditEngine` picks the best arm from
+/// `.none`, `.supportiveNudge`, `.challengingNudge`, or `.overlay` given a 16-dimensional
+/// feature vector.
 ///
-/// The bandit updates its weights when `observeReward` is called after the user reacts to a nudge
-/// (thumbs up/down, ignored, switched to productive app, etc.).
+/// When the bandit picks a nudge arm, `NudgeCopywriterService` (a text-only LLM call)
+/// crafts the actual nudge text in the arm's tone. The VLM's `candidateNudge` is used
+/// only as a safety net if the copywriter fails.
 ///
-/// Falls back to the LLM-only path when Brain 1 extraction fails.
+/// Anti-spam is handled by `BanditCooldown` — intentionally minimal, so the bandit has
+/// enough signal to learn. Heavy filtering belongs in the LLM algorithm.
 ///
-/// Algorithm ID: `"bandit_focus_v1"`
+/// This algorithm never delegates to `MonitoringLLMClient`. If Brain 1 extraction fails,
+/// the tick yields no action and the bandit waits for the next stable window.
+///
+/// Algorithm ID: `"bandit_focus_v1"`.
 final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
         id: MonitoringConfiguration.banditAlgorithmID,
-        version: "1.0",
+        version: "2.0",
         displayName: "Bandit Focus",
-        summary: "LinUCB contextual bandit on VLM screen-state extraction."
+        summary: "Multi-arm LinUCB over VLM screen-state, with LLM-authored nudge copy."
     )
 
     private let screenStateExtractor: any ScreenStateExtracting
-    private let monitoringLLMClient: any MonitoringLLMEvaluating
+    private let nudgeCopywriter: any NudgeCopywriting
+    private let cooldown: BanditCooldown
 
     init(
-        monitoringLLMClient: any MonitoringLLMEvaluating,
-        screenStateExtractor: any ScreenStateExtracting
+        screenStateExtractor: any ScreenStateExtracting,
+        nudgeCopywriter: any NudgeCopywriting,
+        cooldown: BanditCooldown = BanditCooldown()
     ) {
-        self.monitoringLLMClient = monitoringLLMClient
         self.screenStateExtractor = screenStateExtractor
+        self.nudgeCopywriter = nudgeCopywriter
+        self.cooldown = cooldown
     }
 
-    // MARK: - MonitoringAlgorithm — state lifecycle
+    // MARK: - State lifecycle
 
     func resetState(_ state: inout AlgorithmStateEnvelope) {
         state.banditFocus = BanditFocusAlgorithmState()
     }
 
     func resetTransientState(_ state: inout AlgorithmStateEnvelope) {
-        state.banditFocus.distraction = DistractionMetadata()
+        state.banditFocus.lastInterventionByContext = [:]
+        state.banditFocus.pendingNudgeContext = nil
+        state.banditFocus.pendingNudgeEvaluationID = nil
+        state.banditFocus.pendingNudgeIssuedAt = nil
+        state.banditFocus.pendingArm = nil
     }
 
+    /// Returns true if the frontmost context changed — caller uses this to record a
+    /// switch event. The bandit tracks context transitions through the feature vector
+    /// (time-in-app), so there's no ladder state to reset.
     func noteContext(
         _ contextKey: String?,
         at now: Date,
         state: inout AlgorithmStateEnvelope
     ) -> Bool {
-        var ladder = DistractionLadder(metadata: state.banditFocus.distraction)
-        let didChange = ladder.noteContext(contextKey, at: now)
-        state.banditFocus.distraction = ladder.metadata
-        return didChange
+        let current = state.banditFocus.currentContextKey
+        guard current != contextKey else { return false }
+        state.banditFocus.currentContextKey = contextKey
+        state.banditFocus.currentContextEnteredAt = contextKey == nil ? nil : now
+        return true
     }
 
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata {
-        state.banditFocus.distraction
+        // The bandit does not maintain DistractionLadder state. Telemetry gets an empty
+        // record — downstream consumers can detect "bandit mode" by the algorithmID.
+        DistractionMetadata()
     }
 
-    // MARK: - MonitoringAlgorithm — evaluation plan
+    // MARK: - Evaluation plan
 
     func evaluationPlan(
         state: inout AlgorithmStateEnvelope,
@@ -75,37 +94,34 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
         configuration: MonitoringConfiguration,
         now: Date
     ) -> MonitoringEvaluationPlan {
-        let visualContextKey = context.bundleIdentifier ?? context.appName.lowercased()
-        let lastVisualCheckAt =
-            state.banditFocus.lastVisualCheckByContext[visualContextKey] ?? .distantPast
-        let periodicVisualCheckDue =
-            heuristics.periodicVisualReason != nil
-            && now.timeIntervalSince(lastVisualCheckAt) >= MonitoringHeuristics.periodicVisualCheckInterval
+        let contextKey = context.contextKey
+        let enteredAt = state.banditFocus.currentContextEnteredAt
+        let lastInterventionAt = state.banditFocus.lastInterventionByContext[contextKey]
 
-        let ladder = DistractionLadder(metadata: state.banditFocus.distraction)
-        guard ladder.shouldEvaluate(at: now) || periodicVisualCheckDue else {
-            return .none
-        }
-
-        if periodicVisualCheckDue {
-            state.banditFocus.lastVisualCheckByContext[visualContextKey] = now
-        }
+        let mayEvaluate = cooldown.shouldEvaluate(
+            contextKey: contextKey,
+            enteredContextAt: enteredAt,
+            lastInterventionInContextAt: lastInterventionAt,
+            now: now
+        )
+        guard mayEvaluate else { return .none }
 
         return MonitoringEvaluationPlan(
             shouldEvaluate: true,
-            reason: periodicVisualCheckDue ? "periodic_visual_check" : "stable_context",
-            visualCheckReason: periodicVisualCheckDue ? heuristics.periodicVisualReason : nil,
+            reason: "bandit_stable_context",
+            visualCheckReason: heuristics.periodicVisualReason,
             promptMode: "extraction",
             promptVersion: "screen_state_v1"
         )
     }
 
-    // MARK: - MonitoringAlgorithm — evaluate
+    // MARK: - Evaluate
 
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
+        let contextKey = input.snapshot.bundleIdentifier.map { $0 + "|" + (input.snapshot.windowTitle?.normalizedForContextKey ?? "") } ?? input.snapshot.appName
 
-        // Brain 1: extract structured screen state
+        // Brain 1: extract structured screen state.
         let recentNudgeMessages = input.recentActions
             .compactMap { $0.kind == .nudge ? $0.message : nil }
             .prefix(3)
@@ -118,19 +134,19 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             runtimePath: runtimePath
         )
 
-        // Fallback: if Brain 1 fails, delegate to the LLM-only path
         guard let screenState else {
-            return await fallbackToLLMPath(input: input)
+            return makeNoActionResult(
+                input: input,
+                reason: "extraction_failed",
+                updatedState: input.algorithmState
+            )
         }
 
-        // Build feature vector from observation
-        let timeInAppSeconds =
-            input.snapshot.perAppDurations
+        // Feature vector.
+        let timeInAppSeconds = input.snapshot.perAppDurations
             .first(where: { $0.appName == input.snapshot.appName })?.seconds ?? 0
-
         let timeSinceLastNudge = input.algorithmState.banditFocus.lastNudgeAt
             .map { input.now.timeIntervalSince($0) }
-
         let context = BanditFeatureVector.build(
             screenState: screenState,
             now: input.now,
@@ -139,28 +155,76 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             lastNudgeWasPositive: input.algorithmState.banditFocus.lastNudgeWasPositive
         )
 
-        // Brain 2: bandit decision
-        var updatedState = input.algorithmState
-        var engine = updatedState.banditFocus.engine
-        let (banditSaysNudge, _) = engine.shouldNudge(context: context)
-        updatedState.banditFocus.engine = engine
+        // Brain 2: pick an arm.
+        let engine = input.algorithmState.banditFocus.engine
+        let selection = engine.selectArm(context: context)
 
-        // Translate extraction result into a synthetic LLMDecision for CompanionPolicy
+        var updatedState = input.algorithmState
+
+        // Cooldown gate — even if the bandit picks an intervention arm, skip it while
+        // the per-context cooldown is active.
+        let lastInterventionAt = updatedState.banditFocus.lastInterventionByContext[contextKey]
+        let mayIntervene = cooldown.mayIntervene(
+            contextKey: contextKey,
+            lastInterventionInContextAt: lastInterventionAt,
+            now: input.now
+        )
+        let effectiveArm: BanditArm = mayIntervene ? selection.arm : .none
+        let blockReason: String? = {
+            if !mayIntervene && selection.arm != .none { return "bandit_cooldown" }
+            return nil
+        }()
+
+        // Translate arm → CompanionAction (potentially using the copywriter).
+        let action: CompanionAction
+        switch effectiveArm {
+        case .none:
+            action = .none
+
+        case .supportiveNudge, .challengingNudge:
+            let crafted = await nudgeCopywriter.craftNudge(
+                arm: effectiveArm,
+                request: NudgeCopywriteRequest(
+                    goals: input.goals,
+                    memory: input.memory,
+                    appName: input.snapshot.appName,
+                    windowTitle: input.snapshot.windowTitle,
+                    contentSummary: screenState.contentSummary,
+                    recentNudgeMessages: recentNudgeMessages,
+                    candidateNudge: screenState.candidateNudge,
+                    timestamp: input.now
+                ),
+                runtimePath: runtimePath
+            )
+            let text = crafted?.cleanedSingleLine
+                ?? screenState.candidateNudge?.cleanedSingleLine
+                ?? ""
+            if text.isEmpty {
+                action = .none
+            } else {
+                action = .showNudge(text)
+            }
+
+        case .overlay:
+            action = .showOverlay
+        }
+
+        // Build the synthetic decision that appears in telemetry (no LLM decision was made).
         let assessment: ModelAssessment = screenState.onTask ? .focused : .distracted
         let syntheticDecision = LLMDecision(
             assessment: assessment,
-            suggestedAction: banditSaysNudge && !screenState.onTask ? .nudge : .none,
+            suggestedAction: suggestedAction(for: action),
             confidence: screenState.confidence,
-            reasonTags: [screenState.appCategory.rawValue],
-            nudge: screenState.candidateNudge,
+            reasonTags: [
+                screenState.appCategory.rawValue,
+                "arm:\(effectiveArm.rawValue)",
+            ],
+            nudge: {
+                if case let .showNudge(text) = action { return text }
+                return nil
+            }(),
             abstainReason: nil
         )
-
-        // DistractionLadder — spam guard
-        let distractionBefore = updatedState.banditFocus.distraction
-        var ladder = DistractionLadder(metadata: distractionBefore)
-        let ladderSignal = ladder.record(assessment: assessment, at: input.now)
-        updatedState.banditFocus.distraction = ladder.metadata
 
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
@@ -169,24 +233,16 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             experimentArm: input.configuration.experimentArm
         )
 
-        let policy = CompanionPolicy.decide(
-            evaluationID: input.evaluationID,
-            modelDecision: syntheticDecision,
-            ladderSignal: ladderSignal,
-            distractionBefore: distractionBefore,
-            distractionAfter: ladder.metadata,
-            strategy: execution.telemetryRecord
-        )
-
-        // If a nudge fired, save pending context for deferred reward
-        if case .showNudge = policy.action {
+        // If we're firing an intervention, record the cooldown timestamp and pending arm.
+        if action != .none {
             updatedState.banditFocus.pendingNudgeContext = context
             updatedState.banditFocus.pendingNudgeEvaluationID = input.evaluationID
             updatedState.banditFocus.pendingNudgeIssuedAt = input.now
+            updatedState.banditFocus.pendingArm = effectiveArm
             updatedState.banditFocus.lastNudgeAt = input.now
+            updatedState.banditFocus.lastInterventionByContext[contextKey] = input.now
         }
 
-        // Synthetic evaluation result (no LLM was called, no attempts)
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimePath,
             modelIdentifier: LocalModelRuntime.defaultModelIdentifier,
@@ -197,75 +253,98 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
             failureMessage: nil
         )
 
+        let policyRecord = PolicyDecisionRecord(
+            evaluationID: input.evaluationID,
+            model: syntheticDecision.parsedRecord,
+            strategy: execution.telemetryRecord,
+            ladderSignal: "bandit:\(effectiveArm.rawValue)",
+            allowIntervention: action != .none,
+            allowEscalation: action == .showOverlay,
+            blockReason: blockReason,
+            finalAction: CompanionPolicy.telemetryActionRecord(for: action),
+            distractionBefore: CompanionPolicy.telemetryState(from: DistractionMetadata()),
+            distractionAfter: CompanionPolicy.telemetryState(from: DistractionMetadata())
+        )
+
         return MonitoringDecisionResult(
             execution: execution,
             evaluation: evaluation,
             decision: syntheticDecision,
-            policy: policy,
+            policy: CompanionPolicyResult(action: action, record: policyRecord),
             updatedAlgorithmState: updatedState
         )
     }
 
-    // MARK: - MonitoringAlgorithm — reward
+    // MARK: - Reward
 
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope) {
         guard
             let pendingContext = state.banditFocus.pendingNudgeContext,
             let pendingID = state.banditFocus.pendingNudgeEvaluationID,
+            let arm = state.banditFocus.pendingArm,
             pendingID == signal.evaluationID
         else { return }
 
-        state.banditFocus.engine.update(context: pendingContext, reward: signal.value)
+        state.banditFocus.engine.update(arm: arm, context: pendingContext, reward: signal.value)
         state.banditFocus.lastNudgeWasPositive = signal.value > 0
 
-        // Clear pending state
         state.banditFocus.pendingNudgeContext = nil
         state.banditFocus.pendingNudgeEvaluationID = nil
         state.banditFocus.pendingNudgeIssuedAt = nil
+        state.banditFocus.pendingArm = nil
     }
 
-    // MARK: - Fallback
+    // MARK: - Helpers
 
-    private func fallbackToLLMPath(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
-        let evaluation = await monitoringLLMClient.evaluate(
-            snapshot: input.snapshot,
-            goals: input.goals,
-            recentActions: input.recentActions,
-            distraction: input.algorithmState.banditFocus.distraction,
-            heuristics: input.heuristics,
-            memory: input.memory,
-            promptProfileID: MonitoringConfiguration.defaultPromptProfileID,
-            runtimeOverride: input.runtimeOverride
-        )
+    private func suggestedAction(for action: CompanionAction) -> ModelSuggestedAction {
+        switch action {
+        case .none:         return .none
+        case .showNudge:    return .nudge
+        case .showOverlay:  return .overlay
+        }
+    }
 
-        let decision = evaluation.finalDecision ?? .unclear
-        var updatedState = input.algorithmState
-        var ladder = DistractionLadder(metadata: updatedState.banditFocus.distraction)
-        let ladderSignal = ladder.record(assessment: decision.assessment, at: input.now)
-        updatedState.banditFocus.distraction = ladder.metadata
-
+    private func makeNoActionResult(
+        input: MonitoringDecisionInput,
+        reason: String,
+        updatedState: AlgorithmStateEnvelope
+    ) -> MonitoringDecisionResult {
+        let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
+        let decision = LLMDecision.unclear
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
-            promptProfileID: evaluation.promptProfileID,
+            promptProfileID: "screen_state_v1",
             experimentArm: input.configuration.experimentArm
         )
-
-        let policy = CompanionPolicy.decide(
-            evaluationID: input.evaluationID,
-            modelDecision: decision,
-            ladderSignal: ladderSignal,
-            distractionBefore: input.algorithmState.banditFocus.distraction,
-            distractionAfter: ladder.metadata,
-            strategy: execution.telemetryRecord
+        let evaluation = LLMEvaluationResult(
+            runtimePath: runtimePath,
+            modelIdentifier: LocalModelRuntime.defaultModelIdentifier,
+            promptProfileID: "screen_state_v1",
+            promptProfileVersion: "screen_state_v1",
+            attempts: [],
+            finalDecision: decision,
+            failureMessage: reason
         )
-
+        let policyRecord = PolicyDecisionRecord(
+            evaluationID: input.evaluationID,
+            model: decision.parsedRecord,
+            strategy: execution.telemetryRecord,
+            ladderSignal: "bandit:none",
+            allowIntervention: false,
+            allowEscalation: false,
+            blockReason: reason,
+            finalAction: CompanionPolicy.telemetryActionRecord(for: .none),
+            distractionBefore: CompanionPolicy.telemetryState(from: DistractionMetadata()),
+            distractionAfter: CompanionPolicy.telemetryState(from: DistractionMetadata())
+        )
         return MonitoringDecisionResult(
             execution: execution,
             evaluation: evaluation,
             decision: decision,
-            policy: policy,
+            policy: CompanionPolicyResult(action: .none, record: policyRecord),
             updatedAlgorithmState: updatedState
         )
     }
 }
+

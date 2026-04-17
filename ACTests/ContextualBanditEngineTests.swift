@@ -36,78 +36,96 @@ struct ContextualBanditEngineTests {
 
     // MARK: - Tests
 
-    @Test func freshEnginePrefersExploration() {
-        // A fresh engine has A=I, b=0.
+    @Test func freshEngineExploresIntervention() {
+        // A fresh engine has A=I, b=0 for every arm.
         // theta = A⁻¹b = 0,  meanReward = 0
         // variance = xᵀ A⁻¹ x = xᵀ I x = ||x||² > 0
-        // UCB = 0 + alpha * sqrt(||x||²) > 0  ⟹  nudge
-        var engine = ContextualBanditEngine()
+        // UCB = 0 + alpha * sqrt(||x||²) > 0  ⟹  pick the best-scoring intervention arm.
+        let engine = ContextualBanditEngine()
         let x = makeVector()
-        let (decision, ucb) = engine.shouldNudge(context: x)
-        #expect(decision == true)
+        let (arm, ucb, scores) = engine.selectArm(context: x)
+        #expect(arm != .none)
         #expect(ucb > 0)
+        #expect(scores.count == BanditArm.learnable.count)
     }
 
-    @Test func positiveRewardRaisesUCBForSimilarContext() {
-        var engineBefore = ContextualBanditEngine()
+    @Test func positiveRewardRaisesUCBForSameArmAndContext() {
+        let engineBefore = ContextualBanditEngine()
         var engineAfter = ContextualBanditEngine()
         let x = makeVector()
 
-        let (_, ucbBefore) = engineBefore.shouldNudge(context: x)
-        engineAfter.update(context: x, reward: 1.0)
-        let (_, ucbAfter) = engineAfter.shouldNudge(context: x)
+        let ucbBefore = engineBefore
+            .selectArm(context: x).scores
+            .first(where: { $0.arm == .supportiveNudge })?.ucb ?? 0
+        engineAfter.update(arm: .supportiveNudge, context: x, reward: 1.0)
+        let ucbAfter = engineAfter
+            .selectArm(context: x).scores
+            .first(where: { $0.arm == .supportiveNudge })?.ucb ?? 0
 
         #expect(ucbAfter > ucbBefore)
     }
 
-    @Test func strongNegativeRewardSuppressesNudge() {
-        // Fresh engine nudges (exploration-dominated); after repeatedly strong negative feedback it stops.
+    @Test func strongNegativeRewardSuppressesAllArms() {
+        // Fresh engine fires (exploration-dominated); after repeatedly strong negative feedback
+        // on every arm, every UCB drops below 0 and `.none` wins.
         var engine = ContextualBanditEngine()
         let x = makeVector()
 
-        #expect(engine.shouldNudge(context: x).decision == true)
+        #expect(engine.selectArm(context: x).arm != .none)
 
-        // Five updates with reward −5 make the mean so negative that UCB < 0
+        // Five updates with reward −5 on each learnable arm make every mean so negative
+        // that every UCB < 0.
         for _ in 0..<5 {
-            engine.update(context: x, reward: -5.0)
+            for arm in BanditArm.learnable {
+                engine.update(arm: arm, context: x, reward: -5.0)
+            }
         }
 
-        #expect(engine.shouldNudge(context: x).decision == false)
+        #expect(engine.selectArm(context: x).arm == .none)
     }
 
     @Test func orthogonalContextsDoNotCrossContaminateMeanReward() {
-        // After updating with x1, the mean reward for orthogonal x2 should remain 0.
-        // (The exploration term changes because A grows, but theta·x2 = (A⁻¹b)·x2 stays 0
-        //  when x1·x2 = 0 — provable via Woodbury identity.)
+        // After updating a single arm with x1, the mean reward for orthogonal x2 should stay 0
+        // on that arm.  (The exploration term changes because A grows, but theta·x2 = (A⁻¹b)·x2
+        // stays 0 when x1·x2 = 0 — provable via Woodbury identity.)
         var engine = ContextualBanditEngine()
         let x1 = makeVector(seed: 1.0)
         let x2 = makeOrthogonalVector()
 
-        engine.update(context: x1, reward: 1.0)
+        engine.update(arm: .supportiveNudge, context: x1, reward: 1.0)
 
-        // Recompute UCB parts manually: we just check that nudge decision for x2 is still driven
-        // by exploration (decision == true, UCB > 0), not by contaminated mean reward.
-        let (decision, ucb) = engine.shouldNudge(context: x2)
-        // x2 has non-zero norm so exploration term keeps UCB > 0
-        #expect(decision == true)
+        // Any selected arm on x2 should still be driven by exploration (UCB > 0).
+        let (arm, ucb, _) = engine.selectArm(context: x2)
+        // x2 has non-zero norm so exploration term keeps UCB > 0.
+        #expect(arm != .none)
         #expect(ucb > 0)
     }
 
     @Test func stateRoundtripsViaJSON() throws {
         var engine = ContextualBanditEngine()
         let x = makeVector()
-        engine.update(context: x, reward: 0.7)
-        engine.update(context: makeVector(seed: 2.0), reward: -0.3)
+        engine.update(arm: .supportiveNudge, context: x, reward: 0.7)
+        engine.update(arm: .challengingNudge, context: makeVector(seed: 2.0), reward: -0.3)
+        engine.update(arm: .overlay, context: makeVector(seed: 1.5), reward: 0.1)
 
-        let (decisionBefore, ucbBefore) = engine.shouldNudge(context: x)
+        let (armBefore, ucbBefore, scoresBefore) = engine.selectArm(context: x)
 
         let data = try JSONEncoder().encode(engine)
-        var decoded = try JSONDecoder().decode(ContextualBanditEngine.self, from: data)
+        let decoded = try JSONDecoder().decode(ContextualBanditEngine.self, from: data)
 
-        let (decisionAfter, ucbAfter) = decoded.shouldNudge(context: x)
+        let (armAfter, ucbAfter, scoresAfter) = decoded.selectArm(context: x)
 
-        #expect(decisionBefore == decisionAfter)
+        #expect(armBefore == armAfter)
         #expect(abs(ucbBefore - ucbAfter) < 1e-10)
+        #expect(scoresBefore == scoresAfter)
+    }
+
+    @Test func noneIsNotALearnableArm() {
+        // `.none` is the implicit baseline; updating it should be silently ignored.
+        var engine = ContextualBanditEngine()
+        let before = engine
+        engine.update(arm: .none, context: makeVector(), reward: 10.0)
+        #expect(engine == before)
     }
 
     @Test func featureDimensionConsistency() {

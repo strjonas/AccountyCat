@@ -17,7 +17,8 @@ struct BrainServiceConfigurationTests {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
-            screenStateExtractor: ScreenStateExtractorService(runtime: runtime)
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime)
         )
         let brainService = BrainService(
             monitoringAlgorithmRegistry: registry,
@@ -53,7 +54,8 @@ struct BrainServiceConfigurationTests {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
-            screenStateExtractor: ScreenStateExtractorService(runtime: runtime)
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime)
         )
 
         #expect(throws: MonitoringAlgorithmResolutionError.self) {
