@@ -65,7 +65,8 @@ final class AppController: ObservableObject {
         self.memoryService = memoryService
         self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: monitoringLLMClient,
-            screenStateExtractor: ScreenStateExtractorService(runtime: runtime)
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime)
         )
         let loadedState = storageService.loadState()
         self.state = loadedState

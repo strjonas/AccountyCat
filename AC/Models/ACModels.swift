@@ -268,13 +268,16 @@ struct ACState: Codable, Sendable {
         case chatHistory
     }
 
+    /// Telemetry-friendly accessor for the active algorithm's distraction metadata.
+    /// Only the LLM algorithm maintains a DistractionLadder; the bandit returns an
+    /// empty record (its anti-spam is timestamp-based, not ladder-based).
     var distraction: DistractionMetadata {
         get {
             switch monitoringConfiguration.algorithmID {
             case MonitoringConfiguration.defaultAlgorithmID:
                 return algorithmState.llmFocus.distraction
             case MonitoringConfiguration.banditAlgorithmID:
-                return algorithmState.banditFocus.distraction
+                return DistractionMetadata()
             default:
                 return algorithmState.llmFocus.distraction
             }
@@ -284,7 +287,7 @@ struct ACState: Codable, Sendable {
             case MonitoringConfiguration.defaultAlgorithmID:
                 algorithmState.llmFocus.distraction = newValue
             case MonitoringConfiguration.banditAlgorithmID:
-                algorithmState.banditFocus.distraction = newValue
+                break
             default:
                 algorithmState.llmFocus.distraction = newValue
             }

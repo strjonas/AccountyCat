@@ -98,15 +98,16 @@ final class MonitoringAlgorithmRegistry {
     private let banditFocusAlgorithm: BanditMonitoringAlgorithm
 
     init(
-        monitoringLLMClient: MonitoringLLMClient,
-        screenStateExtractor: some ScreenStateExtracting
+        monitoringLLMClient: any MonitoringLLMEvaluating,
+        screenStateExtractor: some ScreenStateExtracting,
+        nudgeCopywriter: any NudgeCopywriting
     ) {
         self.llmFocusAlgorithm = LLMFocusAlgorithm(
             monitoringLLMClient: monitoringLLMClient
         )
         self.banditFocusAlgorithm = BanditMonitoringAlgorithm(
-            monitoringLLMClient: monitoringLLMClient,
-            screenStateExtractor: screenStateExtractor
+            screenStateExtractor: screenStateExtractor,
+            nudgeCopywriter: nudgeCopywriter
         )
     }
 
