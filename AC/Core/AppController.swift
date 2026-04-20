@@ -510,6 +510,32 @@ final class AppController: ObservableObject {
         }
     }
 
+    // MARK: - Today stats
+
+    struct TodayStats {
+        let totalTrackedSeconds: TimeInterval
+        let topAppName: String?
+        let topAppSeconds: TimeInterval
+        let nudgeCount: Int
+        let backToWorkCount: Int
+    }
+
+    var todayStats: TodayStats {
+        let now = Date()
+        let cal = Calendar.current
+        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
+        let total = dayUsage.values.reduce(0, +)
+        let top = dayUsage.max(by: { $0.value < $1.value })
+        let todayActions = state.recentActions.filter { cal.isDate($0.timestamp, inSameDayAs: now) }
+        return TodayStats(
+            totalTrackedSeconds: total,
+            topAppName: top?.key,
+            topAppSeconds: top?.value ?? 0,
+            nudgeCount: todayActions.filter { $0.kind == .nudge }.count,
+            backToWorkCount: todayActions.filter { $0.kind == .backToWork }.count
+        )
+    }
+
     var availableMonitoringAlgorithms: [MonitoringAlgorithmDescriptor] {
         monitoringAlgorithmRegistry.availableAlgorithms
     }

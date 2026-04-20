@@ -2,9 +2,10 @@
 //  ContentView.swift
 //  AC
 //
-//  Compact popover content — replaces the old 900pt settings window.
-//  Two tabs: Home (status + setup + chat) and Settings (prefs + debug + quit).
-//  A Logs tab appears automatically when debug mode is on.
+//  Compact popover content. Two tabs in release builds (Home + Settings); a
+//  third Logs tab only shows in DEBUG. Home surfaces at-a-glance stats, the
+//  primary pause + sound controls, and chat. Settings keeps Goals + Quit
+//  visible and tucks everything else under a collapsible Advanced section.
 //
 
 import AppKit
@@ -32,6 +33,7 @@ struct ContentView: View {
     @State private var selectedTab: ACPopoverTab = .home
     @State private var pendingSettingsAction: SettingsAlertAction?
     @State private var settingsSuccessMessage: String?
+    @State private var advancedExpanded = false
     @AppStorage("acSoundEnabled") private var soundEnabled: Bool = false
 
     var body: some View {
@@ -46,9 +48,7 @@ struct ContentView: View {
         .alert("Are you sure?", isPresented: Binding(
             get: { pendingSettingsAction != nil },
             set: { isPresented in
-                if !isPresented {
-                    pendingSettingsAction = nil
-                }
+                if !isPresented { pendingSettingsAction = nil }
             }
         )) {
             if pendingSettingsAction == .resetAlgorithm {
@@ -58,10 +58,7 @@ struct ContentView: View {
                     pendingSettingsAction = nil
                 }
             }
-
-            Button("Cancel", role: .cancel) {
-                pendingSettingsAction = nil
-            }
+            Button("Cancel", role: .cancel) { pendingSettingsAction = nil }
         } message: {
             switch pendingSettingsAction {
             case .resetAlgorithm:
@@ -73,9 +70,7 @@ struct ContentView: View {
         .alert("Done", isPresented: Binding(
             get: { settingsSuccessMessage != nil },
             set: { isPresented in
-                if !isPresented {
-                    settingsSuccessMessage = nil
-                }
+                if !isPresented { settingsSuccessMessage = nil }
             }
         )) {
             Button("OK", role: .cancel) { settingsSuccessMessage = nil }
@@ -88,7 +83,6 @@ struct ContentView: View {
 
     private var popoverHeader: some View {
         HStack(spacing: 10) {
-            // Branding
             HStack(spacing: 7) {
                 Image(systemName: "pawprint.fill")
                     .font(.system(size: 13, weight: .semibold))
@@ -100,17 +94,15 @@ struct ContentView: View {
 
             Spacer()
 
-            // Status dot
             StatusDot(status: controller.state.setupStatus,
                       isPaused: controller.state.isPaused)
 
             Spacer()
 
-            // Tab switcher
             HStack(spacing: 2) {
                 tabButton(.home)
                 tabButton(.settings)
-                if controller.state.debugMode {
+                if ACBuild.isDebug {
                     tabButton(.logs)
                 }
             }
@@ -159,38 +151,43 @@ struct ContentView: View {
 
     private var homeTab: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Status summary line
             Text(controller.activityStatusText)
                 .font(.ac(12))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Pause toggle (always visible, prominent)
-            Toggle(isOn: Binding(
-                get: { controller.state.isPaused },
-                set: { _ in controller.togglePause() }
-            )) {
-                HStack(spacing: 8) {
-                    Image(systemName: controller.state.isPaused
-                          ? "play.circle.fill"
-                          : "pause.circle.fill")
-                        .foregroundStyle(Color.acCaramel)
-                    Text(controller.state.isPaused ? "Resume monitoring" : "Pause monitoring")
-                        .font(.ac(14))
-                }
-            }
-            .toggleStyle(.switch)
+            // Primary controls: pause + sound, side by side
+            HStack(spacing: 10) {
+                ToggleTile(
+                    icon: controller.state.isPaused ? "play.circle.fill" : "pause.circle.fill",
+                    title: controller.state.isPaused ? "Paused" : "Watching",
+                    subtitle: controller.state.isPaused ? "Tap to resume" : "Tap to pause",
+                    isOn: Binding(
+                        get: { !controller.state.isPaused },
+                        set: { _ in controller.togglePause() }
+                    ),
+                    tint: .acCaramel
+                )
 
-            // Setup card (shown when not fully ready OR dismissed but setup still pending)
+                ToggleTile(
+                    icon: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                    title: "Sound",
+                    subtitle: soundEnabled ? "On for nudges" : "Muted",
+                    isOn: $soundEnabled,
+                    tint: .acCaramel
+                )
+            }
+
             if controller.state.setupStatus != .ready {
                 OnboardingDialogView()
                     .environmentObject(controller)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else {
+                StatsSection(stats: controller.todayStats)
             }
 
             Divider()
 
-            // Chat
             ChatView()
                 .environmentObject(controller)
         }
@@ -203,19 +200,24 @@ struct ContentView: View {
     private var settingsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
 
-            // ── Goals ──
+            // ── Goals (always visible) ──
             VStack(alignment: .leading, spacing: 8) {
                 Label("Your goals", systemImage: "target")
                     .font(.ac(14, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
+
+                Text("AC nudges you back to these when you drift. Keep it short and specific.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
 
                 TextEditor(text: Binding(
                     get: { controller.state.goalsText },
                     set: { controller.updateGoals($0) }
                 ))
                 .font(.ac(13))
-                .frame(minHeight: 90, maxHeight: 140)
+                .frame(minHeight: 96, maxHeight: 140)
                 .padding(8)
+                .scrollContentBackground(.hidden)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color(nsColor: .textBackgroundColor))
@@ -226,26 +228,47 @@ struct ContentView: View {
                 )
             }
 
+            // ── Advanced (collapsible) ──
+            AdvancedDisclosure(expanded: $advancedExpanded) {
+                advancedContent
+            }
+
             Divider()
 
-            // ── Rescue app ──
-            VStack(alignment: .leading, spacing: 10) {
+            // ── Quit (always visible) ──
+            HStack {
+                Spacer()
+                Button("Quit AccountyCat") { NSApp.terminate(nil) }
+                    .font(.ac(13))
+                    .foregroundStyle(Color.red.opacity(0.80))
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(20)
+    }
+
+    @ViewBuilder
+    private var advancedContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            // Rescue app
+            VStack(alignment: .leading, spacing: 8) {
                 Label("Rescue app", systemImage: "arrow.uturn.backward.circle")
-                    .font(.ac(14, weight: .semibold))
+                    .font(.ac(13, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
 
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(controller.state.rescueApp.displayName)
-                            .font(.ac(14))
+                            .font(.ac(13))
                         Text(controller.state.rescueApp.applicationPath
                              ?? controller.state.rescueApp.bundleIdentifier)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                     Spacer()
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Button("Choose") { controller.chooseRescueApp() }
                             .buttonStyle(ACSecondaryButton())
                         Button("Open") { controller.openRescueApp() }
@@ -254,193 +277,127 @@ struct ContentView: View {
                 }
             }
 
-            Divider()
-
-            // ── Toggles ──
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(isOn: $soundEnabled) {
-                    Label("Quiet nudge sound", systemImage: "speaker.wave.1.fill")
-                        .font(.ac(14))
-                }
-                .toggleStyle(.switch)
-
-                Toggle(isOn: Binding(
-                    get: { controller.state.debugMode },
-                    set: { controller.setDebugMode($0) }
-                )) {
-                    Label("Debug mode", systemImage: "ladybug")
-                        .font(.ac(14))
-                }
-                .toggleStyle(.switch)
-            }
-
-            // ── Debug section ──
-            if controller.state.debugMode {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Debug")
-                        .font(.ac(12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 10) {
-                        Button("Test Nudge") { controller.sendTestNudge() }
-                            .buttonStyle(ACPrimaryButton())
-                        Button("Test Overlay") { controller.showTestOverlay() }
-                            .buttonStyle(ACPrimaryButton())
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("llama.cpp path override")
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        TextField("Optional custom path", text: Binding(
-                            get: { controller.state.runtimePathOverride ?? "" },
-                            set: { controller.updateRuntimeOverride($0) }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Monitoring algorithm")
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Picker("Monitoring algorithm", selection: Binding(
-                            get: { controller.state.monitoringConfiguration.algorithmID },
-                            set: { controller.updateMonitoringAlgorithm($0) }
-                        )) {
-                            ForEach(controller.availableMonitoringAlgorithms, id: \.id) { algorithm in
-                                Text(algorithm.displayName).tag(algorithm.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        if let selected = controller.availableMonitoringAlgorithms.first(where: {
-                            $0.id == controller.state.monitoringConfiguration.algorithmID
-                        }) {
-                            Text(selected.summary)
-                                .font(.ac(11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Monitoring prompt profile")
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Picker("Monitoring prompt profile", selection: Binding(
-                            get: { controller.state.monitoringConfiguration.promptProfileID },
-                            set: { controller.updateMonitoringPromptProfile($0) }
-                        )) {
-                            ForEach(controller.availableMonitoringPromptProfiles, id: \.id) { profile in
-                                Text(profile.displayName).tag(profile.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        if let selected = controller.availableMonitoringPromptProfiles.first(where: {
-                            $0.id == controller.state.monitoringConfiguration.promptProfileID
-                        }) {
-                            Text(selected.summary)
-                                .font(.ac(11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Pipeline profile")
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Picker("Pipeline profile", selection: Binding(
-                            get: { controller.state.monitoringConfiguration.pipelineProfileID },
-                            set: { controller.updateMonitoringPipelineProfile($0) }
-                        )) {
-                            ForEach(controller.availablePipelineProfiles, id: \.id) { profile in
-                                Text(profile.displayName).tag(profile.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        if let selected = controller.availablePipelineProfiles.first(where: {
-                            $0.id == controller.state.monitoringConfiguration.pipelineProfileID
-                        }) {
-                            Text(selected.summary)
-                                .font(.ac(11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Runtime profile")
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Picker("Runtime profile", selection: Binding(
-                            get: { controller.state.monitoringConfiguration.runtimeProfileID },
-                            set: { controller.updateMonitoringRuntimeProfile($0) }
-                        )) {
-                            ForEach(controller.availableRuntimeProfiles, id: \.id) { profile in
-                                Text(profile.displayName).tag(profile.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        if let selected = controller.availableRuntimeProfiles.first(where: {
-                            $0.id == controller.state.monitoringConfiguration.runtimeProfileID
-                        }) {
-                            Text(selected.summary)
-                                .font(.ac(11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Algorithm", systemImage: "arrow.counterclockwise")
-                    .font(.ac(14, weight: .semibold))
+            // Reset
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Reset algorithm profile", systemImage: "arrow.counterclockwise")
+                    .font(.ac(13, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
 
-                Text("Reset the model-facing profile to defaults. This clears learned memory, recent behavior context, chat history, and usage context without deleting raw telemetry files.")
-                    .font(.ac(12))
+                Text("Clears learned memory, recent behavior context, chat history, and usage context. Raw telemetry is kept.")
+                    .font(.ac(11))
                     .foregroundStyle(.secondary)
 
-                Button("Reset Algorithm") {
-                    pendingSettingsAction = .resetAlgorithm
-                }
-                .buttonStyle(.plain)
-                .font(.ac(13, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.red.opacity(0.92))
-                )
+                Button("Reset") { pendingSettingsAction = .resetAlgorithm }
+                    .buttonStyle(ACDangerButton())
             }
 
-            Divider()
-
-            // ── Quit ──
-            HStack {
-                Spacer()
-                Button("Quit AccountyCat") { NSApp.terminate(nil) }
-                    .font(.ac(13))
-                    .foregroundStyle(Color.red.opacity(0.75))
-                    .buttonStyle(.plain)
+            if ACBuild.isDebug {
+                developerSection
             }
         }
-        .padding(20)
     }
 
-    // MARK: - Logs Tab
+    // MARK: - Developer (DEBUG only)
+
+    @ViewBuilder
+    private var developerSection: some View {
+        Divider()
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Developer", systemImage: "hammer.fill")
+                .font(.ac(13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button("Test Nudge") { controller.sendTestNudge() }
+                    .buttonStyle(ACPrimaryButton())
+                Button("Test Overlay") { controller.showTestOverlay() }
+                    .buttonStyle(ACPrimaryButton())
+            }
+
+            developerPicker(
+                title: "Monitoring algorithm",
+                selection: Binding(
+                    get: { controller.state.monitoringConfiguration.algorithmID },
+                    set: { controller.updateMonitoringAlgorithm($0) }
+                ),
+                options: controller.availableMonitoringAlgorithms.map { ($0.id, $0.displayName, $0.summary) }
+            )
+
+            developerPicker(
+                title: "Monitoring prompt profile",
+                selection: Binding(
+                    get: { controller.state.monitoringConfiguration.promptProfileID },
+                    set: { controller.updateMonitoringPromptProfile($0) }
+                ),
+                options: controller.availableMonitoringPromptProfiles.map { ($0.id, $0.displayName, $0.summary) }
+            )
+
+            developerPicker(
+                title: "Pipeline profile",
+                selection: Binding(
+                    get: { controller.state.monitoringConfiguration.pipelineProfileID },
+                    set: { controller.updateMonitoringPipelineProfile($0) }
+                ),
+                options: controller.availablePipelineProfiles.map { ($0.id, $0.displayName, $0.summary) }
+            )
+
+            developerPicker(
+                title: "Runtime profile",
+                selection: Binding(
+                    get: { controller.state.monitoringConfiguration.runtimeProfileID },
+                    set: { controller.updateMonitoringRuntimeProfile($0) }
+                ),
+                options: controller.availableRuntimeProfiles.map { ($0.id, $0.displayName, $0.summary) }
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("llama.cpp path override")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                TextField("Optional custom path", text: Binding(
+                    get: { controller.state.runtimePathOverride ?? "" },
+                    set: { controller.updateRuntimeOverride($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+            }
+        }
+    }
+
+    private func developerPicker(
+        title: String,
+        selection: Binding<String>,
+        options: [(id: String, name: String, summary: String)]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.ac(11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Picker(title, selection: selection) {
+                ForEach(options, id: \.id) { opt in
+                    Text(opt.name).tag(opt.id)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            if let summary = options.first(where: { $0.id == selection.wrappedValue })?.summary {
+                Text(summary)
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Logs Tab (DEBUG only)
 
     private var logsTab: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Button("Open telemetry root") { controller.openTelemetryRoot() }
+                Button("Telemetry root") { controller.openTelemetryRoot() }
                     .buttonStyle(ACPrimaryButton())
-                Button("Open current session") { controller.openCurrentTelemetrySession() }
+                Button("Current session") { controller.openCurrentTelemetrySession() }
                     .buttonStyle(ACSecondaryButton())
-                Button("Open text log") { controller.openActivityLog() }
+                Button("Text log") { controller.openActivityLog() }
                     .buttonStyle(ACSecondaryButton())
                 Button("Refresh") { controller.refreshActivityLog() }
                     .buttonStyle(ACSecondaryButton())
@@ -556,5 +513,201 @@ private struct StatusDot: View {
         case .checking:    return "Checking"
         default:           return "Setup needed"
         }
+    }
+}
+
+// MARK: - Toggle Tile
+
+/// Compact tap-to-toggle tile used on the Home tab for the primary controls.
+/// Reads at a glance and responds with a warm caramel accent when on.
+private struct ToggleTile: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+    let tint: Color
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isOn ? tint : Color.secondary.opacity(0.75))
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.ac(13, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Text(subtitle)
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isOn
+                          ? Color.acCaramelSoft.opacity(0.45)
+                          : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(isOn
+                                    ? tint.opacity(0.35)
+                                    : Color.secondary.opacity(0.18),
+                                    lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .animation(.acSnap, value: isOn)
+    }
+}
+
+// MARK: - Stats section
+
+private struct StatsSection: View {
+    let stats: AppController.TodayStats
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Today")
+                .font(.ac(11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            HStack(spacing: 8) {
+                StatCard(
+                    icon: "clock.fill",
+                    value: formatDuration(stats.totalTrackedSeconds),
+                    label: "Tracked"
+                )
+                StatCard(
+                    icon: "bubble.left.fill",
+                    value: "\(stats.nudgeCount)",
+                    label: "Nudges"
+                )
+                StatCard(
+                    icon: "arrow.uturn.backward.circle.fill",
+                    value: "\(stats.backToWorkCount)",
+                    label: "Rescues"
+                )
+            }
+
+            if let top = stats.topAppName, stats.topAppSeconds > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "crown.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.acCaramel)
+                    Text("Top app: ")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                    + Text(top)
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    + Text("  •  \(formatDuration(stats.topAppSeconds))")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "0m"
+    }
+}
+
+private struct StatCard: View {
+    let icon: String
+    let value: String
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.acCaramel)
+            Text(value)
+                .font(.ac(17, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Advanced disclosure
+
+private struct AdvancedDisclosure<Content: View>: View {
+    @Binding var expanded: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.acSnap) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.acCaramel)
+                    Text("Advanced")
+                        .font(.ac(14, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                content()
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+// MARK: - Danger button
+
+struct ACDangerButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Color.red.opacity(configuration.isPressed ? 0.82 : 0.92)))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.acSnap, value: configuration.isPressed)
     }
 }

@@ -34,6 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         controller.bootstrap()
 
+        // Close the popover whenever the user clicks outside of AC — .transient
+        // alone doesn't fire for accessory apps when another app takes focus.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(closePopoverOnResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+
         let wc = WindowCoordinator(controller: controller)
         self.windowCoordinator = wc
 
@@ -219,4 +228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePause()  { controller.togglePause() }
     @objc private func quitApp()      { NSApp.terminate(nil) }
+
+    @objc private func closePopoverOnResignActive() {
+        if let p = popover, p.isShown {
+            p.performClose(nil)
+        }
+    }
 }
