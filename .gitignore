@@ -10,3 +10,4 @@ xcuserdata/
 Config/LocalOverrides.xcconfig
 MD/
 
+.claude/
