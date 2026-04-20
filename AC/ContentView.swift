@@ -3,9 +3,9 @@
 //  AC
 //
 //  Compact popover content. Two tabs in release builds (Home + Settings); a
-//  third Logs tab only shows in DEBUG. Home surfaces at-a-glance stats, the
-//  primary pause + sound controls, and chat. Settings keeps Goals + Quit
-//  visible and tucks everything else under a collapsible Advanced section.
+//  third Logs tab only shows in DEBUG. Home surfaces at-a-glance stats and
+//  chat. Settings keeps Goals, primary controls, Rescue App, and Quit visible
+//  while tucking the rest under a collapsible Advanced section.
 //
 
 import AppKit
@@ -151,33 +151,6 @@ struct ContentView: View {
 
     private var homeTab: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(controller.activityStatusText)
-                .font(.ac(12))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Primary controls: pause + sound, side by side
-            HStack(spacing: 10) {
-                ToggleTile(
-                    icon: controller.state.isPaused ? "play.circle.fill" : "pause.circle.fill",
-                    title: controller.state.isPaused ? "Paused" : "Watching",
-                    subtitle: controller.state.isPaused ? "Tap to resume" : "Tap to pause",
-                    isOn: Binding(
-                        get: { !controller.state.isPaused },
-                        set: { _ in controller.togglePause() }
-                    ),
-                    tint: .acCaramel
-                )
-
-                ToggleTile(
-                    icon: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
-                    title: "Sound",
-                    subtitle: soundEnabled ? "On for nudges" : "Muted",
-                    isOn: $soundEnabled,
-                    tint: .acCaramel
-                )
-            }
-
             if controller.state.setupStatus != .ready {
                 OnboardingDialogView()
                     .environmentObject(controller)
@@ -228,29 +201,33 @@ struct ContentView: View {
                 )
             }
 
-            // ── Advanced (collapsible) ──
-            AdvancedDisclosure(expanded: $advancedExpanded) {
-                advancedContent
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Controls", systemImage: "switch.2")
+                    .font(.ac(14, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+
+                HStack(spacing: 10) {
+                    ToggleTile(
+                        icon: controller.state.isPaused ? "play.circle.fill" : "pause.circle.fill",
+                        title: controller.state.isPaused ? "Paused" : "Watching",
+                        subtitle: controller.state.isPaused ? "Tap to resume" : "Tap to pause",
+                        isOn: Binding(
+                            get: { !controller.state.isPaused },
+                            set: { _ in controller.togglePause() }
+                        ),
+                        tint: .acCaramel
+                    )
+
+                    ToggleTile(
+                        icon: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                        title: "Sound",
+                        subtitle: soundEnabled ? "On for nudges" : "Muted",
+                        isOn: $soundEnabled,
+                        tint: .acCaramel
+                    )
+                }
             }
 
-            Divider()
-
-            // ── Quit (always visible) ──
-            HStack {
-                Spacer()
-                Button("Quit AccountyCat") { NSApp.terminate(nil) }
-                    .font(.ac(13))
-                    .foregroundStyle(Color.red.opacity(0.80))
-                    .buttonStyle(.plain)
-            }
-        }
-        .padding(20)
-    }
-
-    @ViewBuilder
-    private var advancedContent: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            // Rescue app
             VStack(alignment: .leading, spacing: 8) {
                 Label("Rescue app", systemImage: "arrow.uturn.backward.circle")
                     .font(.ac(13, weight: .semibold))
@@ -277,6 +254,28 @@ struct ContentView: View {
                 }
             }
 
+            // ── Advanced (collapsible) ──
+            AdvancedDisclosure(expanded: $advancedExpanded) {
+                advancedContent
+            }
+
+            Divider()
+
+            // ── Quit (always visible) ──
+            HStack {
+                Spacer()
+                Button("Quit AccountyCat") { NSApp.terminate(nil) }
+                    .font(.ac(13))
+                    .foregroundStyle(Color.red.opacity(0.80))
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(20)
+    }
+
+    @ViewBuilder
+    private var advancedContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
             // Reset
             VStack(alignment: .leading, spacing: 6) {
                 Label("Reset algorithm profile", systemImage: "arrow.counterclockwise")
@@ -596,25 +595,6 @@ private struct StatsSection: View {
                     label: "Rescues"
                 )
             }
-
-            if let top = stats.topAppName, stats.topAppSeconds > 0 {
-                HStack(spacing: 6) {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.acCaramel)
-                    Text("Top app: ")
-                        .font(.ac(11))
-                        .foregroundStyle(.secondary)
-                    + Text(top)
-                        .font(.ac(11, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
-                    + Text("  •  \(formatDuration(stats.topAppSeconds))")
-                        .font(.ac(11))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.top, 2)
-            }
         }
     }
 
@@ -634,21 +614,27 @@ private struct StatCard: View {
     let label: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.acCaramel)
-            Text(value)
-                .font(.ac(17, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(label)
-                .font(.ac(10))
-                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.ac(16, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(label)
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
