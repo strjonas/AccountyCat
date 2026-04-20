@@ -22,6 +22,22 @@ actor LocalModelRuntime {
         systemPrompt: String,
         userPrompt: String
     ) async throws -> RuntimeProcessOutput {
+        try await runVisionInference(
+            runtimePath: runtimePath,
+            snapshotPath: snapshotPath,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            options: Self.defaultVisionOptions(modelIdentifier: modelIdentifier)
+        )
+    }
+
+    func runVisionInference(
+        runtimePath: String,
+        snapshotPath: String,
+        systemPrompt: String,
+        userPrompt: String,
+        options: RuntimeInferenceOptions
+    ) async throws -> RuntimeProcessOutput {
         let repoURL = repositoryURL(forRuntimePath: runtimePath)
         let systemPromptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ac-system-\(UUID().uuidString).txt")
@@ -39,9 +55,10 @@ actor LocalModelRuntime {
                 systemPromptURL: systemPromptURL,
                 snapshotPath: snapshotPath,
                 userPrompt: userPrompt,
-                modelIdentifier: modelIdentifier
+                options: options
             ),
-            currentDirectoryURL: repoURL
+            currentDirectoryURL: repoURL,
+            timeoutSeconds: options.timeoutSeconds
         )
     }
 
@@ -50,6 +67,20 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         systemPrompt: String,
         userPrompt: String
+    ) async throws -> RuntimeProcessOutput {
+        try await runTextInference(
+            runtimePath: runtimePath,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            options: Self.defaultTextOptions(modelIdentifier: modelIdentifier)
+        )
+    }
+
+    func runTextInference(
+        runtimePath: String,
+        systemPrompt: String,
+        userPrompt: String,
+        options: RuntimeInferenceOptions
     ) async throws -> RuntimeProcessOutput {
         let repoURL = repositoryURL(forRuntimePath: runtimePath)
         let systemPromptURL = FileManager.default.temporaryDirectory
@@ -67,9 +98,10 @@ actor LocalModelRuntime {
             arguments: Self.textArguments(
                 systemPromptURL: systemPromptURL,
                 userPrompt: userPrompt,
-                modelIdentifier: modelIdentifier
+                options: options
             ),
-            currentDirectoryURL: repoURL
+            currentDirectoryURL: repoURL,
+            timeoutSeconds: options.timeoutSeconds
         )
     }
 
@@ -83,7 +115,8 @@ actor LocalModelRuntime {
     private func runProcess(
         executablePath: String,
         arguments: [String],
-        currentDirectoryURL: URL
+        currentDirectoryURL: URL,
+        timeoutSeconds: UInt64
     ) async throws -> RuntimeProcessOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -106,7 +139,7 @@ actor LocalModelRuntime {
             )
         }
 
-        let status = try await withTimeout(seconds: 45) {
+        let status = try await withTimeout(seconds: timeoutSeconds) {
             process.waitUntilExit()
             return process.terminationStatus
         }
@@ -146,23 +179,23 @@ actor LocalModelRuntime {
         systemPromptURL: URL,
         snapshotPath: String,
         userPrompt: String,
-        modelIdentifier: String
+        options: RuntimeInferenceOptions
     ) -> [String] {
         [
-            "-hf", modelIdentifier,
+            "-hf", options.modelIdentifier,
             "-sysf", systemPromptURL.path,
             "--image", snapshotPath,
             "-p", userPrompt,
             "-cnv",
             "-st",
-            "-n", "120",
+            "-n", String(options.maxTokens),
             "--reasoning", "off",
-            "--temp", "0.15",
-            "--top-p", "0.95",
-            "--top-k", "64",
-            "--ctx-size", "2048",
-            "--batch-size", "2048",
-            "--ubatch-size", "2048",
+            "--temp", String(options.temperature),
+            "--top-p", String(options.topP),
+            "--top-k", String(options.topK),
+            "--ctx-size", String(options.ctxSize),
+            "--batch-size", String(options.batchSize),
+            "--ubatch-size", String(options.ubatchSize),
             "--no-display-prompt",
         ]
     }
@@ -170,24 +203,52 @@ actor LocalModelRuntime {
     private static func textArguments(
         systemPromptURL: URL,
         userPrompt: String,
-        modelIdentifier: String
+        options: RuntimeInferenceOptions
     ) -> [String] {
         [
-            "-hf", modelIdentifier,
+            "-hf", options.modelIdentifier,
             "-sysf", systemPromptURL.path,
             "-p", userPrompt,
             "-cnv",
             "-st",
-            "-n", "240",
+            "-n", String(options.maxTokens),
             "--reasoning", "off",
-            "--temp", "0.4",
-            "--top-p", "0.95",
-            "--top-k", "64",
-            "--ctx-size", "4096",
-            "--batch-size", "1024",
-            "--ubatch-size", "512",
+            "--temp", String(options.temperature),
+            "--top-p", String(options.topP),
+            "--top-k", String(options.topK),
+            "--ctx-size", String(options.ctxSize),
+            "--batch-size", String(options.batchSize),
+            "--ubatch-size", String(options.ubatchSize),
             "--no-display-prompt",
         ]
+    }
+
+    nonisolated static func defaultVisionOptions(modelIdentifier: String = defaultModelIdentifier) -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            modelIdentifier: modelIdentifier,
+            maxTokens: 120,
+            temperature: 0.15,
+            topP: 0.95,
+            topK: 64,
+            ctxSize: 2048,
+            batchSize: 2048,
+            ubatchSize: 2048,
+            timeoutSeconds: 45
+        )
+    }
+
+    nonisolated static func defaultTextOptions(modelIdentifier: String = defaultModelIdentifier) -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            modelIdentifier: modelIdentifier,
+            maxTokens: 240,
+            temperature: 0.4,
+            topP: 0.95,
+            topK: 64,
+            ctxSize: 4096,
+            batchSize: 1024,
+            ubatchSize: 512,
+            timeoutSeconds: 45
+        )
     }
 }
 

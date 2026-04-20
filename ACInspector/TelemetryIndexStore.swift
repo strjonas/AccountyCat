@@ -203,10 +203,12 @@ actor TelemetryIndexStore {
             }
 
             if let modelInput = event.modelInput {
-                accumulator.screenshotPath = await telemetryStore.absoluteArtifactURL(
-                    for: modelInput.screenshot,
-                    sessionID: sessionID
-                ).path
+                if let screenshot = modelInput.screenshot {
+                    accumulator.screenshotPath = await telemetryStore.absoluteArtifactURL(
+                        for: screenshot,
+                        sessionID: sessionID
+                    ).path
+                }
                 if let renderedPromptArtifact = modelInput.renderedPromptArtifact {
                     accumulator.renderedPromptPath = await telemetryStore.absoluteArtifactURL(
                         for: renderedPromptArtifact,

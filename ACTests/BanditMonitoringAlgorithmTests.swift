@@ -89,6 +89,7 @@ struct BanditMonitoringAlgorithmTests {
             recentActions: [],
             heuristics: makeHeuristics(),
             memory: "",
+            policyMemory: PolicyMemory(),
             runtimeOverride: nil,
             configuration: monitoringConfig(),
             algorithmState: state
@@ -215,8 +216,9 @@ struct BanditMonitoringAlgorithmTests {
 
         #expect(result.policy.action == .showNudge("Hey, back to it!"))
         #expect(result.execution.algorithmID == MonitoringConfiguration.banditAlgorithmID)
-        #expect(result.updatedAlgorithmState.banditFocus.pendingNudgeEvaluationID == "eval-1")
-        #expect(result.updatedAlgorithmState.banditFocus.pendingArm != nil)
+        #expect(result.updatedAlgorithmState.banditFocus.pendingInterventionsByEvaluationID["eval-1"] != nil)
+        #expect(result.policy.record.ladderSignal == "none")
+        #expect(result.policy.record.interventionSignal != nil)
     }
 
     @Test func evaluateFallsBackToCandidateNudgeWhenCopywriterFails() async {
@@ -229,7 +231,7 @@ struct BanditMonitoringAlgorithmTests {
         // Whatever arm the engine picked (supportive or challenging), the text should be the VLM fallback.
         if case let .showNudge(text) = result.policy.action {
             #expect(text == "VLM fallback")
-        } else if case .showOverlay = result.policy.action {
+        } else if case .showOverlay(_) = result.policy.action {
             // Overlay arms don't use the copywriter — still a valid outcome.
         } else {
             Issue.record("Expected an intervention on fresh-engine off-task input but got \(result.policy.action)")
@@ -254,11 +256,11 @@ struct BanditMonitoringAlgorithmTests {
         let input = makeInput(evaluationID: "eval-reward")
 
         let result = await algorithm.evaluate(input: input)
-        #expect(result.updatedAlgorithmState.banditFocus.pendingNudgeEvaluationID == "eval-reward")
+        #expect(result.updatedAlgorithmState.banditFocus.pendingInterventionsByEvaluationID["eval-reward"] != nil)
 
         var state = result.updatedAlgorithmState
         let engineBefore = state.banditFocus.engine
-        let firedArm = state.banditFocus.pendingArm
+        let firedArm = state.banditFocus.pendingInterventionsByEvaluationID["eval-reward"]?.arm
 
         let signal = MonitoringRewardSignal(
             evaluationID: "eval-reward",
@@ -267,9 +269,7 @@ struct BanditMonitoringAlgorithmTests {
         )
         algorithm.observeReward(signal, state: &state)
 
-        #expect(state.banditFocus.pendingNudgeContext == nil)
-        #expect(state.banditFocus.pendingNudgeEvaluationID == nil)
-        #expect(state.banditFocus.pendingArm == nil)
+        #expect(state.banditFocus.pendingInterventionsByEvaluationID["eval-reward"] == nil)
         #expect(state.banditFocus.lastNudgeWasPositive == true)
         if let firedArm {
             // Only the fired arm's weights should change; other arms should be untouched.
@@ -307,7 +307,37 @@ struct BanditMonitoringAlgorithmTests {
         algorithm.observeReward(signal, state: &state)
 
         #expect(state.banditFocus.engine == engineBefore)
-        #expect(state.banditFocus.pendingNudgeEvaluationID == "eval-A")
+        #expect(state.banditFocus.pendingInterventionsByEvaluationID["eval-A"] != nil)
+    }
+
+    @Test func observeRewardTargetsOnlyMatchingPendingIntervention() {
+        let algorithm = makeAlgorithm()
+        var state = AlgorithmStateEnvelope()
+        state.banditFocus.pendingInterventionsByEvaluationID = [
+            "eval-A": BanditPendingIntervention(
+                context: BanditFeatureVector(values: Array(repeating: 0.1, count: BanditFeatureVector.dimension)),
+                issuedAt: Date(timeIntervalSince1970: 10),
+                arm: .supportiveNudge
+            ),
+            "eval-B": BanditPendingIntervention(
+                context: BanditFeatureVector(values: Array(repeating: 0.2, count: BanditFeatureVector.dimension)),
+                issuedAt: Date(timeIntervalSince1970: 20),
+                arm: .challengingNudge
+            ),
+        ]
+
+        algorithm.observeReward(
+            MonitoringRewardSignal(
+                evaluationID: "eval-A",
+                kind: .nudgeRatedPositive,
+                value: 1.0
+            ),
+            state: &state
+        )
+
+        #expect(state.banditFocus.pendingInterventionsByEvaluationID["eval-A"] == nil)
+        #expect(state.banditFocus.pendingInterventionsByEvaluationID["eval-B"] != nil)
+        #expect(state.banditFocus.pendingInterventionsByEvaluationID.count == 1)
     }
 
     @Test func resetStateClearsBanditSlice() {

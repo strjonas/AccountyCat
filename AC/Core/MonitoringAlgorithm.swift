@@ -23,6 +23,7 @@ struct MonitoringEvaluationPlan: Sendable {
         shouldEvaluate: false,
         reason: nil,
         visualCheckReason: nil,
+        requiresScreenshot: true,
         promptMode: MonitoringPromptVariant.visionPrimary.rawValue,
         promptVersion: PromptCatalog.defaultMonitoringPromptProfile.descriptor.version
     )
@@ -30,6 +31,7 @@ struct MonitoringEvaluationPlan: Sendable {
     var shouldEvaluate: Bool
     var reason: String?
     var visualCheckReason: String?
+    var requiresScreenshot: Bool
     var promptMode: String
     var promptVersion: String
 }
@@ -42,6 +44,7 @@ struct MonitoringDecisionInput: Sendable {
     var recentActions: [ActionRecord]
     var heuristics: TelemetryHeuristicSnapshot
     var memory: String
+    var policyMemory: PolicyMemory
     var runtimeOverride: String?
     var configuration: MonitoringConfiguration
     var algorithmState: AlgorithmStateEnvelope
@@ -52,6 +55,26 @@ struct MonitoringDecisionResult: Sendable {
     var evaluation: LLMEvaluationResult
     var decision: LLMDecision
     var policy: CompanionPolicyResult
+    var updatedAlgorithmState: AlgorithmStateEnvelope
+}
+
+struct MonitoringAppealReviewInput: Sendable {
+    var now: Date
+    var appealText: String
+    var snapshot: AppSnapshot?
+    var goals: String
+    var recentActions: [ActionRecord]
+    var memory: String
+    var policyMemory: PolicyMemory
+    var configuration: MonitoringConfiguration
+    var algorithmState: AlgorithmStateEnvelope
+    var runtimeOverride: String?
+}
+
+struct MonitoringAppealReviewOutput: Sendable {
+    var result: AppealReviewResult
+    var evaluation: LLMEvaluationResult
+    var updatedPolicyMemory: PolicyMemory
     var updatedAlgorithmState: AlgorithmStateEnvelope
 }
 
@@ -83,6 +106,7 @@ protocol MonitoringAlgorithm: Sendable {
     ) -> MonitoringEvaluationPlan
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult
+    func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput?
     /// Called when the system receives a reward signal for a prior nudge.
     /// Algorithms that do not learn (e.g. LLMFocusAlgorithm) inherit the default no-op.
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope)
@@ -91,19 +115,30 @@ protocol MonitoringAlgorithm: Sendable {
 extension MonitoringAlgorithm {
     /// Default no-op: algorithms that do not learn from rewards implement nothing.
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope) {}
+
+    func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput? {
+        nil
+    }
 }
 
 final class MonitoringAlgorithmRegistry {
     private let llmFocusAlgorithm: LLMFocusAlgorithm
+    private let llmPolicyAlgorithm: LLMPolicyAlgorithm
     private let banditFocusAlgorithm: BanditMonitoringAlgorithm
 
     init(
         monitoringLLMClient: any MonitoringLLMEvaluating,
         screenStateExtractor: some ScreenStateExtracting,
-        nudgeCopywriter: any NudgeCopywriting
+        nudgeCopywriter: any NudgeCopywriting,
+        runtime: LocalModelRuntime,
+        policyMemoryService: PolicyMemoryServicing
     ) {
         self.llmFocusAlgorithm = LLMFocusAlgorithm(
             monitoringLLMClient: monitoringLLMClient
+        )
+        self.llmPolicyAlgorithm = LLMPolicyAlgorithm(
+            runtime: runtime,
+            policyMemoryService: policyMemoryService
         )
         self.banditFocusAlgorithm = BanditMonitoringAlgorithm(
             screenStateExtractor: screenStateExtractor,
@@ -113,13 +148,15 @@ final class MonitoringAlgorithmRegistry {
 
     var availableAlgorithms: [MonitoringAlgorithmDescriptor] {
         [
+            llmPolicyAlgorithm.descriptor,
             llmFocusAlgorithm.descriptor,
             banditFocusAlgorithm.descriptor,
         ]
     }
 
     func containsAlgorithm(id: String) -> Bool {
-        availableAlgorithms.contains { $0.id == id }
+        let normalizedID = MonitoringConfiguration.normalizedAlgorithmID(id)
+        return availableAlgorithms.contains { $0.id == normalizedID }
     }
 
     func descriptor(for id: String) throws -> MonitoringAlgorithmDescriptor {
@@ -188,8 +225,16 @@ final class MonitoringAlgorithmRegistry {
         try resolve(id: configuration.algorithmID).observeReward(signal, state: &state)
     }
 
+    func reviewAppeal(
+        input: MonitoringAppealReviewInput
+    ) async throws -> MonitoringAppealReviewOutput? {
+        try await resolve(id: input.configuration.algorithmID).reviewAppeal(input: input)
+    }
+
     private func resolve(id: String) throws -> any MonitoringAlgorithm {
-        switch id {
+        switch MonitoringConfiguration.normalizedAlgorithmID(id) {
+        case llmPolicyAlgorithm.descriptor.id:
+            return llmPolicyAlgorithm
         case llmFocusAlgorithm.descriptor.id:
             return llmFocusAlgorithm
         case banditFocusAlgorithm.descriptor.id:

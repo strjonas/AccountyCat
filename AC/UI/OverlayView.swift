@@ -12,6 +12,16 @@ struct OverlayView: View {
     @EnvironmentObject private var controller: AppController
 
     var body: some View {
+        let presentation = controller.activeOverlay ?? OverlayPresentation(
+            headline: "Hey… come back for a second.",
+            body: "Ready to hop back into \(controller.state.rescueApp.displayName)?",
+            prompt: nil,
+            appName: controller.state.rescueApp.displayName,
+            evaluationID: nil,
+            submitButtonTitle: "Back to work",
+            secondaryButtonTitle: "Dismiss"
+        )
+
         ZStack {
             // Subtle amber edge vignette — clear center so user can see their work
             RadialGradient(
@@ -49,23 +59,49 @@ struct OverlayView: View {
                 .frame(width: 120, height: 120)
 
                 VStack(spacing: 10) {
-                    Text("Hey… I miss you 🐾")
+                    Text(presentation.headline)
                         .font(.ac(26, weight: .semibold))
                         .foregroundStyle(Color.primary)
 
-                    Text("Ready to hop back into **\(controller.state.rescueApp.displayName)**?")
+                    Text(presentation.body)
                         .font(.ac(15))
                         .foregroundStyle(Color.secondary)
                         .multilineTextAlignment(.center)
                 }
 
-                HStack(spacing: 14) {
-                    Button("Let's go! 🚀") {
-                        controller.handleBackToWork()
-                    }
-                    .buttonStyle(OverlayPrimaryButton())
+                if let prompt = presentation.prompt {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(prompt)
+                            .font(.ac(14, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button("Give me 5 min") {
+                        TextField(
+                            "Tell AC why this helps your goals",
+                            text: $controller.overlayAppealDraft,
+                            axis: .vertical
+                        )
+                        .font(.ac(14))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(controller.sendingOverlayAppeal)
+                    }
+                }
+
+                HStack(spacing: 14) {
+                    if presentation.prompt == nil {
+                        Button(presentation.submitButtonTitle) {
+                            controller.handleBackToWork()
+                        }
+                        .buttonStyle(OverlayPrimaryButton())
+                    } else {
+                        Button(controller.sendingOverlayAppeal ? "Reviewing…" : presentation.submitButtonTitle) {
+                            controller.submitOverlayAppeal()
+                        }
+                        .buttonStyle(OverlayPrimaryButton())
+                        .disabled(controller.sendingOverlayAppeal || controller.overlayAppealDraft.cleanedSingleLine.isEmpty)
+                    }
+
+                    Button(presentation.secondaryButtonTitle) {
                         controller.dismissOverlay()
                     }
                     .font(.ac(14))

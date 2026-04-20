@@ -68,7 +68,17 @@ enum CompanionPolicy {
                 action = .none
                 blockReason = "model_did_not_request_overlay"
             } else {
-                action = .showOverlay
+                action = .showOverlay(
+                    OverlayPresentation(
+                        headline: "Pause for a second.",
+                        body: "This still looks off-track. Want to explain why it helps?",
+                        prompt: "Why should I let you continue on this?",
+                        appName: "Current app",
+                        evaluationID: evaluationID,
+                        submitButtonTitle: "Submit",
+                        secondaryButtonTitle: "Back to work"
+                    )
+                )
                 blockReason = nil
             }
         }
@@ -105,8 +115,13 @@ enum CompanionPolicy {
             return TelemetryCompanionActionRecord(kind: .none, message: nil)
         case let .showNudge(message):
             return TelemetryCompanionActionRecord(kind: .nudge, message: message)
-        case .showOverlay:
-            return TelemetryCompanionActionRecord(kind: .overlay, message: nil)
+        case let .showOverlay(presentation):
+            return TelemetryCompanionActionRecord(
+                kind: .overlay,
+                message: [presentation.headline, presentation.body]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " — ")
+            )
         }
     }
 

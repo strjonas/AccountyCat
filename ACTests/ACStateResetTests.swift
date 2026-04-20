@@ -15,7 +15,7 @@ struct ACStateResetTests {
     func resetAlgorithmProfileClearsModelFacingState() {
         var state = ACState()
         state.monitoringConfiguration = MonitoringConfiguration(
-            algorithmID: "legacy_focus_v1",
+            algorithmID: MonitoringConfiguration.legacyLLMAlgorithmID,
             promptProfileID: "focus_default_v2",
             selectionMode: .fixed,
             experimentArmOverride: "manual:test"
@@ -48,8 +48,11 @@ struct ACStateResetTests {
         #expect(state.algorithmState == AlgorithmStateEnvelope())
         #expect(state.distraction == DistractionMetadata())
         #expect(state.memory.isEmpty)
-        #expect(state.monitoringConfiguration.algorithmID == "legacy_focus_v1")
+        #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
         #expect(state.monitoringConfiguration.promptProfileID == "focus_default_v2")
+        #expect(state.monitoringConfiguration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
+        #expect(state.monitoringConfiguration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
         #expect(state.monitoringConfiguration.experimentArm == "manual:test")
+        #expect(state.policyMemory == PolicyMemory())
     }
 }

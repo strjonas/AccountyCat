@@ -18,11 +18,17 @@ struct BrainServiceConfigurationTests {
         let registry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
-            nudgeCopywriter: NudgeCopywriterService(runtime: runtime)
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
+            runtime: runtime,
+            policyMemoryService: PolicyMemoryService(runtime: runtime)
         )
         let brainService = BrainService(
             monitoringAlgorithmRegistry: registry,
-            executiveArm: ExecutiveArm(showNudge: { _ in }, showOverlay: { }, hideOverlay: { }),
+            executiveArm: ExecutiveArm(
+                showNudge: { _ in },
+                showOverlay: { _ in },
+                hideOverlay: { }
+            ),
             storageService: StorageService(),
             telemetryStore: TelemetryStore(
                 rootURL: FileManager.default.temporaryDirectory
@@ -55,7 +61,9 @@ struct BrainServiceConfigurationTests {
         let registry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
-            nudgeCopywriter: NudgeCopywriterService(runtime: runtime)
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
+            runtime: runtime,
+            policyMemoryService: PolicyMemoryService(runtime: runtime)
         )
 
         #expect(throws: MonitoringAlgorithmResolutionError.self) {

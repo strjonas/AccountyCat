@@ -141,11 +141,23 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             )
         }
 
+        guard let screenshotPath = snapshot.screenshotPath else {
+            return LLMEvaluationResult(
+                runtimePath: runtimePath,
+                modelIdentifier: modelIdentifier,
+                promptProfileID: promptProfile.descriptor.id,
+                promptProfileVersion: promptProfile.descriptor.version,
+                attempts: attempts,
+                finalDecision: nil,
+                failureMessage: "missing_screenshot"
+            )
+        }
+
         do {
             let primaryOutput = try await runtime.runVisionInference(
                 runtimePath: runtimePath,
                 modelIdentifier: modelIdentifier,
-                snapshotPath: snapshot.screenshotPath,
+                snapshotPath: screenshotPath,
                 systemPrompt: primaryAttempt.templateContents,
                 userPrompt: primaryAttempt.renderedPrompt
             )
@@ -182,7 +194,7 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             let fallbackOutput = try await runtime.runVisionInference(
                 runtimePath: runtimePath,
                 modelIdentifier: modelIdentifier,
-                snapshotPath: snapshot.screenshotPath,
+                snapshotPath: screenshotPath,
                 systemPrompt: fallbackAttempt.templateContents,
                 userPrompt: fallbackAttempt.renderedPrompt
             )

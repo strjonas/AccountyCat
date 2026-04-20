@@ -224,7 +224,9 @@ final class WindowCoordinator {
 
     // MARK: - Overlay
 
-    func showOverlay() {
+    func showOverlay(presentation: OverlayPresentation) {
+        controller.activeOverlay = presentation
+        controller.overlayAppealDraft = ""
         controller.overlayVisible = true
         let window = overlayWindow ?? makeOverlayWindow()
         overlayWindow = window
@@ -236,6 +238,9 @@ final class WindowCoordinator {
     func hideOverlay() {
         overlayWindow?.orderOut(nil)
         controller.overlayVisible = false
+        controller.activeOverlay = nil
+        controller.overlayAppealDraft = ""
+        controller.sendingOverlayAppeal = false
     }
 
     // MARK: - Popover anchor

@@ -72,8 +72,11 @@ struct CompanionView: View {
             .animation(.easeInOut(duration: 0.5), value: controller.companionMood == .paused)
             // Tap opens popover — placed here so speech bubble buttons are NOT intercepted
             .onTapGesture { onTap?() }
-            // Edge-peek: clip to the visible half when snapped to a border
-            .clipShape(peekClipShape)
+            // Edge-peek: clip to the visible half ONLY when snapped to a border.
+            // When not peeking, skip clipping entirely so the soft drop shadow
+            // around the orb doesn't get sliced at the bounding-box edges
+            // (which otherwise produces a faint square halo behind the cat).
+            .modifier(ConditionalPeekClip(edge: controller.peekingEdge))
         }
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -141,11 +144,6 @@ struct CompanionView: View {
             : Color.acAmber
     }
 
-    /// Clip shape applied to the orb in peek mode (snapped to a screen edge);
-    /// a full Rectangle otherwise (no-op clip).
-    private var peekClipShape: some Shape {
-        OrbPeekClip(edge: controller.peekingEdge)
-    }
 
     // MARK: - Animations
 
@@ -275,26 +273,28 @@ struct CatFaceView: View {
 
             // ── Blush ──
             Ellipse()
-                .fill(Color.acBlush.opacity(0.60))
-                .frame(width: 14, height: 8)
-                .offset(x: -19, y: 9)
+                .fill(Color.acBlush.opacity(0.75))
+                .frame(width: 15, height: 9)
+                .offset(x: -20, y: 9)
+                .blur(radius: 0.6)
 
             Ellipse()
-                .fill(Color.acBlush.opacity(0.60))
-                .frame(width: 14, height: 8)
-                .offset(x: 19, y: 9)
+                .fill(Color.acBlush.opacity(0.75))
+                .frame(width: 15, height: 9)
+                .offset(x: 20, y: 9)
+                .blur(radius: 0.6)
 
             // ── Eyes ──
             HStack(spacing: 17) {
-                ACEye(mood: mood, isBlinking: isBlinking)
-                ACEye(mood: mood, isBlinking: isBlinking)
+                ACEye(mood: mood, isBlinking: isBlinking, mirrored: false)
+                ACEye(mood: mood, isBlinking: isBlinking, mirrored: true)
             }
             .offset(y: -5)
 
             // ── Nose ──
             ACNose()
                 .fill(Color.acNoseColor)
-                .frame(width: 9, height: 6)
+                .frame(width: 8, height: 5.5)
                 .offset(y: 8)
 
             // ── Whiskers ──
@@ -315,24 +315,36 @@ struct CatFaceView: View {
 private struct ACEye: View {
     let mood: CompanionMood
     let isBlinking: Bool
+    var mirrored: Bool = false
 
-    private var width: CGFloat { mood == .escalated ? 9 : 10 }
+    private var width: CGFloat { mood == .escalated ? 9.5 : 10.5 }
 
     private var height: CGFloat {
         if isBlinking { return 1.5 }
         switch mood {
         case .paused:   return 3.5
-        case .nudging:  return 13
-        case .escalated: return 10
-        default:        return 12
+        case .nudging:  return 13.5
+        case .escalated: return 10.5
+        default:        return 12.5
         }
     }
 
     var body: some View {
-        Capsule()
-            .frame(width: width, height: height)
-            .foregroundStyle(Color.acEyeColor)
-            .animation(.linear(duration: 0.08), value: isBlinking)
+        ZStack {
+            // Iris
+            Capsule()
+                .frame(width: width, height: height)
+                .foregroundStyle(Color.acEyeColor)
+
+            // Sparkle highlight — hidden during blink so the flat line reads cleanly.
+            if !isBlinking && mood != .paused {
+                Circle()
+                    .fill(Color.white.opacity(0.95))
+                    .frame(width: 2.6, height: 2.6)
+                    .offset(x: mirrored ? 1.6 : -1.6, y: -height / 3.2)
+            }
+        }
+        .animation(.linear(duration: 0.08), value: isBlinking)
     }
 }
 
@@ -428,11 +440,24 @@ private struct ACMouth: Shape {
 
 // MARK: - Orb Peek Clip
 
+/// Applies a half-frame clip ONLY when the orb is peeking over a screen edge.
+/// When not peeking it adds no clip, which preserves the orb's soft drop shadow.
+private struct ConditionalPeekClip: ViewModifier {
+    let edge: NSRectEdge?
+
+    func body(content: Content) -> some View {
+        if let edge {
+            content.clipShape(OrbPeekClip(edge: edge))
+        } else {
+            content
+        }
+    }
+}
+
 /// Clips the orb to its visible half when it's snapped to a screen edge.
 /// `edge` is an NSRectEdge: .minX = left, .maxX = right, .minY = bottom (screen-coords bottom).
-/// When `edge` is nil the full bounding rectangle is returned — effectively no clipping.
 private struct OrbPeekClip: Shape {
-    var edge: NSRectEdge?
+    var edge: NSRectEdge
 
     func path(in rect: CGRect) -> Path {
         switch edge {
@@ -446,7 +471,6 @@ private struct OrbPeekClip: Shape {
             // Bottom edge — keep only the top half
             return Path(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height / 2))
         default:
-            // No peek — full rectangle (no clipping)
             return Path(rect)
         }
     }

@@ -46,6 +46,8 @@ extension MonitoringExecutionMetadata {
             algorithmID: algorithmID,
             algorithmVersion: algorithmVersion,
             promptProfileID: promptProfileID,
+            pipelineProfileID: pipelineProfileID,
+            runtimeProfileID: runtimeProfileID,
             experimentArm: experimentArm
         )
     }

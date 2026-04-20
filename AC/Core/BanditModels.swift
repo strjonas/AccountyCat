@@ -90,6 +90,12 @@ struct BanditFeatureVector: Codable, Sendable, Equatable {
     }
 }
 
+struct BanditPendingIntervention: Codable, Sendable, Equatable {
+    var context: BanditFeatureVector
+    var issuedAt: Date
+    var arm: BanditArm
+}
+
 // MARK: - BanditFocusAlgorithmState
 
 /// Persistent state slice for `BanditMonitoringAlgorithm`.
@@ -99,12 +105,9 @@ struct BanditFocusAlgorithmState: Codable, Sendable, Equatable {
     /// The multi-arm LinUCB bandit engine — accumulates weights over time.
     var engine = ContextualBanditEngine()
 
-    // Pending nudge — saved at action time, consumed when reward arrives.
-    var pendingNudgeContext: BanditFeatureVector?
-    var pendingNudgeEvaluationID: String?
-    var pendingNudgeIssuedAt: Date?
-    /// Arm that fired the pending intervention — learning target when the reward lands.
-    var pendingArm: BanditArm?
+    /// Pending interventions keyed by evaluation ID so overlapping nudges can be
+    /// attributed independently when rewards arrive.
+    var pendingInterventionsByEvaluationID: [String: BanditPendingIntervention] = [:]
 
     /// Per-context timestamp of the last intervention. Drives the bandit's minimal
     /// anti-spam cooldown (see `BanditCooldown`).
@@ -124,6 +127,7 @@ struct BanditFocusAlgorithmState: Codable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case engine
+        case pendingInterventionsByEvaluationID
         case pendingNudgeContext
         case pendingNudgeEvaluationID
         case pendingNudgeIssuedAt
@@ -144,10 +148,20 @@ struct BanditFocusAlgorithmState: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         engine = try c.decodeIfPresent(ContextualBanditEngine.self, forKey: .engine) ?? ContextualBanditEngine()
-        pendingNudgeContext = try c.decodeIfPresent(BanditFeatureVector.self, forKey: .pendingNudgeContext)
-        pendingNudgeEvaluationID = try c.decodeIfPresent(String.self, forKey: .pendingNudgeEvaluationID)
-        pendingNudgeIssuedAt = try c.decodeIfPresent(Date.self, forKey: .pendingNudgeIssuedAt)
-        pendingArm = try c.decodeIfPresent(BanditArm.self, forKey: .pendingArm)
+        pendingInterventionsByEvaluationID =
+            try c.decodeIfPresent([String: BanditPendingIntervention].self, forKey: .pendingInterventionsByEvaluationID)
+            ?? [:]
+        if pendingInterventionsByEvaluationID.isEmpty,
+           let pendingID = try c.decodeIfPresent(String.self, forKey: .pendingNudgeEvaluationID),
+           let pendingContext = try c.decodeIfPresent(BanditFeatureVector.self, forKey: .pendingNudgeContext),
+           let pendingIssuedAt = try c.decodeIfPresent(Date.self, forKey: .pendingNudgeIssuedAt),
+           let pendingArm = try c.decodeIfPresent(BanditArm.self, forKey: .pendingArm) {
+            pendingInterventionsByEvaluationID[pendingID] = BanditPendingIntervention(
+                context: pendingContext,
+                issuedAt: pendingIssuedAt,
+                arm: pendingArm
+            )
+        }
         lastInterventionByContext =
             try c.decodeIfPresent([String: Date].self, forKey: .lastInterventionByContext)
             ?? c.decodeIfPresent([String: Date].self, forKey: .lastVisualCheckByContext)
@@ -161,10 +175,7 @@ struct BanditFocusAlgorithmState: Codable, Sendable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(engine, forKey: .engine)
-        try c.encodeIfPresent(pendingNudgeContext, forKey: .pendingNudgeContext)
-        try c.encodeIfPresent(pendingNudgeEvaluationID, forKey: .pendingNudgeEvaluationID)
-        try c.encodeIfPresent(pendingNudgeIssuedAt, forKey: .pendingNudgeIssuedAt)
-        try c.encodeIfPresent(pendingArm, forKey: .pendingArm)
+        try c.encode(pendingInterventionsByEvaluationID, forKey: .pendingInterventionsByEvaluationID)
         try c.encode(lastInterventionByContext, forKey: .lastInterventionByContext)
         try c.encodeIfPresent(currentContextKey, forKey: .currentContextKey)
         try c.encodeIfPresent(currentContextEnteredAt, forKey: .currentContextEnteredAt)

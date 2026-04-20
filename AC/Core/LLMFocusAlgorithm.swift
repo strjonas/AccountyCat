@@ -11,10 +11,10 @@ import Foundation
 /// a single inference call. The DistractionLadder enforces spam-prevention timing; CompanionPolicy
 /// applies the confidence threshold and escalation rules.
 ///
-/// Algorithm ID: "legacy_focus_v1" (kept stable for state persistence and telemetry continuity)
+/// Algorithm ID: `"llm_focus_v1"`, with a decoder shim for persisted `"legacy_focus_v1"` state.
 final class LLMFocusAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
-        id: MonitoringConfiguration.defaultAlgorithmID,
+        id: MonitoringConfiguration.llmAlgorithmID,
         version: "1.0",
         displayName: "LLM Focus",
         summary: "VLM-driven nudge policy with DistractionLadder spam prevention."
@@ -73,6 +73,7 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
             shouldEvaluate: true,
             reason: periodicVisualCheckDue ? "periodic_visual_check" : "stable_context",
             visualCheckReason: periodicVisualCheckDue ? heuristics.periodicVisualReason : nil,
+            requiresScreenshot: true,
             promptMode: MonitoringPromptVariant.visionPrimary.rawValue,
             promptVersion: promptProfile.descriptor.version
         )
@@ -104,6 +105,8 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
             promptProfileID: evaluation.promptProfileID,
+            pipelineProfileID: nil,
+            runtimeProfileID: nil,
             experimentArm: input.configuration.experimentArm
         )
 

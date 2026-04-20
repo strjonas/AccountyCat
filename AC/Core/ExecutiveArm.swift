@@ -11,12 +11,12 @@ import Foundation
 @MainActor
 final class ExecutiveArm {
     private let showNudge: (String) -> Void
-    private let showOverlay: () -> Void
+    private let showOverlay: (OverlayPresentation) -> Void
     private let hideOverlay: () -> Void
 
     init(
         showNudge: @escaping (String) -> Void,
-        showOverlay: @escaping () -> Void,
+        showOverlay: @escaping (OverlayPresentation) -> Void,
         hideOverlay: @escaping () -> Void
     ) {
         self.showNudge = showNudge
@@ -30,8 +30,8 @@ final class ExecutiveArm {
             break
         case let .showNudge(message):
             showNudge(message)
-        case .showOverlay:
-            showOverlay()
+        case let .showOverlay(presentation):
+            showOverlay(presentation)
         }
     }
 
