@@ -7,9 +7,9 @@ import Foundation
 
 /// The LLM-brain monitoring algorithm.
 ///
-/// The VLM assesses the screen, decides if the user is distracted, and generates nudge text — all in
-/// a single inference call. The DistractionLadder enforces spam-prevention timing; CompanionPolicy
-/// applies the confidence threshold and escalation rules.
+/// A screenshot perception step first describes what the user is doing, then a text-only decision step
+/// decides whether the user is distracted and what AC should do next. The DistractionLadder enforces
+/// spam-prevention timing; CompanionPolicy applies the confidence threshold and escalation rules.
 ///
 /// Algorithm ID: `"llm_focus_v1"`, with a decoder shim for persisted `"legacy_focus_v1"` state.
 final class LLMFocusAlgorithm: MonitoringAlgorithm {
@@ -17,7 +17,7 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
         id: MonitoringConfiguration.llmAlgorithmID,
         version: "1.0",
         displayName: "LLM Focus",
-        summary: "VLM-driven nudge policy with DistractionLadder spam prevention."
+        summary: "Two-step screenshot perception plus text decision with DistractionLadder spam prevention."
     )
 
     private let monitoringLLMClient: any MonitoringLLMEvaluating
@@ -74,7 +74,7 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
             reason: periodicVisualCheckDue ? "periodic_visual_check" : "stable_context",
             visualCheckReason: periodicVisualCheckDue ? heuristics.periodicVisualReason : nil,
             requiresScreenshot: true,
-            promptMode: MonitoringPromptVariant.visionPrimary.rawValue,
+            promptMode: "legacy_two_step",
             promptVersion: promptProfile.descriptor.version
         )
     }

@@ -26,4 +26,17 @@ struct PromptCatalogTests {
         #expect(prompt.asset.version == "focus_default_v2")
         #expect(prompt.contents.isEmpty == false)
     }
+
+    @Test
+    func policyDecisionPromptUsesSharedDecisionRules() {
+        let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .decision)
+        let perceptionPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .perceptionVision)
+        let runtimeProfile = LLMPolicyCatalog.defaultRuntimeProfile
+
+        #expect(systemPrompt.contains("assessment` and `suggested_action` must agree"))
+        #expect(systemPrompt.contains("Prefer silence over a false positive."))
+        #expect(systemPrompt.contains("recent interventions"))
+        #expect(perceptionPrompt.contains("Do not decide whether the activity matches the user's goals or policy rules yet."))
+        #expect(runtimeProfile.options(for: .decision).ctxSize == 4096)
+    }
 }

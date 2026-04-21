@@ -109,6 +109,36 @@ struct MonitoringLLMClientPromptTests {
         #expect(prompt.count < 4000)
     }
 
+    @Test
+    func recentExplicitRestrictionBeatsOlderGenericMemory() {
+        let payload = MonitoringLLMClient.makeLegacyPerceptionPayload(
+            snapshot: AppSnapshot(
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                windowTitle: "(1) Home / X",
+                recentSwitches: [],
+                perAppDurations: [],
+                screenshotArtifact: nil,
+                screenshotThumbnail: nil,
+                screenshotPath: "/tmp/x.png",
+                idle: false,
+                timestamp: Date(timeIntervalSince1970: 7_300)
+            ),
+            goals: "I want to spend most of my time studying, building, and gaining experience.",
+            heuristics: makeHeuristics(),
+            memory: """
+            Focus areas are: studying, building, and gaining experience.
+            - Avoid excessive YouTube viewing to maintain focus.
+            - Acceptable break time is 10 or 15 minutes, maximum.
+            Nudge when drifting or pulling focus away from study/building goals.
+            Focus areas are studying, building, and gaining experience. Avoid excessive YouTube viewing.
+            Do not allow use of X.com today.
+            """
+        )
+
+        #expect(payload.memory?.contains("Do not allow use of X.com today.") == true)
+    }
+
     private func makeSnapshot(timestamp: Date = Date(timeIntervalSince1970: 1)) -> AppSnapshot {
         AppSnapshot(
             bundleIdentifier: "com.google.Chrome",

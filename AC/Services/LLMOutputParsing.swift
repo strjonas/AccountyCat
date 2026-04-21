@@ -60,10 +60,15 @@ enum LLMOutputParsing {
             let abstainReason =
                 (object["abstain_reason"] as? String) ??
                 (object["abstainReason"] as? String)
+            let normalizedSuggestedAction = normalizedSuggestedAction(
+                suggestedAction,
+                assessment: assessment,
+                nudge: nudge
+            )
 
             return LLMDecision(
                 assessment: assessment,
-                suggestedAction: suggestedAction,
+                suggestedAction: normalizedSuggestedAction,
                 confidence: confidence,
                 reasonTags: reasonTags,
                 nudge: nudge,
@@ -75,58 +80,7 @@ enum LLMOutputParsing {
     }
 
     nonisolated static func jsonObjects(in output: String) -> [String] {
-        var results: [String] = []
-        var startIndex: String.Index?
-        var currentIndex = output.startIndex
-        var depth = 0
-        var insideString = false
-        var escaping = false
-
-        while currentIndex < output.endIndex {
-            let character = output[currentIndex]
-
-            if insideString {
-                if escaping {
-                    escaping = false
-                } else if character == "\\" {
-                    escaping = true
-                } else if character == "\"" {
-                    insideString = false
-                }
-
-                currentIndex = output.index(after: currentIndex)
-                continue
-            }
-
-            if character == "\"" {
-                insideString = true
-                currentIndex = output.index(after: currentIndex)
-                continue
-            }
-
-            if character == "{" {
-                if depth == 0 {
-                    startIndex = currentIndex
-                }
-                depth += 1
-            } else if character == "}" {
-                guard depth > 0 else {
-                    currentIndex = output.index(after: currentIndex)
-                    continue
-                }
-
-                depth -= 1
-                if depth == 0, let objectStartIndex = startIndex {
-                    let endIndex = output.index(after: currentIndex)
-                    results.append(String(output[objectStartIndex..<endIndex]))
-                    startIndex = nil
-                }
-            }
-
-            currentIndex = output.index(after: currentIndex)
-        }
-
-        return results
+        StructuredOutputJSON.jsonObjects(in: output)
     }
 
     nonisolated static func cleanChatOutput(_ output: String) -> String {
@@ -203,6 +157,24 @@ enum LLMOutputParsing {
             return "abstain"
         case .distracted:
             return (nudge?.cleanedSingleLine.isEmpty == false) ? "nudge" : "abstain"
+        }
+    }
+
+    nonisolated private static func normalizedSuggestedAction(
+        _ suggestedAction: ModelSuggestedAction,
+        assessment: ModelAssessment,
+        nudge: String?
+    ) -> ModelSuggestedAction {
+        switch assessment {
+        case .focused:
+            return .none
+        case .unclear:
+            return .abstain
+        case .distracted:
+            if suggestedAction == .overlay || suggestedAction == .nudge {
+                return suggestedAction
+            }
+            return (nudge?.cleanedSingleLine.isEmpty == false) ? .nudge : .abstain
         }
     }
 }

@@ -147,35 +147,50 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
             from: input.recentActions,
             at: input.now
         )
+        let compactAppName = input.snapshot.appName.truncatedForPrompt(maxLength: 80)
+        let compactWindowTitle = input.snapshot.windowTitle?.truncatedForPrompt(
+            maxLength: MonitoringPromptContextBudget.windowTitleCharacters
+        )
+        let compactSwitches = compactRecentSwitches(
+            input.snapshot.recentSwitches,
+            limit: MonitoringPromptContextBudget.decisionSwitchCount
+        )
+        let compactUsage = compactUsage(
+            input.snapshot.perAppDurations,
+            limit: MonitoringPromptContextBudget.decisionUsageCount
+        )
+        let compactInterventions = compactInterventionSummary(relevantActions)
         let policySummary = makePolicySummary(
             policyMemory: input.policyMemory,
             snapshot: input.snapshot,
             now: input.now
         )
+        let freeFormMemory = MonitoringLLMClient
+            .condensedMonitoringMemory(input.memory, goals: input.goals)
+            .truncatedMultilineForPrompt(
+                maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+            )
 
-        var titlePerception: PolicyPerceptionOutput?
+        var titlePerception: MonitoringPerceptionEnvelope?
         if pipelineProfile.usesTitlePerception {
             titlePerception = await runTextStage(
                 stage: .perceptionTitle,
                 runtimePath: runtimePath,
                 options: runtimeProfile.options(for: .perceptionTitle),
-                payload: PolicyTitlePerceptionPayload(
-                    goals: input.goals.cleanedSingleLine,
-                    appName: input.snapshot.appName,
+                payload: MonitoringTitlePerceptionPromptPayload(
+                    appName: compactAppName,
                     bundleIdentifier: input.snapshot.bundleIdentifier,
-                    windowTitle: input.snapshot.windowTitle,
-                    timestamp: input.now,
-                    recentSwitches: Array(input.snapshot.recentSwitches.prefix(3)),
-                    usage: Array(input.snapshot.perAppDurations.prefix(6)),
-                    policySummary: policySummary,
-                    recentActions: Array(relevantActions.prefix(3))
+                    windowTitle: compactWindowTitle,
+                    recentSwitches: Array(compactSwitches.prefix(MonitoringPromptContextBudget.titlePerceptionSwitchCount)),
+                    usage: Array(compactUsage.prefix(MonitoringPromptContextBudget.titlePerceptionUsageCount))
                 ),
                 attempts: &attempts,
-                decoder: PolicyPerceptionOutput.self
+                decoder: MonitoringPerceptionEnvelope.self
             )
         }
 
-        var visionPerception: PolicyPerceptionOutput?
+        var visionPerception: MonitoringPerceptionEnvelope?
         if pipelineProfile.usesVisionPerception,
            let screenshotPath = input.snapshot.screenshotPath {
             visionPerception = await runVisionStage(
@@ -183,15 +198,12 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
                 runtimePath: runtimePath,
                 snapshotPath: screenshotPath,
                 options: runtimeProfile.options(for: .perceptionVision),
-                payload: PolicyVisionPerceptionPayload(
-                    goals: input.goals.cleanedSingleLine,
-                    appName: input.snapshot.appName,
-                    windowTitle: input.snapshot.windowTitle,
-                    timestamp: input.now,
-                    policySummary: policySummary
+                payload: MonitoringVisionPerceptionPromptPayload(
+                    appName: compactAppName,
+                    windowTitle: compactWindowTitle
                 ),
                 attempts: &attempts,
-                decoder: PolicyPerceptionOutput.self
+                decoder: MonitoringPerceptionEnvelope.self
             )
         }
 
@@ -199,44 +211,53 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
             stage: .decision,
             runtimePath: runtimePath,
             options: runtimeProfile.options(for: .decision),
-            payload: PolicyDecisionPayload(
-                goals: input.goals.cleanedSingleLine,
-                freeFormMemory: MonitoringLLMClient.condensedMonitoringMemory(input.memory, goals: input.goals),
+            payload: MonitoringDecisionPromptPayload(
+                goals: input.goals.cleanedSingleLine.truncatedForPrompt(
+                    maxLength: MonitoringPromptContextBudget.goalCharacters
+                ),
+                freeFormMemory: freeFormMemory,
                 policySummary: policySummary,
-                timestamp: input.now,
-                appName: input.snapshot.appName,
+                appName: compactAppName,
                 bundleIdentifier: input.snapshot.bundleIdentifier,
-                windowTitle: input.snapshot.windowTitle,
-                recentSwitches: Array(input.snapshot.recentSwitches.prefix(4)),
-                usage: Array(input.snapshot.perAppDurations.prefix(8)),
-                recentActions: Array(relevantActions.prefix(4)),
-                heuristics: input.heuristics,
-                distraction: input.algorithmState.llmPolicy.distraction.telemetryState,
+                windowTitle: compactWindowTitle,
+                recentSwitches: compactSwitches,
+                usage: compactUsage,
+                recentInterventions: compactInterventions,
+                heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
+                distraction: MonitoringPromptDistractionSummary(
+                    state: input.algorithmState.llmPolicy.distraction.telemetryState
+                ),
                 titlePerception: titlePerception,
                 visionPerception: visionPerception
             ),
             attempts: &attempts,
-            decoder: PolicyDecisionEnvelope.self
+            decoder: MonitoringDecisionEnvelope.self
         )
 
-        var decision = decisionEnvelope?.decision ?? .unclear
+        let effectiveDecisionEnvelope = decisionEnvelope ?? attempts.last?.parsedDecision.map(Self.makeDecisionEnvelope)
+        var decision = effectiveDecisionEnvelope?.asLLMDecision ?? .unclear
         if pipelineProfile.splitCopyGeneration,
            decision.suggestedAction == ModelSuggestedAction.nudge {
             let nudgeEnvelope = await runTextStage(
                 stage: .nudgeCopy,
                 runtimePath: runtimePath,
                 options: runtimeProfile.options(for: .nudgeCopy),
-                payload: PolicyNudgeCopyPayload(
-                    goals: input.goals.cleanedSingleLine,
+                payload: MonitoringNudgePromptPayload(
+                    goals: input.goals.cleanedSingleLine.truncatedForPrompt(
+                        maxLength: MonitoringPromptContextBudget.goalCharacters
+                    ),
                     policySummary: policySummary,
-                    appName: input.snapshot.appName,
-                    windowTitle: input.snapshot.windowTitle,
+                    appName: compactAppName,
+                    windowTitle: compactWindowTitle,
                     titlePerception: titlePerception?.activitySummary,
                     visionPerception: visionPerception?.activitySummary,
-                    recentNudges: input.algorithmState.llmPolicy.recentNudgeMessages
+                    recentNudges: Array(
+                        input.algorithmState.llmPolicy.recentNudgeMessages
+                            .prefix(MonitoringPromptContextBudget.recentNudgeCount)
+                    )
                 ),
                 attempts: &attempts,
-                decoder: PolicyNudgeEnvelope.self
+                decoder: MonitoringNudgeEnvelope.self
             )
             if let nudge = nudgeEnvelope?.nudge?.cleanedSingleLine,
                !nudge.isEmpty {
@@ -280,7 +301,7 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
             case .overlay:
                 let overlayReady = policyState.lastOverlayAt.map { input.now.timeIntervalSince($0) >= overlayCooldown } ?? true
                 if overlayReady {
-                    let presentation = decisionEnvelope?.overlayPresentation(
+                    let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
                         appName: input.snapshot.appName,
                         evaluationID: input.evaluationID
                     ) ?? OverlayPresentation(
@@ -381,10 +402,17 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
             stage: .appealReview,
             runtimePath: runtimePath,
             options: runtimeProfile.options(for: .appealReview),
-            payload: PolicyAppealPayload(
+            payload: MonitoringAppealPromptPayload(
                 appealText: input.appealText,
-                goals: input.goals.cleanedSingleLine,
-                freeFormMemory: MonitoringLLMClient.condensedMonitoringMemory(input.memory, goals: input.goals),
+                goals: input.goals.cleanedSingleLine.truncatedForPrompt(
+                    maxLength: MonitoringPromptContextBudget.goalCharacters
+                ),
+                freeFormMemory: MonitoringLLMClient
+                    .condensedMonitoringMemory(input.memory, goals: input.goals)
+                    .truncatedMultilineForPrompt(
+                        maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                        maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+                    ),
                 policySummary: makePolicySummary(
                     policyMemory: input.policyMemory,
                     snapshot: input.snapshot,
@@ -392,13 +420,14 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
                 ),
                 snapshotAppName: input.snapshot?.appName,
                 snapshotWindowTitle: input.snapshot?.windowTitle,
-                activeAppeal: input.algorithmState.llmPolicy.activeAppeal
+                assessment: input.algorithmState.llmPolicy.distraction.lastAssessment,
+                suggestedAction: nil
             ),
             attempts: &attempts,
-            decoder: PolicyAppealReviewEnvelope.self
+            decoder: MonitoringAppealEnvelope.self
         )
 
-        let result = envelope?.appealReviewResult ?? AppealReviewResult(
+        let result = envelope?.asAppealReviewResult ?? AppealReviewResult(
             decision: .deferDecision,
             message: "I’m not sure yet. If it really helps your goals, explain a bit more."
         )
@@ -518,7 +547,12 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
 
         var policyMemory = policyMemory
         policyMemory.expireRules(at: now)
-        return policyMemory.monitoringSummary(for: context, usageByDay: usageByDay, now: now, limit: 8)
+        return policyMemory
+            .monitoringSummary(for: context, usageByDay: usageByDay, now: now, limit: 5)
+            .truncatedMultilineForPrompt(
+                maxLength: MonitoringPromptContextBudget.policySummaryCharacters,
+                maxLines: MonitoringPromptContextBudget.policySummaryLines
+            )
     }
 
     private func runTextStage<T: Decodable & Sendable, P: Encodable>(
@@ -622,141 +656,73 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         _ type: T.Type,
         from output: String
     ) -> T? {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        for object in LLMOutputParsing.jsonObjects(in: output).reversed() {
-            guard let data = object.data(using: .utf8),
-                  let decoded = try? decoder.decode(type, from: data) else {
-                continue
-            }
-            return decoded
-        }
-        return nil
+        StructuredOutputJSON.decode(type, from: output)
     }
 
     private static func sha256Hex(_ input: String) -> String {
         SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-}
 
-nonisolated private struct PolicyTitlePerceptionPayload: Encodable {
-    var goals: String
-    var appName: String
-    var bundleIdentifier: String?
-    var windowTitle: String?
-    var timestamp: Date
-    var recentSwitches: [AppSwitchRecord]
-    var usage: [AppUsageRecord]
-    var policySummary: String
-    var recentActions: [ActionRecord]
-}
-
-nonisolated private struct PolicyVisionPerceptionPayload: Encodable {
-    var goals: String
-    var appName: String
-    var windowTitle: String?
-    var timestamp: Date
-    var policySummary: String
-}
-
-nonisolated private struct PolicyDecisionPayload: Encodable {
-    var goals: String
-    var freeFormMemory: String
-    var policySummary: String
-    var timestamp: Date
-    var appName: String
-    var bundleIdentifier: String?
-    var windowTitle: String?
-    var recentSwitches: [AppSwitchRecord]
-    var usage: [AppUsageRecord]
-    var recentActions: [ActionRecord]
-    var heuristics: TelemetryHeuristicSnapshot
-    var distraction: TelemetryDistractionState
-    var titlePerception: PolicyPerceptionOutput?
-    var visionPerception: PolicyPerceptionOutput?
-}
-
-nonisolated private struct PolicyNudgeCopyPayload: Encodable {
-    var goals: String
-    var policySummary: String
-    var appName: String
-    var windowTitle: String?
-    var titlePerception: String?
-    var visionPerception: String?
-    var recentNudges: [String]
-}
-
-nonisolated private struct PolicyAppealPayload: Encodable {
-    var appealText: String
-    var goals: String
-    var freeFormMemory: String
-    var policySummary: String
-    var snapshotAppName: String?
-    var snapshotWindowTitle: String?
-    var activeAppeal: MonitoringAppealSession?
-}
-
-nonisolated private struct PolicyPerceptionOutput: Codable, Sendable {
-    var activitySummary: String
-    var focusGuess: ModelAssessment?
-    var reasonTags: [String]
-    var notes: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case activitySummary = "activity_summary"
-        case sceneSummary = "scene_summary"
-        case focusGuess = "focus_guess"
-        case reasonTags = "reason_tags"
-        case notes
+    private func compactRecentSwitches(
+        _ records: [AppSwitchRecord],
+        limit: Int
+    ) -> [MonitoringPromptSwitchRecord] {
+        records.prefix(limit).map {
+            MonitoringPromptSwitchRecord(
+                fromAppName: $0.fromAppName?.truncatedForPrompt(maxLength: 60),
+                toAppName: $0.toAppName.truncatedForPrompt(maxLength: 60),
+                toWindowTitle: $0.toWindowTitle?.truncatedForPrompt(maxLength: 140),
+                timestamp: $0.timestamp
+            )
+        }
     }
 
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        activitySummary = try c.decodeIfPresent(String.self, forKey: .activitySummary)
-            ?? c.decodeIfPresent(String.self, forKey: .sceneSummary)
-            ?? ""
-        focusGuess = try c.decodeIfPresent(ModelAssessment.self, forKey: .focusGuess)
-        reasonTags = try c.decodeIfPresent([String].self, forKey: .reasonTags) ?? []
-        notes = try c.decodeIfPresent([String].self, forKey: .notes) ?? []
+    private func compactUsage(
+        _ records: [AppUsageRecord],
+        limit: Int
+    ) -> [MonitoringPromptUsageRecord] {
+        records.prefix(limit).map {
+            MonitoringPromptUsageRecord(
+                appName: $0.appName.truncatedForPrompt(maxLength: 60),
+                seconds: $0.seconds
+            )
+        }
     }
 
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(activitySummary, forKey: .activitySummary)
-        try c.encodeIfPresent(focusGuess, forKey: .focusGuess)
-        try c.encode(reasonTags, forKey: .reasonTags)
-        try c.encode(notes, forKey: .notes)
+    private func compactInterventionSummary(_ records: [ActionRecord]) -> MonitoringPromptInterventionSummary {
+        let recentRelevant = records.prefix(MonitoringPromptContextBudget.recentNudgeCount)
+        let recentNudges = recentRelevant
+            .filter { $0.kind == .nudge }
+            .compactMap { $0.message?.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+
+        let lastAction = recentRelevant.first
+        return MonitoringPromptInterventionSummary(
+            recentNudges: recentNudges,
+            lastActionKind: lastAction?.kind.rawValue,
+            lastActionMessage: lastAction?.message?.truncatedForPrompt(maxLength: 120)
+        )
+    }
+
+    private static func makeDecisionEnvelope(from decision: LLMDecision) -> MonitoringDecisionEnvelope {
+        MonitoringDecisionEnvelope(
+            assessment: decision.assessment,
+            suggestedAction: decision.suggestedAction,
+            confidence: decision.confidence,
+            reasonTags: decision.reasonTags,
+            nudge: decision.nudge,
+            abstainReason: decision.abstainReason,
+            overlayHeadline: nil,
+            overlayBody: nil,
+            overlayPrompt: nil,
+            submitButtonTitle: nil,
+            secondaryButtonTitle: nil
+        )
     }
 }
 
-nonisolated private struct PolicyDecisionEnvelope: Codable, Sendable {
-    var assessment: ModelAssessment
-    var suggestedAction: ModelSuggestedAction
-    var confidence: Double?
-    var reasonTags: [String]
-    var nudge: String?
-    var abstainReason: String?
-    var overlayHeadline: String?
-    var overlayBody: String?
-    var overlayPrompt: String?
-    var submitButtonTitle: String?
-    var secondaryButtonTitle: String?
-
-    enum CodingKeys: String, CodingKey {
-        case assessment
-        case suggestedAction = "suggested_action"
-        case confidence
-        case reasonTags = "reason_tags"
-        case nudge
-        case abstainReason = "abstain_reason"
-        case overlayHeadline = "overlay_headline"
-        case overlayBody = "overlay_body"
-        case overlayPrompt = "overlay_prompt"
-        case submitButtonTitle = "submit_button_title"
-        case secondaryButtonTitle = "secondary_button_title"
-    }
-
-    var decision: LLMDecision {
+private extension MonitoringDecisionEnvelope {
+    var asLLMDecision: LLMDecision {
         LLMDecision(
             assessment: assessment,
             suggestedAction: suggestedAction,
@@ -767,7 +733,7 @@ nonisolated private struct PolicyDecisionEnvelope: Codable, Sendable {
         )
     }
 
-    func overlayPresentation(
+    func asOverlayPresentation(
         appName: String,
         evaluationID: String
     ) -> OverlayPresentation {
@@ -793,17 +759,20 @@ nonisolated private struct PolicyDecisionEnvelope: Codable, Sendable {
     }
 }
 
-nonisolated private struct PolicyNudgeEnvelope: Codable, Sendable {
-    var nudge: String?
-}
+private extension MonitoringAppealEnvelope {
+    var asAppealReviewResult: AppealReviewResult {
+        let mappedDecision: AppealReviewDecision
+        switch decision {
+        case .allow:
+            mappedDecision = .allow
+        case .deny:
+            mappedDecision = .deny
+        case .deferDecision:
+            mappedDecision = .deferDecision
+        }
 
-nonisolated private struct PolicyAppealReviewEnvelope: Codable, Sendable {
-    var decision: AppealReviewDecision
-    var message: String
-
-    var appealReviewResult: AppealReviewResult {
-        AppealReviewResult(
-            decision: decision,
+        return AppealReviewResult(
+            decision: mappedDecision,
             message: message.cleanedSingleLine
         )
     }

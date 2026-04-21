@@ -754,8 +754,12 @@ private struct InspectorDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 screenshotSection
-                promptSection
-                modelSection
+                if controller.selectedEpisodeAttempts.isEmpty {
+                    promptSection
+                    modelSection
+                } else {
+                    modelAttemptsSection
+                }
                 annotationSection
                 timelineSection
             }
@@ -856,6 +860,50 @@ private struct InspectorDetailView: View {
         }
     }
 
+    private var modelAttemptsSection: some View {
+        GroupBox("Model Attempts") {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(controller.selectedEpisodeAttempts) { attempt in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text(attempt.title)
+                                .font(.headline)
+                            Spacer()
+                            Text(attempt.timestamp.formatted(date: .omitted, time: .standard))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let parsedOutputJSON = attempt.parsedOutputJSON, !parsedOutputJSON.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Parsed output")
+                                    .font(.subheadline.weight(.semibold))
+                                ScrollView {
+                                    Text(parsedOutputJSON)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(minHeight: 110)
+                            }
+                        }
+
+                        filePreview(title: "Prompt payload", path: attempt.promptPayloadPath)
+                        filePreview(title: "Rendered prompt", path: attempt.renderedPromptPath)
+                        filePreview(title: "Raw stdout", path: attempt.stdoutPath, fallbackText: attempt.stdoutPreview)
+                        filePreview(title: "Raw stderr", path: attempt.stderrPath, fallbackText: attempt.stderrPreview)
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.secondary.opacity(0.06))
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var annotationSection: some View {
         GroupBox("Annotation") {
             VStack(alignment: .leading, spacing: 12) {
@@ -920,7 +968,7 @@ private struct InspectorDetailView: View {
         }
     }
 
-    private func filePreview(title: String, path: String?) -> some View {
+    private func filePreview(title: String, path: String?, fallbackText: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title)
@@ -941,6 +989,14 @@ private struct InspectorDetailView: View {
                         .textSelection(.enabled)
                 }
                 .frame(minHeight: 140)
+            } else if let fallbackText, !fallbackText.isEmpty {
+                ScrollView {
+                    Text(fallbackText)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(minHeight: 110)
             } else {
                 Text("No file stored.")
                     .foregroundStyle(.secondary)

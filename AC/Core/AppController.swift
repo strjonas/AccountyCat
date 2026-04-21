@@ -612,6 +612,11 @@ final class AppController: ObservableObject {
         sendingChatMessage = true
         logActivity("chat", "User: \(trimmedDraft)")
 
+        if let immediateMemoryLine = AppControllerChatSupport.immediateMemoryLine(from: trimmedDraft) {
+            appendMemoryLine(immediateMemoryLine)
+            logActivity("memory", "Captured immediately: \(immediateMemoryLine)")
+        }
+
         if AppControllerChatSupport.looksLikeNegativeChatFeedback(trimmedDraft) {
             brainService?.recordUserReaction(
                 UserReactionRecord(
@@ -905,8 +910,71 @@ private enum AppControllerChatSupport {
     static func appendingMemoryLine(_ line: String, to memory: String) -> String {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return memory }
+        let normalizedTrimmed = trimmed.lowercased()
+        let existingLines = memory
+            .components(separatedBy: .newlines)
+            .map { $0.cleanedSingleLine.lowercased() }
+        if existingLines.contains(normalizedTrimmed) {
+            return memory
+        }
         guard !memory.isEmpty else { return trimmed }
         return memory + "\n" + trimmed
+    }
+
+    static func immediateMemoryLine(from text: String) -> String? {
+        let cleaned = text.cleanedSingleLine
+        guard !cleaned.isEmpty else { return nil }
+
+        let lowered = cleaned.lowercased()
+        let explicitRuleMarkers = [
+            "don't let me",
+            "do not let me",
+            "keep me off",
+            "block ",
+        ]
+        guard explicitRuleMarkers.contains(where: { lowered.contains($0) }) else {
+            return nil
+        }
+
+        let timeMarkers = [
+            "today",
+            "tonight",
+            "tomorrow",
+            "this week",
+            "this evening",
+            "this afternoon",
+            "for now",
+        ]
+        let matchedTimeMarker = timeMarkers.first(where: { lowered.contains($0) })
+
+        let pattern = #"(?i)(?:don't let me|do not let me|keep me off|block)\s+(?:go on|use|open|visit|browse)?\s*([A-Za-z0-9._-]+(?:\.[A-Za-z0-9._-]+)?)\s+(today|tonight|tomorrow|this week|this evening|this afternoon|for now)"#
+        if let match = firstMatch(pattern: pattern, in: cleaned),
+           match.numberOfRanges >= 3,
+           let targetRange = Range(match.range(at: 1), in: cleaned),
+           let timeRange = Range(match.range(at: 2), in: cleaned) {
+            let target = String(cleaned[targetRange])
+            let timeMarker = String(cleaned[timeRange]).lowercased()
+            return "Do not allow use of \(displayName(forBlockedTarget: target)) \(timeMarker)."
+        }
+
+        guard let matchedTimeMarker else { return nil }
+        return "Do not allow this activity \(matchedTimeMarker)."
+    }
+
+    private static func firstMatch(pattern: String, in text: String) -> NSTextCheckingResult? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, range: range)
+    }
+
+    private static func displayName(forBlockedTarget target: String) -> String {
+        let trimmed = target.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
+        switch trimmed.lowercased() {
+        case "x.com":
+            return "X.com"
+        default:
+            return trimmed
+        }
     }
 
     static func makeChatContext(from state: ACState) -> ChatContext {

@@ -58,6 +58,85 @@ nonisolated struct VisionPromptPayload: Codable, Sendable {
     var distraction: TelemetryDistractionState
 }
 
+nonisolated struct LegacyFocusPerceptionPayload: Codable, Sendable {
+    var goals: String
+    var memory: String?
+    var frontmostApp: String
+    var windowTitle: String?
+    var timestamp: Date
+    var recentSwitches: [TelemetryAppSwitchRecord]
+    var timeByApp: [TelemetryUsageRecord]
+    var heuristics: TelemetryHeuristicSnapshot
+}
+
+nonisolated struct LegacyFocusDecisionPayload: Codable, Sendable {
+    var goals: String
+    var memory: String?
+    var frontmostApp: String
+    var windowTitle: String?
+    var timestamp: Date
+    var activitySummary: String
+    var perceptionFocusGuess: ModelAssessment?
+    var perceptionReasonTags: [String]
+    var recentSwitches: [TelemetryAppSwitchRecord]
+    var timeByApp: [TelemetryUsageRecord]
+    var interventionHistory: VisionInterventionHistorySummary
+    var heuristics: TelemetryHeuristicSnapshot
+    var distraction: TelemetryDistractionState
+}
+
+nonisolated struct LegacyFocusPerceptionEnvelope: Codable, Sendable {
+    var activitySummary: String
+    var focusGuess: ModelAssessment?
+    var reasonTags: [String]
+    var notes: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case activitySummary = "activity_summary"
+        case sceneSummary = "scene_summary"
+        case focusGuess = "focus_guess"
+        case reasonTags = "reason_tags"
+        case notes
+    }
+
+    init(
+        activitySummary: String,
+        focusGuess: ModelAssessment?,
+        reasonTags: [String],
+        notes: [String]
+    ) {
+        self.activitySummary = activitySummary
+        self.focusGuess = focusGuess
+        self.reasonTags = reasonTags
+        self.notes = notes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        activitySummary = try container.decodeIfPresent(String.self, forKey: .activitySummary)
+            ?? container.decodeIfPresent(String.self, forKey: .sceneSummary)
+            ?? ""
+        focusGuess = try container.decodeIfPresent(ModelAssessment.self, forKey: .focusGuess)
+        reasonTags = try container.decodeIfPresent([String].self, forKey: .reasonTags) ?? []
+        if let noteList = try? container.decode([String].self, forKey: .notes) {
+            notes = noteList
+        } else if let note = try? container.decode(String.self, forKey: .notes) {
+            let cleaned = note.cleanedSingleLine
+            notes = cleaned.isEmpty ? [] : [cleaned]
+        } else {
+            notes = []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(activitySummary, forKey: .activitySummary)
+        try container.encodeIfPresent(focusGuess, forKey: .focusGuess)
+        try container.encode(reasonTags, forKey: .reasonTags)
+        try container.encode(notes, forKey: .notes)
+    }
+}
+
 protocol MonitoringLLMEvaluating: Sendable {
     func evaluate(
         snapshot: AppSnapshot,
@@ -72,7 +151,12 @@ protocol MonitoringLLMEvaluating: Sendable {
 }
 
 actor MonitoringLLMClient: MonitoringLLMEvaluating {
-    private var cooldownUntil: Date?
+    private struct FailureCooldown: Sendable {
+        var until: Date
+        var contextKey: String?
+    }
+
+    private var cooldown: FailureCooldown?
 
     private let runtime: LocalModelRuntime
     private let modelIdentifier: String
@@ -97,35 +181,42 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
     ) async -> LLMEvaluationResult {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
         let promptProfile = PromptCatalog.monitoringProfile(id: promptProfileID)
-        let primaryAttempt = makePrimaryAttempt(
+        let snapshotContextKey = Self.contextKey(for: snapshot)
+        let perceptionAttempt = makePerceptionAttempt(
             snapshot: snapshot,
             goals: goals,
             recentActions: recentActions,
             heuristics: heuristics,
-            distraction: distraction,
             memory: memory,
             promptProfile: promptProfile
         )
-        var attempts: [LLMEvaluationAttempt] = [primaryAttempt]
+        var attempts: [LLMEvaluationAttempt] = [perceptionAttempt]
 
-        if let cooldownUntil, Date() < cooldownUntil {
-            await ActivityLogService.shared.append(
-                category: "llm",
-                message: "Skipped evaluation because cooldown is active."
-            )
-            return LLMEvaluationResult(
-                runtimePath: runtimePath,
-                modelIdentifier: modelIdentifier,
-                promptProfileID: promptProfile.descriptor.id,
-                promptProfileVersion: promptProfile.descriptor.version,
-                attempts: attempts,
-                finalDecision: nil,
-                failureMessage: "cooldown_active"
-            )
+        if let cooldown, Date() < cooldown.until {
+            let sameContext = cooldown.contextKey == nil || cooldown.contextKey == snapshotContextKey
+            if sameContext {
+                await ActivityLogService.shared.append(
+                    category: "llm",
+                    message: "Skipped evaluation because cooldown is active."
+                )
+                return LLMEvaluationResult(
+                    runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
+                    promptProfileID: promptProfile.descriptor.id,
+                    promptProfileVersion: promptProfile.descriptor.version,
+                    attempts: attempts,
+                    finalDecision: nil,
+                    failureMessage: "cooldown_active"
+                )
+            }
+            self.cooldown = nil
         }
 
         guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
-            cooldownUntil = Date().addingTimeInterval(120)
+            cooldown = FailureCooldown(
+                until: Date().addingTimeInterval(120),
+                contextKey: nil
+            )
             await ActivityLogService.shared.append(
                 category: "llm",
                 message: "Runtime missing at \(runtimePath)."
@@ -154,60 +245,47 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         }
 
         do {
-            let primaryOutput = try await runtime.runVisionInference(
+            let perceptionOutput = try await runtime.runVisionInference(
                 runtimePath: runtimePath,
-                modelIdentifier: modelIdentifier,
                 snapshotPath: screenshotPath,
-                systemPrompt: primaryAttempt.templateContents,
-                userPrompt: primaryAttempt.renderedPrompt
+                systemPrompt: perceptionAttempt.templateContents,
+                userPrompt: perceptionAttempt.renderedPrompt,
+                options: Self.legacyVisionOptions(modelIdentifier: modelIdentifier)
             )
-            var resolvedPrimaryAttempt = attempts[0]
-            resolvedPrimaryAttempt.runtimeOutput = primaryOutput
-            resolvedPrimaryAttempt.parsedDecision = LLMOutputParsing.extractDecision(
-                from: primaryOutput.stdout + "\n" + primaryOutput.stderr
+            attempts[0].runtimeOutput = perceptionOutput
+            let rawPerceptionOutput = perceptionOutput.stdout + "\n" + perceptionOutput.stderr
+            let parsedPerception = Self.decode(LegacyFocusPerceptionEnvelope.self, from: rawPerceptionOutput)
+            let effectivePerception = Self.resolvePerception(
+                parsedPerception,
+                snapshot: snapshot
             )
-            attempts[0] = resolvedPrimaryAttempt
 
-            if let parsedDecision = resolvedPrimaryAttempt.parsedDecision {
-                cooldownUntil = nil
-                return LLMEvaluationResult(
-                    runtimePath: runtimePath,
-                    modelIdentifier: modelIdentifier,
-                    promptProfileID: promptProfile.descriptor.id,
-                    promptProfileVersion: promptProfile.descriptor.version,
-                    attempts: attempts,
-                    finalDecision: parsedDecision,
-                    failureMessage: nil
-                )
-            }
-
-            let fallbackAttempt = makeFallbackAttempt(
+            let decisionAttempt = makeDecisionAttempt(
                 snapshot: snapshot,
                 goals: goals,
                 recentActions: recentActions,
                 heuristics: heuristics,
                 distraction: distraction,
                 memory: memory,
-                promptProfile: promptProfile
+                perception: effectivePerception,
+                promptProfile: promptProfile,
+                stage: .decision
             )
-            attempts.append(fallbackAttempt)
-            let fallbackOutput = try await runtime.runVisionInference(
+            attempts.append(decisionAttempt)
+            let decisionOutput = try await runtime.runTextInference(
                 runtimePath: runtimePath,
-                modelIdentifier: modelIdentifier,
-                snapshotPath: screenshotPath,
-                systemPrompt: fallbackAttempt.templateContents,
-                userPrompt: fallbackAttempt.renderedPrompt
+                systemPrompt: decisionAttempt.templateContents,
+                userPrompt: decisionAttempt.renderedPrompt,
+                options: Self.legacyDecisionOptions(modelIdentifier: modelIdentifier)
             )
-            var resolvedFallbackAttempt = fallbackAttempt
-            resolvedFallbackAttempt.runtimeOutput = fallbackOutput
-            resolvedFallbackAttempt.parsedDecision = LLMOutputParsing.extractDecision(
-                from: fallbackOutput.stdout + "\n" + fallbackOutput.stderr
+            attempts[1].runtimeOutput = decisionOutput
+            attempts[1].parsedDecision = LLMOutputParsing.extractDecision(
+                from: decisionOutput.stdout + "\n" + decisionOutput.stderr
             )
-            attempts[1] = resolvedFallbackAttempt
 
-            let finalDecision = resolvedFallbackAttempt.parsedDecision
+            let finalDecision = attempts[1].parsedDecision
             if let finalDecision {
-                cooldownUntil = nil
+                cooldown = nil
                 return LLMEvaluationResult(
                     runtimePath: runtimePath,
                     modelIdentifier: modelIdentifier,
@@ -218,8 +296,47 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                     failureMessage: nil
                 )
             } else {
-                cooldownUntil = Date().addingTimeInterval(120)
+                let fallbackAttempt = makeDecisionAttempt(
+                    snapshot: snapshot,
+                    goals: goals,
+                    recentActions: recentActions,
+                    heuristics: heuristics,
+                    distraction: distraction,
+                    memory: memory,
+                    perception: effectivePerception,
+                    promptProfile: promptProfile,
+                    stage: .decisionFallback
+                )
+                attempts.append(fallbackAttempt)
+                let fallbackOutput = try await runtime.runTextInference(
+                    runtimePath: runtimePath,
+                    systemPrompt: fallbackAttempt.templateContents,
+                    userPrompt: fallbackAttempt.renderedPrompt,
+                    options: Self.legacyDecisionFallbackOptions(modelIdentifier: modelIdentifier)
+                )
+                attempts[2].runtimeOutput = fallbackOutput
+                attempts[2].parsedDecision = LLMOutputParsing.extractDecision(
+                    from: fallbackOutput.stdout + "\n" + fallbackOutput.stderr
+                )
             }
+
+            if let fallbackDecision = attempts.last?.parsedDecision {
+                cooldown = nil
+                return LLMEvaluationResult(
+                    runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
+                    promptProfileID: promptProfile.descriptor.id,
+                    promptProfileVersion: promptProfile.descriptor.version,
+                    attempts: attempts,
+                    finalDecision: fallbackDecision,
+                    failureMessage: nil
+                )
+            }
+
+            cooldown = FailureCooldown(
+                until: Date().addingTimeInterval(120),
+                contextKey: snapshotContextKey
+            )
 
             return LLMEvaluationResult(
                 runtimePath: runtimePath,
@@ -231,7 +348,10 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                 failureMessage: "no_usable_decision"
             )
         } catch {
-            cooldownUntil = Date().addingTimeInterval(120)
+            cooldown = FailureCooldown(
+                until: Date().addingTimeInterval(120),
+                contextKey: snapshotContextKey
+            )
             await ActivityLogService.shared.append(
                 category: "llm-error",
                 message: error.localizedDescription
@@ -248,48 +368,37 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         }
     }
 
-    private func makePrimaryAttempt(
+    private func makePerceptionAttempt(
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
         heuristics: TelemetryHeuristicSnapshot,
-        distraction: DistractionMetadata,
         memory: String,
         promptProfile: MonitoringPromptProfile
     ) -> LLMEvaluationAttempt {
-        let prompt = PromptCatalog.loadMonitoringPrompt(
-            profileID: promptProfile.descriptor.id,
-            variant: .visionPrimary
-        )
-        let renderedPrompt = Self.makeUserPrompt(
+        let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .perceptionVision)
+        let payload = Self.makeLegacyPerceptionPayload(
             snapshot: snapshot,
             goals: goals,
-            recentActions: recentActions,
             heuristics: heuristics,
-            distraction: distraction,
-            memory: memory,
-            promptProfile: promptProfile
-        )
-        let payload = Self.makeVisionPayload(
-            snapshot: snapshot,
-            goals: goals,
-            recentActions: recentActions,
-            heuristics: heuristics,
-            distraction: distraction,
             memory: memory
         )
         let payloadJSON = Self.encodePayload(payload)
+        let renderedPrompt = PromptCatalog.renderPolicyUserPrompt(
+            stage: .perceptionVision,
+            payloadJSON: payloadJSON
+        )
         let template = PromptTemplateRecord(
-            id: prompt.asset.id,
-            version: prompt.asset.version,
-            sha256: Self.sha256Hex(prompt.contents)
+            id: "legacy_focus.perception_vision",
+            version: promptProfile.descriptor.version,
+            sha256: Self.sha256Hex(systemPrompt)
         )
 
         return LLMEvaluationAttempt(
-            promptMode: MonitoringPromptVariant.visionPrimary.rawValue,
+            promptMode: "legacy_perception_vision",
             promptVersion: promptProfile.descriptor.version,
             template: template,
-            templateContents: prompt.contents,
+            templateContents: systemPrompt,
             payloadJSON: payloadJSON,
             renderedPrompt: renderedPrompt,
             runtimeOutput: nil,
@@ -297,44 +406,43 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
     }
 
-    private func makeFallbackAttempt(
+    private func makeDecisionAttempt(
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
         heuristics: TelemetryHeuristicSnapshot,
         distraction: DistractionMetadata,
         memory: String,
-        promptProfile: MonitoringPromptProfile
+        perception: LegacyFocusPerceptionEnvelope,
+        promptProfile: MonitoringPromptProfile,
+        stage: LegacyFocusPromptStage
     ) -> LLMEvaluationAttempt {
-        let prompt = PromptCatalog.loadMonitoringPrompt(
-            profileID: promptProfile.descriptor.id,
-            variant: .fallback
-        )
-        let payload = Self.makeVisionPayload(
+        let systemPrompt = PromptCatalog.loadLegacyFocusSystemPrompt(stage: stage)
+        let payload = Self.makeLegacyDecisionPayload(
             snapshot: snapshot,
             goals: goals,
             recentActions: recentActions,
             heuristics: heuristics,
             distraction: distraction,
-            memory: memory
-        )
-        let renderedPrompt = Self.makeUserPrompt(
-            payloadJSON: Self.encodePayload(payload),
-            promptProfile: promptProfile,
-            variant: .fallbackUser
+            memory: memory,
+            perception: perception
         )
         let payloadJSON = Self.encodePayload(payload)
+        let renderedPrompt = PromptCatalog.renderLegacyFocusUserPrompt(
+            stage: stage,
+            payloadJSON: payloadJSON
+        )
         let template = PromptTemplateRecord(
-            id: prompt.asset.id,
-            version: prompt.asset.version,
-            sha256: Self.sha256Hex(prompt.contents)
+            id: "legacy_focus.\(stage.rawValue)",
+            version: promptProfile.descriptor.version,
+            sha256: Self.sha256Hex(systemPrompt)
         )
 
         return LLMEvaluationAttempt(
-            promptMode: MonitoringPromptVariant.fallback.rawValue,
+            promptMode: "legacy_\(stage.rawValue)",
             promptVersion: promptProfile.descriptor.version,
             template: template,
-            templateContents: prompt.contents,
+            templateContents: systemPrompt,
             payloadJSON: payloadJSON,
             renderedPrompt: renderedPrompt,
             runtimeOutput: nil,
@@ -360,10 +468,71 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
         return VisionPromptPayload(
             goals: goals.cleanedSingleLine,
-            memory: trimmedMemory.isEmpty ? nil : trimmedMemory,
-            frontmostApp: snapshot.appName,
-            windowTitle: snapshot.windowTitle,
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory.truncatedMultilineForPrompt(maxLength: 220, maxLines: 2),
+            frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
+            windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
             timestamp: snapshot.timestamp,
+            recentSwitches: snapshot.recentSwitches.prefix(2).map(\.telemetryRecord),
+            timeByApp: snapshot.perAppDurations.prefix(4).map(\.telemetryRecord),
+            interventionHistory: makeInterventionHistorySummary(from: relevantActions),
+            heuristics: heuristics,
+            distraction: distraction.telemetryState
+        )
+    }
+
+    nonisolated static func makeLegacyPerceptionPayload(
+        snapshot: AppSnapshot,
+        goals: String,
+        heuristics: TelemetryHeuristicSnapshot,
+        memory: String = ""
+    ) -> LegacyFocusPerceptionPayload {
+        let trimmedMemory = condensedMonitoringMemory(
+            memory,
+            goals: goals
+        )
+        return LegacyFocusPerceptionPayload(
+            goals: goals.cleanedSingleLine.truncatedForPrompt(maxLength: 180),
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory.truncatedMultilineForPrompt(maxLength: 180, maxLines: 2),
+            frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
+            windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
+            timestamp: snapshot.timestamp,
+            recentSwitches: snapshot.recentSwitches.prefix(2).map(\.telemetryRecord),
+            timeByApp: snapshot.perAppDurations.prefix(4).map(\.telemetryRecord),
+            heuristics: TelemetryHeuristicSnapshot(
+                clearlyProductive: heuristics.clearlyProductive,
+                browser: heuristics.browser,
+                helpfulWindowTitle: heuristics.helpfulWindowTitle,
+                periodicVisualReason: nil
+            )
+        )
+    }
+
+    nonisolated static func makeLegacyDecisionPayload(
+        snapshot: AppSnapshot,
+        goals: String,
+        recentActions: [ActionRecord],
+        heuristics: TelemetryHeuristicSnapshot,
+        distraction: DistractionMetadata,
+        memory: String = "",
+        perception: LegacyFocusPerceptionEnvelope
+    ) -> LegacyFocusDecisionPayload {
+        let relevantActions = monitoringRelevantActions(
+            from: recentActions,
+            at: snapshot.timestamp
+        )
+        let trimmedMemory = condensedMonitoringMemory(
+            memory,
+            goals: goals
+        )
+        return LegacyFocusDecisionPayload(
+            goals: goals.cleanedSingleLine.truncatedForPrompt(maxLength: 180),
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory.truncatedMultilineForPrompt(maxLength: 220, maxLines: 2),
+            frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
+            windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
+            timestamp: snapshot.timestamp,
+            activitySummary: perception.activitySummary.truncatedForPrompt(maxLength: 220),
+            perceptionFocusGuess: perception.focusGuess,
+            perceptionReasonTags: Array(perception.reasonTags.prefix(4)),
             recentSwitches: snapshot.recentSwitches.prefix(2).map(\.telemetryRecord),
             timeByApp: snapshot.perAppDurations.prefix(4).map(\.telemetryRecord),
             interventionHistory: makeInterventionHistorySummary(from: relevantActions),
@@ -388,7 +557,7 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             return true
         }
 
-        return Array(filtered.prefix(4))
+        return Array(filtered.prefix(3))
     }
 
     nonisolated static func condensedMonitoringMemory(
@@ -402,9 +571,18 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
 
         var seen = Set<String>()
-        var selected: [String] = []
+        var candidates: [(line: String, score: Int, index: Int)] = []
 
-        for line in memory.components(separatedBy: .newlines) {
+        let restrictionMarkers = [
+            "don't", "do not", "avoid", "block", "limit", "keep me off",
+            "stay off", "no ", "not allow", "shouldn't", "should not"
+        ]
+        let timeBoundMarkers = [
+            "today", "tonight", "tomorrow", "this week", "this afternoon",
+            "this evening", "for now", "until"
+        ]
+
+        for (index, line) in memory.components(separatedBy: .newlines).enumerated() {
             let trimmed = line.cleanedSingleLine
             guard !trimmed.isEmpty else { continue }
 
@@ -424,13 +602,30 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                 }
             }
 
-            selected.append(trimmed)
-            if selected.count == 3 {
-                break
+            var score = index
+            if restrictionMarkers.contains(where: { normalized.contains($0) }) {
+                score += 40
             }
+            if timeBoundMarkers.contains(where: { normalized.contains($0) }) {
+                score += 20
+            }
+            if normalized.contains(".com") || normalized.contains(".io") || normalized.contains(".org") {
+                score += 15
+            }
+
+            candidates.append((line: trimmed, score: score, index: index))
         }
 
-        return selected.joined(separator: "\n")
+        return candidates
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.index > rhs.index
+                }
+                return lhs.score > rhs.score
+            }
+            .prefix(2)
+            .map(\.line)
+            .joined(separator: "\n")
     }
 
     nonisolated static func makeInterventionHistorySummary(
@@ -502,13 +697,131 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
 
     nonisolated static func encodePayload<T: Encodable>(_ payload: T) -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(payload),
               let string = String(data: data, encoding: .utf8) else {
             return "{}"
         }
         return string
+    }
+
+    nonisolated private static func resolvePerception(
+        _ perception: LegacyFocusPerceptionEnvelope?,
+        snapshot: AppSnapshot
+    ) -> LegacyFocusPerceptionEnvelope {
+        guard let perception,
+              !perception.activitySummary.cleanedSingleLine.isEmpty else {
+            let fallbackSummary: String
+            if let windowTitle = snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
+               !windowTitle.isEmpty {
+                fallbackSummary = "\(snapshot.appName.truncatedForPrompt(maxLength: 80)): \(windowTitle)"
+            } else {
+                fallbackSummary = "Using \(snapshot.appName.truncatedForPrompt(maxLength: 80)) in an unclear way."
+            }
+            return LegacyFocusPerceptionEnvelope(
+                activitySummary: fallbackSummary,
+                focusGuess: .unclear,
+                reasonTags: ["perception_fallback"],
+                notes: ["perception_parse_failed"]
+            )
+        }
+        return LegacyFocusPerceptionEnvelope(
+            activitySummary: perception.activitySummary.cleanedSingleLine.truncatedForPrompt(maxLength: 220),
+            focusGuess: perception.focusGuess,
+            reasonTags: Array(perception.reasonTags.prefix(4)),
+            notes: Array(perception.notes.prefix(2)).map { $0.truncatedForPrompt(maxLength: 120) }
+        )
+    }
+
+    nonisolated private static func decode<T: Decodable>(
+        _ type: T.Type,
+        from output: String
+    ) -> T? {
+        StructuredOutputJSON.decode(type, from: output)
+    }
+
+    nonisolated private static func contextKey(for snapshot: AppSnapshot) -> String {
+        [snapshot.bundleIdentifier ?? "unknown", snapshot.windowTitle?.normalizedForContextKey ?? ""]
+            .joined(separator: "|")
+    }
+
+    nonisolated private static func legacyVisionOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+        runtimeOptions(
+            sharedStage: .perceptionVision,
+            modelIdentifier: modelIdentifier,
+            fallback: RuntimeInferenceOptions(
+                modelIdentifier: modelIdentifier,
+                maxTokens: 180,
+                temperature: 0.15,
+                topP: 0.95,
+                topK: 64,
+                ctxSize: 4096,
+                batchSize: 2048,
+                ubatchSize: 1024,
+                timeoutSeconds: 45
+            )
+        )
+    }
+
+    nonisolated private static func legacyDecisionOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+        runtimeOptions(
+            sharedStage: .legacyDecision,
+            modelIdentifier: modelIdentifier,
+            fallback: RuntimeInferenceOptions(
+                modelIdentifier: modelIdentifier,
+                maxTokens: 220,
+                temperature: 0.08,
+                topP: 0.9,
+                topK: 40,
+                ctxSize: 4096,
+                batchSize: 1024,
+                ubatchSize: 512,
+                timeoutSeconds: 40
+            )
+        )
+    }
+
+    nonisolated private static func legacyDecisionFallbackOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+        runtimeOptions(
+            sharedStage: .legacyDecisionFallback,
+            modelIdentifier: modelIdentifier,
+            fallback: RuntimeInferenceOptions(
+                modelIdentifier: modelIdentifier,
+                maxTokens: 180,
+                temperature: 0.08,
+                topP: 0.9,
+                topK: 32,
+                ctxSize: 4096,
+                batchSize: 1024,
+                ubatchSize: 512,
+                timeoutSeconds: 40
+            )
+        )
+    }
+
+    nonisolated private static func runtimeOptions(
+        sharedStage: MonitoringPromptTuningStage,
+        modelIdentifier: String,
+        fallback: RuntimeInferenceOptions
+    ) -> RuntimeInferenceOptions {
+        guard let baseOptions = MonitoringPromptTuning.runtimeDefinitions
+            .first(where: { $0.id == MonitoringConfiguration.defaultRuntimeProfileID })?
+            .options(for: sharedStage) else {
+            return fallback
+        }
+
+        return RuntimeInferenceOptions(
+            modelIdentifier: modelIdentifier,
+            maxTokens: baseOptions.maxTokens,
+            temperature: baseOptions.temperature,
+            topP: baseOptions.topP,
+            topK: baseOptions.topK,
+            ctxSize: baseOptions.ctxSize,
+            batchSize: baseOptions.batchSize,
+            ubatchSize: baseOptions.ubatchSize,
+            timeoutSeconds: baseOptions.timeoutSeconds
+        )
     }
 
     nonisolated private static func sha256Hex(_ input: String) -> String {

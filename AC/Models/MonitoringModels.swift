@@ -12,14 +12,14 @@ enum MonitoringSelectionMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct MonitoringConfiguration: Codable, Hashable, Sendable {
-    static let legacyLLMAlgorithmID = "legacy_focus_v1"
-    static let llmAlgorithmID = "llm_focus_v1"
-    static let llmPolicyAlgorithmID = "llm_policy_v1"
-    static let defaultAlgorithmID = llmPolicyAlgorithmID
-    static let defaultPromptProfileID = "focus_default_v2"
-    static let defaultPipelineProfileID = "vision_split_default"
-    static let defaultRuntimeProfileID = "gemma_balanced_v1"
-    static let banditAlgorithmID = "bandit_focus_v1"
+    nonisolated static let legacyLLMAlgorithmID = "legacy_focus_v1"
+    nonisolated static let llmAlgorithmID = "llm_focus_v1"
+    nonisolated static let llmPolicyAlgorithmID = "llm_policy_v1"
+    nonisolated static let defaultAlgorithmID = llmPolicyAlgorithmID
+    nonisolated static let defaultPromptProfileID = "focus_default_v2"
+    nonisolated static let defaultPipelineProfileID = "vision_split_default"
+    nonisolated static let defaultRuntimeProfileID = "gemma_balanced_v1"
+    nonisolated static let banditAlgorithmID = "bandit_focus_v1"
 
     var algorithmID: String
     var promptProfileID: String
@@ -53,7 +53,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         self.experimentArmOverride = experimentArmOverride
     }
 
-    static func normalizedAlgorithmID(_ id: String) -> String {
+    nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
         switch id {
         case legacyLLMAlgorithmID:
             return llmAlgorithmID

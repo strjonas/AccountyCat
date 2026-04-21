@@ -66,3 +66,24 @@ struct IndexedEvent: Identifiable, Hashable, Sendable {
     var summary: String
     var rawJSON: String
 }
+
+struct IndexedModelAttempt: Identifiable, Hashable, Sendable {
+    var evaluationID: String
+    var promptMode: String
+    var timestamp: Date
+    var promptPayloadPath: String?
+    var renderedPromptPath: String?
+    var stdoutPath: String?
+    var stderrPath: String?
+    var stdoutPreview: String?
+    var stderrPreview: String?
+    var parsedOutputJSON: String?
+
+    var id: String {
+        "\(evaluationID):\(promptMode)"
+    }
+
+    var title: String {
+        promptMode.replacingOccurrences(of: "_", with: " ")
+    }
+}

@@ -59,4 +59,53 @@ extension String {
             .replacingOccurrences(of: "  ", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    nonisolated func truncatedForPrompt(maxLength: Int) -> String {
+        let cleaned = cleanedSingleLine
+        guard maxLength > 0, cleaned.count > maxLength else {
+            return cleaned
+        }
+
+        let prefixLength = max(0, maxLength - 3)
+        return cleaned.prefix(prefixLength).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+    }
+
+    nonisolated func truncatedMultilineForPrompt(
+        maxLength: Int,
+        maxLines: Int? = nil
+    ) -> String {
+        guard maxLength > 0 else {
+            return ""
+        }
+
+        let lines = components(separatedBy: .newlines)
+            .map(\.cleanedSingleLine)
+            .filter { !$0.isEmpty }
+
+        if lines.isEmpty {
+            return ""
+        }
+
+        let limitedLines = maxLines.map { Array(lines.prefix($0)) } ?? lines
+        var resultLines: [String] = []
+        var remaining = maxLength
+
+        for line in limitedLines {
+            let separatorCost = resultLines.isEmpty ? 0 : 1
+            guard remaining > separatorCost else { break }
+
+            let lineBudget = remaining - separatorCost
+            let truncatedLine = line.truncatedForPrompt(maxLength: lineBudget)
+            guard !truncatedLine.isEmpty else { continue }
+
+            resultLines.append(truncatedLine)
+            remaining -= separatorCost + truncatedLine.count
+
+            if truncatedLine.hasSuffix("...") {
+                break
+            }
+        }
+
+        return resultLines.joined(separator: "\n")
+    }
 }

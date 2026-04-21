@@ -148,6 +148,7 @@ actor TelemetryIndexStore {
             var labels: Set<EpisodeAnnotationLabel> = []
             var notes: [String] = []
             var screenshotPath: String?
+            var primaryPromptMode: String?
             var renderedPromptPath: String?
             var promptPayloadPath: String?
             var modelOutputJSON: String?
@@ -209,13 +210,32 @@ actor TelemetryIndexStore {
                         sessionID: sessionID
                     ).path
                 }
-                if let renderedPromptArtifact = modelInput.renderedPromptArtifact {
+                if shouldPreferPromptMode(modelInput.promptMode, over: accumulator.primaryPromptMode) {
+                    accumulator.primaryPromptMode = modelInput.promptMode
+                    if let renderedPromptArtifact = modelInput.renderedPromptArtifact {
+                        accumulator.renderedPromptPath = await telemetryStore.absoluteArtifactURL(
+                            for: renderedPromptArtifact,
+                            sessionID: sessionID
+                        ).path
+                    } else {
+                        accumulator.renderedPromptPath = nil
+                    }
+                    if let promptPayloadArtifact = modelInput.promptPayloadArtifact {
+                        accumulator.promptPayloadPath = await telemetryStore.absoluteArtifactURL(
+                            for: promptPayloadArtifact,
+                            sessionID: sessionID
+                        ).path
+                    } else {
+                        accumulator.promptPayloadPath = nil
+                    }
+                } else if accumulator.renderedPromptPath == nil,
+                          let renderedPromptArtifact = modelInput.renderedPromptArtifact {
                     accumulator.renderedPromptPath = await telemetryStore.absoluteArtifactURL(
                         for: renderedPromptArtifact,
                         sessionID: sessionID
                     ).path
-                }
-                if let promptPayloadArtifact = modelInput.promptPayloadArtifact {
+                } else if accumulator.promptPayloadPath == nil,
+                          let promptPayloadArtifact = modelInput.promptPayloadArtifact {
                     accumulator.promptPayloadPath = await telemetryStore.absoluteArtifactURL(
                         for: promptPayloadArtifact,
                         sessionID: sessionID
@@ -301,6 +321,26 @@ actor TelemetryIndexStore {
             return nil
         }
         return evaluationEpisodeIDs[evaluationID]
+    }
+
+    private func shouldPreferPromptMode(_ candidate: String, over current: String?) -> Bool {
+        promptModePriority(candidate) > promptModePriority(current)
+    }
+
+    private func promptModePriority(_ promptMode: String?) -> Int {
+        guard let promptMode else { return Int.min }
+        switch promptMode {
+        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback":
+            return 300
+        case "nudge_copy":
+            return 200
+        case "appeal_review":
+            return 150
+        case "perception_title", "perception_vision", "legacy_perception_vision":
+            return 100
+        default:
+            return 0
+        }
     }
 
     private func prettyJSONString<T: Encodable & Sendable>(for value: T) async throws -> String {

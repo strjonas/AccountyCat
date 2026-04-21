@@ -88,33 +88,45 @@ actor PromptLabRunner {
         }
 
         var stageResults: [PromptLabStageRunResult] = []
+        let compactAppName = scenario.appName.truncatedForPrompt(
+            maxLength: MonitoringPromptContextBudget.appNameCharacters
+        )
+        let compactWindowTitle = scenario.windowTitle.nilIfBlank?.truncatedForPrompt(
+            maxLength: MonitoringPromptContextBudget.windowTitleCharacters
+        )
+        let compactPolicySummary = policySummary(for: scenario)
+        let compactSwitches = compactRecentSwitches(
+            scenario.recentSwitches,
+            limit: MonitoringPromptContextBudget.decisionSwitchCount
+        )
+        let compactUsage = compactUsage(
+            scenario.usage,
+            limit: MonitoringPromptContextBudget.decisionUsageCount
+        )
+        let compactInterventions = compactInterventionSummary(scenario.recentActions)
 
-        let titlePerception: PromptLabPerceptionEnvelope?
+        let titlePerception: MonitoringPerceptionEnvelope?
         if pipeline.usesTitlePerception {
             titlePerception = await runTextStage(
                 stage: .perceptionTitle,
                 prompt: promptSet.prompt(for: .perceptionTitle),
                 runtimePath: normalizedRuntimePath,
                 options: runtimeProfile.options(for: .perceptionTitle),
-                payload: PromptLabTitlePerceptionPayload(
-                    goals: scenario.goals.cleanedSingleLine,
-                    appName: scenario.appName.cleanedSingleLine,
+                payload: MonitoringTitlePerceptionPromptPayload(
+                    appName: compactAppName,
                     bundleIdentifier: scenario.bundleIdentifier.nilIfBlank,
-                    windowTitle: scenario.windowTitle.nilIfBlank,
-                    timestamp: scenario.timestamp,
-                    recentSwitches: scenario.recentSwitches,
-                    usage: scenario.usage,
-                    policySummary: policySummary(for: scenario),
-                    recentActions: scenario.recentActions
+                    windowTitle: compactWindowTitle,
+                    recentSwitches: Array(compactSwitches.prefix(MonitoringPromptContextBudget.titlePerceptionSwitchCount)),
+                    usage: Array(compactUsage.prefix(MonitoringPromptContextBudget.titlePerceptionUsageCount))
                 ),
                 stageResults: &stageResults,
-                decoder: PromptLabPerceptionEnvelope.self
+                decoder: MonitoringPerceptionEnvelope.self
             )
         } else {
             titlePerception = nil
         }
 
-        let visionPerception: PromptLabPerceptionEnvelope?
+        let visionPerception: MonitoringPerceptionEnvelope?
         if pipeline.usesVisionPerception {
             if let snapshotPath = scenario.screenshotPath.nilIfBlank,
                FileManager.default.fileExists(atPath: snapshotPath) {
@@ -124,15 +136,12 @@ actor PromptLabRunner {
                     runtimePath: normalizedRuntimePath,
                     snapshotPath: snapshotPath,
                     options: runtimeProfile.options(for: .perceptionVision),
-                    payload: PromptLabVisionPerceptionPayload(
-                        goals: scenario.goals.cleanedSingleLine,
-                        appName: scenario.appName.cleanedSingleLine,
-                        windowTitle: scenario.windowTitle.nilIfBlank,
-                        timestamp: scenario.timestamp,
-                        policySummary: policySummary(for: scenario)
+                    payload: MonitoringVisionPerceptionPromptPayload(
+                        appName: compactAppName,
+                        windowTitle: compactWindowTitle
                     ),
                     stageResults: &stageResults,
-                    decoder: PromptLabPerceptionEnvelope.self
+                    decoder: MonitoringPerceptionEnvelope.self
                 )
             } else {
                 stageResults.append(
@@ -152,31 +161,47 @@ actor PromptLabRunner {
             visionPerception = nil
         }
 
-        let decision = await runTextStage(
+        var decision = await runTextStage(
             stage: .decision,
             prompt: promptSet.prompt(for: .decision),
             runtimePath: normalizedRuntimePath,
             options: runtimeProfile.options(for: .decision),
-            payload: PromptLabDecisionPayload(
-                goals: scenario.goals.cleanedSingleLine,
-                freeFormMemory: scenario.freeFormMemorySummary.cleanedSingleLine,
-                policySummary: policySummary(for: scenario),
-                policyMemoryJSON: scenario.policyMemoryJSON.nilIfBlank,
-                timestamp: scenario.timestamp,
-                appName: scenario.appName.cleanedSingleLine,
+            payload: MonitoringDecisionPromptPayload(
+                goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
+                    maxLength: MonitoringPromptContextBudget.goalCharacters
+                ),
+                freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
+                    maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                    maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+                ),
+                policySummary: compactPolicySummary,
+                appName: compactAppName,
                 bundleIdentifier: scenario.bundleIdentifier.nilIfBlank,
-                windowTitle: scenario.windowTitle.nilIfBlank,
-                recentSwitches: scenario.recentSwitches,
-                usage: scenario.usage,
-                recentActions: scenario.recentActions,
-                heuristics: scenario.heuristics.telemetryRecord,
-                distraction: scenario.distraction.telemetryRecord,
+                windowTitle: compactWindowTitle,
+                recentSwitches: compactSwitches,
+                usage: compactUsage,
+                recentInterventions: compactInterventions,
+                heuristics: MonitoringPromptHeuristicSummary(heuristics: scenario.heuristics.telemetryRecord),
+                distraction: MonitoringPromptDistractionSummary(state: scenario.distraction.telemetryRecord),
                 titlePerception: titlePerception,
                 visionPerception: visionPerception
             ),
             stageResults: &stageResults,
-            decoder: PromptLabDecisionEnvelope.self
+            decoder: MonitoringDecisionEnvelope.self
         )
+        if decision == nil,
+           let rawOutput = stageResults.last?.rawOutput,
+           let salvagedDecision = Self.salvageDecisionEnvelope(from: rawOutput) {
+            decision = salvagedDecision
+            if let lastIndex = stageResults.indices.last {
+                stageResults[lastIndex].parsedSummary = Self.summary(
+                    for: .decision,
+                    decoded: salvagedDecision,
+                    rawOutput: rawOutput
+                ) + " • salvaged_partial_json"
+                stageResults[lastIndex].errorMessage = nil
+            }
+        }
 
         var finalNudge = decision?.nudge?.cleanedSingleLine
         if pipeline.splitCopyGeneration,
@@ -186,44 +211,51 @@ actor PromptLabRunner {
                 prompt: promptSet.prompt(for: .nudgeCopy),
                 runtimePath: normalizedRuntimePath,
                 options: runtimeProfile.options(for: .nudgeCopy),
-                payload: PromptLabNudgePayload(
-                    goals: scenario.goals.cleanedSingleLine,
-                    policySummary: policySummary(for: scenario),
-                    policyMemoryJSON: scenario.policyMemoryJSON.nilIfBlank,
-                    appName: scenario.appName.cleanedSingleLine,
-                    windowTitle: scenario.windowTitle.nilIfBlank,
+                payload: MonitoringNudgePromptPayload(
+                    goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
+                        maxLength: MonitoringPromptContextBudget.goalCharacters
+                    ),
+                    policySummary: compactPolicySummary,
+                    appName: compactAppName,
+                    windowTitle: compactWindowTitle,
                     titlePerception: titlePerception?.activitySummary,
                     visionPerception: visionPerception?.activitySummary,
-                    recentNudges: scenario.recentNudgeMessages
+                    recentNudges: Array(
+                        scenario.recentNudgeMessages.prefix(MonitoringPromptContextBudget.recentNudgeCount)
+                    )
                 ),
                 stageResults: &stageResults,
-                decoder: PromptLabNudgeEnvelope.self
+                decoder: MonitoringNudgeEnvelope.self
             )
             if let nudge = nudgeEnvelope?.nudge?.cleanedSingleLine, !nudge.isEmpty {
                 finalNudge = nudge
             }
         }
 
-        let appealEnvelope: PromptLabAppealEnvelope?
+        let appealEnvelope: MonitoringAppealEnvelope?
         if !scenario.appealText.cleanedSingleLine.isEmpty {
             appealEnvelope = await runTextStage(
                 stage: .appealReview,
                 prompt: promptSet.prompt(for: .appealReview),
                 runtimePath: normalizedRuntimePath,
                 options: runtimeProfile.options(for: .appealReview),
-                payload: PromptLabAppealPayload(
+                payload: MonitoringAppealPromptPayload(
                     appealText: scenario.appealText.cleanedSingleLine,
-                    goals: scenario.goals.cleanedSingleLine,
-                    freeFormMemory: scenario.freeFormMemorySummary.cleanedSingleLine,
-                    policySummary: policySummary(for: scenario),
-                    policyMemoryJSON: scenario.policyMemoryJSON.nilIfBlank,
-                    snapshotAppName: scenario.appName.cleanedSingleLine,
-                    snapshotWindowTitle: scenario.windowTitle.nilIfBlank,
+                    goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
+                        maxLength: MonitoringPromptContextBudget.goalCharacters
+                    ),
+                    freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
+                        maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                        maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+                    ),
+                    policySummary: compactPolicySummary,
+                    snapshotAppName: compactAppName,
+                    snapshotWindowTitle: compactWindowTitle,
                     assessment: decision?.assessment,
                     suggestedAction: decision?.suggestedAction
                 ),
                 stageResults: &stageResults,
-                decoder: PromptLabAppealEnvelope.self
+                decoder: MonitoringAppealEnvelope.self
             )
         } else {
             appealEnvelope = nil
@@ -252,10 +284,14 @@ actor PromptLabRunner {
 
     private func policySummary(for scenario: PromptLabScenario) -> String {
         if !scenario.policyMemorySummary.cleanedSingleLine.isEmpty {
-            return scenario.policyMemorySummary.cleanedSingleLine
+            return scenario.policyMemorySummary.truncatedMultilineForPrompt(
+                maxLength: MonitoringPromptContextBudget.policySummaryCharacters,
+                maxLines: MonitoringPromptContextBudget.policySummaryLines
+            )
         }
         if !scenario.policyMemoryJSON.cleanedSingleLine.isEmpty {
             return scenario.policyMemoryJSON.cleanedSingleLine
+                .truncatedForPrompt(maxLength: MonitoringPromptContextBudget.policySummaryCharacters)
         }
         return "No structured policy rules."
     }
@@ -270,6 +306,7 @@ actor PromptLabRunner {
         decoder: T.Type
     ) async -> T? {
         let payloadJSON = Self.encodePayload(payload)
+        let payloadJSONPretty = Self.encodePayload(payload, prettyPrinted: true)
         let renderedPrompt = renderPrompt(prompt, payloadJSON: payloadJSON)
         let startedAt = Date()
 
@@ -285,7 +322,7 @@ actor PromptLabRunner {
             stageResults.append(
                 PromptLabStageRunResult(
                     stage: stage,
-                    payloadJSON: payloadJSON,
+                    payloadJSON: payloadJSONPretty,
                     renderedPrompt: Self.formatRenderedPrompt(system: prompt.systemPrompt, user: renderedPrompt),
                     rawOutput: rawOutput,
                     parsedSummary: Self.summary(for: stage, decoded: decoded, rawOutput: rawOutput),
@@ -298,7 +335,7 @@ actor PromptLabRunner {
             stageResults.append(
                 PromptLabStageRunResult(
                     stage: stage,
-                    payloadJSON: payloadJSON,
+                    payloadJSON: payloadJSONPretty,
                     renderedPrompt: Self.formatRenderedPrompt(system: prompt.systemPrompt, user: renderedPrompt),
                     rawOutput: "",
                     parsedSummary: "Error: \(error.localizedDescription)",
@@ -321,6 +358,7 @@ actor PromptLabRunner {
         decoder: T.Type
     ) async -> T? {
         let payloadJSON = Self.encodePayload(payload)
+        let payloadJSONPretty = Self.encodePayload(payload, prettyPrinted: true)
         let renderedPrompt = renderPrompt(prompt, payloadJSON: payloadJSON)
         let startedAt = Date()
 
@@ -337,7 +375,7 @@ actor PromptLabRunner {
             stageResults.append(
                 PromptLabStageRunResult(
                     stage: stage,
-                    payloadJSON: payloadJSON,
+                    payloadJSON: payloadJSONPretty,
                     renderedPrompt: Self.formatRenderedPrompt(system: prompt.systemPrompt, user: renderedPrompt),
                     rawOutput: rawOutput,
                     parsedSummary: Self.summary(for: stage, decoded: decoded, rawOutput: rawOutput),
@@ -350,7 +388,7 @@ actor PromptLabRunner {
             stageResults.append(
                 PromptLabStageRunResult(
                     stage: stage,
-                    payloadJSON: payloadJSON,
+                    payloadJSON: payloadJSONPretty,
                     renderedPrompt: Self.formatRenderedPrompt(system: prompt.systemPrompt, user: renderedPrompt),
                     rawOutput: "",
                     parsedSummary: "Error: \(error.localizedDescription)",
@@ -382,9 +420,12 @@ actor PromptLabRunner {
         """
     }
 
-    private static func encodePayload<P: Encodable>(_ payload: P) -> String {
+    private static func encodePayload<P: Encodable>(
+        _ payload: P,
+        prettyPrinted: Bool = false
+    ) -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(payload),
               let json = String(data: data, encoding: .utf8) else {
@@ -394,79 +435,140 @@ actor PromptLabRunner {
     }
 
     private static func decode<T: Decodable>(_ type: T.Type, from output: String) -> T? {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        StructuredOutputJSON.decode(type, from: output)
+    }
+
+    private static func salvageDecisionEnvelope(from output: String) -> MonitoringDecisionEnvelope? {
         for object in jsonObjects(in: output).reversed() {
             guard let data = object.data(using: .utf8),
-                  let decoded = try? decoder.decode(type, from: data) else {
+                  let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 continue
             }
-            return decoded
+
+            let assessmentRaw = (dictionary["assessment"] as? String) ?? (dictionary["verdict"] as? String)
+            guard let assessmentRaw,
+                  let assessment = ModelAssessment(rawValue: assessmentRaw) else {
+                continue
+            }
+
+            let suggestedActionRaw =
+                (dictionary["suggested_action"] as? String) ??
+                (dictionary["suggestedAction"] as? String) ??
+                inferredSuggestedAction(
+                    assessment: assessment,
+                    nudge: dictionary["nudge"] as? String
+                )
+
+            let suggestedAction = ModelSuggestedAction(rawValue: suggestedActionRaw) ?? .abstain
+            let confidence = dictionary["confidence"] as? Double
+            let reasonTags =
+                (dictionary["reason_tags"] as? [String]) ??
+                (dictionary["reasonTags"] as? [String]) ??
+                []
+            let nudge = (dictionary["nudge"] as? String)?.cleanedSingleLine
+            let abstainReason =
+                (dictionary["abstain_reason"] as? String) ??
+                (dictionary["abstainReason"] as? String)
+
+            return MonitoringDecisionEnvelope(
+                assessment: assessment,
+                suggestedAction: suggestedAction,
+                confidence: confidence,
+                reasonTags: reasonTags,
+                nudge: nudge,
+                abstainReason: abstainReason?.cleanedSingleLine,
+                overlayHeadline: nil,
+                overlayBody: nil,
+                overlayPrompt: nil,
+                submitButtonTitle: nil,
+                secondaryButtonTitle: nil
+            )
         }
+
         return nil
     }
 
-    private static func jsonObjects(in text: String) -> [String] {
-        var results: [String] = []
-        var startIndex: String.Index?
-        var depth = 0
-        var inString = false
-        var escaping = false
-
-        for index in text.indices {
-            let character = text[index]
-
-            if inString {
-                if escaping {
-                    escaping = false
-                } else if character == "\\" {
-                    escaping = true
-                } else if character == "\"" {
-                    inString = false
-                }
-                continue
-            }
-
-            if character == "\"" {
-                inString = true
-                continue
-            }
-
-            if character == "{" {
-                if depth == 0 {
-                    startIndex = index
-                }
-                depth += 1
-            } else if character == "}" {
-                guard depth > 0 else { continue }
-                depth -= 1
-                if depth == 0, let start = startIndex {
-                    results.append(String(text[start...index]))
-                    startIndex = nil
-                }
-            }
+    private static func inferredSuggestedAction(
+        assessment: ModelAssessment,
+        nudge: String?
+    ) -> String {
+        if let nudge, !nudge.cleanedSingleLine.isEmpty {
+            return ModelSuggestedAction.nudge.rawValue
         }
+        switch assessment {
+        case .focused:
+            return ModelSuggestedAction.none.rawValue
+        case .distracted:
+            return ModelSuggestedAction.abstain.rawValue
+        case .unclear:
+            return ModelSuggestedAction.abstain.rawValue
+        }
+    }
 
-        return results
+    private static func jsonObjects(in text: String) -> [String] {
+        StructuredOutputJSON.jsonObjects(in: text)
     }
 
     private static func summary<T>(for stage: PromptLabStage, decoded: T?, rawOutput: String) -> String {
         switch decoded {
-        case let envelope as PromptLabPerceptionEnvelope:
+        case let envelope as MonitoringPerceptionEnvelope:
             let guess = envelope.focusGuess?.rawValue ?? "unknown"
             return "\(guess) • \(envelope.activitySummary.cleanedSingleLine)"
-        case let envelope as PromptLabDecisionEnvelope:
+        case let envelope as MonitoringDecisionEnvelope:
             let action = envelope.suggestedAction.rawValue
             let reason = envelope.reasonTags.joined(separator: ",")
             let nudge = envelope.nudge?.cleanedSingleLine ?? "no_nudge"
             return "\(envelope.assessment.rawValue) • \(action) • \(reason) • \(nudge)"
-        case let envelope as PromptLabNudgeEnvelope:
+        case let envelope as MonitoringNudgeEnvelope:
             return envelope.nudge?.cleanedSingleLine ?? "No nudge."
-        case let envelope as PromptLabAppealEnvelope:
+        case let envelope as MonitoringAppealEnvelope:
             return "\(envelope.decision.rawValue) • \(envelope.message.cleanedSingleLine)"
         default:
             return rawOutput.cleanedSingleLine.prefix(220).description
         }
+    }
+
+    private func compactRecentSwitches(
+        _ records: [PromptLabSwitchRecord],
+        limit: Int
+    ) -> [MonitoringPromptSwitchRecord] {
+        records.prefix(limit).map {
+            MonitoringPromptSwitchRecord(
+                fromAppName: $0.fromAppName.truncatedForPrompt(maxLength: 60),
+                toAppName: $0.toAppName.truncatedForPrompt(maxLength: 60),
+                toWindowTitle: $0.toWindowTitle.truncatedForPrompt(maxLength: 140),
+                timestamp: $0.timestamp
+            )
+        }
+    }
+
+    private func compactUsage(
+        _ records: [PromptLabUsageRecord],
+        limit: Int
+    ) -> [MonitoringPromptUsageRecord] {
+        records.prefix(limit).map {
+            MonitoringPromptUsageRecord(
+                appName: $0.appName.truncatedForPrompt(maxLength: 60),
+                seconds: $0.seconds
+            )
+        }
+    }
+
+    private func compactInterventionSummary(
+        _ records: [PromptLabActionRecord]
+    ) -> MonitoringPromptInterventionSummary {
+        let recentRelevant = records.prefix(MonitoringPromptContextBudget.recentNudgeCount)
+        let recentNudges = recentRelevant
+            .filter { $0.kind == "nudge" }
+            .map { $0.message.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+
+        let lastAction = recentRelevant.first
+        return MonitoringPromptInterventionSummary(
+            recentNudges: recentNudges,
+            lastActionKind: lastAction?.kind.truncatedForPrompt(maxLength: 24),
+            lastActionMessage: lastAction?.message.truncatedForPrompt(maxLength: 120)
+        )
     }
 }
 
@@ -654,131 +756,6 @@ private enum PromptLabRuntimeError: LocalizedError {
             return "Runtime failed with status \(status): \(preview)"
         }
     }
-}
-
-nonisolated private struct PromptLabTitlePerceptionPayload: Encodable {
-    var goals: String
-    var appName: String
-    var bundleIdentifier: String?
-    var windowTitle: String?
-    var timestamp: Date
-    var recentSwitches: [PromptLabSwitchRecord]
-    var usage: [PromptLabUsageRecord]
-    var policySummary: String
-    var recentActions: [PromptLabActionRecord]
-}
-
-nonisolated private struct PromptLabVisionPerceptionPayload: Encodable {
-    var goals: String
-    var appName: String
-    var windowTitle: String?
-    var timestamp: Date
-    var policySummary: String
-}
-
-nonisolated private struct PromptLabDecisionPayload: Encodable {
-    var goals: String
-    var freeFormMemory: String
-    var policySummary: String
-    var policyMemoryJSON: String?
-    var timestamp: Date
-    var appName: String
-    var bundleIdentifier: String?
-    var windowTitle: String?
-    var recentSwitches: [PromptLabSwitchRecord]
-    var usage: [PromptLabUsageRecord]
-    var recentActions: [PromptLabActionRecord]
-    var heuristics: TelemetryHeuristicSnapshot
-    var distraction: TelemetryDistractionState
-    var titlePerception: PromptLabPerceptionEnvelope?
-    var visionPerception: PromptLabPerceptionEnvelope?
-}
-
-nonisolated private struct PromptLabNudgePayload: Encodable {
-    var goals: String
-    var policySummary: String
-    var policyMemoryJSON: String?
-    var appName: String
-    var windowTitle: String?
-    var titlePerception: String?
-    var visionPerception: String?
-    var recentNudges: [String]
-}
-
-nonisolated private struct PromptLabAppealPayload: Encodable {
-    var appealText: String
-    var goals: String
-    var freeFormMemory: String
-    var policySummary: String
-    var policyMemoryJSON: String?
-    var snapshotAppName: String
-    var snapshotWindowTitle: String?
-    var assessment: ModelAssessment?
-    var suggestedAction: ModelSuggestedAction?
-}
-
-nonisolated private struct PromptLabPerceptionEnvelope: Codable, Sendable {
-    var activitySummary: String
-    var focusGuess: ModelAssessment?
-    var reasonTags: [String]
-    var notes: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case activitySummary = "activity_summary"
-        case sceneSummary = "scene_summary"
-        case focusGuess = "focus_guess"
-        case reasonTags = "reason_tags"
-        case notes
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        activitySummary = try container.decodeIfPresent(String.self, forKey: .activitySummary)
-            ?? container.decodeIfPresent(String.self, forKey: .sceneSummary)
-            ?? ""
-        focusGuess = try container.decodeIfPresent(ModelAssessment.self, forKey: .focusGuess)
-        reasonTags = try container.decodeIfPresent([String].self, forKey: .reasonTags) ?? []
-        notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(activitySummary, forKey: .activitySummary)
-        try container.encodeIfPresent(focusGuess, forKey: .focusGuess)
-        try container.encode(reasonTags, forKey: .reasonTags)
-        try container.encode(notes, forKey: .notes)
-    }
-}
-
-nonisolated private struct PromptLabDecisionEnvelope: Codable, Sendable {
-    var assessment: ModelAssessment
-    var suggestedAction: ModelSuggestedAction
-    var confidence: Double?
-    var reasonTags: [String]
-    var nudge: String?
-
-    enum CodingKeys: String, CodingKey {
-        case assessment
-        case suggestedAction = "suggested_action"
-        case confidence
-        case reasonTags = "reason_tags"
-        case nudge
-    }
-}
-
-nonisolated private struct PromptLabNudgeEnvelope: Codable, Sendable {
-    var nudge: String?
-}
-
-nonisolated private struct PromptLabAppealEnvelope: Codable, Sendable {
-    var decision: PromptLabAppealDecision
-    var message: String
-}
-
-nonisolated private enum PromptLabAppealDecision: String, Codable, Sendable {
-    case allow
-    case deny
-    case deferDecision = "defer"
 }
 
 private extension String {

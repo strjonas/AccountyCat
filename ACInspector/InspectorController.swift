@@ -15,28 +15,32 @@ final class InspectorController: ObservableObject {
     @Published var episodes: [IndexedEpisode] = []
     @Published var selectedEpisodeID: String?
     @Published var selectedEpisodeEvents: [IndexedEvent] = []
+    @Published var selectedEpisodeAttempts: [IndexedModelAttempt] = []
     @Published var annotationNote = ""
     @Published var selectedLabels: Set<EpisodeAnnotationLabel> = []
     @Published var pinEpisode = false
     @Published var statusText = "Loading telemetry."
-    @Published var promptLabScenarios: [PromptLabScenario] = [.syntheticDefault]
-    @Published var selectedPromptLabScenarioID: UUID? = PromptLabScenario.syntheticDefault.id
-    @Published var promptLabPromptSets: [PromptLabPromptSet] = PromptLabPromptSet.defaults
-    @Published var selectedPromptSetID: String = PromptLabPromptSet.defaults.first?.id ?? ""
-    @Published var selectedPromptStage: PromptLabStage = .decision
-    @Published var selectedPipelineIDs: Set<String> = [PromptLabPipelineProfile.defaults.first?.id ?? ""]
-    @Published var selectedRuntimeProfileIDs: Set<String> = [PromptLabRuntimeProfile.defaults.first?.id ?? ""]
-    @Published var promptLabRuntimePath = PromptLabRunner.defaultRuntimePath
-    @Published var promptLabResults: [PromptLabRunResult] = []
+    @Published var promptLabScenarios: [PromptLabScenario] = [.syntheticDefault] { didSet { schedulePersistPromptLabState() } }
+    @Published var selectedPromptLabScenarioID: UUID? = PromptLabScenario.syntheticDefault.id { didSet { schedulePersistPromptLabState() } }
+    @Published var promptLabPromptSets: [PromptLabPromptSet] = PromptLabPromptSet.defaults { didSet { schedulePersistPromptLabState() } }
+    @Published var selectedPromptSetID: String = PromptLabPromptSet.defaults.first?.id ?? "" { didSet { schedulePersistPromptLabState() } }
+    @Published var selectedPromptStage: PromptLabStage = .decision { didSet { schedulePersistPromptLabState() } }
+    @Published var selectedPipelineIDs: Set<String> = [PromptLabPipelineProfile.defaults.first?.id ?? ""] { didSet { schedulePersistPromptLabState() } }
+    @Published var selectedRuntimeProfileIDs: Set<String> = [PromptLabRuntimeProfile.defaults.first?.id ?? ""] { didSet { schedulePersistPromptLabState() } }
+    @Published var promptLabRuntimePath = PromptLabRunner.defaultRuntimePath { didSet { schedulePersistPromptLabState() } }
+    @Published var promptLabResults: [PromptLabRunResult] = [] { didSet { schedulePersistPromptLabState() } }
     @Published var promptLabStatusText = "Prompt Lab ready."
     @Published var promptLabIsRunning = false
 
     private let indexStore = TelemetryIndexStore()
     private let telemetryStore = TelemetryStore.shared
     private let promptLabRunner = PromptLabRunner()
+    private let promptLabPersistenceURL: URL
     private var refreshTask: Task<Void, Never>?
+    private var promptLabSaveTask: Task<Void, Never>?
     private var lastLoadedDraft: AnnotationDraft?
     private var lastLoadedEpisodeID: String?
+    private var isHydratingPromptLabState = false
 
     private struct AnnotationDraft: Equatable {
         var note: String
@@ -44,8 +48,27 @@ final class InspectorController: ObservableObject {
         var pinned: Bool
     }
 
+    private struct PromptLabPersistenceState: Codable {
+        var scenarios: [PromptLabScenario]
+        var selectedScenarioID: UUID?
+        var promptSets: [PromptLabPromptSet]
+        var selectedPromptSetID: String
+        var selectedPromptStage: PromptLabStage
+        var selectedPipelineIDs: [String]
+        var selectedRuntimeProfileIDs: [String]
+        var runtimePath: String
+        var results: [PromptLabRunResult]
+    }
+
+    init(fileManager: FileManager = .default) {
+        promptLabPersistenceURL = TelemetryPaths.inspectorSupportURL(fileManager: fileManager)
+            .appendingPathComponent("prompt_lab_state.json")
+        loadPersistedPromptLabState(fileManager: fileManager)
+    }
+
     deinit {
         refreshTask?.cancel()
+        promptLabSaveTask?.cancel()
     }
 
     func start() {
@@ -286,6 +309,7 @@ final class InspectorController: ObservableObject {
 
     private func loadEpisodeDetails(episodeID: String, preserveDraftIfDirty: Bool) async throws {
         selectedEpisodeEvents = try await indexStore.loadEvents(for: episodeID)
+        selectedEpisodeAttempts = await makeAttemptDetails(from: selectedEpisodeEvents)
         if let selectedEpisode = episodes.first(where: { $0.id == episodeID }) {
             let loadedDraft = AnnotationDraft(
                 note: selectedEpisode.note,
@@ -320,6 +344,7 @@ final class InspectorController: ObservableObject {
 
     private func clearSelectionState() {
         selectedEpisodeEvents = []
+        selectedEpisodeAttempts = []
         applyAnnotationDraft(AnnotationDraft(note: "", labels: Set<EpisodeAnnotationLabel>(), pinned: false))
         lastLoadedDraft = nil
         lastLoadedEpisodeID = nil
@@ -462,5 +487,307 @@ final class InspectorController: ObservableObject {
             }
         }
         return nil
+    }
+
+    private func makeAttemptDetails(from indexedEvents: [IndexedEvent]) async -> [IndexedModelAttempt] {
+        var attemptsByID: [String: IndexedModelAttempt] = [:]
+
+        for indexedEvent in indexedEvents {
+            guard let event = Self.decodeTelemetryEvent(from: indexedEvent) else { continue }
+
+            if let modelInput = event.modelInput {
+                let key = Self.attemptKey(
+                    evaluationID: modelInput.evaluationID,
+                    promptMode: modelInput.promptMode
+                )
+                var attempt = attemptsByID[key] ?? IndexedModelAttempt(
+                    evaluationID: modelInput.evaluationID,
+                    promptMode: modelInput.promptMode,
+                    timestamp: indexedEvent.timestamp,
+                    promptPayloadPath: nil,
+                    renderedPromptPath: nil,
+                    stdoutPath: nil,
+                    stderrPath: nil,
+                    stdoutPreview: nil,
+                    stderrPreview: nil,
+                    parsedOutputJSON: nil
+                )
+                if let payload = modelInput.promptPayloadArtifact {
+                    attempt.promptPayloadPath = await telemetryStore.absoluteArtifactURL(
+                        for: payload,
+                        sessionID: indexedEvent.sessionID
+                    ).path
+                }
+                if let renderedPrompt = modelInput.renderedPromptArtifact {
+                    attempt.renderedPromptPath = await telemetryStore.absoluteArtifactURL(
+                        for: renderedPrompt,
+                        sessionID: indexedEvent.sessionID
+                    ).path
+                }
+                attemptsByID[key] = attempt
+            }
+
+            if let modelOutput = event.modelOutput {
+                let key = Self.attemptKey(
+                    evaluationID: modelOutput.evaluationID,
+                    promptMode: modelOutput.promptMode
+                )
+                var attempt = attemptsByID[key] ?? IndexedModelAttempt(
+                    evaluationID: modelOutput.evaluationID,
+                    promptMode: modelOutput.promptMode,
+                    timestamp: indexedEvent.timestamp,
+                    promptPayloadPath: nil,
+                    renderedPromptPath: nil,
+                    stdoutPath: nil,
+                    stderrPath: nil,
+                    stdoutPreview: nil,
+                    stderrPreview: nil,
+                    parsedOutputJSON: nil
+                )
+                if let stdoutArtifact = modelOutput.stdoutArtifact {
+                    attempt.stdoutPath = await telemetryStore.absoluteArtifactURL(
+                        for: stdoutArtifact,
+                        sessionID: indexedEvent.sessionID
+                    ).path
+                }
+                if let stderrArtifact = modelOutput.stderrArtifact {
+                    attempt.stderrPath = await telemetryStore.absoluteArtifactURL(
+                        for: stderrArtifact,
+                        sessionID: indexedEvent.sessionID
+                    ).path
+                }
+                attempt.stdoutPreview = modelOutput.stdoutPreview.cleanedSingleLine.isEmpty
+                    ? nil
+                    : modelOutput.stdoutPreview
+                attempt.stderrPreview = modelOutput.stderrPreview.cleanedSingleLine.isEmpty
+                    ? nil
+                    : modelOutput.stderrPreview
+                attemptsByID[key] = attempt
+            }
+
+            if let policy = event.policy,
+               let parsedJSON = Self.prettyJSONString(for: policy.model) {
+                let promptMode = Self.decisionPromptMode(
+                    for: policy.evaluationID,
+                    attempts: attemptsByID
+                )
+                let key = Self.attemptKey(
+                    evaluationID: policy.evaluationID,
+                    promptMode: promptMode
+                )
+                var attempt = attemptsByID[key] ?? IndexedModelAttempt(
+                    evaluationID: policy.evaluationID,
+                    promptMode: promptMode,
+                    timestamp: indexedEvent.timestamp,
+                    promptPayloadPath: nil,
+                    renderedPromptPath: nil,
+                    stdoutPath: nil,
+                    stderrPath: nil,
+                    stdoutPreview: nil,
+                    stderrPreview: nil,
+                    parsedOutputJSON: nil
+                )
+                attempt.parsedOutputJSON = parsedJSON
+                attemptsByID[key] = attempt
+            }
+        }
+
+        return attemptsByID.values.sorted { lhs, rhs in
+            if lhs.timestamp == rhs.timestamp {
+                return lhs.promptMode < rhs.promptMode
+            }
+            return lhs.timestamp < rhs.timestamp
+        }
+    }
+
+    private static func attemptKey(evaluationID: String, promptMode: String) -> String {
+        "\(evaluationID):\(promptMode)"
+    }
+
+    private static func decisionPromptMode(
+        for evaluationID: String,
+        attempts: [String: IndexedModelAttempt]
+    ) -> String {
+        let promptModes = attempts.values
+            .filter { $0.evaluationID == evaluationID }
+            .map(\.promptMode)
+
+        if let legacyDecision = promptModes.first(where: { $0 == "legacy_decision" || $0 == "legacy_decision_fallback" }) {
+            return legacyDecision
+        }
+        if let decision = promptModes.first(where: { $0 == "decision" }) {
+            return decision
+        }
+        return promptModes.first ?? "decision"
+    }
+
+    private static func prettyJSONString<T: Encodable>(for value: T) -> String? {
+        guard let data = try? makeJSONEncoder().encode(value) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func schedulePersistPromptLabState() {
+        guard !isHydratingPromptLabState else { return }
+
+        promptLabSaveTask?.cancel()
+        promptLabSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.persistPromptLabState()
+        }
+    }
+
+    private func loadPersistedPromptLabState(fileManager: FileManager) {
+        guard let data = try? Data(contentsOf: promptLabPersistenceURL),
+              let persisted = try? Self.makeJSONDecoder().decode(PromptLabPersistenceState.self, from: data) else {
+            normalizePromptLabSelections()
+            return
+        }
+
+        isHydratingPromptLabState = true
+        defer { isHydratingPromptLabState = false }
+
+        let normalizedPromptSets = normalizePromptSets(persisted.promptSets)
+        let normalizedScenarios = persisted.scenarios.isEmpty ? [.syntheticDefault] : persisted.scenarios
+        let validScenarioIDs = Set(normalizedScenarios.map(\.id))
+        let validPipelineIDs = Set(PromptLabPipelineProfile.defaults.map(\.id))
+        let validRuntimeIDs = Set(PromptLabRuntimeProfile.defaults.map(\.id))
+
+        promptLabScenarios = normalizedScenarios
+        selectedPromptLabScenarioID = validScenarioIDs.contains(persisted.selectedScenarioID ?? UUID())
+            ? persisted.selectedScenarioID
+            : normalizedScenarios.first?.id
+        promptLabPromptSets = normalizedPromptSets
+        selectedPromptSetID = normalizedPromptSets.contains(where: { $0.id == persisted.selectedPromptSetID })
+            ? persisted.selectedPromptSetID
+            : normalizedPromptSets.first?.id ?? ""
+        selectedPromptStage = PromptLabStage.allCases.contains(persisted.selectedPromptStage)
+            ? persisted.selectedPromptStage
+            : .decision
+        selectedPipelineIDs = Set(persisted.selectedPipelineIDs.filter { validPipelineIDs.contains($0) })
+        if selectedPipelineIDs.isEmpty, let first = PromptLabPipelineProfile.defaults.first?.id {
+            selectedPipelineIDs = [first]
+        }
+        selectedRuntimeProfileIDs = Set(persisted.selectedRuntimeProfileIDs.filter { validRuntimeIDs.contains($0) })
+        if selectedRuntimeProfileIDs.isEmpty, let first = PromptLabRuntimeProfile.defaults.first?.id {
+            selectedRuntimeProfileIDs = [first]
+        }
+        promptLabRuntimePath = persisted.runtimePath.cleanedSingleLine.isEmpty
+            ? PromptLabRunner.defaultRuntimePath
+            : persisted.runtimePath.cleanedSingleLine
+        promptLabResults = persisted.results.filter { validScenarioIDs.contains($0.scenarioID) }
+        normalizePromptLabSelections()
+    }
+
+    private func persistPromptLabState() {
+        let state = PromptLabPersistenceState(
+            scenarios: promptLabScenarios,
+            selectedScenarioID: selectedPromptLabScenarioID,
+            promptSets: promptLabPromptSets,
+            selectedPromptSetID: selectedPromptSetID,
+            selectedPromptStage: selectedPromptStage,
+            selectedPipelineIDs: Array(selectedPipelineIDs).sorted(),
+            selectedRuntimeProfileIDs: Array(selectedRuntimeProfileIDs).sorted(),
+            runtimePath: promptLabRuntimePath.cleanedSingleLine,
+            results: promptLabResults
+        )
+
+        do {
+            try FileManager.default.createDirectory(
+                at: promptLabPersistenceURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try Self.makeJSONEncoder().encode(state)
+            try data.write(to: promptLabPersistenceURL, options: .atomic)
+        } catch {
+            promptLabStatusText = "Prompt Lab save failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func normalizePromptLabSelections() {
+        if promptLabScenarios.isEmpty {
+            promptLabScenarios = [.syntheticDefault]
+        }
+        if promptLabScenarios.contains(where: { $0.id == selectedPromptLabScenarioID }) == false {
+            selectedPromptLabScenarioID = promptLabScenarios.first?.id
+        }
+
+        promptLabPromptSets = normalizePromptSets(promptLabPromptSets)
+        if promptLabPromptSets.contains(where: { $0.id == selectedPromptSetID }) == false {
+            selectedPromptSetID = promptLabPromptSets.first?.id ?? ""
+        }
+
+        let validPipelineIDs = Set(PromptLabPipelineProfile.defaults.map(\.id))
+        selectedPipelineIDs = selectedPipelineIDs.filter { validPipelineIDs.contains($0) }
+        if selectedPipelineIDs.isEmpty, let first = PromptLabPipelineProfile.defaults.first?.id {
+            selectedPipelineIDs = [first]
+        }
+
+        let validRuntimeIDs = Set(PromptLabRuntimeProfile.defaults.map(\.id))
+        selectedRuntimeProfileIDs = selectedRuntimeProfileIDs.filter { validRuntimeIDs.contains($0) }
+        if selectedRuntimeProfileIDs.isEmpty, let first = PromptLabRuntimeProfile.defaults.first?.id {
+            selectedRuntimeProfileIDs = [first]
+        }
+    }
+
+    private func normalizePromptSets(_ promptSets: [PromptLabPromptSet]) -> [PromptLabPromptSet] {
+        var normalized: [PromptLabPromptSet] = []
+        let defaultSets = PromptLabPromptSet.defaults
+
+        for defaultSet in defaultSets {
+            if let persisted = promptSets.first(where: { $0.id == defaultSet.id }) {
+                normalized.append(normalizePromptSet(persisted, fallback: defaultSet))
+            } else {
+                normalized.append(defaultSet)
+            }
+        }
+
+        for promptSet in promptSets where defaultSets.contains(where: { $0.id == promptSet.id }) == false {
+            normalized.append(normalizePromptSet(promptSet, fallback: nil))
+        }
+
+        return normalized
+    }
+
+    private func normalizePromptSet(
+        _ promptSet: PromptLabPromptSet,
+        fallback: PromptLabPromptSet?
+    ) -> PromptLabPromptSet {
+        var normalized = fallback ?? PromptLabPromptSet(
+            id: promptSet.id,
+            name: promptSet.name,
+            summary: promptSet.summary,
+            prompts: PromptLabStage.allCases.map {
+                PromptLabStagePrompt(stage: $0, systemPrompt: "", userTemplate: "{{PAYLOAD_JSON}}")
+            }
+        )
+
+        normalized.name = promptSet.name
+        normalized.summary = promptSet.summary
+
+        for stage in PromptLabStage.allCases {
+            let persistedPrompt = promptSet.prompts.first(where: { $0.stage == stage })
+            let stagePrompt = persistedPrompt ?? fallback?.prompt(for: stage) ?? normalized.prompt(for: stage)
+            normalized.update(
+                stage: stage,
+                systemPrompt: stagePrompt.systemPrompt,
+                userTemplate: stagePrompt.userTemplate
+            )
+        }
+
+        return normalized
+    }
+
+    private static func makeJSONEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    private static func makeJSONDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }

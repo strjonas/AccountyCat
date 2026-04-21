@@ -82,187 +82,23 @@ struct PromptLabPromptSet: Codable, Hashable, Identifiable, Sendable {
     }
 
     static var defaults: [PromptLabPromptSet] {
-        [
+        MonitoringPromptTuning.promptSets.map {
             PromptLabPromptSet(
-                id: "policy_default_v1",
-                name: "Policy Default",
-                summary: "Matches the current production-style staged policy prompts.",
-                prompts: [
-                    PromptLabStagePrompt(
-                        stage: .perceptionTitle,
-                        systemPrompt: """
-                        You normalize text-only context for a focus companion.
-                        Return exactly one JSON object:
-                        {"activity_summary":"...","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional"]}
-                        Be conservative. Use only the structured payload. No markdown.
-                        """,
-                        userTemplate: """
-                        Normalize this title-and-usage context into a short account of what the user is likely doing.
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .perceptionVision,
-                        systemPrompt: """
-                        You analyze the screenshot for a focus companion.
-                        Return exactly one JSON object:
-                        {"scene_summary":"...","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional"]}
-                        Avoid personal data and URLs. No markdown.
-                        """,
-                        userTemplate: """
-                        The screenshot is attached. Use it together with the payload:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .decision,
-                        systemPrompt: """
-                        You are the policy brain for a focus companion.
-                        Honor the user's goals and structured policy memory. False positives are expensive.
-                        Return exactly one JSON object:
-                        {
-                          "assessment":"focused|distracted|unclear",
-                          "suggested_action":"none|nudge|overlay|abstain",
-                          "confidence":0.0,
-                          "reason_tags":["tag"],
-                          "nudge":"optional short nudge",
-                          "abstain_reason":"optional",
-                          "overlay_headline":"optional short headline",
-                          "overlay_body":"optional short body",
-                          "overlay_prompt":"optional typed appeal prompt",
-                          "submit_button_title":"optional",
-                          "secondary_button_title":"optional"
-                        }
-                        Use `overlay` only for clear, repeated distraction. Keep copy short and human.
-                        """,
-                        userTemplate: """
-                        Decide what AC should do with this situation:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .nudgeCopy,
-                        systemPrompt: """
-                        Write one short nudge for a focus companion.
-                        It should feel human, specific, and non-repetitive.
-                        Return exactly one JSON object: {"nudge":"..."}
-                        """,
-                        userTemplate: """
-                        Write the nudge from this decision context:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .appealReview,
-                        systemPrompt: """
-                        Review a user's typed appeal to continue a distracting activity.
-                        Be conservative with denial and prefer soft guidance.
-                        Return exactly one JSON object:
-                        {"decision":"allow|deny|defer","message":"short explanation"}
-                        """,
-                        userTemplate: """
-                        Review this appeal:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                ]
-            ),
-            PromptLabPromptSet(
-                id: "policy_direct_v1",
-                name: "Policy Direct",
-                summary: "Stricter reasoning instructions and shorter, more pointed intervention copy.",
-                prompts: [
-                    PromptLabStagePrompt(
-                        stage: .perceptionTitle,
-                        systemPrompt: """
-                        Infer what the user is doing from titles, usage, and short history.
-                        Return one JSON object only:
-                        {"activity_summary":"...","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional"]}
-                        Prefer `unclear` over overclaiming.
-                        """,
-                        userTemplate: """
-                        Summarize this text-only context:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .perceptionVision,
-                        systemPrompt: """
-                        Describe what is happening on screen for a focus coach.
-                        Return one JSON object only:
-                        {"scene_summary":"...","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional"]}
-                        Keep it neutral and concise.
-                        """,
-                        userTemplate: """
-                        Use the screenshot and payload together:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .decision,
-                        systemPrompt: """
-                        You decide whether a focus coach should stay silent, nudge, or escalate.
-                        Respect explicit rules, temporary exceptions, time limits, and user feedback.
-                        False positives are expensive, but ignored explicit rules are unacceptable.
-                        Return exactly one JSON object:
-                        {
-                          "assessment":"focused|distracted|unclear",
-                          "suggested_action":"none|nudge|overlay|abstain",
-                          "confidence":0.0,
-                          "reason_tags":["tag"],
-                          "nudge":"optional short nudge",
-                          "abstain_reason":"optional",
-                          "overlay_headline":"optional short headline",
-                          "overlay_body":"optional short body",
-                          "overlay_prompt":"optional typed appeal prompt",
-                          "submit_button_title":"optional",
-                          "secondary_button_title":"optional"
-                        }
-                        Use `overlay` only for repeated off-task behavior after leniency is already represented in the payload.
-                        """,
-                        userTemplate: """
-                        Decide the best next action from this context:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .nudgeCopy,
-                        systemPrompt: """
-                        Write a single nudge that is warm, psychologically useful, and not generic.
-                        Avoid clichés, moralizing, and repeated phrasing.
-                        Return exactly one JSON object: {"nudge":"..."}
-                        """,
-                        userTemplate: """
-                        Draft the nudge for this situation:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                    PromptLabStagePrompt(
-                        stage: .appealReview,
-                        systemPrompt: """
-                        Judge whether the user's typed reason justifies continuing a potentially distracting activity.
-                        Prefer allow or defer unless the reason clearly conflicts with stated goals and rules.
-                        Return exactly one JSON object:
-                        {"decision":"allow|deny|defer","message":"short explanation"}
-                        """,
-                        userTemplate: """
-                        Evaluate this typed appeal:
-                        {{PAYLOAD_JSON}}
-                        Return exactly one JSON object.
-                        """
-                    ),
-                ]
-            ),
-        ]
+                id: $0.id,
+                name: $0.name,
+                summary: $0.summary,
+                prompts: $0.prompts.compactMap { prompt in
+                    guard let stage = PromptLabStage(sharedStage: prompt.stage) else {
+                        return nil
+                    }
+                    return PromptLabStagePrompt(
+                        stage: stage,
+                        systemPrompt: prompt.systemPrompt,
+                        userTemplate: prompt.userTemplate
+                    )
+                }
+            )
+        }
     }
 }
 
@@ -276,44 +112,17 @@ struct PromptLabPipelineProfile: Codable, Hashable, Identifiable, Sendable {
     var splitCopyGeneration: Bool
 
     static var defaults: [PromptLabPipelineProfile] {
-        [
+        MonitoringPromptTuning.pipelineDefinitions.map {
             PromptLabPipelineProfile(
-                id: "vision_split_default",
-                displayName: "Vision Split Default",
-                summary: "Vision-backed perception, low-temp decision, separate nudge copy.",
-                requiresScreenshot: true,
-                usesTitlePerception: true,
-                usesVisionPerception: true,
-                splitCopyGeneration: true
-            ),
-            PromptLabPipelineProfile(
-                id: "title_only_default",
-                displayName: "Title Only",
-                summary: "Title, usage, and memory only. No screenshot required.",
-                requiresScreenshot: false,
-                usesTitlePerception: true,
-                usesVisionPerception: false,
-                splitCopyGeneration: true
-            ),
-            PromptLabPipelineProfile(
-                id: "vision_single_call",
-                displayName: "Vision Single Call",
-                summary: "Vision-backed decision with inline nudge generation.",
-                requiresScreenshot: true,
-                usesTitlePerception: true,
-                usesVisionPerception: true,
-                splitCopyGeneration: false
-            ),
-            PromptLabPipelineProfile(
-                id: "title_split_copy",
-                displayName: "Title Split Copy",
-                summary: "Title-only perception with separate nudge copy generation.",
-                requiresScreenshot: false,
-                usesTitlePerception: true,
-                usesVisionPerception: false,
-                splitCopyGeneration: true
-            ),
-        ]
+                id: $0.id,
+                displayName: $0.displayName,
+                summary: $0.summary,
+                requiresScreenshot: $0.requiresScreenshot,
+                usesTitlePerception: $0.usesTitlePerception,
+                usesVisionPerception: $0.usesVisionPerception,
+                splitCopyGeneration: $0.splitCopyGeneration
+            )
+        }
     }
 }
 
@@ -358,44 +167,32 @@ struct PromptLabRuntimeProfile: Codable, Hashable, Identifiable, Sendable {
     }
 
     static var defaults: [PromptLabRuntimeProfile] {
-        [
+        MonitoringPromptTuning.runtimeDefinitions.map {
             PromptLabRuntimeProfile(
-                id: "gemma_balanced_v1",
-                displayName: "Gemma Balanced",
-                summary: "Default Gemma preset for staged policy evaluation.",
-                optionsByStage: [
-                    PromptLabRuntimeStageOptions(stage: .perceptionTitle, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                    PromptLabRuntimeStageOptions(stage: .perceptionVision, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 2048, batchSize: 2048, ubatchSize: 2048, timeoutSeconds: 45)),
-                    PromptLabRuntimeStageOptions(stage: .decision, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 220, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                    PromptLabRuntimeStageOptions(stage: .nudgeCopy, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                    PromptLabRuntimeStageOptions(stage: .appealReview, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                ]
-            ),
-            PromptLabRuntimeProfile(
-                id: "gemma_low_ram_v1",
-                displayName: "Gemma Low RAM",
-                summary: "Lower context and token limits for lighter local tests.",
-                optionsByStage: [
-                    PromptLabRuntimeStageOptions(stage: .perceptionTitle, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                    PromptLabRuntimeStageOptions(stage: .perceptionVision, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
-                    PromptLabRuntimeStageOptions(stage: .decision, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
-                    PromptLabRuntimeStageOptions(stage: .nudgeCopy, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
-                    PromptLabRuntimeStageOptions(stage: .appealReview, options: PromptLabRuntimeOptions(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                ]
-            ),
-            PromptLabRuntimeProfile(
-                id: "llama_experiment_v1",
-                displayName: "Llama Experiment",
-                summary: "Llama-family preset for side-by-side comparisons.",
-                optionsByStage: [
-                    PromptLabRuntimeStageOptions(stage: .perceptionTitle, options: PromptLabRuntimeOptions(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                    PromptLabRuntimeStageOptions(stage: .perceptionVision, options: PromptLabRuntimeOptions(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 2048, batchSize: 2048, ubatchSize: 2048, timeoutSeconds: 45)),
-                    PromptLabRuntimeStageOptions(stage: .decision, options: PromptLabRuntimeOptions(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 240, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                    PromptLabRuntimeStageOptions(stage: .nudgeCopy, options: PromptLabRuntimeOptions(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                    PromptLabRuntimeStageOptions(stage: .appealReview, options: PromptLabRuntimeOptions(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                ]
-            ),
-        ]
+                id: $0.id,
+                displayName: $0.displayName,
+                summary: $0.summary,
+                optionsByStage: $0.optionsByStage.compactMap { stageDefinition in
+                    guard let stage = PromptLabStage(sharedStage: stageDefinition.stage) else {
+                        return nil
+                    }
+                    return PromptLabRuntimeStageOptions(
+                        stage: stage,
+                        options: PromptLabRuntimeOptions(
+                            modelIdentifier: stageDefinition.options.modelIdentifier,
+                            maxTokens: stageDefinition.options.maxTokens,
+                            temperature: stageDefinition.options.temperature,
+                            topP: stageDefinition.options.topP,
+                            topK: stageDefinition.options.topK,
+                            ctxSize: stageDefinition.options.ctxSize,
+                            batchSize: stageDefinition.options.batchSize,
+                            ubatchSize: stageDefinition.options.ubatchSize,
+                            timeoutSeconds: stageDefinition.options.timeoutSeconds
+                        )
+                    )
+                }
+            )
+        }
     }
 }
 
@@ -613,4 +410,23 @@ struct PromptLabMatrixSummary: Hashable, Sendable {
     var passedRuns: Int
     var failedRuns: Int
     var unmatchedRuns: Int
+}
+
+private extension PromptLabStage {
+    init?(sharedStage: MonitoringPromptTuningStage) {
+        switch sharedStage {
+        case .perceptionTitle:
+            self = .perceptionTitle
+        case .perceptionVision:
+            self = .perceptionVision
+        case .decision, .legacyDecision, .legacyDecisionFallback:
+            self = .decision
+        case .nudgeCopy:
+            self = .nudgeCopy
+        case .appealReview:
+            self = .appealReview
+        case .policyMemory:
+            return nil
+        }
+    }
 }

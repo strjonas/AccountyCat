@@ -14,6 +14,11 @@ enum MonitoringPromptVariant: String, Sendable {
     case fallbackUser = "fallback_user"
 }
 
+enum LegacyFocusPromptStage: String, Sendable {
+    case decision
+    case decisionFallback = "decision_fallback"
+}
+
 struct PromptAsset: Hashable, Sendable {
     var id: String
     var version: String
@@ -366,6 +371,9 @@ enum PromptCatalog {
         for stage: LLMPolicyStage,
         kind: PolicyPromptKind
     ) -> PromptAsset {
+        let sharedStage = sharedPolicyStage(for: stage)
+        let sharedPrompt = MonitoringPromptTuning.policyDefaultPromptSet.prompt(for: sharedStage)
+
         switch (stage, kind) {
         case (.perceptionTitle, .system):
             return PromptAsset(
@@ -374,12 +382,7 @@ enum PromptCatalog {
                 resourceName: "perception_title_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                You normalize text-only context for a focus companion.
-                Return exactly one JSON object:
-                {"activity_summary":"...","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional"]}
-                Be conservative. Use only the structured payload. No markdown.
-                """
+                fallbackContents: sharedPrompt.systemPrompt
             )
         case (.perceptionTitle, .user):
             return PromptAsset(
@@ -388,11 +391,7 @@ enum PromptCatalog {
                 resourceName: "perception_title_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Normalize this title-and-usage context into a short account of what the user is likely doing.
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
+                fallbackContents: sharedPrompt.userTemplate
             )
         case (.perceptionVision, .system):
             return PromptAsset(
@@ -401,12 +400,7 @@ enum PromptCatalog {
                 resourceName: "perception_vision_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                You analyze the screenshot for a focus companion.
-                Return exactly one JSON object:
-                {"scene_summary":"...","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional"]}
-                Avoid personal data and URLs. No markdown.
-                """
+                fallbackContents: sharedPrompt.systemPrompt
             )
         case (.perceptionVision, .user):
             return PromptAsset(
@@ -415,11 +409,7 @@ enum PromptCatalog {
                 resourceName: "perception_vision_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                The screenshot is attached. Use it together with the payload:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
+                fallbackContents: sharedPrompt.userTemplate
             )
         case (.decision, .system):
             return PromptAsset(
@@ -428,25 +418,7 @@ enum PromptCatalog {
                 resourceName: "decision_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                You are the policy brain for a focus companion.
-                Honor the user's goals and structured policy memory. False positives are expensive.
-                Return exactly one JSON object:
-                {
-                  "assessment":"focused|distracted|unclear",
-                  "suggested_action":"none|nudge|overlay|abstain",
-                  "confidence":0.0,
-                  "reason_tags":["tag"],
-                  "nudge":"optional short nudge",
-                  "abstain_reason":"optional",
-                  "overlay_headline":"optional short headline",
-                  "overlay_body":"optional short body",
-                  "overlay_prompt":"optional typed appeal prompt",
-                  "submit_button_title":"optional",
-                  "secondary_button_title":"optional"
-                }
-                Use `overlay` only for clear, repeated distraction. Keep copy short and human.
-                """
+                fallbackContents: sharedPrompt.systemPrompt
             )
         case (.decision, .user):
             return PromptAsset(
@@ -455,11 +427,7 @@ enum PromptCatalog {
                 resourceName: "decision_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Decide what AC should do with this situation:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
+                fallbackContents: sharedPrompt.userTemplate
             )
         case (.nudgeCopy, .system):
             return PromptAsset(
@@ -468,11 +436,7 @@ enum PromptCatalog {
                 resourceName: "nudge_copy_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Write one short nudge for a focus companion.
-                It should feel human, specific, and non-repetitive.
-                Return exactly one JSON object: {"nudge":"..."}
-                """
+                fallbackContents: sharedPrompt.systemPrompt
             )
         case (.nudgeCopy, .user):
             return PromptAsset(
@@ -481,11 +445,7 @@ enum PromptCatalog {
                 resourceName: "nudge_copy_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Write the nudge from this decision context:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
+                fallbackContents: sharedPrompt.userTemplate
             )
         case (.appealReview, .system):
             return PromptAsset(
@@ -494,12 +454,7 @@ enum PromptCatalog {
                 resourceName: "appeal_review_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Review a user's typed appeal to continue a distracting activity.
-                Be conservative with denial and prefer soft guidance.
-                Return exactly one JSON object:
-                {"decision":"allow|deny|defer","message":"short explanation"}
-                """
+                fallbackContents: sharedPrompt.systemPrompt
             )
         case (.appealReview, .user):
             return PromptAsset(
@@ -508,11 +463,7 @@ enum PromptCatalog {
                 resourceName: "appeal_review_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Review this appeal:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
+                fallbackContents: sharedPrompt.userTemplate
             )
         case (.policyMemory, .system):
             return PromptAsset(
@@ -521,23 +472,7 @@ enum PromptCatalog {
                 resourceName: "policy_memory_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                You update structured policy memory for a focus companion.
-                Only return JSON matching this schema:
-                {
-                  "operations":[
-                    {
-                      "type":"add_rule|update_rule|remove_rule|expire_rule",
-                      "rule":{...optional full rule...},
-                      "ruleID":"optional existing id",
-                      "patch":{...optional partial patch...},
-                      "reason":"short reason"
-                    }
-                  ]
-                }
-                Create rules only when the event clearly implies a durable or time-bounded preference.
-                Prefer updating existing rules over duplicating them.
-                """
+                fallbackContents: sharedPrompt.systemPrompt
             )
         case (.policyMemory, .user):
             return PromptAsset(
@@ -546,11 +481,7 @@ enum PromptCatalog {
                 resourceName: "policy_memory_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
-                fallbackContents: """
-                Update structured policy memory from this event:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
+                fallbackContents: sharedPrompt.userTemplate
             )
         }
     }
@@ -558,6 +489,88 @@ enum PromptCatalog {
     nonisolated private enum PolicyPromptKind {
         case system
         case user
+    }
+
+    // MARK: - Legacy LLM focus prompts
+
+    nonisolated static func loadLegacyFocusSystemPrompt(stage: LegacyFocusPromptStage) -> String {
+        load(asset: legacyFocusPromptAsset(for: stage, kind: .system))
+    }
+
+    nonisolated static func renderLegacyFocusUserPrompt(
+        stage: LegacyFocusPromptStage,
+        payloadJSON: String
+    ) -> String {
+        load(asset: legacyFocusPromptAsset(for: stage, kind: .user))
+            .replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
+    }
+
+    nonisolated private static func legacyFocusPromptAsset(
+        for stage: LegacyFocusPromptStage,
+        kind: PolicyPromptKind
+    ) -> PromptAsset {
+        let sharedPrompt: MonitoringStagePromptDefinition = switch stage {
+        case .decision:
+            MonitoringPromptTuning.legacyDecisionPrompt
+        case .decisionFallback:
+            MonitoringPromptTuning.legacyDecisionFallbackPrompt
+        }
+
+        switch (stage, kind) {
+        case (.decision, .system):
+            return PromptAsset(
+                id: "legacy_focus.decision.system",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_system",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.systemPrompt
+            )
+        case (.decision, .user):
+            return PromptAsset(
+                id: "legacy_focus.decision.user",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_user",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.userTemplate
+            )
+        case (.decisionFallback, .system):
+            return PromptAsset(
+                id: "legacy_focus.decision_fallback.system",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_fallback_system",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.systemPrompt
+            )
+        case (.decisionFallback, .user):
+            return PromptAsset(
+                id: "legacy_focus.decision_fallback.user",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_fallback_user",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.userTemplate
+            )
+        }
+    }
+
+    nonisolated private static func sharedPolicyStage(for stage: LLMPolicyStage) -> MonitoringPromptTuningStage {
+        switch stage {
+        case .perceptionTitle:
+            return .perceptionTitle
+        case .perceptionVision:
+            return .perceptionVision
+        case .decision:
+            return .decision
+        case .nudgeCopy:
+            return .nudgeCopy
+        case .appealReview:
+            return .appealReview
+        case .policyMemory:
+            return .policyMemory
+        }
     }
 
     nonisolated private static func load(asset: PromptAsset) -> String {
