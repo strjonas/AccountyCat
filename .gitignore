@@ -11,3 +11,4 @@ Config/LocalOverrides.xcconfig
 MD/
 
 .claude/
+.DerivedData/
