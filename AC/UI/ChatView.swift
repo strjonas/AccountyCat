@@ -18,6 +18,13 @@ private enum ChatClearAction: String, Identifiable {
     var id: String { rawValue }
 }
 
+private let chatSuggestions = [
+    "Don't let me use Instagram today",
+    "I'm taking a break — social apps are fine",
+    "Be strict with me for the next 2 hours",
+    "Go easy on me today",
+]
+
 struct ChatView: View {
     @EnvironmentObject private var controller: AppController
     @State private var draft = ""
@@ -140,6 +147,15 @@ struct ChatView: View {
                         .id("chat-bottom-sentinel")
                 }
                 .padding(10)
+                .overlay(alignment: .center) {
+                    if controller.chatMessages.isEmpty && !controller.sendingChatMessage {
+                        SuggestionChips(suggestions: chatSuggestions) { suggestion in
+                            draft = suggestion
+                            inputFocused = true
+                        }
+                        .padding(10)
+                    }
+                }
             }
             .frame(height: 220)
             .background(
@@ -227,6 +243,96 @@ struct ChatView: View {
         let text = draft
         draft = ""
         controller.sendChatMessage(text)
+    }
+}
+
+// MARK: - Suggestion Chips
+
+private struct SuggestionChips: View {
+    let suggestions: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 8) {
+            Text("Try asking…")
+                .font(.ac(11))
+                .foregroundStyle(.tertiary)
+            FlowLayout(spacing: 6) {
+                ForEach(suggestions, id: \.self) { suggestion in
+                    Button(suggestion) { onSelect(suggestion) }
+                        .buttonStyle(SuggestionChipStyle())
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct SuggestionChipStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(12))
+            .foregroundStyle(Color.acCaramel)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.acCaramel.opacity(configuration.isPressed ? 0.18 : 0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.acCaramel.opacity(0.25), lineWidth: 1)
+                    )
+            )
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > width && x > 0 {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: width, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        var rowViews: [(subview: LayoutSubview, size: CGSize)] = []
+
+        func flushRow() {
+            let totalWidth = rowViews.reduce(0) { $0 + $1.size.width } + CGFloat(max(0, rowViews.count - 1)) * spacing
+            var rx = bounds.minX + (bounds.width - totalWidth) / 2
+            for (subview, size) in rowViews {
+                subview.place(at: CGPoint(x: rx, y: y), proposal: .unspecified)
+                rx += size.width + spacing
+            }
+        }
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX && !rowViews.isEmpty {
+                flushRow()
+                y += rowHeight + spacing
+                x = bounds.minX
+                rowHeight = 0
+                rowViews = []
+            }
+            rowViews.append((subview, size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        flushRow()
     }
 }
 
