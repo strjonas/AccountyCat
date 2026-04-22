@@ -1,5 +1,5 @@
 //
-//  LLMFocusAlgorithmTests.swift
+//  LegacyLLMFocusAlgorithmTests.swift
 //  ACTests
 //
 
@@ -33,11 +33,11 @@ private actor StubMonitoringLLMClient: MonitoringLLMEvaluating {
 }
 
 @MainActor
-struct LLMFocusAlgorithmTests {
+struct LegacyLLMFocusAlgorithmTests {
 
     @Test
     func respectsStableWindowBeforeEvaluating() {
-        let algorithm = LLMFocusAlgorithm(
+        let algorithm = LegacyLLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: .unclear))
         )
         var state = AlgorithmStateEnvelope()
@@ -54,6 +54,7 @@ struct LLMFocusAlgorithmTests {
             state: &state,
             context: context,
             heuristics: MonitoringHeuristics.telemetrySnapshot(for: context),
+            policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
             now: start.addingTimeInterval(19)
         )
@@ -61,6 +62,7 @@ struct LLMFocusAlgorithmTests {
             state: &state,
             context: context,
             heuristics: MonitoringHeuristics.telemetrySnapshot(for: context),
+            policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
             now: start.addingTimeInterval(20)
         )
@@ -72,7 +74,7 @@ struct LLMFocusAlgorithmTests {
 
     @Test
     func periodicVisualChecksUsePromptProfileWithoutTouchingLadder() {
-        let algorithm = LLMFocusAlgorithm(
+        let algorithm = LegacyLLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: .unclear))
         )
         var state = AlgorithmStateEnvelope()
@@ -88,6 +90,7 @@ struct LLMFocusAlgorithmTests {
             state: &state,
             context: context,
             heuristics: MonitoringHeuristics.telemetrySnapshot(for: context),
+            policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
             now: now
         )
@@ -108,7 +111,7 @@ struct LLMFocusAlgorithmTests {
             nudge: "back to it",
             abstainReason: nil
         )
-        let algorithm = LLMFocusAlgorithm(
+        let algorithm = LegacyLLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: decision))
         )
         let result = await algorithm.evaluate(
@@ -129,7 +132,7 @@ struct LLMFocusAlgorithmTests {
 
         #expect(result.policy.action == .showNudge("back to it"))
         #expect(result.updatedAlgorithmState.llmFocus.distraction.consecutiveDistractedCount == 1)
-        #expect(result.execution.algorithmID == MonitoringConfiguration.llmAlgorithmID)
+        #expect(result.execution.algorithmID == MonitoringConfiguration.legacyLLMFocusAlgorithmID)
         #expect(result.execution.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
     }
 
@@ -151,7 +154,7 @@ struct LLMFocusAlgorithmTests {
             consecutiveDistractedCount: 3,
             nextEvaluationAt: Date(timeIntervalSince1970: 2)
         )
-        let algorithm = LLMFocusAlgorithm(
+        let algorithm = LegacyLLMFocusAlgorithm(
             monitoringLLMClient: StubMonitoringLLMClient(result: makeEvaluationResult(finalDecision: decision))
         )
 

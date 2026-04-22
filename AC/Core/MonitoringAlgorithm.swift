@@ -101,6 +101,7 @@ protocol MonitoringAlgorithm: Sendable {
         state: inout AlgorithmStateEnvelope,
         context: FrontmostContext,
         heuristics: TelemetryHeuristicSnapshot,
+        policyMemory: PolicyMemory,
         configuration: MonitoringConfiguration,
         now: Date
     ) -> MonitoringEvaluationPlan
@@ -108,7 +109,7 @@ protocol MonitoringAlgorithm: Sendable {
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult
     func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput?
     /// Called when the system receives a reward signal for a prior nudge.
-    /// Algorithms that do not learn (e.g. LLMFocusAlgorithm) inherit the default no-op.
+    /// Algorithms that do not learn (e.g. LegacyLLMFocusAlgorithm) inherit the default no-op.
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope)
 }
 
@@ -122,8 +123,8 @@ extension MonitoringAlgorithm {
 }
 
 final class MonitoringAlgorithmRegistry: @unchecked Sendable {
-    private let llmFocusAlgorithm: LLMFocusAlgorithm
-    private let llmPolicyAlgorithm: LLMPolicyAlgorithm
+    private let legacyLLMFocusAlgorithm: LegacyLLMFocusAlgorithm
+    private let llmMonitorAlgorithm: LLMMonitorAlgorithm
     private let banditFocusAlgorithm: BanditMonitoringAlgorithm
 
     init(
@@ -133,10 +134,10 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
         runtime: LocalModelRuntime,
         policyMemoryService: PolicyMemoryServicing
     ) {
-        self.llmFocusAlgorithm = LLMFocusAlgorithm(
+        self.legacyLLMFocusAlgorithm = LegacyLLMFocusAlgorithm(
             monitoringLLMClient: monitoringLLMClient
         )
-        self.llmPolicyAlgorithm = LLMPolicyAlgorithm(
+        self.llmMonitorAlgorithm = LLMMonitorAlgorithm(
             runtime: runtime,
             policyMemoryService: policyMemoryService
         )
@@ -148,8 +149,8 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
 
     var availableAlgorithms: [MonitoringAlgorithmDescriptor] {
         [
-            llmPolicyAlgorithm.descriptor,
-            llmFocusAlgorithm.descriptor,
+            llmMonitorAlgorithm.descriptor,
+            legacyLLMFocusAlgorithm.descriptor,
             banditFocusAlgorithm.descriptor,
         ]
     }
@@ -180,6 +181,7 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
         configuration: MonitoringConfiguration,
         context: FrontmostContext,
         heuristics: TelemetryHeuristicSnapshot,
+        policyMemory: PolicyMemory,
         now: Date,
         state: inout AlgorithmStateEnvelope
     ) throws -> MonitoringEvaluationPlan {
@@ -187,6 +189,7 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
             state: &state,
             context: context,
             heuristics: heuristics,
+            policyMemory: policyMemory,
             configuration: configuration,
             now: now
         )
@@ -233,10 +236,10 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
 
     private func resolve(id: String) throws -> any MonitoringAlgorithm {
         switch MonitoringConfiguration.normalizedAlgorithmID(id) {
-        case llmPolicyAlgorithm.descriptor.id:
-            return llmPolicyAlgorithm
-        case llmFocusAlgorithm.descriptor.id:
-            return llmFocusAlgorithm
+        case llmMonitorAlgorithm.descriptor.id:
+            return llmMonitorAlgorithm
+        case legacyLLMFocusAlgorithm.descriptor.id:
+            return legacyLLMFocusAlgorithm
         case banditFocusAlgorithm.descriptor.id:
             return banditFocusAlgorithm
         default:

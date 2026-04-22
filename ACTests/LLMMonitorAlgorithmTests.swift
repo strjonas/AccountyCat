@@ -3,7 +3,7 @@ import Testing
 @testable import AC
 
 @MainActor
-struct LLMPolicyAlgorithmTests {
+struct LLMMonitorAlgorithmTests {
 
     @Test
     func titleOnlyPipelineUsesSplitCopyAndStoresRecentNudge() async throws {
@@ -101,6 +101,107 @@ struct LLMPolicyAlgorithmTests {
     }
 
     @Test
+    func focusedDecisionSchedulesLongFollowUpInsteadOfClearingCadence() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"focused","suggested_action":"none","confidence":0.88,"reason_tags":["allowed_work"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_500)
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-focused",
+                runtimeOverride: runtimeFixture.runtimePath
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(10 * 60))
+    }
+
+    @Test
+    func scheduledFocusedFollowUpDoesNotReevaluateUntilDue() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Docs"
+        )
+        let start = Date(timeIntervalSince1970: 7_800)
+        var state = AlgorithmStateEnvelope()
+
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: context.contextKey,
+            stableSince: start,
+            lastAssessment: .focused,
+            consecutiveDistractedCount: 0,
+            nextEvaluationAt: start.addingTimeInterval(10 * 60)
+        )
+
+        let beforeDue = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            now: start.addingTimeInterval(60)
+        )
+        let afterDue = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            now: start.addingTimeInterval((10 * 60) + 1)
+        )
+
+        #expect(beforeDue.shouldEvaluate == false)
+        #expect(beforeDue.reason == "scheduled_recheck")
+        #expect(afterDue.shouldEvaluate == true)
+        #expect(afterDue.reason == "scheduled_recheck")
+    }
+
+    @Test
+    func explicitAllowRuleSuppressesEvaluationEvenInBrowserContexts() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Docs"
+        )
+        let start = Date(timeIntervalSince1970: 7_900)
+        var state = AlgorithmStateEnvelope()
+
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+
+        let allowRule = PolicyRule(
+            kind: .allow,
+            summary: "Always allow Docs for this work block.",
+            source: .userChat,
+            priority: 90,
+            scope: PolicyRuleScope(appName: "Google Chrome", titleContains: ["Docs"])
+        )
+        let policyMemory = PolicyMemory(rules: [allowRule], tonePreference: nil, lastUpdatedAt: start)
+
+        let plan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: policyMemory,
+            configuration: MonitoringConfiguration(),
+            now: start.addingTimeInterval(30)
+        )
+
+        #expect(plan.shouldEvaluate == false)
+        #expect(plan.reason == "explicit_allow_rule")
+    }
+
+    @Test
     func appealReviewAppliesPolicyMemoryUpdateAndClearsSessionWhenAllowed() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.appealReview = """
@@ -111,7 +212,7 @@ struct LLMPolicyAlgorithmTests {
         """
         let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
         let runtime = LocalModelRuntime()
-        let algorithm = LLMPolicyAlgorithm(
+        let algorithm = LLMMonitorAlgorithm(
             runtime: runtime,
             policyMemoryService: PolicyMemoryService(runtime: runtime)
         )
@@ -153,9 +254,9 @@ struct LLMPolicyAlgorithmTests {
         #expect(result?.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(45))
     }
 
-    private func makeAlgorithm() -> LLMPolicyAlgorithm {
+    private func makeAlgorithm() -> LLMMonitorAlgorithm {
         let runtime = LocalModelRuntime()
-        return LLMPolicyAlgorithm(
+        return LLMMonitorAlgorithm(
             runtime: runtime,
             policyMemoryService: PolicyMemoryService(runtime: runtime)
         )

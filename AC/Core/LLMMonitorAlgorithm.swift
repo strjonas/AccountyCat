@@ -1,22 +1,24 @@
 //
-//  LLMPolicyAlgorithm.swift
+//  LLMMonitorAlgorithm.swift
 //  AC
 //
 
 import CryptoKit
 import Foundation
 
-final class LLMPolicyAlgorithm: MonitoringAlgorithm {
+final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
-        id: MonitoringConfiguration.llmPolicyAlgorithmID,
+        id: MonitoringConfiguration.currentLLMMonitorAlgorithmID,
         version: "1.0",
-        displayName: "LLM Policy",
-        summary: "Staged local-LLM policy pipeline with structured memory and soft appeals."
+        displayName: "LLM Monitor",
+        summary: "Current staged LLM monitor with structured policy memory, perception, decisions, and typed appeals."
     )
 
     private let runtime: LocalModelRuntime
     private let policyMemoryService: PolicyMemoryServicing
     private let stabilityWindow: TimeInterval = 6
+    private let focusedFollowUp: TimeInterval = 10 * 60
+    private let unclearFollowUp: TimeInterval = 2 * 60
     private let distractedFollowUp: TimeInterval = 45
 
     init(
@@ -62,15 +64,22 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         state: inout AlgorithmStateEnvelope,
         context: FrontmostContext,
         heuristics: TelemetryHeuristicSnapshot,
+        policyMemory: PolicyMemory,
         configuration: MonitoringConfiguration,
         now: Date
     ) -> MonitoringEvaluationPlan {
         let profile = LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
+        let matchingRules = policyMemory.activeRules(at: now, matching: context)
+        let hasExplicitAllowRule = matchingRules.contains { $0.kind == .allow }
+        let hasRestrictiveRule = matchingRules.contains {
+            $0.kind == .disallow || $0.kind == .discourage || $0.kind == .limit
+        }
 
-        if heuristics.clearlyProductive && heuristics.browser == false {
+        if !hasRestrictiveRule,
+           ((heuristics.clearlyProductive && heuristics.browser == false) || hasExplicitAllowRule) {
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
-                reason: "obviously_productive",
+                reason: hasExplicitAllowRule ? "explicit_allow_rule" : "obviously_productive",
                 visualCheckReason: nil,
                 requiresScreenshot: profile.descriptor.requiresScreenshot,
                 promptMode: profile.descriptor.id,
@@ -82,12 +91,17 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         let shouldEvaluate: Bool
         let reason: String
 
-        if distraction.lastAssessment == .distracted {
-            shouldEvaluate = distraction.nextEvaluationAt.map { now >= $0 } ?? false
-            reason = "distracted_follow_up"
-        } else if let stableSince = state.llmPolicy.currentContextEnteredAt {
+        if let nextEvaluationAt = distraction.nextEvaluationAt,
+           now < nextEvaluationAt {
+            shouldEvaluate = false
+            reason = "scheduled_recheck"
+        } else if distraction.lastAssessment == nil,
+                  let stableSince = state.llmPolicy.currentContextEnteredAt {
             shouldEvaluate = now.timeIntervalSince(stableSince) >= stabilityWindow
             reason = "stable_context"
+        } else if distraction.lastAssessment != nil {
+            shouldEvaluate = true
+            reason = "scheduled_recheck"
         } else {
             shouldEvaluate = false
             reason = "awaiting_context"
@@ -114,7 +128,7 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
-            promptProfileID: "llm_policy_v1",
+            promptProfileID: descriptor.id,
             pipelineProfileID: pipelineProfile.descriptor.id,
             runtimeProfileID: runtimeProfile.descriptor.id,
             experimentArm: input.configuration.experimentArm
@@ -127,7 +141,7 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
                 evaluation: LLMEvaluationResult(
                     runtimePath: runtimePath,
                     modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
-                    promptProfileID: "llm_policy_v1",
+                    promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
                     attempts: [],
                     finalDecision: .unclear,
@@ -221,7 +235,6 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
                 recentSwitches: compactSwitches,
                 usage: compactUsage,
                 recentInterventions: compactInterventions,
-                heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
                 distraction: MonitoringPromptDistractionSummary(
                     state: input.algorithmState.llmPolicy.distraction.telemetryState
                 ),
@@ -266,7 +279,7 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimePath,
             modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
-            promptProfileID: "llm_policy_v1",
+            promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
             attempts: attempts,
             finalDecision: decision,
@@ -282,13 +295,21 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         let blockReason: String?
 
         switch decision.assessment {
-        case .focused, .unclear:
-            distraction.lastAssessment = decision.assessment
+        case .focused:
+            distraction.lastAssessment = .focused
             distraction.consecutiveDistractedCount = 0
-            distraction.nextEvaluationAt = nil
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(focusedFollowUp)
             policyState.activeAppeal = nil
             action = .none
-            blockReason = decision.assessment == ModelAssessment.unclear ? "unclear_assessment" : nil
+            blockReason = nil
+
+        case .unclear:
+            distraction.lastAssessment = .unclear
+            distraction.consecutiveDistractedCount = 0
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(unclearFollowUp)
+            policyState.activeAppeal = nil
+            action = .none
+            blockReason = "unclear_assessment"
 
         case .distracted:
             distraction.lastAssessment = .distracted
@@ -372,7 +393,7 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
                 evaluation: LLMEvaluationResult(
                     runtimePath: runtimePath,
                     modelIdentifier: LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID).descriptor.modelIdentifier,
-                    promptProfileID: "llm_policy_v1",
+                    promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
                     attempts: [],
                     finalDecision: .unclear,
@@ -421,7 +442,7 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimePath,
             modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
-            promptProfileID: "llm_policy_v1",
+            promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
             attempts: attempts,
             finalDecision: .unclear,

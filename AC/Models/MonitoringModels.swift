@@ -12,10 +12,12 @@ enum MonitoringSelectionMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct MonitoringConfiguration: Codable, Hashable, Sendable {
-    nonisolated static let legacyLLMAlgorithmID = "legacy_focus_v1"
-    nonisolated static let llmAlgorithmID = "llm_focus_v1"
-    nonisolated static let llmPolicyAlgorithmID = "llm_policy_v1"
-    nonisolated static let defaultAlgorithmID = llmPolicyAlgorithmID
+    nonisolated static let deprecatedLegacyLLMAlgorithmID = "legacy_focus_v1"
+    nonisolated static let deprecatedLLMFocusAlgorithmID = "llm_focus_v1"
+    nonisolated static let deprecatedLLMMonitorAlgorithmID = "llm_policy_v1"
+    nonisolated static let legacyLLMFocusAlgorithmID = "llm_focus_legacy_v1"
+    nonisolated static let currentLLMMonitorAlgorithmID = "llm_monitor_v1"
+    nonisolated static let defaultAlgorithmID = currentLLMMonitorAlgorithmID
     nonisolated static let defaultPromptProfileID = "focus_default_v2"
     nonisolated static let defaultPipelineProfileID = "vision_split_default"
     nonisolated static let defaultRuntimeProfileID = "gemma_balanced_v1"
@@ -55,10 +57,21 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
 
     nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
         switch id {
-        case legacyLLMAlgorithmID:
-            return llmAlgorithmID
+        case deprecatedLegacyLLMAlgorithmID, deprecatedLLMFocusAlgorithmID:
+            return legacyLLMFocusAlgorithmID
+        case deprecatedLLMMonitorAlgorithmID:
+            return currentLLMMonitorAlgorithmID
         default:
             return id
+        }
+    }
+
+    nonisolated static func shouldAutoMigrateDeprecatedDefaultAlgorithm(_ id: String) -> Bool {
+        switch id {
+        case deprecatedLegacyLLMAlgorithmID, deprecatedLLMFocusAlgorithmID:
+            return true
+        default:
+            return false
         }
     }
 

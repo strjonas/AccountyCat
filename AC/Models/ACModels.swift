@@ -316,9 +316,9 @@ struct ACState: Codable, Sendable {
     var distraction: DistractionMetadata {
         get {
             switch MonitoringConfiguration.normalizedAlgorithmID(monitoringConfiguration.algorithmID) {
-            case MonitoringConfiguration.llmAlgorithmID:
+            case MonitoringConfiguration.legacyLLMFocusAlgorithmID:
                 return algorithmState.llmFocus.distraction
-            case MonitoringConfiguration.llmPolicyAlgorithmID:
+            case MonitoringConfiguration.currentLLMMonitorAlgorithmID:
                 return algorithmState.llmPolicy.distraction
             case MonitoringConfiguration.banditAlgorithmID:
                 return DistractionMetadata()
@@ -328,9 +328,9 @@ struct ACState: Codable, Sendable {
         }
         set {
             switch MonitoringConfiguration.normalizedAlgorithmID(monitoringConfiguration.algorithmID) {
-            case MonitoringConfiguration.llmAlgorithmID:
+            case MonitoringConfiguration.legacyLLMFocusAlgorithmID:
                 algorithmState.llmFocus.distraction = newValue
-            case MonitoringConfiguration.llmPolicyAlgorithmID:
+            case MonitoringConfiguration.currentLLMMonitorAlgorithmID:
                 algorithmState.llmPolicy.distraction = newValue
             case MonitoringConfiguration.banditAlgorithmID:
                 break

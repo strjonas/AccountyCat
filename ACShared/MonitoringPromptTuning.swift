@@ -144,7 +144,7 @@ enum MonitoringPromptTuning {
                 stage: .decision,
                 systemPrompt: """
                 You are AC's decision stage.
-                Use goals, policy memory, distraction state, recent interventions, heuristics, and perception summaries to choose the next action.
+                Use goals, policy memory, distraction state, recent interventions, and perception summaries to choose the next action.
                 False positives are expensive, but explicit rules and limits must still be honored.
                 Return exactly one JSON object:
                 \(decisionSchema)
@@ -279,7 +279,7 @@ enum MonitoringPromptTuning {
                 - unclear -> abstain
                 - distracted -> nudge or overlay
                 - overlay only for repeated off-task behavior already reflected in the payload
-                - explicit rules beat weak heuristics
+                - explicit rules beat weak signals
                 - when evidence is mixed, prefer focused or unclear over distracted
                 """
             ,
@@ -379,9 +379,9 @@ enum MonitoringPromptTuning {
         MonitoringPipelineDefinition(
             id: "vision_split_default",
             displayName: "Vision Split Default",
-            summary: "Vision-backed perception, low-temp decision, separate nudge copy.",
+            summary: "Single image-plus-title perception, low-temp decision, separate nudge copy.",
             requiresScreenshot: true,
-            usesTitlePerception: true,
+            usesTitlePerception: false,
             usesVisionPerception: true,
             splitCopyGeneration: true
         ),
@@ -397,9 +397,9 @@ enum MonitoringPromptTuning {
         MonitoringPipelineDefinition(
             id: "vision_single_call",
             displayName: "Vision Single Call",
-            summary: "Vision-backed decision with inline nudge generation.",
+            summary: "Single image-plus-title perception with inline nudge generation.",
             requiresScreenshot: true,
-            usesTitlePerception: true,
+            usesTitlePerception: false,
             usesVisionPerception: true,
             splitCopyGeneration: false
         ),

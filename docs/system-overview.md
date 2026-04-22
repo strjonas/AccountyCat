@@ -4,11 +4,11 @@ This document reflects the current shipped architecture in the repo as of April 
 
 The monitoring stack now has three production algorithms behind one seam:
 
-- `llm_policy_v1`: default. Staged LLM policy pipeline with structured policy memory, profile-aware screenshot use, split decision/copy, and typed soft appeals.
-- `llm_focus_v1`: legacy conservative LLM path. It now runs screenshot-to-description first, then a text-only decision step through the old ladder/policy gates.
+- `llm_monitor_v1`: default. Current staged LLM monitor with structured policy memory, combined image-plus-title perception, split decision/copy, and typed soft appeals.
+- `llm_focus_legacy_v1`: legacy conservative LLM path. It now runs screenshot-to-description first, then a text-only decision step through the old ladder/policy gates.
 - `bandit_focus_v1`: contextual bandit path. Vision extraction plus LinUCB action selection.
 
-`legacy_focus_v1` still decodes from persisted state, but it is normalized to `llm_focus_v1` at runtime.
+`legacy_focus_v1`, `llm_focus_v1`, and `llm_policy_v1` still decode from persisted state, but they are normalized to the clearer runtime ids above.
 
 ## 1. Runtime Architecture
 
@@ -21,15 +21,15 @@ flowchart TB
     end
 
     subgraph Runtime["Monitoring Runtime"]
-        Brain["BrainService<br/>2s tick"]
+        Brain["BrainService<br/>10s tick"]
         Registry["MonitoringAlgorithmRegistry"]
         Exec["ExecutiveArm"]
         Snap["SnapshotService"]
     end
 
     subgraph Algorithms["Algorithms"]
-        PolicyAlgo["LLMPolicyAlgorithm<br/>default"]
-        FocusAlgo["LLMFocusAlgorithm<br/>legacy conservative"]
+        PolicyAlgo["LLMMonitorAlgorithm<br/>default"]
+        FocusAlgo["LegacyLLMFocusAlgorithm<br/>legacy conservative"]
         BanditAlgo["BanditMonitoringAlgorithm"]
     end
 
@@ -135,32 +135,31 @@ Important runtime behavior:
 
 ## 3. Algorithms
 
-### 3.1 `llm_policy_v1` (default)
+### 3.1 `llm_monitor_v1` (default)
 
 This is the current primary production path.
 
 Pipeline stages:
 
-1. `perception_title`
-2. `perception_vision` (optional, profile-dependent)
-3. `decision`
-4. `nudge_copy` (optional, only when the decision chose `nudge` and the profile uses split copy)
-5. `appeal_review`
-6. `policy_memory` updates for explicit and implicit feedback paths
+1. `perception_vision` using the screenshot plus app/title context
+2. `decision`
+3. `nudge_copy` (optional, only when the decision chose `nudge` and the profile uses split copy)
+4. `appeal_review`
+5. `policy_memory` updates for explicit and implicit feedback paths
 
 Deterministic rails still exist, but they are intentionally small:
 
 - obvious productive shortcuts
 - stable-context gating
-- distracted follow-up scheduling
+- explicit recheck scheduling after each result
 - stale-context discard
 - permission gating
 
 The model owns semantic interpretation and primary action choice. Deterministic code only enforces safety and anti-spam.
 
-`llm_policy_v1` currently records `lastNudgeAt` and `lastOverlayAt` in state, but explicit nudge/overlay cooldown suppression is not yet enforced in the algorithm path itself.
+Focused decisions now schedule a long follow-up instead of re-triggering every poll, and explicit `allow` rules can suppress re-evaluation the same way obviously productive contexts do.
 
-### 3.2 `llm_focus_v1`
+### 3.2 `llm_focus_legacy_v1`
 
 This is the conservative legacy LLM path. It now uses a two-step structure:
 
@@ -246,14 +245,14 @@ The monitoring pipeline consumes a deterministic monitoring summary of active ma
 
 Defaults:
 
-- algorithm: `llm_policy_v1`
+- algorithm: `llm_monitor_v1`
 - pipeline: `vision_split_default`
 - runtime: `gemma_balanced_v1`
 
 Legacy note:
 
-- `promptProfileID` is mainly relevant to the legacy `llm_focus_v1` path.
-- `pipelineProfileID` and `runtimeProfileID` drive `llm_policy_v1`.
+- `promptProfileID` is mainly relevant to the legacy `llm_focus_legacy_v1` path.
+- `pipelineProfileID` and `runtimeProfileID` drive `llm_monitor_v1`.
 
 ## 6. Pipeline Profiles
 
@@ -316,7 +315,7 @@ instead of generic summaries like “using Chrome”.
 
 ### 8.2 Legacy prompts
 
-`llm_focus_v1` now shares the same style of screenshot perception prompt for the first step, then runs a shorter text-only decision prompt over the extracted description.
+`llm_focus_legacy_v1` now shares the same style of screenshot perception prompt for the first step, then runs a shorter text-only decision prompt over the extracted description.
 
 ## 9. Appeals and Overlay
 
@@ -390,8 +389,8 @@ If you are tracing the current architecture, start here:
 
 - [AC/Core/BrainService.swift](../AC/Core/BrainService.swift)
 - [AC/Core/MonitoringAlgorithm.swift](../AC/Core/MonitoringAlgorithm.swift)
-- [AC/Core/LLMPolicyAlgorithm.swift](../AC/Core/LLMPolicyAlgorithm.swift)
-- [AC/Core/LLMFocusAlgorithm.swift](../AC/Core/LLMFocusAlgorithm.swift)
+- [AC/Core/LLMMonitorAlgorithm.swift](../AC/Core/LLMMonitorAlgorithm.swift)
+- [AC/Core/LegacyLLMFocusAlgorithm.swift](../AC/Core/LegacyLLMFocusAlgorithm.swift)
 - [AC/Core/BanditMonitoringAlgorithm.swift](../AC/Core/BanditMonitoringAlgorithm.swift)
 - [AC/Models/MonitoringModels.swift](../AC/Models/MonitoringModels.swift)
 - [AC/Models/LLMPolicyProfileModels.swift](../AC/Models/LLMPolicyProfileModels.swift)

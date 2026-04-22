@@ -7,7 +7,7 @@ import Foundation
 
 // MARK: - BanditMonitoringAlgorithm
 
-/// Two-brain monitoring algorithm — independent of `LLMFocusAlgorithm`.
+/// Two-brain monitoring algorithm — independent of `LegacyLLMFocusAlgorithm`.
 ///
 /// **Brain 1** (VLM): `ScreenStateExtractorService` takes a screenshot and returns a
 /// `BanditScreenState` — a structured observation including `productivityScore`, `onTask`,
@@ -88,6 +88,7 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
         state: inout AlgorithmStateEnvelope,
         context: FrontmostContext,
         heuristics: TelemetryHeuristicSnapshot,
+        policyMemory _: PolicyMemory,
         configuration: MonitoringConfiguration,
         now: Date
     ) -> MonitoringEvaluationPlan {
