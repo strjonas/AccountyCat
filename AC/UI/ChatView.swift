@@ -133,29 +133,30 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(controller.chatMessages) { message in
-                        CompactBubble(message: message)
-                            .id(message.id)
+                    if hasConversationMessages {
+                        ForEach(conversationMessages) { message in
+                            CompactBubble(message: message)
+                                .id(message.id)
+                        }
+                    } else if !controller.sendingChatMessage {
+                        EmptyChatState(suggestions: chatSuggestions) { suggestion in
+                            draft = suggestion
+                            inputFocused = true
+                        }
+                        .padding(.top, 8)
                     }
+
                     if controller.sendingChatMessage {
                         TypingIndicator()
                             .id("typing-indicator")
                     }
+
                     // Sentinel used to always scroll to the very bottom
                     Color.clear
                         .frame(height: 1)
                         .id("chat-bottom-sentinel")
                 }
                 .padding(10)
-                .overlay(alignment: .center) {
-                    if controller.chatMessages.isEmpty && !controller.sendingChatMessage {
-                        SuggestionChips(suggestions: chatSuggestions) { suggestion in
-                            draft = suggestion
-                            inputFocused = true
-                        }
-                        .padding(10)
-                    }
-                }
             }
             .frame(height: 220)
             .background(
@@ -184,6 +185,14 @@ struct ChatView: View {
                 }
             }
         }
+    }
+
+    private var conversationMessages: [ChatMessage] {
+        controller.chatMessages.filter { $0.role != .system }
+    }
+
+    private var hasConversationMessages: Bool {
+        !conversationMessages.isEmpty
     }
 
     // MARK: - Input
@@ -248,23 +257,47 @@ struct ChatView: View {
 
 // MARK: - Suggestion Chips
 
+private struct EmptyChatState: View {
+    let suggestions: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("How can I help?", systemImage: "sparkles")
+                .font(.ac(13, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+
+            Text("Try one of these quick prompts to start the conversation.")
+                .font(.ac(11))
+                .foregroundStyle(.secondary)
+
+            SuggestionChips(suggestions: suggestions, onSelect: onSelect)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.65))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
+                )
+        )
+    }
+}
+
 private struct SuggestionChips: View {
     let suggestions: [String]
     let onSelect: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .center, spacing: 8) {
-            Text("Try asking…")
-                .font(.ac(11))
-                .foregroundStyle(.tertiary)
-            FlowLayout(spacing: 6) {
-                ForEach(suggestions, id: \.self) { suggestion in
-                    Button(suggestion) { onSelect(suggestion) }
-                        .buttonStyle(SuggestionChipStyle())
-                }
+        FlowLayout(spacing: 8) {
+            ForEach(suggestions, id: \.self) { suggestion in
+                Button(suggestion) { onSelect(suggestion) }
+                    .buttonStyle(SuggestionChipStyle())
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -272,15 +305,21 @@ private struct SuggestionChipStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.ac(12))
-            .foregroundStyle(Color.acCaramel)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .foregroundStyle(Color.acTextPrimary)
+            .lineLimit(1)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.acCaramel.opacity(configuration.isPressed ? 0.18 : 0.10))
+                Capsule(style: .continuous)
+                    .fill(configuration.isPressed
+                          ? Color.acCaramel.opacity(0.22)
+                          : Color(nsColor: .windowBackgroundColor).opacity(0.85))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.acCaramel.opacity(0.25), lineWidth: 1)
+                        Capsule(style: .continuous)
+                            .stroke(configuration.isPressed
+                                    ? Color.acCaramel.opacity(0.45)
+                                    : Color.secondary.opacity(0.20),
+                                    lineWidth: 1)
                     )
             )
             .animation(.acSnap, value: configuration.isPressed)
@@ -311,8 +350,7 @@ private struct FlowLayout: Layout {
         var rowViews: [(subview: LayoutSubview, size: CGSize)] = []
 
         func flushRow() {
-            let totalWidth = rowViews.reduce(0) { $0 + $1.size.width } + CGFloat(max(0, rowViews.count - 1)) * spacing
-            var rx = bounds.minX + (bounds.width - totalWidth) / 2
+            var rx = bounds.minX
             for (subview, size) in rowViews {
                 subview.place(at: CGPoint(x: rx, y: y), proposal: .unspecified)
                 rx += size.width + spacing
