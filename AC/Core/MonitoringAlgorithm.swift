@@ -121,7 +121,7 @@ extension MonitoringAlgorithm {
     }
 }
 
-final class MonitoringAlgorithmRegistry {
+final class MonitoringAlgorithmRegistry: @unchecked Sendable {
     private let llmFocusAlgorithm: LLMFocusAlgorithm
     private let llmPolicyAlgorithm: LLMPolicyAlgorithm
     private let banditFocusAlgorithm: BanditMonitoringAlgorithm

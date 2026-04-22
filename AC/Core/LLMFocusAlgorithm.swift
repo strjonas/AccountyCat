@@ -85,6 +85,7 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
 
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
         let evaluation = await monitoringLLMClient.evaluate(
+            evaluationID: input.evaluationID,
             snapshot: input.snapshot,
             goals: input.goals,
             recentActions: input.recentActions,
@@ -92,6 +93,7 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
             heuristics: input.heuristics,
             memory: input.memory,
             promptProfileID: input.configuration.promptProfileID,
+            runtimeProfileID: input.configuration.runtimeProfileID,
             runtimeOverride: input.runtimeOverride
         )
 

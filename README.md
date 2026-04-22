@@ -37,9 +37,9 @@ Everything stays under `~/Library/Application Support/AC` — screenshots, telem
 
 - [Architecture](docs/architecture.md)
 - [Runtime](docs/runtime.md)
+- [Prompt And Algorithm Verification](MD/prompttesting.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-

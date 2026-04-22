@@ -9,6 +9,7 @@ import Testing
 import Foundation
 @testable import AC
 
+@MainActor
 struct ACTests {
 
     @Test

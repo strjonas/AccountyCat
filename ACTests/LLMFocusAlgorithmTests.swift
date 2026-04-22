@@ -15,6 +15,7 @@ private actor StubMonitoringLLMClient: MonitoringLLMEvaluating {
     }
 
     func evaluate(
+        evaluationID _: String,
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
@@ -22,6 +23,7 @@ private actor StubMonitoringLLMClient: MonitoringLLMEvaluating {
         heuristics: TelemetryHeuristicSnapshot,
         memory: String,
         promptProfileID: String,
+        runtimeProfileID _: String,
         runtimeOverride: String?
     ) async -> LLMEvaluationResult {
         var result = result
@@ -30,6 +32,7 @@ private actor StubMonitoringLLMClient: MonitoringLLMEvaluating {
     }
 }
 
+@MainActor
 struct LLMFocusAlgorithmTests {
 
     @Test

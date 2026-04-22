@@ -103,6 +103,7 @@ final class AppController: ObservableObject {
     func shutdown() {
         persistState()
         Task { @MainActor [weak self] in
+            await self?.localModelRuntime.shutdown()
             await self?.telemetryStore.endCurrentSession(reason: "app_termination")
         }
     }
@@ -794,6 +795,14 @@ final class AppController: ObservableObject {
 
     private func repairInvalidMonitoringConfigurationIfNeeded() {
         let algorithmID = state.monitoringConfiguration.algorithmID
+        if !state.hasMigratedPolicyAlgorithmDefault,
+           MonitoringConfiguration.normalizedAlgorithmID(algorithmID) == MonitoringConfiguration.llmAlgorithmID {
+            state.monitoringConfiguration.algorithmID = MonitoringConfiguration.llmPolicyAlgorithmID
+            state.algorithmState = AlgorithmStateEnvelope()
+            state.hasMigratedPolicyAlgorithmDefault = true
+            logActivity("monitoring", "Migrated saved monitoring algorithm from \(algorithmID) to \(MonitoringConfiguration.llmPolicyAlgorithmID)")
+        }
+
         guard !monitoringAlgorithmRegistry.containsAlgorithm(id: algorithmID) else {
             if !LLMPolicyCatalog.availablePipelineProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID }) {
                 state.monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
@@ -801,11 +810,13 @@ final class AppController: ObservableObject {
             if !LLMPolicyCatalog.availableRuntimeProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.runtimeProfileID }) {
                 state.monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
             }
+            state.hasMigratedPolicyAlgorithmDefault = true
             return
         }
 
         state.monitoringConfiguration.algorithmID = MonitoringConfiguration.defaultAlgorithmID
         state.algorithmState = AlgorithmStateEnvelope()
+        state.hasMigratedPolicyAlgorithmDefault = true
         setupErrorMessage = "Saved monitoring algorithm '\(algorithmID)' was invalid. AC reset it to '\(MonitoringConfiguration.defaultAlgorithmID)'."
         logActivity("monitoring", "Reset invalid monitoring algorithm: \(algorithmID)")
     }

@@ -151,12 +151,14 @@ Pipeline stages:
 Deterministic rails still exist, but they are intentionally small:
 
 - obvious productive shortcuts
-- nudge cooldown
-- overlay cooldown
+- stable-context gating
+- distracted follow-up scheduling
 - stale-context discard
 - permission gating
 
 The model owns semantic interpretation and primary action choice. Deterministic code only enforces safety and anti-spam.
+
+`llm_policy_v1` currently records `lastNudgeAt` and `lastOverlayAt` in state, but explicit nudge/overlay cooldown suppression is not yet enforced in the algorithm path itself.
 
 ### 3.2 `llm_focus_v1`
 

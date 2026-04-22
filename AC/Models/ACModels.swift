@@ -279,6 +279,7 @@ struct ACState: Codable, Sendable {
     var runtimePathOverride: String?
     var monitoringConfiguration = MonitoringConfiguration()
     var algorithmState = AlgorithmStateEnvelope()
+    var hasMigratedPolicyAlgorithmDefault = false
     var recentActions: [ActionRecord] = []
     var recentSwitches: [AppSwitchRecord] = []
     var usageByDay: [String: [String: TimeInterval]] = [:]
@@ -299,6 +300,7 @@ struct ACState: Codable, Sendable {
         case runtimePathOverride
         case monitoringConfiguration
         case algorithmState
+        case hasMigratedPolicyAlgorithmDefault
         case recentActions
         case recentSwitches
         case usageByDay
@@ -351,6 +353,7 @@ struct ACState: Codable, Sendable {
         runtimePathOverride = try container.decodeIfPresent(String.self, forKey: .runtimePathOverride)
         monitoringConfiguration = try container.decodeIfPresent(MonitoringConfiguration.self, forKey: .monitoringConfiguration) ?? MonitoringConfiguration()
         algorithmState = try container.decodeIfPresent(AlgorithmStateEnvelope.self, forKey: .algorithmState) ?? AlgorithmStateEnvelope()
+        hasMigratedPolicyAlgorithmDefault = try container.decodeIfPresent(Bool.self, forKey: .hasMigratedPolicyAlgorithmDefault) ?? false
         recentActions = try container.decodeIfPresent([ActionRecord].self, forKey: .recentActions) ?? []
         recentSwitches = try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
         usageByDay = try container.decodeIfPresent([String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
@@ -375,6 +378,7 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
         try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
         try container.encode(algorithmState, forKey: .algorithmState)
+        try container.encode(hasMigratedPolicyAlgorithmDefault, forKey: .hasMigratedPolicyAlgorithmDefault)
         try container.encode(recentActions, forKey: .recentActions)
         try container.encode(recentSwitches, forKey: .recentSwitches)
         try container.encode(usageByDay, forKey: .usageByDay)
@@ -394,6 +398,7 @@ struct ACState: Codable, Sendable {
         monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
         monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
         algorithmState = AlgorithmStateEnvelope()
+        hasMigratedPolicyAlgorithmDefault = true
         memory = ""
         policyMemory = PolicyMemory()
         chatHistory = []

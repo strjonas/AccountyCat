@@ -22,6 +22,7 @@ final class BrainService: NSObject {
 
     private var timer: Timer?
     private var isEvaluating = false
+    private var activeEvaluationTask: Task<MonitoringDecisionResult, Error>?
     private var isSessionAvailable = true
     private var lastObservedContext: FrontmostContext?
     private var lastObservedAt = Date()
@@ -84,6 +85,7 @@ final class BrainService: NSObject {
     }
 
     func stop() {
+        cancelActiveEvaluationIfNeeded(reason: "monitoring_stop")
         timer?.invalidate()
         timer = nil
         NSWorkspace.shared.notificationCenter.removeObserver(self)
@@ -103,12 +105,14 @@ final class BrainService: NSObject {
     }
 
     func resetAlgorithmProfile() {
+        cancelActiveEvaluationIfNeeded(reason: "reset_algorithm_profile")
         recentSwitches = []
         resetRuntimeContext()
         resetDistractionState()
     }
 
     func handleMonitoringConfigurationChange() {
+        cancelActiveEvaluationIfNeeded(reason: "monitoring_configuration_changed")
         guard var state = stateProvider?() else { return }
         state.algorithmState = AlgorithmStateEnvelope()
         stateSink?(state)
@@ -184,6 +188,7 @@ final class BrainService: NSObject {
     }
 
     @objc private func handleWillSleep() {
+        cancelActiveEvaluationIfNeeded(reason: "system_sleep")
         isSessionAvailable = false
         Task {
             await ActivityLogService.shared.append(category: "app", message: "System will sleep. Monitoring is standing by.")
@@ -210,6 +215,7 @@ final class BrainService: NSObject {
     }
 
     @objc private func handleSessionInactive() {
+        cancelActiveEvaluationIfNeeded(reason: "session_inactive")
         isSessionAvailable = false
         Task {
             await ActivityLogService.shared.append(category: "app", message: "User session became inactive. Monitoring is standing by.")
@@ -247,6 +253,7 @@ final class BrainService: NSObject {
         }
 
         if state.isPaused {
+            cancelActiveEvaluationIfNeeded(reason: "monitoring_paused")
             await endActiveEpisode(
                 reason: .paused,
                 context: lastObservedContext,
@@ -260,12 +267,14 @@ final class BrainService: NSObject {
         }
 
         if !state.permissions.satisfies(LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)) {
+            cancelActiveEvaluationIfNeeded(reason: "permissions_missing")
             moodSink?(.setup)
             statusSink?("Required permissions are still missing.")
             return
         }
 
         if !isSessionAvailable {
+            cancelActiveEvaluationIfNeeded(reason: "session_unavailable")
             moodSink?(.idle)
             statusSink?("Session inactive. AC is standing by.")
             return
@@ -274,6 +283,7 @@ final class BrainService: NSObject {
         let now = Date()
         let idleSeconds = SnapshotService.idleSeconds()
         if idleSeconds >= 60 {
+            cancelActiveEvaluationIfNeeded(reason: "idle_reset")
             await endActiveEpisode(
                 reason: .idleReset,
                 context: lastObservedContext,
@@ -463,9 +473,8 @@ final class BrainService: NSObject {
         }
 
         let preEvaluationDistraction = currentDistractionMetadata(from: state)
-        let decisionResult: MonitoringDecisionResult
-        do {
-            decisionResult = try await monitoringAlgorithmRegistry.evaluate(
+        let evaluationTask = Task { [monitoringAlgorithmRegistry] in
+            try await monitoringAlgorithmRegistry.evaluate(
                 input: MonitoringDecisionInput(
                     now: now,
                     evaluationID: evaluationID,
@@ -478,8 +487,22 @@ final class BrainService: NSObject {
                 runtimeOverride: state.runtimePathOverride,
                 configuration: state.monitoringConfiguration,
                 algorithmState: state.algorithmState
+                )
             )
-            )
+        }
+        activeEvaluationTask = evaluationTask
+        defer {
+            activeEvaluationTask = nil
+        }
+
+        let decisionResult: MonitoringDecisionResult
+        do {
+            decisionResult = try await evaluationTask.value
+        } catch is CancellationError {
+            moodSink?(.watching)
+            statusSink?("Context changed during evaluation — cancelled.")
+            stateSink?(state)
+            return
         } catch {
             handleMonitoringConfigurationError(error)
             return
@@ -684,6 +707,8 @@ final class BrainService: NSObject {
         idleSeconds: TimeInterval,
         now: Date
     ) async {
+        cancelActiveEvaluationIfNeeded(reason: "context_changed")
+
         let endReason: EpisodeEndReason
         if let pendingReaction = mostRecentPendingReaction(
             where: { pending in
@@ -1224,10 +1249,24 @@ final class BrainService: NSObject {
     }
 
     private func resetRuntimeContext() {
+        cancelActiveEvaluationIfNeeded(reason: "runtime_context_reset")
         pendingReactionsByEvaluationID = [:]
         activeEpisode = nil
         lastObservedContext = nil
         lastObservedAt = Date()
+    }
+
+    private func cancelActiveEvaluationIfNeeded(reason: String) {
+        guard let activeEvaluationTask else { return }
+        guard !activeEvaluationTask.isCancelled else { return }
+
+        activeEvaluationTask.cancel()
+        Task {
+            await ActivityLogService.shared.append(
+                category: "monitoring-cancel",
+                message: reason
+            )
+        }
     }
 
     private func matchingPendingReaction(for reaction: UserReactionRecord) -> PendingReaction? {

@@ -9,6 +9,7 @@ import Foundation
 import Testing
 @testable import AC
 
+@MainActor
 struct MonitoringConfigurationTests {
 
     @Test

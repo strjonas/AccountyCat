@@ -16,10 +16,8 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
 
     private let runtime: LocalModelRuntime
     private let policyMemoryService: PolicyMemoryServicing
-    private let stabilityWindow: TimeInterval = 20
-    private let distractedFollowUp: TimeInterval = 180
-    private let nudgeCooldown: TimeInterval = 60
-    private let overlayCooldown: TimeInterval = 180
+    private let stabilityWindow: TimeInterval = 6
+    private let distractedFollowUp: TimeInterval = 45
 
     init(
         runtime: LocalModelRuntime,
@@ -299,42 +297,34 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
 
             switch decision.suggestedAction {
             case .overlay:
-                let overlayReady = policyState.lastOverlayAt.map { input.now.timeIntervalSince($0) >= overlayCooldown } ?? true
-                if overlayReady {
-                    let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
-                        appName: input.snapshot.appName,
-                        evaluationID: input.evaluationID
-                    ) ?? OverlayPresentation(
-                        headline: "Pause for a second.",
-                        body: "This still looks off-track in \(input.snapshot.appName).",
-                        prompt: "Why should I let you continue on this?",
-                        appName: input.snapshot.appName,
-                        evaluationID: input.evaluationID,
-                        submitButtonTitle: "Submit",
-                        secondaryButtonTitle: "Back to work"
-                    )
-                    policyState.lastOverlayAt = input.now
-                    policyState.lastInterventionAt = input.now
-                    policyState.activeAppeal = MonitoringAppealSession(
-                        evaluationID: input.evaluationID,
-                        contextKey: distraction.contextKey ?? "unknown",
-                        appName: input.snapshot.appName,
-                        prompt: presentation.prompt ?? "Why should I let you continue on this?",
-                        createdAt: input.now,
-                        lastSubmittedAt: nil,
-                        lastResult: nil
-                    )
-                    action = .showOverlay(presentation)
-                    blockReason = nil
-                } else {
-                    action = .none
-                    blockReason = "overlay_cooldown"
-                }
+                let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
+                    appName: input.snapshot.appName,
+                    evaluationID: input.evaluationID
+                ) ?? OverlayPresentation(
+                    headline: "Pause for a second.",
+                    body: "This still looks off-track in \(input.snapshot.appName).",
+                    prompt: "Why should I let you continue on this?",
+                    appName: input.snapshot.appName,
+                    evaluationID: input.evaluationID,
+                    submitButtonTitle: "Submit",
+                    secondaryButtonTitle: "Back to work"
+                )
+                policyState.lastOverlayAt = input.now
+                policyState.lastInterventionAt = input.now
+                policyState.activeAppeal = MonitoringAppealSession(
+                    evaluationID: input.evaluationID,
+                    contextKey: distraction.contextKey ?? "unknown",
+                    appName: input.snapshot.appName,
+                    prompt: presentation.prompt ?? "Why should I let you continue on this?",
+                    createdAt: input.now,
+                    lastSubmittedAt: nil,
+                    lastResult: nil
+                )
+                action = .showOverlay(presentation)
+                blockReason = nil
 
             case .nudge:
-                let nudgeReady = policyState.lastNudgeAt.map { input.now.timeIntervalSince($0) >= nudgeCooldown } ?? true
-                if nudgeReady,
-                   let nudge = decision.nudge?.cleanedSingleLine,
+                if let nudge = decision.nudge?.cleanedSingleLine,
                    !nudge.isEmpty {
                     policyState.lastNudgeAt = input.now
                     policyState.lastInterventionAt = input.now
@@ -342,9 +332,6 @@ final class LLMPolicyAlgorithm: MonitoringAlgorithm {
                     policyState.recentNudgeMessages = Array(policyState.recentNudgeMessages.prefix(3))
                     action = .showNudge(nudge)
                     blockReason = nil
-                } else if !nudgeReady {
-                    action = .none
-                    blockReason = "nudge_cooldown"
                 } else {
                     action = .none
                     blockReason = "missing_nudge_copy"

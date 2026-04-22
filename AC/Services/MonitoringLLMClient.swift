@@ -139,6 +139,7 @@ nonisolated struct LegacyFocusPerceptionEnvelope: Codable, Sendable {
 
 protocol MonitoringLLMEvaluating: Sendable {
     func evaluate(
+        evaluationID _: String,
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
@@ -146,6 +147,7 @@ protocol MonitoringLLMEvaluating: Sendable {
         heuristics: TelemetryHeuristicSnapshot,
         memory: String,
         promptProfileID: String,
+        runtimeProfileID: String,
         runtimeOverride: String?
     ) async -> LLMEvaluationResult
 }
@@ -159,17 +161,17 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
     private var cooldown: FailureCooldown?
 
     private let runtime: LocalModelRuntime
-    private let modelIdentifier: String
 
     init(
         runtime: LocalModelRuntime,
         modelIdentifier: String = LocalModelRuntime.defaultModelIdentifier
     ) {
         self.runtime = runtime
-        self.modelIdentifier = modelIdentifier
+        let _ = modelIdentifier
     }
 
     func evaluate(
+        evaluationID: String,
         snapshot: AppSnapshot,
         goals: String,
         recentActions: [ActionRecord],
@@ -177,10 +179,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         heuristics: TelemetryHeuristicSnapshot,
         memory: String = "",
         promptProfileID: String,
+        runtimeProfileID: String,
         runtimeOverride: String?
     ) async -> LLMEvaluationResult {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
         let promptProfile = PromptCatalog.monitoringProfile(id: promptProfileID)
+        let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: runtimeProfileID)
+        let modelIdentifier = runtimeProfile.descriptor.modelIdentifier
         let snapshotContextKey = Self.contextKey(for: snapshot)
         let perceptionAttempt = makePerceptionAttempt(
             snapshot: snapshot,
@@ -250,7 +255,10 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                 snapshotPath: screenshotPath,
                 systemPrompt: perceptionAttempt.templateContents,
                 userPrompt: perceptionAttempt.renderedPrompt,
-                options: Self.legacyVisionOptions(modelIdentifier: modelIdentifier)
+                options: Self.legacyVisionOptions(
+                    modelIdentifier: modelIdentifier,
+                    runtimeProfileID: runtimeProfileID
+                )
             )
             attempts[0].runtimeOutput = perceptionOutput
             let rawPerceptionOutput = perceptionOutput.stdout + "\n" + perceptionOutput.stderr
@@ -276,7 +284,10 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                 runtimePath: runtimePath,
                 systemPrompt: decisionAttempt.templateContents,
                 userPrompt: decisionAttempt.renderedPrompt,
-                options: Self.legacyDecisionOptions(modelIdentifier: modelIdentifier)
+                options: Self.legacyDecisionOptions(
+                    modelIdentifier: modelIdentifier,
+                    runtimeProfileID: runtimeProfileID
+                )
             )
             attempts[1].runtimeOutput = decisionOutput
             attempts[1].parsedDecision = LLMOutputParsing.extractDecision(
@@ -312,7 +323,10 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                     runtimePath: runtimePath,
                     systemPrompt: fallbackAttempt.templateContents,
                     userPrompt: fallbackAttempt.renderedPrompt,
-                    options: Self.legacyDecisionFallbackOptions(modelIdentifier: modelIdentifier)
+                    options: Self.legacyDecisionFallbackOptions(
+                        modelIdentifier: modelIdentifier,
+                        runtimeProfileID: runtimeProfileID
+                    )
                 )
                 attempts[2].runtimeOutput = fallbackOutput
                 attempts[2].parsedDecision = LLMOutputParsing.extractDecision(
@@ -348,6 +362,18 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                 failureMessage: "no_usable_decision"
             )
         } catch {
+            if error is CancellationError {
+                return LLMEvaluationResult(
+                    runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
+                    promptProfileID: promptProfile.descriptor.id,
+                    promptProfileVersion: promptProfile.descriptor.version,
+                    attempts: attempts,
+                    finalDecision: nil,
+                    failureMessage: "cancelled"
+                )
+            }
+
             cooldown = FailureCooldown(
                 until: Date().addingTimeInterval(120),
                 contextKey: snapshotContextKey
@@ -746,9 +772,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             .joined(separator: "|")
     }
 
-    nonisolated private static func legacyVisionOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+    nonisolated private static func legacyVisionOptions(
+        modelIdentifier: String,
+        runtimeProfileID: String
+    ) -> RuntimeInferenceOptions {
         runtimeOptions(
             sharedStage: .perceptionVision,
+            runtimeProfileID: runtimeProfileID,
             modelIdentifier: modelIdentifier,
             fallback: RuntimeInferenceOptions(
                 modelIdentifier: modelIdentifier,
@@ -764,9 +794,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
     }
 
-    nonisolated private static func legacyDecisionOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+    nonisolated private static func legacyDecisionOptions(
+        modelIdentifier: String,
+        runtimeProfileID: String
+    ) -> RuntimeInferenceOptions {
         runtimeOptions(
             sharedStage: .legacyDecision,
+            runtimeProfileID: runtimeProfileID,
             modelIdentifier: modelIdentifier,
             fallback: RuntimeInferenceOptions(
                 modelIdentifier: modelIdentifier,
@@ -782,9 +816,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         )
     }
 
-    nonisolated private static func legacyDecisionFallbackOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+    nonisolated private static func legacyDecisionFallbackOptions(
+        modelIdentifier: String,
+        runtimeProfileID: String
+    ) -> RuntimeInferenceOptions {
         runtimeOptions(
             sharedStage: .legacyDecisionFallback,
+            runtimeProfileID: runtimeProfileID,
             modelIdentifier: modelIdentifier,
             fallback: RuntimeInferenceOptions(
                 modelIdentifier: modelIdentifier,
@@ -802,11 +840,12 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
 
     nonisolated private static func runtimeOptions(
         sharedStage: MonitoringPromptTuningStage,
+        runtimeProfileID: String,
         modelIdentifier: String,
         fallback: RuntimeInferenceOptions
     ) -> RuntimeInferenceOptions {
         guard let baseOptions = MonitoringPromptTuning.runtimeDefinitions
-            .first(where: { $0.id == MonitoringConfiguration.defaultRuntimeProfileID })?
+            .first(where: { $0.id == runtimeProfileID })?
             .options(for: sharedStage) else {
             return fallback
         }
