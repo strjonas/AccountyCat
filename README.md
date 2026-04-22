@@ -1,11 +1,11 @@
+
 # AccountyCat
 
 A local macOS focus companion. Sits quietly in the background, watches what you're doing, and nudges you when you drift — not by blocking anything, just a gentle heads-up from a little cat in your menu bar.
 
 Runs entirely on-device. No accounts, no cloud, nothing phoning home.
 
-<img width="486" height="593" alt="image" src="https://github.com/user-attachments/assets/dd9e16f7-8f3f-46a8-a927-5d6a4c272fc9" />
-
+<img width="1000" height="600" alt="showcase" src="https://github.com/user-attachments/assets/9f197866-1215-41cd-9791-d6ddc64df4c9" />
 
 ## Why open source
 
