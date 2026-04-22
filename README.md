@@ -4,6 +4,9 @@ A local macOS focus companion. Sits quietly in the background, watches what you'
 
 Runs entirely on-device. No accounts, no cloud, nothing phoning home.
 
+<img width="486" height="593" alt="image" src="https://github.com/user-attachments/assets/dd9e16f7-8f3f-46a8-a927-5d6a4c272fc9" />
+
+
 ## Why open source
 
 Screen Recording and Accessibility are serious permissions to hand over. Open source means you can read exactly what happens with them. The answer is: nothing leaves your machine.
