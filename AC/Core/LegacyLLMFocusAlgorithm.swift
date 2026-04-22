@@ -1,5 +1,5 @@
 //
-//  LLMFocusAlgorithm.swift
+//  LegacyLLMFocusAlgorithm.swift
 //  AC
 //
 
@@ -11,13 +11,13 @@ import Foundation
 /// decides whether the user is distracted and what AC should do next. The DistractionLadder enforces
 /// spam-prevention timing; CompanionPolicy applies the confidence threshold and escalation rules.
 ///
-/// Algorithm ID: `"llm_focus_v1"`, with a decoder shim for persisted `"legacy_focus_v1"` state.
-final class LLMFocusAlgorithm: MonitoringAlgorithm {
+/// Algorithm ID: `"llm_focus_legacy_v1"`, with decoder shims for older saved ids.
+final class LegacyLLMFocusAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
-        id: MonitoringConfiguration.llmAlgorithmID,
+        id: MonitoringConfiguration.legacyLLMFocusAlgorithmID,
         version: "1.0",
-        displayName: "LLM Focus",
-        summary: "Two-step screenshot perception plus text decision with DistractionLadder spam prevention."
+        displayName: "Legacy LLM Focus",
+        summary: "Older two-step LLM focus path with the DistractionLadder and deterministic policy gates."
     )
 
     private let monitoringLLMClient: any MonitoringLLMEvaluating
@@ -49,6 +49,7 @@ final class LLMFocusAlgorithm: MonitoringAlgorithm {
         state: inout AlgorithmStateEnvelope,
         context: FrontmostContext,
         heuristics: TelemetryHeuristicSnapshot,
+        policyMemory _: PolicyMemory,
         configuration: MonitoringConfiguration,
         now: Date
     ) -> MonitoringEvaluationPlan {

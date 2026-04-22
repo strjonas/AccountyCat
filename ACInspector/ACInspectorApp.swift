@@ -754,11 +754,13 @@ private struct InspectorDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 screenshotSection
-                if controller.selectedEpisodeAttempts.isEmpty {
+                if controller.selectedEvaluationRuns.isEmpty, controller.selectedEpisodeAttempts.isEmpty {
                     promptSection
                     modelSection
-                } else {
+                } else if controller.selectedEvaluationRuns.isEmpty {
                     modelAttemptsSection
+                } else {
+                    evaluationRunsSection
                 }
                 annotationSection
                 timelineSection
@@ -904,6 +906,51 @@ private struct InspectorDetailView: View {
         }
     }
 
+    private var evaluationRunsSection: some View {
+        GroupBox("Evaluation Runs") {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(controller.selectedEvaluationRuns) { run in
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(run.outcomeSummary)
+                                    .font(.headline)
+                                Text("Evaluation \(run.evaluationID.prefix(8))")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(run.requestedAt.formatted(date: .omitted, time: .standard))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        ForEach(run.primaryStages) { stage in
+                            evaluationStageCard(stage)
+                        }
+
+                        if !run.secondaryStages.isEmpty {
+                            DisclosureGroup("Additional stages") {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    ForEach(run.secondaryStages) { stage in
+                                        evaluationStageCard(stage)
+                                    }
+                                }
+                                .padding(.top, 8)
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.secondary.opacity(0.06))
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var annotationSection: some View {
         GroupBox("Annotation") {
             VStack(alignment: .leading, spacing: 12) {
@@ -948,24 +995,78 @@ private struct InspectorDetailView: View {
     }
 
     private var timelineSection: some View {
-        GroupBox("Timeline") {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(controller.selectedEpisodeEvents) { event in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(event.kind)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                        Text(event.summary)
-                            .font(.body)
-                        Text(event.timestamp.formatted(date: .abbreviated, time: .standard))
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                        Divider()
+        GroupBox {
+            DisclosureGroup("Raw Timeline") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(controller.selectedEpisodeEvents) { event in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(event.kind)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text(event.summary)
+                                .font(.body)
+                            Text(event.timestamp.formatted(date: .abbreviated, time: .standard))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func evaluationStageCard(_ stage: IndexedEvaluationStage) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stage.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(stage.summary)
+                        .font(.body)
+                }
+                Spacer()
+                Text(stage.timestamp.formatted(date: .omitted, time: .standard))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            if !stage.details.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(stage.details) { row in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(row.label)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text(row.value)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            DisclosureGroup("Debug") {
+                VStack(alignment: .leading, spacing: 12) {
+                    filePreview(title: "Prompt payload", path: stage.promptPayloadPath)
+                    filePreview(title: "Rendered prompt", path: stage.renderedPromptPath)
+                    filePreview(title: "Raw stdout", path: stage.stdoutPath, fallbackText: stage.stdoutPreview)
+                    filePreview(title: "Raw stderr", path: stage.stderrPath, fallbackText: stage.stderrPreview)
+                }
+                .padding(.top, 8)
+            }
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.001))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
     }
 
     private func filePreview(title: String, path: String?, fallbackText: String? = nil) -> some View {

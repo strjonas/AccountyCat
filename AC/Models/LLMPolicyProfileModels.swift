@@ -83,12 +83,12 @@ enum LLMPolicyCatalog {
     nonisolated static func permissionRequirements(for configuration: MonitoringConfiguration) -> MonitoringPermissionRequirements {
         switch MonitoringConfiguration.normalizedAlgorithmID(configuration.algorithmID) {
         case MonitoringConfiguration.banditAlgorithmID,
-             MonitoringConfiguration.llmAlgorithmID:
+             MonitoringConfiguration.legacyLLMFocusAlgorithmID:
             return MonitoringPermissionRequirements(
                 requiresAccessibility: true,
                 requiresScreenRecording: true
             )
-        case MonitoringConfiguration.llmPolicyAlgorithmID:
+        case MonitoringConfiguration.currentLLMMonitorAlgorithmID:
             let profile = pipelineProfile(id: configuration.pipelineProfileID)
             return MonitoringPermissionRequirements(
                 requiresAccessibility: true,

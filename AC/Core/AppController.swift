@@ -796,11 +796,11 @@ final class AppController: ObservableObject {
     private func repairInvalidMonitoringConfigurationIfNeeded() {
         let algorithmID = state.monitoringConfiguration.algorithmID
         if !state.hasMigratedPolicyAlgorithmDefault,
-           MonitoringConfiguration.normalizedAlgorithmID(algorithmID) == MonitoringConfiguration.llmAlgorithmID {
-            state.monitoringConfiguration.algorithmID = MonitoringConfiguration.llmPolicyAlgorithmID
+           MonitoringConfiguration.shouldAutoMigrateDeprecatedDefaultAlgorithm(algorithmID) {
+            state.monitoringConfiguration.algorithmID = MonitoringConfiguration.currentLLMMonitorAlgorithmID
             state.algorithmState = AlgorithmStateEnvelope()
             state.hasMigratedPolicyAlgorithmDefault = true
-            logActivity("monitoring", "Migrated saved monitoring algorithm from \(algorithmID) to \(MonitoringConfiguration.llmPolicyAlgorithmID)")
+            logActivity("monitoring", "Migrated saved monitoring algorithm from \(algorithmID) to \(MonitoringConfiguration.currentLLMMonitorAlgorithmID)")
         }
 
         guard !monitoringAlgorithmRegistry.containsAlgorithm(id: algorithmID) else {

@@ -49,12 +49,12 @@ struct MonitoringConfigurationTests {
 
         let state = try JSONDecoder().decode(ACState.self, from: data)
 
-        #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.llmAlgorithmID)
+        #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.legacyLLMFocusAlgorithmID)
         #expect(
             state.monitoringConfiguration.experimentArm
             == [
                 "fixed",
-                MonitoringConfiguration.llmAlgorithmID,
+                MonitoringConfiguration.legacyLLMFocusAlgorithmID,
                 MonitoringConfiguration.defaultPipelineProfileID,
                 MonitoringConfiguration.defaultRuntimeProfileID,
                 MonitoringConfiguration.defaultPromptProfileID,
@@ -66,7 +66,7 @@ struct MonitoringConfigurationTests {
     func defaultConfigurationUsesLLMPolicyDefaults() {
         let configuration = MonitoringConfiguration()
 
-        #expect(configuration.algorithmID == MonitoringConfiguration.llmPolicyAlgorithmID)
+        #expect(configuration.algorithmID == MonitoringConfiguration.currentLLMMonitorAlgorithmID)
         #expect(configuration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(configuration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
     }

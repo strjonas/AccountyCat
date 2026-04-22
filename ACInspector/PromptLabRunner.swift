@@ -181,7 +181,6 @@ actor PromptLabRunner {
                 recentSwitches: compactSwitches,
                 usage: compactUsage,
                 recentInterventions: compactInterventions,
-                heuristics: MonitoringPromptHeuristicSummary(heuristics: scenario.heuristics.telemetryRecord),
                 distraction: MonitoringPromptDistractionSummary(state: scenario.distraction.telemetryRecord),
                 titlePerception: titlePerception,
                 visionPerception: visionPerception

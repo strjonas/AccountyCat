@@ -162,12 +162,12 @@ struct BanditMonitoringAlgorithmTests {
 
         let before = algorithm.evaluationPlan(
             state: &state, context: context,
-            heuristics: makeHeuristics(), configuration: monitoringConfig(),
+            heuristics: makeHeuristics(), policyMemory: PolicyMemory(), configuration: monitoringConfig(),
             now: start.addingTimeInterval(19)
         )
         let after = algorithm.evaluationPlan(
             state: &state, context: context,
-            heuristics: makeHeuristics(), configuration: monitoringConfig(),
+            heuristics: makeHeuristics(), policyMemory: PolicyMemory(), configuration: monitoringConfig(),
             now: start.addingTimeInterval(20)
         )
 
@@ -193,12 +193,12 @@ struct BanditMonitoringAlgorithmTests {
 
         let within = algorithm.evaluationPlan(
             state: &state, context: context,
-            heuristics: makeHeuristics(), configuration: monitoringConfig(),
+            heuristics: makeHeuristics(), policyMemory: PolicyMemory(), configuration: monitoringConfig(),
             now: start.addingTimeInterval(30)
         )
         let after = algorithm.evaluationPlan(
             state: &state, context: context,
-            heuristics: makeHeuristics(), configuration: monitoringConfig(),
+            heuristics: makeHeuristics(), policyMemory: PolicyMemory(), configuration: monitoringConfig(),
             now: start.addingTimeInterval(90)
         )
 

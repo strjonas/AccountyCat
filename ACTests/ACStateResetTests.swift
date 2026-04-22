@@ -16,7 +16,7 @@ struct ACStateResetTests {
     func resetAlgorithmProfileClearsModelFacingState() {
         var state = ACState()
         state.monitoringConfiguration = MonitoringConfiguration(
-            algorithmID: MonitoringConfiguration.legacyLLMAlgorithmID,
+            algorithmID: MonitoringConfiguration.deprecatedLegacyLLMAlgorithmID,
             promptProfileID: "focus_default_v2",
             selectionMode: .fixed,
             experimentArmOverride: "manual:test"

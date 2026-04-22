@@ -87,3 +87,49 @@ struct IndexedModelAttempt: Identifiable, Hashable, Sendable {
         promptMode.replacingOccurrences(of: "_", with: " ")
     }
 }
+
+struct InspectorDetailRow: Identifiable, Hashable, Sendable {
+    var label: String
+    var value: String
+
+    var id: String {
+        "\(label):\(value)"
+    }
+}
+
+enum IndexedEvaluationStageKind: String, Hashable, Sendable {
+    case perception
+    case decision
+    case nudge
+    case additional
+}
+
+struct IndexedEvaluationStage: Identifiable, Hashable, Sendable {
+    var evaluationID: String
+    var promptMode: String
+    var timestamp: Date
+    var kind: IndexedEvaluationStageKind
+    var title: String
+    var summary: String
+    var details: [InspectorDetailRow]
+    var promptPayloadPath: String?
+    var renderedPromptPath: String?
+    var stdoutPath: String?
+    var stderrPath: String?
+    var stdoutPreview: String?
+    var stderrPreview: String?
+
+    var id: String {
+        "\(evaluationID):\(promptMode)"
+    }
+}
+
+struct IndexedEvaluationRun: Identifiable, Hashable, Sendable {
+    var evaluationID: String
+    var requestedAt: Date
+    var outcomeSummary: String
+    var primaryStages: [IndexedEvaluationStage]
+    var secondaryStages: [IndexedEvaluationStage]
+
+    var id: String { evaluationID }
+}

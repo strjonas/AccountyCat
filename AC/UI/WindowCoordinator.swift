@@ -20,6 +20,9 @@ final class WindowCoordinator {
     private var overlayWindow: NSWindow?
     private var nudgeBorderWindow: NSWindow?
     private var dismissNudgeWorkItem: DispatchWorkItem?
+    private var nudgeRestoreFrame: NSRect?
+    private var nudgeAdjustedFrame: NSRect?
+    private var nudgeRestorePeekingEdge: NSRectEdge?
 
     // Native-event drag state (replaces SwiftUI DragGesture)
     private var dragEventMonitor: Any?
@@ -204,6 +207,7 @@ final class WindowCoordinator {
     // MARK: - Nudge (speech bubble edition)
 
     func showNudge(message: String) {
+        adjustCompanionForVisibleNudgeIfNeeded()
         controller.latestNudge = message
         showNudgeBorder()
         triggerHaptic()
@@ -215,6 +219,7 @@ final class WindowCoordinator {
         // Auto-dismiss after 7 s
         dismissNudgeWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
+            self?.restoreCompanionAfterNudgeIfNeeded()
             self?.controller.clearTransientUI()
             self?.hideNudgeBorder()
         }
@@ -390,6 +395,102 @@ final class WindowCoordinator {
         window.ignoresMouseEvents = true
         window.contentViewController = hosting
         return window
+    }
+
+    // MARK: - Nudge visibility near screen edges
+
+    /// If the orb is peeking or close to an edge, temporarily bring the
+    /// companion panel on-screen so the speech bubble is readable.
+    private func adjustCompanionForVisibleNudgeIfNeeded() {
+        guard let panel = companionPanel else { return }
+
+        let screen = screenContaining(panel) ?? activeScreen()
+        let visible = screen.visibleFrame
+        let frame = panel.frame
+        let inset: CGFloat = 8
+        let orbCentreX = frame.midX
+        let leftDistance = orbCentreX - screen.frame.minX
+        let rightDistance = screen.frame.maxX - orbCentreX
+        let nearestSideDistance = min(leftDistance, rightDistance)
+        let nearSideThreshold = peekThreshold + 26
+        let isPartiallyOffscreen =
+            frame.minX < screen.frame.minX + inset
+            || frame.maxX > screen.frame.maxX - inset
+        let sidePeek = peekingEdge == .minX || peekingEdge == .maxX
+        let topOverflow = frame.maxY > visible.maxY - inset
+        let bottomOverflow = frame.minY < screen.frame.minY + inset
+        let needsVerticalAdjust = topOverflow || bottomOverflow
+
+        guard sidePeek
+            || isPartiallyOffscreen
+            || nearestSideDistance < nearSideThreshold
+            || needsVerticalAdjust else {
+            return
+        }
+
+        var target = panel.frame
+        let moveTowardLeft = leftDistance <= rightDistance
+
+        if moveTowardLeft {
+            target.origin.x = screen.frame.minX + inset
+        } else {
+            target.origin.x = screen.frame.maxX - target.width - inset
+        }
+
+        // Keep full nudge panel visible vertically. This covers cases where
+        // AC is near the menu bar and the bubble would otherwise be clipped.
+        if target.maxY > visible.maxY - inset {
+            target.origin.y = visible.maxY - target.height - inset
+        }
+        if target.minY < screen.frame.minY + inset {
+            target.origin.y = screen.frame.minY + inset
+        }
+
+        let movedX = abs(target.origin.x - panel.frame.origin.x)
+        let movedY = abs(target.origin.y - panel.frame.origin.y)
+        guard movedX > 0.5 || movedY > 0.5 else { return }
+
+        nudgeRestoreFrame = panel.frame
+        nudgeRestorePeekingEdge = peekingEdge
+        nudgeAdjustedFrame = target
+        peekingEdge = nil
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            panel.animator().setFrame(target, display: true)
+        }
+    }
+
+    /// Restore the previous edge-peek frame after the nudge disappears unless
+    /// the user moved the orb while the nudge was visible.
+    private func restoreCompanionAfterNudgeIfNeeded() {
+        guard let panel = companionPanel,
+              let restore = nudgeRestoreFrame,
+              let adjusted = nudgeAdjustedFrame else {
+            nudgeRestoreFrame = nil
+            nudgeAdjustedFrame = nil
+            nudgeRestorePeekingEdge = nil
+            return
+        }
+
+        let dx = panel.frame.origin.x - adjusted.origin.x
+        let dy = panel.frame.origin.y - adjusted.origin.y
+        let movedDuringNudge = hypot(dx, dy) > 2
+
+        defer {
+            nudgeRestoreFrame = nil
+            nudgeAdjustedFrame = nil
+            nudgeRestorePeekingEdge = nil
+        }
+
+        guard !movedDuringNudge else { return }
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            panel.animator().setFrame(restore, display: true)
+        }
+        peekingEdge = nudgeRestorePeekingEdge
+        saveCompanionPosition()
     }
 
     // MARK: - Helpers

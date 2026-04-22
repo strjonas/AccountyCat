@@ -19,8 +19,12 @@ final class BrainService: NSObject {
     private let executiveArm: ExecutiveArm
     private let storageService: StorageService
     private let telemetryStore: TelemetryStore
+    private let pollingInterval: TimeInterval = 10
+    private let contextChangeProbeInterval: TimeInterval = 2
 
     private var timer: Timer?
+    private var contextProbeTimer: Timer?
+    private var isTickScheduled = false
     private var isEvaluating = false
     private var activeEvaluationTask: Task<MonitoringDecisionResult, Error>?
     private var isSessionAvailable = true
@@ -67,7 +71,7 @@ final class BrainService: NSObject {
     }
 
     func start() {
-        guard timer == nil else { return }
+        guard timer == nil, contextProbeTimer == nil else { return }
 
         let notificationCenter = NSWorkspace.shared.notificationCenter
         notificationCenter.addObserver(self, selector: #selector(handleWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
@@ -75,19 +79,27 @@ final class BrainService: NSObject {
         notificationCenter.addObserver(self, selector: #selector(handleSessionInactive), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         notificationCenter.addObserver(self, selector: #selector(handleSessionActive), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
 
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                await self.tick()
+        timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleTickIfNeeded()
+            }
+        }
+        contextProbeTimer = Timer.scheduledTimer(withTimeInterval: contextChangeProbeInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.probeForContextChange()
             }
         }
         RunLoop.main.add(timer!, forMode: .common)
+        RunLoop.main.add(contextProbeTimer!, forMode: .common)
     }
 
     func stop() {
         cancelActiveEvaluationIfNeeded(reason: "monitoring_stop")
         timer?.invalidate()
         timer = nil
+        contextProbeTimer?.invalidate()
+        contextProbeTimer = nil
+        isTickScheduled = false
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
@@ -212,6 +224,7 @@ final class BrainService: NSObject {
         Task {
             await ActivityLogService.shared.append(category: "app", message: "System woke up. Monitoring resumed.")
         }
+        scheduleTickIfNeeded()
     }
 
     @objc private func handleSessionInactive() {
@@ -238,6 +251,36 @@ final class BrainService: NSObject {
         isSessionAvailable = true
         Task {
             await ActivityLogService.shared.append(category: "app", message: "User session became active. Monitoring resumed.")
+        }
+        scheduleTickIfNeeded()
+    }
+
+    private func scheduleTickIfNeeded() {
+        guard isTickScheduled == false else { return }
+        isTickScheduled = true
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isTickScheduled = false }
+            await self.tick()
+        }
+    }
+
+    private func probeForContextChange() {
+        guard isEvaluating == false,
+              let state = stateProvider?(),
+              state.setupStatus == .ready,
+              state.isPaused == false,
+              isSessionAvailable else {
+            return
+        }
+
+        guard let context = SnapshotService.frontmostContext() else {
+            return
+        }
+
+        if context.contextKey != lastObservedContext?.contextKey {
+            scheduleTickIfNeeded()
         }
     }
 
@@ -368,6 +411,7 @@ final class BrainService: NSObject {
                 configuration: state.monitoringConfiguration,
                 context: context,
                 heuristics: heuristics,
+                policyMemory: state.policyMemory,
                 now: now,
                 state: &state.algorithmState
             )

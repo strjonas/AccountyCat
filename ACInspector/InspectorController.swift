@@ -16,6 +16,7 @@ final class InspectorController: ObservableObject {
     @Published var selectedEpisodeID: String?
     @Published var selectedEpisodeEvents: [IndexedEvent] = []
     @Published var selectedEpisodeAttempts: [IndexedModelAttempt] = []
+    @Published var selectedEvaluationRuns: [IndexedEvaluationRun] = []
     @Published var annotationNote = ""
     @Published var selectedLabels: Set<EpisodeAnnotationLabel> = []
     @Published var pinEpisode = false
@@ -310,6 +311,10 @@ final class InspectorController: ObservableObject {
     private func loadEpisodeDetails(episodeID: String, preserveDraftIfDirty: Bool) async throws {
         selectedEpisodeEvents = try await indexStore.loadEvents(for: episodeID)
         selectedEpisodeAttempts = await makeAttemptDetails(from: selectedEpisodeEvents)
+        selectedEvaluationRuns = makeEvaluationRuns(
+            from: selectedEpisodeEvents,
+            attempts: selectedEpisodeAttempts
+        )
         if let selectedEpisode = episodes.first(where: { $0.id == episodeID }) {
             let loadedDraft = AnnotationDraft(
                 note: selectedEpisode.note,
@@ -345,6 +350,7 @@ final class InspectorController: ObservableObject {
     private func clearSelectionState() {
         selectedEpisodeEvents = []
         selectedEpisodeAttempts = []
+        selectedEvaluationRuns = []
         applyAnnotationDraft(AnnotationDraft(note: "", labels: Set<EpisodeAnnotationLabel>(), pinned: false))
         lastLoadedDraft = nil
         lastLoadedEpisodeID = nil
@@ -489,6 +495,28 @@ final class InspectorController: ObservableObject {
         return nil
     }
 
+    private static func findStringArray(in object: Any, matching keys: Set<String>) -> [String] {
+        if let dictionary = object as? [String: Any] {
+            for (key, value) in dictionary {
+                if keys.contains(key), let values = value as? [String] {
+                    return values.map(\.cleanedSingleLine).filter { !$0.isEmpty }
+                }
+                let nested = findStringArray(in: value, matching: keys)
+                if !nested.isEmpty {
+                    return nested
+                }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                let nested = findStringArray(in: value, matching: keys)
+                if !nested.isEmpty {
+                    return nested
+                }
+            }
+        }
+        return []
+    }
+
     private func makeAttemptDetails(from indexedEvents: [IndexedEvent]) async -> [IndexedModelAttempt] {
         var attemptsByID: [String: IndexedModelAttempt] = [:]
 
@@ -624,6 +652,332 @@ final class InspectorController: ObservableObject {
     private static func prettyJSONString<T: Encodable>(for value: T) -> String? {
         guard let data = try? makeJSONEncoder().encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    private func makeEvaluationRuns(
+        from indexedEvents: [IndexedEvent],
+        attempts: [IndexedModelAttempt]
+    ) -> [IndexedEvaluationRun] {
+        var requestedAtByEvaluationID: [String: Date] = [:]
+        var policyByEvaluationID: [String: PolicyDecisionRecord] = [:]
+
+        for indexedEvent in indexedEvents {
+            guard let event = Self.decodeTelemetryEvent(from: indexedEvent) else { continue }
+            if let evaluation = event.evaluation {
+                requestedAtByEvaluationID[evaluation.evaluationID] = indexedEvent.timestamp
+            }
+            if let policy = event.policy {
+                policyByEvaluationID[policy.evaluationID] = policy
+            }
+        }
+
+        return Dictionary(grouping: attempts, by: \.evaluationID)
+            .map { evaluationID, groupedAttempts in
+                let stages = groupedAttempts
+                    .map(Self.makeEvaluationStage)
+                    .sorted { lhs, rhs in
+                        let left = Self.primarySortOrder(for: lhs)
+                        let right = Self.primarySortOrder(for: rhs)
+                        if left == right {
+                            return lhs.timestamp < rhs.timestamp
+                        }
+                        return left < right
+                    }
+
+                let (primaryStages, secondaryStages) = Self.partitionStages(stages)
+                let requestedAt = requestedAtByEvaluationID[evaluationID]
+                    ?? groupedAttempts.map(\.timestamp).min()
+                    ?? .distantPast
+
+                return IndexedEvaluationRun(
+                    evaluationID: evaluationID,
+                    requestedAt: requestedAt,
+                    outcomeSummary: Self.outcomeSummary(for: policyByEvaluationID[evaluationID]),
+                    primaryStages: primaryStages,
+                    secondaryStages: secondaryStages
+                )
+            }
+            .sorted { $0.requestedAt > $1.requestedAt }
+    }
+
+    private static func makeEvaluationStage(from attempt: IndexedModelAttempt) -> IndexedEvaluationStage {
+        let promptMode = attempt.promptMode
+        let kind = stageKind(for: promptMode)
+        let payloadObject = jsonObject(at: attempt.promptPayloadPath)
+
+        var summary = "No parsed output."
+        var details: [InspectorDetailRow] = []
+
+        switch promptMode {
+        case "perception_vision", "perception_title", "legacy_perception_vision":
+            let output = decodeJSONFile(MonitoringPerceptionEnvelope.self, path: attempt.stdoutPath)
+            let activitySummary = output.map { $0.activitySummary.cleanedSingleLine } ?? ""
+            summary = activitySummary.isEmpty ? "No parsed perception output." : activitySummary
+            if let focusGuess = output?.focusGuess {
+                details.append(InspectorDetailRow(label: "Focus guess", value: focusGuess.rawValue))
+            }
+            let tags = output?.reasonTags ?? []
+            if !tags.isEmpty {
+                details.append(InspectorDetailRow(label: "Reason tags", value: tags.joined(separator: ", ")))
+            }
+            let notes = (output?.notes ?? []).map(\.cleanedSingleLine).filter { !$0.isEmpty }
+            if !notes.isEmpty {
+                details.append(InspectorDetailRow(label: "Notes", value: notes.joined(separator: "\n")))
+            }
+            let contextParts = [
+                findString(in: payloadObject as Any, matching: ["appName", "frontmostApp"]),
+                findString(in: payloadObject as Any, matching: ["windowTitle"])
+            ].compactMap { value -> String? in
+                guard let value, !value.cleanedSingleLine.isEmpty else { return nil }
+                return value.cleanedSingleLine
+            }
+            if !contextParts.isEmpty {
+                details.append(InspectorDetailRow(label: "Context", value: contextParts.joined(separator: " • ")))
+            }
+
+        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback":
+            let decision = decodeDecisionRecord(from: attempt)
+            summary = formattedDecisionSummary(from: decision) ?? "No parsed decision output."
+            if let nudge = decision?.nudge?.cleanedSingleLine, !nudge.isEmpty {
+                details.append(InspectorDetailRow(label: "Inline nudge", value: nudge))
+            }
+            if let abstainReason = decision?.abstainReason?.cleanedSingleLine, !abstainReason.isEmpty {
+                details.append(InspectorDetailRow(label: "Abstain reason", value: abstainReason))
+            }
+            if let goals = findString(in: payloadObject as Any, matching: ["goals", "goalsSummary"]),
+               !goals.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Goals", value: goals.cleanedSingleLine))
+            }
+            if let memory = findString(in: payloadObject as Any, matching: ["freeFormMemory", "memory", "free_form_memory"]),
+               !memory.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Memory", value: memory))
+            }
+            if let policySummary = findString(in: payloadObject as Any, matching: ["policySummary", "policy_summary"]),
+               !policySummary.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Policy context", value: policySummary))
+            }
+            let contextParts = [
+                findString(in: payloadObject as Any, matching: ["appName", "frontmostApp"]),
+                findString(in: payloadObject as Any, matching: ["windowTitle"])
+            ].compactMap { value -> String? in
+                guard let value, !value.cleanedSingleLine.isEmpty else { return nil }
+                return value.cleanedSingleLine
+            }
+            if !contextParts.isEmpty {
+                details.append(InspectorDetailRow(label: "Context", value: contextParts.joined(separator: " • ")))
+            }
+            if let perception = findString(in: payloadObject as Any, matching: ["activitySummary", "activity_summary", "sceneSummary", "scene_summary"]),
+               !perception.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Perception passed in", value: perception.cleanedSingleLine))
+            }
+
+        case "nudge_copy":
+            let nudge = decodeJSONFile(MonitoringNudgeEnvelope.self, path: attempt.stdoutPath)?.nudge?.cleanedSingleLine
+            summary = (nudge?.isEmpty == false) ? nudge! : "No nudge copy returned."
+            if let goals = findString(in: payloadObject as Any, matching: ["goals"]),
+               !goals.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Goals", value: goals.cleanedSingleLine))
+            }
+            if let policySummary = findString(in: payloadObject as Any, matching: ["policySummary", "policy_summary"]),
+               !policySummary.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Policy context", value: policySummary))
+            }
+            let contextParts = [
+                findString(in: payloadObject as Any, matching: ["appName"]),
+                findString(in: payloadObject as Any, matching: ["windowTitle"])
+            ].compactMap { value -> String? in
+                guard let value, !value.cleanedSingleLine.isEmpty else { return nil }
+                return value.cleanedSingleLine
+            }
+            if !contextParts.isEmpty {
+                details.append(InspectorDetailRow(label: "Context", value: contextParts.joined(separator: " • ")))
+            }
+            if let perception = findString(in: payloadObject as Any, matching: ["visionPerception", "titlePerception"]),
+               !perception.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Perception passed in", value: perception.cleanedSingleLine))
+            }
+            let recentNudges = findStringArray(in: payloadObject as Any, matching: ["recentNudges"])
+            if !recentNudges.isEmpty {
+                details.append(InspectorDetailRow(label: "Recent nudges", value: recentNudges.joined(separator: "\n")))
+            }
+
+        case "appeal_review":
+            let appeal = decodeJSONFile(MonitoringAppealEnvelope.self, path: attempt.stdoutPath)
+            let appealMessage = appeal.map { $0.message.cleanedSingleLine } ?? ""
+            summary = [
+                appeal?.decision.rawValue,
+                appealMessage
+            ]
+            .compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " • ")
+            if let appealText = findString(in: payloadObject as Any, matching: ["appealText"]),
+               !appealText.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Appeal", value: appealText))
+            }
+
+        default:
+            summary = attempt.stdoutPreview ?? "No parsed output."
+        }
+
+        return IndexedEvaluationStage(
+            evaluationID: attempt.evaluationID,
+            promptMode: promptMode,
+            timestamp: attempt.timestamp,
+            kind: kind,
+            title: stageTitle(for: promptMode),
+            summary: summary,
+            details: details,
+            promptPayloadPath: attempt.promptPayloadPath,
+            renderedPromptPath: attempt.renderedPromptPath,
+            stdoutPath: attempt.stdoutPath,
+            stderrPath: attempt.stderrPath,
+            stdoutPreview: attempt.stdoutPreview,
+            stderrPreview: attempt.stderrPreview
+        )
+    }
+
+    private static func partitionStages(
+        _ stages: [IndexedEvaluationStage]
+    ) -> ([IndexedEvaluationStage], [IndexedEvaluationStage]) {
+        var primary: [IndexedEvaluationStage] = []
+        var secondary: [IndexedEvaluationStage] = []
+        var hasPerception = false
+        var hasDecision = false
+        var hasNudge = false
+
+        for stage in stages {
+            switch stage.kind {
+            case .perception where !hasPerception:
+                primary.append(stage)
+                hasPerception = true
+            case .decision where !hasDecision:
+                primary.append(stage)
+                hasDecision = true
+            case .nudge where !hasNudge:
+                primary.append(stage)
+                hasNudge = true
+            default:
+                secondary.append(stage)
+            }
+        }
+
+        return (primary, secondary)
+    }
+
+    private static func primarySortOrder(for stage: IndexedEvaluationStage) -> Int {
+        switch stage.kind {
+        case .perception:
+            return stage.promptMode == "perception_vision" ? 0 : 1
+        case .decision:
+            return stage.promptMode == "decision" ? 10 : 11
+        case .nudge:
+            return 20
+        case .additional:
+            return 30
+        }
+    }
+
+    private static func stageKind(for promptMode: String) -> IndexedEvaluationStageKind {
+        switch promptMode {
+        case "perception_vision", "perception_title", "legacy_perception_vision":
+            return .perception
+        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback":
+            return .decision
+        case "nudge_copy":
+            return .nudge
+        default:
+            return .additional
+        }
+    }
+
+    private static func stageTitle(for promptMode: String) -> String {
+        switch promptMode {
+        case "perception_vision":
+            return "Perception"
+        case "perception_title":
+            return "Title Perception"
+        case "legacy_perception_vision":
+            return "Legacy Perception"
+        case "decision":
+            return "Decision"
+        case "legacy_decision":
+            return "Legacy Decision"
+        case "decision_fallback", "legacy_decision_fallback":
+            return "Fallback Decision"
+        case "nudge_copy":
+            return "Nudge"
+        case "appeal_review":
+            return "Appeal Review"
+        default:
+            return promptMode.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private static func decodeDecisionRecord(from attempt: IndexedModelAttempt) -> ModelOutputParsedRecord? {
+        if let parsedOutputJSON = attempt.parsedOutputJSON {
+            return decodeJSONString(ModelOutputParsedRecord.self, string: parsedOutputJSON)
+        }
+        if let envelope = decodeJSONFile(MonitoringDecisionEnvelope.self, path: attempt.stdoutPath) {
+            return ModelOutputParsedRecord(
+                assessment: envelope.assessment,
+                suggestedAction: envelope.suggestedAction,
+                confidence: envelope.confidence,
+                reasonTags: envelope.reasonTags,
+                nudge: envelope.nudge,
+                abstainReason: envelope.abstainReason
+            )
+        }
+        return nil
+    }
+
+    private static func formattedDecisionSummary(from decision: ModelOutputParsedRecord?) -> String? {
+        guard let decision else { return nil }
+        var parts = [decision.assessment.rawValue, decision.suggestedAction.rawValue]
+        if let confidence = decision.confidence {
+            parts.append("\(Int((confidence * 100).rounded()))%")
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    private static func outcomeSummary(for policy: PolicyDecisionRecord?) -> String {
+        guard let policy else { return "Pending" }
+        var parts = [
+            policy.model.assessment.rawValue,
+            policy.finalAction.kind.rawValue
+        ]
+        if let blockReason = policy.blockReason?.cleanedSingleLine, !blockReason.isEmpty {
+            parts.append(blockReason)
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    private static func decodeJSONFile<T: Decodable>(_ type: T.Type, path: String?) -> T? {
+        guard let path,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            return nil
+        }
+        let decoder = makeJSONDecoder()
+        return try? decoder.decode(type, from: data)
+    }
+
+    private static func decodeJSONString<T: Decodable>(_ type: T.Type, string: String?) -> T? {
+        guard let string,
+              let data = string.data(using: .utf8) else {
+            return nil
+        }
+        let decoder = makeJSONDecoder()
+        return try? decoder.decode(type, from: data)
+    }
+
+    private static func jsonObject(at path: String?) -> Any? {
+        guard let path,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: data)
     }
 
     private func schedulePersistPromptLabState() {

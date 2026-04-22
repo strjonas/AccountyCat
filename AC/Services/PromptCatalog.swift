@@ -345,7 +345,7 @@ enum PromptCatalog {
         return load(asset: asset).replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
     }
 
-    // MARK: - LLM Policy prompts
+    // MARK: - LLM Monitor prompts
 
     nonisolated static func loadPolicySystemPrompt(stage: LLMPolicyStage) -> String {
         load(asset: policyPromptAsset(for: stage, kind: .system))
@@ -378,7 +378,7 @@ enum PromptCatalog {
         case (.perceptionTitle, .system):
             return PromptAsset(
                 id: "policy.perception_title.system",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "perception_title_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -387,7 +387,7 @@ enum PromptCatalog {
         case (.perceptionTitle, .user):
             return PromptAsset(
                 id: "policy.perception_title.user",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "perception_title_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -396,7 +396,7 @@ enum PromptCatalog {
         case (.perceptionVision, .system):
             return PromptAsset(
                 id: "policy.perception_vision.system",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "perception_vision_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -405,7 +405,7 @@ enum PromptCatalog {
         case (.perceptionVision, .user):
             return PromptAsset(
                 id: "policy.perception_vision.user",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "perception_vision_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -414,7 +414,7 @@ enum PromptCatalog {
         case (.decision, .system):
             return PromptAsset(
                 id: "policy.decision.system",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "decision_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -423,7 +423,7 @@ enum PromptCatalog {
         case (.decision, .user):
             return PromptAsset(
                 id: "policy.decision.user",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "decision_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -432,7 +432,7 @@ enum PromptCatalog {
         case (.nudgeCopy, .system):
             return PromptAsset(
                 id: "policy.nudge_copy.system",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "nudge_copy_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -441,7 +441,7 @@ enum PromptCatalog {
         case (.nudgeCopy, .user):
             return PromptAsset(
                 id: "policy.nudge_copy.user",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "nudge_copy_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -450,7 +450,7 @@ enum PromptCatalog {
         case (.appealReview, .system):
             return PromptAsset(
                 id: "policy.appeal_review.system",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "appeal_review_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -459,7 +459,7 @@ enum PromptCatalog {
         case (.appealReview, .user):
             return PromptAsset(
                 id: "policy.appeal_review.user",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "appeal_review_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -468,7 +468,7 @@ enum PromptCatalog {
         case (.policyMemory, .system):
             return PromptAsset(
                 id: "policy.memory.system",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "policy_memory_system",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",
@@ -477,7 +477,7 @@ enum PromptCatalog {
         case (.policyMemory, .user):
             return PromptAsset(
                 id: "policy.memory.user",
-                version: "llm_policy_v1",
+                version: "llm_monitor_v1",
                 resourceName: "policy_memory_user",
                 fileExtension: "md",
                 subdirectory: "Prompts/Policy",

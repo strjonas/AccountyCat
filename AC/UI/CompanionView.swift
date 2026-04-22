@@ -40,7 +40,7 @@ struct CompanionView: View {
             // ── Speech bubble (appears only while latestNudge is set) ──
             if let nudge = controller.latestNudge {
                 SpeechBubble(text: nudge)
-                    .frame(maxWidth: 176)
+                    .frame(maxWidth: 188)
                     .transition(.asymmetric(
                         insertion: .scale(scale: 0.82, anchor: .bottom)
                             .combined(with: .opacity),

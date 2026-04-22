@@ -20,10 +20,11 @@ struct SpeechBubble: View {
             // Bubble body
             VStack(spacing: 6) {
                 Text(text)
-                    .font(.ac(12.5))
-                    .foregroundStyle(Color.primary)
+                    .font(.ac(13.5, weight: .medium))
+                    .foregroundStyle(bubbleTextColor)
                     .multilineTextAlignment(.center)
-                    .lineLimit(4)
+                    .lineLimit(6)
+                    .allowsTightening(true)
                     .fixedSize(horizontal: false, vertical: true)
 
                 // Thumbs up / down feedback row
@@ -47,8 +48,8 @@ struct SpeechBubble: View {
                     .help("This nudge was not helpful")
                 }
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity)
             .background(bubbleBackground)
 
@@ -60,19 +61,28 @@ struct SpeechBubble: View {
         }
     }
 
-    /// Tail fill matches the material surface color closely enough in both modes.
+    private var bubbleTextColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.96)
+            : Color.black.opacity(0.86)
+    }
+
+    /// Tail fill matches the bubble body surface in both modes.
     private var tailColor: Color {
         colorScheme == .dark
-            ? Color(red: 0.22, green: 0.22, blue: 0.24)
-            : Color(red: 1.0, green: 0.97, blue: 0.92)
+            ? Color(red: 0.16, green: 0.16, blue: 0.18)
+            : Color(red: 0.99, green: 0.96, blue: 0.91)
     }
 
     private var bubbleBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(tailColor.opacity(colorScheme == .dark ? 0.95 : 0.97))
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.10), lineWidth: 1)
+                .stroke(
+                    Color.primary.opacity(colorScheme == .dark ? 0.30 : 0.18),
+                    lineWidth: 1
+                )
         }
         .shadow(
             color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.10),

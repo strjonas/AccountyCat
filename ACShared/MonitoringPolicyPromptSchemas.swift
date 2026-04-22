@@ -85,7 +85,6 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var recentSwitches: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var recentInterventions: MonitoringPromptInterventionSummary
-    var heuristics: MonitoringPromptHeuristicSummary
     var distraction: MonitoringPromptDistractionSummary
     var titlePerception: MonitoringPerceptionEnvelope?
     var visionPerception: MonitoringPerceptionEnvelope?
