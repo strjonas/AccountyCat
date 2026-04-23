@@ -581,7 +581,8 @@ final class BrainService: NSObject {
                 policyMemory: state.policyMemory,
                 runtimeOverride: state.runtimePathOverride,
                 configuration: state.monitoringConfiguration,
-                algorithmState: state.algorithmState
+                algorithmState: state.algorithmState,
+                characterPersonalityPrefix: state.character.personalityPrefix
                 )
             )
         }

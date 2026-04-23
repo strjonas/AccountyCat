@@ -7,6 +7,46 @@
 
 import Foundation
 
+// MARK: - AC Character
+
+/// Selectable companion personality. Stored in ACState and persisted across launches.
+/// The character injects a 1–2 sentence style prefix into every system prompt;
+/// the companion always identifies itself as "AccountyCat" / "AC" regardless of character.
+enum ACCharacter: String, Codable, CaseIterable, Sendable {
+    case mochi  // default — warm, cozy
+    case nova   // sharp, energetic
+    case sage   // calm, minimal
+
+    var displayName: String {
+        switch self {
+        case .mochi: return "Mochi"
+        case .nova:  return "Nova"
+        case .sage:  return "Sage"
+        }
+    }
+
+    var tagline: String {
+        switch self {
+        case .mochi: return "Your cozy focus buddy"
+        case .nova:  return "Your sharp-minded co-pilot"
+        case .sage:  return "Your calm inner guide"
+        }
+    }
+
+    /// 1–2 sentence style prefix prepended to every system prompt.
+    /// The companion still calls itself AccountyCat / AC in all conversations.
+    nonisolated var personalityPrefix: String {
+        switch self {
+        case .mochi:
+            return "You are AccountyCat (AC), the user's warm and cozy focus companion. Check in gently like a caring friend who's always in their corner."
+        case .nova:
+            return "You are AccountyCat (AC), the user's sharp-minded, energetic focus co-pilot. Nudge with confident, punchy energy — you believe they can do it."
+        case .sage:
+            return "You are AccountyCat (AC), the user's calm and grounded focus guide. Use spacious, mindful words that invite reflection without pressure."
+        }
+    }
+}
+
 enum ACBuild {
     /// True for Debug configuration builds; false for Release.
     static let isDebug: Bool = {
@@ -287,6 +327,7 @@ struct ACState: Codable, Sendable {
     I want to spend most of my time studying, building, and gaining experience. Short social check-ins are okay, but not long scrolling sessions.
     """
 
+    var character: ACCharacter = .mochi
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
     var isPaused = false
@@ -313,6 +354,7 @@ struct ACState: Codable, Sendable {
     var chatHistory: [ChatMessage] = []
 
     enum CodingKeys: String, CodingKey {
+        case character
         case permissions
         case setupStatus
         case isPaused
@@ -333,6 +375,7 @@ struct ACState: Codable, Sendable {
         case policyMemory
         case chatHistory
     }
+
 
     /// Telemetry-friendly accessor for the active algorithm's distraction metadata.
     /// Only the LLM algorithm maintains a DistractionLadder; the bandit returns an
@@ -368,6 +411,7 @@ struct ACState: Codable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
@@ -411,6 +455,7 @@ struct ACState: Codable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(character, forKey: .character)
         try container.encode(permissions, forKey: .permissions)
         try container.encode(setupStatus, forKey: .setupStatus)
         try container.encode(isPaused, forKey: .isPaused)

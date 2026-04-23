@@ -34,6 +34,8 @@ struct NudgeCopywriteRequest: Sendable {
     var recentNudgeMessages: [String]
     var candidateNudge: String?
     var timestamp: Date
+    /// Personality prefix from the selected ACCharacter — prepended to the system prompt.
+    var characterPersonalityPrefix: String = ""
 }
 
 // MARK: - Service
@@ -59,7 +61,10 @@ actor NudgeCopywriterService: NudgeCopywriting {
         guard let toneKey = arm.toneKey else { return nil }
         guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
 
-        let system = PromptCatalog.loadNudgeCopywriterSystemPrompt(tone: toneKey)
+        let baseSystem = PromptCatalog.loadNudgeCopywriterSystemPrompt(tone: toneKey)
+        let system = request.characterPersonalityPrefix.isEmpty
+            ? baseSystem
+            : request.characterPersonalityPrefix + "\n\n" + baseSystem
         let payload = Self.makePayloadJSON(request: request)
         let user = PromptCatalog.loadNudgeCopywriterUserPrompt(
             tone: toneKey,

@@ -191,7 +191,8 @@ final class BanditMonitoringAlgorithm: MonitoringAlgorithm {
                     contentSummary: screenState.contentSummary,
                     recentNudgeMessages: recentNudgeMessages,
                     candidateNudge: screenState.candidateNudge,
-                    timestamp: input.now
+                    timestamp: input.now,
+                    characterPersonalityPrefix: input.characterPersonalityPrefix
                 ),
                 runtimePath: runtimePath
             )

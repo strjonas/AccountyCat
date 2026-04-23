@@ -106,21 +106,19 @@ struct CompanionView: View {
     // MARK: - Mood helpers
 
     private var orbGradient: LinearGradient {
+        let ch = controller.state.character
         switch controller.companionMood {
         case .setup, .idle, .watching:
             return LinearGradient(
-                colors: [Color(red: 1.00, green: 0.96, blue: 0.89),
-                         Color(red: 0.98, green: 0.88, blue: 0.72)],
+                colors: [ch.orbTopColor, ch.orbBottomColor],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
         case .nudging:
             return LinearGradient(
-                colors: [Color(red: 1.00, green: 0.95, blue: 0.78),
-                         Color(red: 0.98, green: 0.82, blue: 0.52)],
+                colors: [ch.nudgingOrbTopColor, ch.nudgingOrbBottomColor],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
         case .escalated:
             return LinearGradient(
-                colors: [Color(red: 1.00, green: 0.91, blue: 0.74),
-                         Color(red: 0.97, green: 0.72, blue: 0.46)],
+                colors: [ch.nudgingOrbTopColor, ch.escalatedRingColor.opacity(0.80)],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
         case .paused:
             return LinearGradient(
@@ -131,17 +129,18 @@ struct CompanionView: View {
     }
 
     private var orbShadow: Color {
+        let ch = controller.state.character
         switch controller.companionMood {
-        case .nudging:  return Color.acCaramel
-        case .escalated: return Color(red: 0.95, green: 0.60, blue: 0.30)
-        default:        return Color(red: 0.75, green: 0.60, blue: 0.40)
+        case .nudging:   return ch.ringColor
+        case .escalated: return ch.escalatedRingColor
+        default:         return ch.shadowColor
         }
     }
 
     private var ringColor: Color {
         controller.companionMood == .escalated
-            ? Color(red: 0.97, green: 0.60, blue: 0.35)
-            : Color.acAmber
+            ? controller.state.character.escalatedRingColor
+            : controller.state.character.ringColor
     }
 
 

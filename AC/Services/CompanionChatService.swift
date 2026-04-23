@@ -34,6 +34,7 @@ actor CompanionChatService {
         context: ChatContext,
         history: [ChatMessage] = [],
         memory: String = "",
+        character: ACCharacter = .mochi,
         runtimeOverride: String?
     ) async -> CompanionChatResult? {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
@@ -45,7 +46,7 @@ actor CompanionChatService {
             return nil
         }
 
-        let systemPrompt = PromptCatalog.loadChatSystemPrompt()
+        let systemPrompt = PromptCatalog.loadChatSystemPrompt(character: character)
         let prompt = Self.makeChatPrompt(
             userMessage: userMessage,
             goals: goals,

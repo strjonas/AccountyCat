@@ -97,3 +97,113 @@ struct ACSecondaryButton: ButtonStyle {
             .animation(.acSnap, value: configuration.isPressed)
     }
 }
+
+// MARK: - Character Palette
+
+extension ACCharacter {
+    // MARK: Orb gradient
+    var orbTopColor: Color {
+        switch self {
+        case .mochi: return Color(red: 1.00, green: 0.96, blue: 0.89)
+        case .nova:  return Color(red: 0.87, green: 0.89, blue: 1.00)
+        case .sage:  return Color(red: 0.88, green: 0.97, blue: 0.90)
+        }
+    }
+    var orbBottomColor: Color {
+        switch self {
+        case .mochi: return Color(red: 0.98, green: 0.88, blue: 0.72)
+        case .nova:  return Color(red: 0.72, green: 0.76, blue: 0.98)
+        case .sage:  return Color(red: 0.70, green: 0.89, blue: 0.76)
+        }
+    }
+    var nudgingOrbTopColor: Color {
+        switch self {
+        case .mochi: return Color(red: 1.00, green: 0.95, blue: 0.78)
+        case .nova:  return Color(red: 0.80, green: 0.84, blue: 1.00)
+        case .sage:  return Color(red: 0.82, green: 0.97, blue: 0.85)
+        }
+    }
+    var nudgingOrbBottomColor: Color {
+        switch self {
+        case .mochi: return Color(red: 0.98, green: 0.82, blue: 0.52)
+        case .nova:  return Color(red: 0.55, green: 0.62, blue: 0.97)
+        case .sage:  return Color(red: 0.48, green: 0.82, blue: 0.60)
+        }
+    }
+
+    // MARK: Accent — replaces acCaramel / acCaramelLight / acCaramelSoft
+    var accentColor: Color {
+        switch self {
+        case .mochi: return Color(red: 0.91, green: 0.66, blue: 0.35)
+        case .nova:  return Color(red: 0.44, green: 0.48, blue: 0.92)
+        case .sage:  return Color(red: 0.26, green: 0.65, blue: 0.46)
+        }
+    }
+    var accentLight: Color {
+        switch self {
+        case .mochi: return Color(red: 0.97, green: 0.83, blue: 0.63)
+        case .nova:  return Color(red: 0.78, green: 0.80, blue: 0.98)
+        case .sage:  return Color(red: 0.72, green: 0.90, blue: 0.78)
+        }
+    }
+    var accentSoft: Color {
+        switch self {
+        case .mochi: return Color(red: 0.98, green: 0.90, blue: 0.75)
+        case .nova:  return Color(red: 0.90, green: 0.91, blue: 0.99)
+        case .sage:  return Color(red: 0.89, green: 0.97, blue: 0.91)
+        }
+    }
+
+    // MARK: Ring (pulse ring on nudge / escalate)
+    var ringColor: Color {
+        switch self {
+        case .mochi: return Color(red: 0.98, green: 0.76, blue: 0.35)
+        case .nova:  return Color(red: 0.55, green: 0.60, blue: 0.97)
+        case .sage:  return Color(red: 0.30, green: 0.72, blue: 0.52)
+        }
+    }
+    var escalatedRingColor: Color {
+        switch self {
+        case .mochi: return Color(red: 0.97, green: 0.60, blue: 0.35)
+        case .nova:  return Color(red: 0.75, green: 0.40, blue: 0.95)
+        case .sage:  return Color(red: 0.85, green: 0.55, blue: 0.30)
+        }
+    }
+    var shadowColor: Color {
+        switch self {
+        case .mochi: return Color(red: 0.75, green: 0.60, blue: 0.40)
+        case .nova:  return Color(red: 0.44, green: 0.48, blue: 0.75)
+        case .sage:  return Color(red: 0.26, green: 0.55, blue: 0.38)
+        }
+    }
+
+    // MARK: Header gradient (light / dark handled in ContentView)
+    var headerLightTop: Color {
+        switch self {
+        case .mochi: return Color(red: 1.00, green: 0.97, blue: 0.93)
+        case .nova:  return Color(red: 0.93, green: 0.94, blue: 1.00)
+        case .sage:  return Color(red: 0.93, green: 0.99, blue: 0.94)
+        }
+    }
+    var headerLightBottom: Color {
+        switch self {
+        case .mochi: return Color(red: 0.99, green: 0.94, blue: 0.87)
+        case .nova:  return Color(red: 0.87, green: 0.89, blue: 0.99)
+        case .sage:  return Color(red: 0.87, green: 0.97, blue: 0.89)
+        }
+    }
+    var headerDarkTop: Color {
+        switch self {
+        case .mochi: return Color(red: 0.22, green: 0.18, blue: 0.13)
+        case .nova:  return Color(red: 0.13, green: 0.14, blue: 0.24)
+        case .sage:  return Color(red: 0.11, green: 0.19, blue: 0.15)
+        }
+    }
+    var headerDarkBottom: Color {
+        switch self {
+        case .mochi: return Color(red: 0.18, green: 0.14, blue: 0.09)
+        case .nova:  return Color(red: 0.09, green: 0.10, blue: 0.19)
+        case .sage:  return Color(red: 0.08, green: 0.14, blue: 0.11)
+        }
+    }
+}
