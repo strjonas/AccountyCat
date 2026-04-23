@@ -85,7 +85,7 @@ private struct EpisodesRootView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Refresh") {
                     Task { @MainActor in
-                        await controller.refresh()
+                        await controller.refresh(forceRebuild: true)
                     }
                 }
                 Button("Import To Prompt Lab") {

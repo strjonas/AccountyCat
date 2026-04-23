@@ -9,16 +9,23 @@ import Foundation
 import SQLite3
 
 actor TelemetryIndexStore {
+    private struct SessionSourceState: Equatable {
+        var descriptorSignature: String
+        var eventsSignature: String
+    }
+
     private let telemetryStore: TelemetryStore
     private let databaseURL: URL
+    private let telemetryRootURL: URL
 
     init(telemetryStore: TelemetryStore = .shared) {
         self.telemetryStore = telemetryStore
         self.databaseURL = TelemetryPaths.inspectorSupportURL()
             .appendingPathComponent("index.sqlite")
+        self.telemetryRootURL = TelemetryPaths.telemetryRootURL()
     }
 
-    func refresh() async throws {
+    func refresh(forceRebuild: Bool = false) async throws -> Bool {
         let sessions = await telemetryStore.listSessions()
 
         try FileManager.default.createDirectory(
@@ -31,18 +38,36 @@ actor TelemetryIndexStore {
         defer { sqlite3_close(db) }
         try prepareSchema(in: db)
 
+        let existingSourceStates = try loadSourceStates(db: db)
+        let currentSessionIDs = Set(sessions.map(\.id))
+        var didChange = forceRebuild
+
         try execute("BEGIN IMMEDIATE TRANSACTION;", db: db)
-        try execute("DELETE FROM sessions;", db: db)
-        try execute("DELETE FROM episodes;", db: db)
-        try execute("DELETE FROM events;", db: db)
+
+        let removedSessionIDs = Set(existingSourceStates.keys).subtracting(currentSessionIDs)
+        for sessionID in removedSessionIDs {
+            try deleteIndexedSession(sessionID: sessionID, db: db)
+            try deleteSourceState(sessionID: sessionID, db: db)
+            didChange = true
+        }
 
         for session in sessions {
+            let sourceState = makeSourceState(for: session)
+            let shouldReindex = forceRebuild || existingSourceStates[session.id] != sourceState
+            guard shouldReindex else {
+                continue
+            }
+
+            try deleteIndexedSession(sessionID: session.id, db: db)
             try insertSession(session, db: db)
             let events = await telemetryStore.loadEvents(sessionID: session.id)
             try await index(events: events, sessionID: session.id, db: db)
+            try upsertSourceState(sessionID: session.id, state: sourceState, db: db)
+            didChange = true
         }
 
         try execute("COMMIT;", db: db)
+        return didChange
     }
 
     func loadEpisodes() throws -> [IndexedEpisode] {
@@ -454,6 +479,16 @@ actor TelemetryIndexStore {
             """,
             db: db
         )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_states (
+                session_id TEXT PRIMARY KEY,
+                descriptor_signature TEXT NOT NULL,
+                events_signature TEXT NOT NULL
+            );
+            """,
+            db: db
+        )
     }
 
     private func migrateSchema(in db: OpaquePointer?) throws {
@@ -512,6 +547,85 @@ actor TelemetryIndexStore {
         sqlite3_bind_text(statement, 2, formatTimestamp(session.startedAt), -1, sqliteTransient())
         sqlite3_bind_text(statement, 3, formatTimestamp(session.endedAt), -1, sqliteTransient())
         sqlite3_bind_text(statement, 4, session.id, -1, sqliteTransient())
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteError.stepFailed(message: currentErrorMessage(db))
+        }
+    }
+
+    private func loadSourceStates(db: OpaquePointer?) throws -> [String: SessionSourceState] {
+        let sql = "SELECT session_id, descriptor_signature, events_signature FROM source_states;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteError.prepareFailed(message: currentErrorMessage(db))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var states: [String: SessionSourceState] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let sessionID = string(at: 0, statement: statement) else {
+                continue
+            }
+            states[sessionID] = SessionSourceState(
+                descriptorSignature: string(at: 1, statement: statement) ?? "",
+                eventsSignature: string(at: 2, statement: statement) ?? ""
+            )
+        }
+        return states
+    }
+
+    private func upsertSourceState(
+        sessionID: String,
+        state: SessionSourceState,
+        db: OpaquePointer?
+    ) throws {
+        let sql = """
+        INSERT INTO source_states (session_id, descriptor_signature, events_signature)
+        VALUES (?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+            descriptor_signature = excluded.descriptor_signature,
+            events_signature = excluded.events_signature;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteError.prepareFailed(message: currentErrorMessage(db))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, sessionID, -1, sqliteTransient())
+        sqlite3_bind_text(statement, 2, state.descriptorSignature, -1, sqliteTransient())
+        sqlite3_bind_text(statement, 3, state.eventsSignature, -1, sqliteTransient())
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteError.stepFailed(message: currentErrorMessage(db))
+        }
+    }
+
+    private func deleteIndexedSession(sessionID: String, db: OpaquePointer?) throws {
+        try deleteRows(in: "events", matching: "session_id", value: sessionID, db: db)
+        try deleteRows(in: "episodes", matching: "session_id", value: sessionID, db: db)
+        try deleteRows(in: "sessions", matching: "id", value: sessionID, db: db)
+    }
+
+    private func deleteSourceState(sessionID: String, db: OpaquePointer?) throws {
+        try deleteRows(in: "source_states", matching: "session_id", value: sessionID, db: db)
+    }
+
+    private func deleteRows(
+        in table: String,
+        matching column: String,
+        value: String,
+        db: OpaquePointer?
+    ) throws {
+        let sql = "DELETE FROM \(table) WHERE \(column) = ?;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteError.prepareFailed(message: currentErrorMessage(db))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, value, -1, sqliteTransient())
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw SQLiteError.stepFailed(message: currentErrorMessage(db))
@@ -603,6 +717,34 @@ actor TelemetryIndexStore {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteError.stepFailed(message: currentErrorMessage(db))
         }
+    }
+
+    private func makeSourceState(for session: TelemetrySessionDescriptor) -> SessionSourceState {
+        SessionSourceState(
+            descriptorSignature: [
+                TelemetryTimestampCodec.string(from: session.startedAt),
+                session.endedAt.map(TelemetryTimestampCodec.string(from:)) ?? ""
+            ].joined(separator: "|"),
+            eventsSignature: fileSignature(at: eventsFileURL(for: session.id))
+        )
+    }
+
+    private func eventsFileURL(for sessionID: String) -> URL {
+        telemetryRootURL
+            .appendingPathComponent(sessionID, isDirectory: true)
+            .appendingPathComponent("events.jsonl")
+    }
+
+    private func fileSignature(at url: URL) -> String {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return "missing"
+        }
+
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? -1
+        let modifiedAt = (attributes[.modificationDate] as? Date)
+            .map(TelemetryTimestampCodec.string(from:))
+            ?? "unknown"
+        return "\(size)|\(modifiedAt)"
     }
 
     private func currentErrorMessage(_ db: OpaquePointer?) -> String {

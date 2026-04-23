@@ -79,14 +79,18 @@ final class InspectorController: ObservableObject {
             guard let self else { return }
             while !Task.isCancelled {
                 await self.refresh()
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
         }
     }
 
-    func refresh() async {
+    func refresh(forceRebuild: Bool = false) async {
         do {
-            try await indexStore.refresh()
+            let didChange = try await indexStore.refresh(forceRebuild: forceRebuild)
+            guard didChange || forceRebuild || episodes.isEmpty else {
+                return
+            }
+
             let episodes = try await indexStore.loadEpisodes()
             self.episodes = episodes
 
