@@ -719,10 +719,12 @@ private struct CharacterPickerSection: View {
 
             HStack(spacing: 8) {
                 ForEach(ACCharacter.allCases, id: \.self) { character in
-                    CharacterCard(character: character, isSelected: selected == character)
-                        .onTapGesture {
-                            withAnimation(.acSpring) { onSelect(character) }
-                        }
+                    Button(action: {
+                        withAnimation(.acSpring) { onSelect(character) }
+                    }) {
+                        CharacterCard(character: character, isSelected: selected == character)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
