@@ -7,6 +7,14 @@
 
 import Foundation
 
+/// Combined chat reply + memory update. AC decides both in one call so the user never
+/// receives a reply that "promises" to remember something AC doesn't actually commit.
+struct CompanionChatResult: Sendable {
+    var reply: String
+    /// When non-nil, a single bullet to append to persistent memory (AC's choice).
+    var memoryUpdate: String?
+}
+
 actor CompanionChatService {
     private let runtime: LocalModelRuntime
     private let modelIdentifier: String
@@ -27,7 +35,7 @@ actor CompanionChatService {
         history: [ChatMessage] = [],
         memory: String = "",
         runtimeOverride: String?
-    ) async -> String? {
+    ) async -> CompanionChatResult? {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
         guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
             await ActivityLogService.shared.append(
@@ -57,8 +65,12 @@ actor CompanionChatService {
             let combined = [output.stdout, output.stderr]
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
-            let reply = LLMOutputParsing.extractChatReply(from: combined) ?? LLMOutputParsing.cleanChatOutput(combined)
-            return reply.isEmpty ? nil : reply
+            if let parsed = LLMOutputParsing.extractChatResult(from: combined) {
+                return parsed
+            }
+            // Legacy/fallback: pull a plain reply, no memory update.
+            let reply = LLMOutputParsing.cleanChatOutput(combined)
+            return reply.isEmpty ? nil : CompanionChatResult(reply: reply, memoryUpdate: nil)
         } catch {
             await ActivityLogService.shared.append(
                 category: "chat-error",
@@ -100,7 +112,7 @@ actor CompanionChatService {
         [User goals]
         \(goals.cleanedSingleLine)
 
-        [Persistent memory — always honour these]
+        [Persistent memory — lines are stamped with when they were added; honour them and treat later lines as overriding earlier ones]
         \(memorySection)
 
         [Recent conversation]
@@ -112,8 +124,18 @@ actor CompanionChatService {
         Respond as AccountyCat. Match the energy and tone of the user's message.
         If they're casual, be casual. If they're excited, share the excitement. If they're stressed, be warm and grounding.
         Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
-        Return exactly one JSON object: {"reply":"your response"}
-        No markdown. No extra keys. No other text.
+
+        You also maintain persistent memory. If — and only if — this message contains something worth
+        remembering across future sessions (a new rule like "don't let me use Instagram today", an
+        explicit allowance like "WhatsApp is okay for the next hour", a lasting preference, or
+        something that would clearly contradict a future nudge otherwise), include a `memory` field.
+        Otherwise set `memory` to null. Be conservative — do NOT add a memory for every message.
+        Add one memory only when it clearly adds value on top of what's already remembered, and
+        phrase it so it still makes sense on its own days from now.
+
+        Return exactly one JSON object: {"reply":"your response","memory":null}
+        or {"reply":"your response","memory":"single concise bullet under 20 words"}
+        No markdown outside the JSON value. No other keys.
         """
     }
 }

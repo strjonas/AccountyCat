@@ -488,13 +488,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             from: recentActions,
             at: snapshot.timestamp
         )
-        let trimmedMemory = condensedMonitoringMemory(
-            memory,
-            goals: goals
+        let trimmedMemory = memory.truncatedMultilineForPrompt(
+            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
         )
         return VisionPromptPayload(
             goals: goals.cleanedSingleLine,
-            memory: trimmedMemory.isEmpty ? nil : trimmedMemory.truncatedMultilineForPrompt(maxLength: 220, maxLines: 2),
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory,
             frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
             windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
             timestamp: snapshot.timestamp,
@@ -512,13 +512,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         heuristics: TelemetryHeuristicSnapshot,
         memory: String = ""
     ) -> LegacyFocusPerceptionPayload {
-        let trimmedMemory = condensedMonitoringMemory(
-            memory,
-            goals: goals
+        let trimmedMemory = memory.truncatedMultilineForPrompt(
+            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
         )
         return LegacyFocusPerceptionPayload(
             goals: goals.cleanedSingleLine.truncatedForPrompt(maxLength: 180),
-            memory: trimmedMemory.isEmpty ? nil : trimmedMemory.truncatedMultilineForPrompt(maxLength: 180, maxLines: 2),
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory,
             frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
             windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
             timestamp: snapshot.timestamp,
@@ -546,13 +546,13 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             from: recentActions,
             at: snapshot.timestamp
         )
-        let trimmedMemory = condensedMonitoringMemory(
-            memory,
-            goals: goals
+        let trimmedMemory = memory.truncatedMultilineForPrompt(
+            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
         )
         return LegacyFocusDecisionPayload(
             goals: goals.cleanedSingleLine.truncatedForPrompt(maxLength: 180),
-            memory: trimmedMemory.isEmpty ? nil : trimmedMemory.truncatedMultilineForPrompt(maxLength: 220, maxLines: 2),
+            memory: trimmedMemory.isEmpty ? nil : trimmedMemory,
             frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
             windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
             timestamp: snapshot.timestamp,
@@ -586,73 +586,12 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         return Array(filtered.prefix(3))
     }
 
-    nonisolated static func condensedMonitoringMemory(
-        _ memory: String,
-        goals: String
-    ) -> String {
-        let goalTokens = Set(
-            goals.lowercased()
-                .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { $0.count >= 4 }
-        )
-
-        var seen = Set<String>()
-        var candidates: [(line: String, score: Int, index: Int)] = []
-
-        let restrictionMarkers = [
-            "don't", "do not", "avoid", "block", "limit", "keep me off",
-            "stay off", "no ", "not allow", "shouldn't", "should not"
-        ]
-        let timeBoundMarkers = [
-            "today", "tonight", "tomorrow", "this week", "this afternoon",
-            "this evening", "for now", "until"
-        ]
-
-        for (index, line) in memory.components(separatedBy: .newlines).enumerated() {
-            let trimmed = line.cleanedSingleLine
-            guard !trimmed.isEmpty else { continue }
-
-            let normalized = trimmed.lowercased()
-            guard seen.insert(normalized).inserted else { continue }
-
-            let lineTokens = Set(
-                normalized
-                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                    .filter { $0.count >= 4 }
-            )
-
-            if !lineTokens.isEmpty {
-                let overlap = lineTokens.intersection(goalTokens).count
-                if overlap >= min(4, lineTokens.count) {
-                    continue
-                }
-            }
-
-            var score = index
-            if restrictionMarkers.contains(where: { normalized.contains($0) }) {
-                score += 40
-            }
-            if timeBoundMarkers.contains(where: { normalized.contains($0) }) {
-                score += 20
-            }
-            if normalized.contains(".com") || normalized.contains(".io") || normalized.contains(".org") {
-                score += 15
-            }
-
-            candidates.append((line: trimmed, score: score, index: index))
-        }
-
-        return candidates
-            .sorted { lhs, rhs in
-                if lhs.score == rhs.score {
-                    return lhs.index > rhs.index
-                }
-                return lhs.score > rhs.score
-            }
-            .prefix(2)
-            .map(\.line)
-            .joined(separator: "\n")
-    }
+    // NOTE: The heuristic `condensedMonitoringMemory` was removed. The algorithm used to
+    // score lines by keyword ("don't", "today", ".com" etc.) and keep only the top 2 — that
+    // systematically dropped allowances ("YouTube is okay") and sometimes dropped the very
+    // rule the user had just created. Memory curation now lives entirely in the LLM
+    // (chat-reply memory_update + periodic consolidation pass). Callers render memory via
+    // `ACState.memoryForPrompt(now:)` and pass it through verbatim.
 
     nonisolated static func makeInterventionHistorySummary(
         from recentActions: [ActionRecord]

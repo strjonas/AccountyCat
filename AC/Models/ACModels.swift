@@ -283,8 +283,13 @@ struct ACState: Codable, Sendable {
     var recentActions: [ActionRecord] = []
     var recentSwitches: [AppSwitchRecord] = []
     var usageByDay: [String: [String: TimeInterval]] = [:]
-    /// Persistent memory of user preferences, rules, and important context.
-    var memory: String = ""
+    /// Timestamped persistent memory of user preferences, rules, and important context.
+    /// The LLM decides what goes in here (via chat-reply memory_update) and consolidates
+    /// when the list grows or entries go stale. Code does not filter, score, or rewrite.
+    var memoryEntries: [MemoryEntry] = []
+    /// Last time the consolidation pass ran, so we can throttle it (at most once/day
+    /// unless the list exceeds the soft cap).
+    var lastMemoryConsolidationAt: Date?
     /// Structured monitoring rules that the model can update deterministically.
     var policyMemory = PolicyMemory()
     /// Persistent chat history excluding the synthetic system opener.
@@ -306,6 +311,8 @@ struct ACState: Codable, Sendable {
         case usageByDay
         case distraction
         case memory
+        case memoryEntries
+        case lastMemoryConsolidationAt
         case policyMemory
         case chatHistory
     }
@@ -362,7 +369,25 @@ struct ACState: Codable, Sendable {
            let legacyDistraction {
             algorithmState.llmFocus.distraction = legacyDistraction
         }
-        memory = try container.decodeIfPresent(String.self, forKey: .memory) ?? ""
+        if let decodedEntries = try container.decodeIfPresent([MemoryEntry].self, forKey: .memoryEntries) {
+            memoryEntries = decodedEntries
+        } else if let legacy = try container.decodeIfPresent(String.self, forKey: .memory), !legacy.isEmpty {
+            // Legacy string memory → one entry per non-empty line, backdated 1 minute apart so
+            // relative order is preserved. The next consolidation pass will clean up timestamps.
+            let now = Date()
+            let lines = legacy.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            memoryEntries = lines.enumerated().map { index, text in
+                MemoryEntry(
+                    createdAt: now.addingTimeInterval(-Double(lines.count - index) * 60),
+                    text: text
+                )
+            }
+        } else {
+            memoryEntries = []
+        }
+        lastMemoryConsolidationAt = try container.decodeIfPresent(Date.self, forKey: .lastMemoryConsolidationAt)
         policyMemory = try container.decodeIfPresent(PolicyMemory.self, forKey: .policyMemory) ?? PolicyMemory()
         chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
     }
@@ -383,7 +408,8 @@ struct ACState: Codable, Sendable {
         try container.encode(recentSwitches, forKey: .recentSwitches)
         try container.encode(usageByDay, forKey: .usageByDay)
         try container.encode(distraction, forKey: .distraction)
-        try container.encode(memory, forKey: .memory)
+        try container.encode(memoryEntries, forKey: .memoryEntries)
+        try container.encodeIfPresent(lastMemoryConsolidationAt, forKey: .lastMemoryConsolidationAt)
         try container.encode(policyMemory, forKey: .policyMemory)
         try container.encode(chatHistory, forKey: .chatHistory)
     }
@@ -399,9 +425,41 @@ struct ACState: Codable, Sendable {
         monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
         algorithmState = AlgorithmStateEnvelope()
         hasMigratedPolicyAlgorithmDefault = true
-        memory = ""
+        memoryEntries = []
+        lastMemoryConsolidationAt = nil
         policyMemory = PolicyMemory()
         chatHistory = []
+    }
+
+    // MARK: - Memory helpers
+
+    /// Soft cap: when exceeded, the consolidation pass is scheduled.
+    /// The cap is intentionally generous — AC should compress intelligently, not truncate mechanically.
+    static let memorySoftLineCap = 15
+
+    /// Render the stored memory for inclusion in an LLM prompt. Most-recent-N entries up to
+    /// the byte budget, chronological (oldest first, newest last). Empty string if no memory.
+    func memoryForPrompt(
+        now: Date = Date(),
+        maxLines: Int = MonitoringPromptContextBudget.freeFormMemoryLines,
+        maxCharacters: Int = MonitoringPromptContextBudget.freeFormMemoryCharacters
+    ) -> String {
+        MemoryRendering.renderForPrompt(
+            entries: memoryEntries,
+            now: now,
+            maxLines: maxLines,
+            maxCharacters: maxCharacters
+        )
+    }
+
+    /// Full, human-readable memory for the UI. Newest first.
+    func memoryForDisplay(now: Date = Date()) -> String {
+        MemoryRendering.renderForDisplay(entries: memoryEntries, now: now)
+    }
+
+    /// True when the stored memory has grown past the soft cap and consolidation should run.
+    var memoryExceedsSoftCap: Bool {
+        memoryEntries.count > Self.memorySoftLineCap
     }
 }
 

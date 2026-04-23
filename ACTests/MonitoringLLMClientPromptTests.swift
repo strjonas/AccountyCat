@@ -33,7 +33,10 @@ struct MonitoringLLMClientPromptTests {
             """
         )
 
-        #expect(payload.memory == "Don't let me waste time on Instagram.\nKeep social check-ins short.")
+        // Memory is now passed through verbatim; the LLM is responsible for deduping and
+        // consolidating noisy lines (previously done by a heuristic condenser).
+        #expect(payload.memory?.contains("Don't let me waste time on Instagram.") == true)
+        #expect(payload.memory?.contains("Keep social check-ins short.") == true)
         #expect(payload.interventionHistory.nudgeCount == 1)
         #expect(payload.interventionHistory.dismissOverlayCount == 1)
         #expect(payload.interventionHistory.recentNudgeMessages == [

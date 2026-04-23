@@ -9,6 +9,13 @@ import Foundation
 
 enum LLMOutputParsing {
     nonisolated static func extractChatReply(from output: String) -> String? {
+        extractChatResult(from: output)?.reply
+    }
+
+    /// Parses the combined chat reply object:
+    /// `{"reply":"...", "memory": null | "short bullet"}`. Falls back to
+    /// a reply-only shape if the `memory` key is missing.
+    nonisolated static func extractChatResult(from output: String) -> CompanionChatResult? {
         for json in jsonObjects(in: output).reversed() {
             guard let data = json.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -16,10 +23,24 @@ enum LLMOutputParsing {
                 continue
             }
 
-            let cleaned = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty {
-                return cleaned
+            let cleanedReply = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedReply.isEmpty else { continue }
+
+            let memoryValue = (object["memory"] as? String)
+                ?? (object["memory_update"] as? String)
+                ?? (object["memoryUpdate"] as? String)
+            let trimmedMemory = memoryValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedMemory: String?
+            if let trimmedMemory,
+               !trimmedMemory.isEmpty,
+               trimmedMemory.lowercased() != "none",
+               trimmedMemory.lowercased() != "null" {
+                normalizedMemory = trimmedMemory
+            } else {
+                normalizedMemory = nil
             }
+
+            return CompanionChatResult(reply: cleanedReply, memoryUpdate: normalizedMemory)
         }
 
         return nil

@@ -39,15 +39,13 @@ final class AppController: ObservableObject {
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 6
-    /// Compress memory when it exceeds this character count.
-    static let memoryCompressionThreshold = 1000
 
     let storageService = StorageService()
     let telemetryStore = TelemetryStore.shared
     let localModelRuntime: LocalModelRuntime
     let monitoringLLMClient: MonitoringLLMClient
     let companionChatService: CompanionChatService
-    let memoryService: MemoryService
+    let memoryConsolidationService: MemoryConsolidationService
     let policyMemoryService: PolicyMemoryService
     let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
 
@@ -62,12 +60,12 @@ final class AppController: ObservableObject {
         let runtime = LocalModelRuntime()
         let monitoringLLMClient = MonitoringLLMClient(runtime: runtime)
         let companionChatService = CompanionChatService(runtime: runtime)
-        let memoryService = MemoryService(runtime: runtime)
+        let memoryConsolidationService = MemoryConsolidationService(runtime: runtime)
         let policyMemoryService = PolicyMemoryService(runtime: runtime)
         self.localModelRuntime = runtime
         self.monitoringLLMClient = monitoringLLMClient
         self.companionChatService = companionChatService
-        self.memoryService = memoryService
+        self.memoryConsolidationService = memoryConsolidationService
         self.policyMemoryService = policyMemoryService
         self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
             monitoringLLMClient: monitoringLLMClient,
@@ -257,7 +255,8 @@ final class AppController: ObservableObject {
     }
 
     func clearMemory() {
-        state.memory = ""
+        state.memoryEntries = []
+        state.lastMemoryConsolidationAt = nil
         state.policyMemory = PolicyMemory()
         persistState()
         logActivity("memory", "Memory cleared")
@@ -461,13 +460,18 @@ final class AppController: ObservableObject {
         sendingOverlayAppeal = true
 
         Task {
+            let reviewNow = Date()
             let reviewInput = MonitoringAppealReviewInput(
-                now: Date(),
+                now: reviewNow,
                 appealText: trimmedAppeal,
                 snapshot: nil,
                 goals: state.goalsText,
                 recentActions: state.recentActions,
-                memory: state.memory,
+                memory: state.memoryForPrompt(now: reviewNow),
+                recentUserMessages: BrainService.recentUserMessages(
+                    chatHistory: state.chatHistory,
+                    limit: MonitoringPromptContextBudget.recentUserChatCount
+                ),
                 policyMemory: state.policyMemory,
                 configuration: state.monitoringConfiguration,
                 algorithmState: state.algorithmState,
@@ -613,11 +617,6 @@ final class AppController: ObservableObject {
         sendingChatMessage = true
         logActivity("chat", "User: \(trimmedDraft)")
 
-        if let immediateMemoryLine = AppControllerChatSupport.immediateMemoryLine(from: trimmedDraft) {
-            appendMemoryLine(immediateMemoryLine)
-            logActivity("memory", "Captured immediately: \(immediateMemoryLine)")
-        }
-
         if AppControllerChatSupport.looksLikeNegativeChatFeedback(trimmedDraft) {
             brainService?.recordUserReaction(
                 UserReactionRecord(
@@ -635,39 +634,48 @@ final class AppController: ObservableObject {
             .suffix(Self.chatContextWindow)
             .dropLast()  // exclude the message we just appended (it's the userMessage arg)
             .map { $0 }
-        let currentMemory = state.memory
+        let renderedMemory = state.memoryForPrompt(now: Date())
 
         Task {
-            let reply: String
+            let result: CompanionChatResult
             if state.setupStatus != .ready || !setupDiagnostics.runtimePresent {
-                reply = "Finish setup first, then I can answer from the local runtime."
+                result = CompanionChatResult(
+                    reply: "Finish setup first, then I can answer from the local runtime.",
+                    memoryUpdate: nil
+                )
             } else if let response = await companionChatService.chat(
                 userMessage: trimmedDraft,
                 goals: state.goalsText,
                 recentActions: state.recentActions,
                 context: makeChatContext(),
                 history: Array(historyWindow),
-                memory: currentMemory,
+                memory: renderedMemory,
                 runtimeOverride: state.runtimePathOverride
             ) {
-                reply = response
+                result = response
             } else {
-                reply = "I couldn't answer just now. Check the logs and local runtime status."
+                result = CompanionChatResult(
+                    reply: "I couldn't answer just now. Check the logs and local runtime status.",
+                    memoryUpdate: nil
+                )
             }
 
             await MainActor.run {
-                self.chatMessages.append(ChatMessage(role: .assistant, text: reply))
+                self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
+                if let update = result.memoryUpdate?.cleanedSingleLine, !update.isEmpty {
+                    self.state.memoryEntries.append(MemoryEntry(text: update))
+                    self.logActivity("memory", "Remembered: \(update)")
+                }
                 self.persistState()
                 self.sendingChatMessage = false
             }
-            self.logActivity("chat", "Assistant: \(reply)")
+            self.logActivity("chat", "Assistant: \(result.reply)")
             self.schedulePolicyMemoryUpdate(
-                eventSummary: "User chat feedback: \(trimmedDraft.cleanedSingleLine)\nAssistant reply: \(reply.cleanedSingleLine)",
+                eventSummary: "User chat feedback: \(trimmedDraft.cleanedSingleLine)\nAssistant reply: \(result.reply.cleanedSingleLine)",
                 context: SnapshotService.frontmostContext()
             )
-
-            // Async memory extraction — non-blocking, runs after reply is shown
-            await self.extractAndUpdateMemory(userMessage: trimmedDraft, reply: reply)
+            // Run consolidation lazily so the chat reply never waits for it.
+            self.maybeConsolidateMemory()
         }
     }
 
@@ -697,18 +705,26 @@ final class AppController: ObservableObject {
     // MARK: - Memory helpers
 
     private func appendMemoryLine(_ line: String) {
-        state.memory = AppControllerChatSupport.appendingMemoryLine(line, to: state.memory)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Avoid exact-duplicate entries from noisy call sites (e.g. repeated feedback).
+        if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return
+        }
+        state.memoryEntries.append(MemoryEntry(text: trimmed))
         persistState()
+        maybeConsolidateMemory()
     }
 
     private func schedulePolicyMemoryUpdate(
         eventSummary: String,
         context: FrontmostContext?
     ) {
+        let now = Date()
         let request = PolicyMemoryUpdateRequest(
-            now: Date(),
+            now: now,
             goals: state.goalsText,
-            freeFormMemory: state.memory,
+            freeFormMemory: state.memoryForPrompt(now: now),
             policyMemory: state.policyMemory,
             eventSummary: eventSummary,
             recentActions: state.recentActions,
@@ -729,33 +745,47 @@ final class AppController: ObservableObject {
         }
     }
 
-    /// Runs after each chat exchange to extract memorable rules/preferences.
-    /// Compresses only when memory exceeds the threshold.
-    private func extractAndUpdateMemory(userMessage: String, reply: String) async {
+    /// Trigger the consolidation pass if the memory exceeds the soft cap, or if a full
+    /// day has passed since the last consolidation (stale "today" entries etc. get pruned).
+    /// Runs asynchronously; the chat reply never waits for it.
+    private var consolidationInFlight = false
+    private func maybeConsolidateMemory(now: Date = Date()) {
         guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
+        guard !consolidationInFlight else { return }
+        let overCap = state.memoryExceedsSoftCap
+        let staleSinceLastRun: Bool = {
+            guard let last = state.lastMemoryConsolidationAt else { return !state.memoryEntries.isEmpty }
+            return now.timeIntervalSince(last) >= 24 * 60 * 60
+        }()
+        guard overCap || staleSinceLastRun else { return }
 
-        if let bullet = await memoryService.extractMemoryUpdate(
-            userMessage: userMessage,
-            reply: reply,
-            currentMemory: state.memory,
-            runtimeOverride: state.runtimePathOverride
-        ) {
-            await MainActor.run {
-                self.appendMemoryLine(bullet)
-                self.logActivity("memory", "Extracted: \(bullet)")
-            }
-        }
+        consolidationInFlight = true
+        let entriesSnapshot = state.memoryEntries
+        let goalsSnapshot = state.goalsText
+        let runtimeOverride = state.runtimePathOverride
 
-        // Compress only when over threshold
-        guard state.memory.count > Self.memoryCompressionThreshold else { return }
-        if let compressed = await memoryService.compressMemory(
-            memory: state.memory,
-            runtimeOverride: state.runtimePathOverride
-        ) {
+        Task { [weak self, memoryConsolidationService] in
+            let consolidated = await memoryConsolidationService.consolidate(
+                entries: entriesSnapshot,
+                goals: goalsSnapshot,
+                now: now,
+                runtimeOverride: runtimeOverride
+            )
             await MainActor.run {
-                self.state.memory = compressed
-                self.persistState()
-                self.logActivity("memory", "Compressed memory to \(compressed.count) chars")
+                guard let self else { return }
+                self.consolidationInFlight = false
+                self.state.lastMemoryConsolidationAt = now
+                if let consolidated {
+                    self.state.memoryEntries = consolidated
+                    self.persistState()
+                    self.logActivity(
+                        "memory",
+                        "Consolidated \(entriesSnapshot.count) → \(consolidated.count) entries"
+                    )
+                } else {
+                    // Keep whatever is there; just record that we tried, so we back off a day.
+                    self.persistState()
+                }
             }
         }
     }
@@ -918,75 +948,9 @@ private enum AppControllerChatSupport {
         messages.filter { $0.role != .system }
     }
 
-    static func appendingMemoryLine(_ line: String, to memory: String) -> String {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return memory }
-        let normalizedTrimmed = trimmed.lowercased()
-        let existingLines = memory
-            .components(separatedBy: .newlines)
-            .map { $0.cleanedSingleLine.lowercased() }
-        if existingLines.contains(normalizedTrimmed) {
-            return memory
-        }
-        guard !memory.isEmpty else { return trimmed }
-        return memory + "\n" + trimmed
-    }
-
-    static func immediateMemoryLine(from text: String) -> String? {
-        let cleaned = text.cleanedSingleLine
-        guard !cleaned.isEmpty else { return nil }
-
-        let lowered = cleaned.lowercased()
-        let explicitRuleMarkers = [
-            "don't let me",
-            "do not let me",
-            "keep me off",
-            "block ",
-        ]
-        guard explicitRuleMarkers.contains(where: { lowered.contains($0) }) else {
-            return nil
-        }
-
-        let timeMarkers = [
-            "today",
-            "tonight",
-            "tomorrow",
-            "this week",
-            "this evening",
-            "this afternoon",
-            "for now",
-        ]
-        let matchedTimeMarker = timeMarkers.first(where: { lowered.contains($0) })
-
-        let pattern = #"(?i)(?:don't let me|do not let me|keep me off|block)\s+(?:go on|use|open|visit|browse)?\s*([A-Za-z0-9._-]+(?:\.[A-Za-z0-9._-]+)?)\s+(today|tonight|tomorrow|this week|this evening|this afternoon|for now)"#
-        if let match = firstMatch(pattern: pattern, in: cleaned),
-           match.numberOfRanges >= 3,
-           let targetRange = Range(match.range(at: 1), in: cleaned),
-           let timeRange = Range(match.range(at: 2), in: cleaned) {
-            let target = String(cleaned[targetRange])
-            let timeMarker = String(cleaned[timeRange]).lowercased()
-            return "Do not allow use of \(displayName(forBlockedTarget: target)) \(timeMarker)."
-        }
-
-        guard let matchedTimeMarker else { return nil }
-        return "Do not allow this activity \(matchedTimeMarker)."
-    }
-
-    private static func firstMatch(pattern: String, in text: String) -> NSTextCheckingResult? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return regex.firstMatch(in: text, range: range)
-    }
-
-    private static func displayName(forBlockedTarget target: String) -> String {
-        let trimmed = target.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
-        switch trimmed.lowercased() {
-        case "x.com":
-            return "X.com"
-        default:
-            return trimmed
-        }
-    }
+    // `immediateMemoryLine` and `appendingMemoryLine` are gone. Chat messages now flow
+    // through the combined chat-reply prompt, which returns an optional `memory_update`.
+    // The LLM decides what — if anything — is worth remembering.
 
     static func makeChatContext(from state: ACState) -> ChatContext {
         let now = Date()

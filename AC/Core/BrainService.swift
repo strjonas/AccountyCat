@@ -58,6 +58,17 @@ final class BrainService: NSObject {
         }
     }
 
+    /// Pull the last `limit` user chat messages (oldest→newest) from the stored history.
+    /// Safety net so fresh intent reaches the decision stage even if memory extraction lags.
+    static func recentUserMessages(chatHistory: [ChatMessage], limit: Int) -> [String] {
+        let userMessages = chatHistory
+            .filter { $0.role == .user }
+            .suffix(limit)
+            .map { $0.text.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+        return Array(userMessages)
+    }
+
     init(
         monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry,
         executiveArm: ExecutiveArm,
@@ -526,7 +537,11 @@ final class BrainService: NSObject {
                     goals: state.goalsText,
                     recentActions: state.recentActions,
                 heuristics: heuristics,
-                memory: state.memory,
+                memory: state.memoryForPrompt(now: now),
+                recentUserMessages: Self.recentUserMessages(
+                    chatHistory: state.chatHistory,
+                    limit: MonitoringPromptContextBudget.recentUserChatCount
+                ),
                 policyMemory: state.policyMemory,
                 runtimeOverride: state.runtimePathOverride,
                 configuration: state.monitoringConfiguration,

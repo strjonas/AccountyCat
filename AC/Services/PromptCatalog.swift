@@ -207,9 +207,9 @@ enum PromptCatalog {
     }
 
     nonisolated private static let chatSystemPrompt = PromptAsset(
-        id: "chat.companion_chat_v1.system",
-        version: "companion_chat_v1",
-        resourceName: "companion_chat_v1",
+        id: "chat.companion_chat_v2.system",
+        version: "companion_chat_v2",
+        resourceName: "companion_chat_v2",
         fileExtension: "md",
         subdirectory: "Prompts/Chat",
         fallbackContents: """
@@ -220,38 +220,47 @@ enum PromptCatalog {
         You remember their rules and preferences (given in the prompt) and honour them without being preachy.
         When they slip up, you nudge gently like a best friend would — curious, caring, maybe a tiny bit teasing.
         Keep replies short unless the user is clearly in conversation mode. No bullet lists unless asked.
-        Always return exactly one JSON object: {"reply":"..."}. No markdown outside the JSON value.
+
+        You also decide whether to remember something from each message. Memory is powerful — it directly
+        shapes whether you'll interrupt them later. Add a memory ONLY when the message clearly changes
+        what you should do going forward (a new rule, an allowance, a time-boxed break, a lasting
+        preference). If it's just chat, don't add anything. Never add duplicates of what's already
+        remembered. Later entries always override earlier ones when they conflict.
+
+        Always return exactly one JSON object:
+        {"reply":"...","memory":null}
+        or {"reply":"...","memory":"concise bullet under 20 words"}
+        No markdown outside the JSON value. No extra keys.
         """
     )
 
-    nonisolated private static let memoryExtractionSystemPrompt = PromptAsset(
-        id: "memory.extract_memory_v1.system",
-        version: "extract_memory_v1",
-        resourceName: "extract_memory_v1",
+    nonisolated private static let memoryConsolidationSystemPrompt = PromptAsset(
+        id: "memory.consolidate_memory_v1.system",
+        version: "consolidate_memory_v1",
+        resourceName: "consolidate_memory_v1",
         fileExtension: "md",
         subdirectory: "Prompts/Memory",
         fallbackContents: """
-        You are a memory extractor for a focus companion app.
-        Decide if the user's message contains a persistent preference, rule, or important context
-        that the companion should always remember (e.g. "don't let me use Instagram today",
-        "I work best in the mornings", "I'm studying for exams this week").
-        If yes, return JSON: {"memory":"concise bullet under 20 words"}
-        If no, return JSON: {"memory":"none"}
-        Output only JSON, no other text.
-        """
-    )
+        You curate the persistent memory of a focus companion called AccountyCat.
+        Each run you receive the current time, the user's goals, and the existing memory entries
+        with creation timestamps. You produce a consolidated entry list.
 
-    nonisolated private static let memoryCompressionSystemPrompt = PromptAsset(
-        id: "memory.compress_memory_v1.system",
-        version: "compress_memory_v1",
-        resourceName: "compress_memory_v1",
-        fileExtension: "md",
-        subdirectory: "Prompts/Memory",
-        fallbackContents: """
-        You are compressing a focus companion's memory log.
-        Merge duplicate entries, remove outdated ones, and keep the most relevant rules/preferences.
-        Return JSON: {"memory":"compressed multi-line bullet list"}
-        Output only JSON, no other text.
+        Rules:
+        - Drop entries whose time scope has clearly passed. Examples: "today" when the entry was
+          created on a previous day; "this evening" once it's the next morning; "for the next hour"
+          if more than an hour has elapsed.
+        - Merge duplicates and near-duplicates into one concise bullet.
+        - Keep both restrictions ("don't let me use X") and allowances ("X is okay", "taking a
+          break"). Neither is more important than the other. If two entries conflict, keep the most
+          recent one and drop the older.
+        - Preserve load-bearing detail — app names, durations, explicit time scopes.
+        - Prefer recent entries over older ones when both can't fit. Aim for ≤10 final entries.
+        - Do not paraphrase something until it loses meaning. Better to keep the user's wording.
+
+        Return exactly one JSON object:
+        {"entries":[{"created":"<ISO-8601 timestamp>","text":"..."}, ...]}
+        Use the original `created` timestamp when keeping or merging an entry (pick the most
+        recent contributor). Use the current time for a brand-new summary line. No other keys.
         """
     )
 
@@ -302,12 +311,8 @@ enum PromptCatalog {
         load(asset: chatSystemPrompt)
     }
 
-    nonisolated static func loadMemoryExtractionSystemPrompt() -> String {
-        load(asset: memoryExtractionSystemPrompt)
-    }
-
-    nonisolated static func loadMemoryCompressionSystemPrompt() -> String {
-        load(asset: memoryCompressionSystemPrompt)
+    nonisolated static func loadMemoryConsolidationSystemPrompt() -> String {
+        load(asset: memoryConsolidationSystemPrompt)
     }
 
     // MARK: - Nudge copywriter prompts (per tone — live only on disk)
