@@ -43,7 +43,13 @@ struct MonitoringDecisionInput: Sendable {
     var goals: String
     var recentActions: [ActionRecord]
     var heuristics: TelemetryHeuristicSnapshot
+    /// Pre-rendered prompt-facing memory (with timestamps). The algorithm no longer
+    /// condenses or filters this — the LLM is the authority on what matters.
     var memory: String
+    /// Last few user chat messages (most recent first is fine — the LLM reads order).
+    /// This is a safety net so fresh intent always reaches the decision stage even
+    /// if memory extraction is lagging.
+    var recentUserMessages: [String] = []
     var policyMemory: PolicyMemory
     var runtimeOverride: String?
     var configuration: MonitoringConfiguration
@@ -65,6 +71,7 @@ struct MonitoringAppealReviewInput: Sendable {
     var goals: String
     var recentActions: [ActionRecord]
     var memory: String
+    var recentUserMessages: [String] = []
     var policyMemory: PolicyMemory
     var configuration: MonitoringConfiguration
     var algorithmState: AlgorithmStateEnvelope

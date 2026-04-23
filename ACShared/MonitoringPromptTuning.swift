@@ -144,14 +144,21 @@ enum MonitoringPromptTuning {
                 stage: .decision,
                 systemPrompt: """
                 You are AC's decision stage.
-                Use goals, policy memory, distraction state, recent interventions, and perception summaries to choose the next action.
+                Use goals, free-form memory, recent user chat messages, policy memory, distraction state, recent interventions, and perception summaries to choose the next action.
                 False positives are expensive, but explicit rules and limits must still be honored.
                 Return exactly one JSON object:
                 \(decisionSchema)
+
+                Memory priority (READ CAREFULLY — this is the #1 cause of bad decisions):
+                - `freeFormMemory` lines are stamped with when they were added. A more recent line overrides an older one when they conflict.
+                - `recentUserMessages` is the last few things the user typed in chat. Treat them as the most recent ground truth — even if not yet consolidated into memory. If the user just said "WhatsApp is okay" or "let me watch YouTube for a bit", honour that over category heuristics.
+                - An allowance ("X is okay", "I'm taking a break", "let me") is as authoritative as a restriction ("don't let me use X"). Do not override either with vibes about productivity.
+                - Use `now` + the memory timestamps to judge "today" / "this afternoon" etc. relative to the current time.
+
                 Decision rules:
-                - If the likely activity supports the goals or an allowed rule, return `assessment="focused"` and `suggested_action="none"`.
+                - If the likely activity supports the goals or is covered by an allowance in memory / recent chat, return `assessment="focused"` and `suggested_action="none"`.
                 - If the activity is still genuinely unclear after using the whole payload, return `assessment="unclear"` and `suggested_action="abstain"`.
-                - If the activity likely conflicts with the goals or a disallow rule, return `assessment="distracted"` and `suggested_action="nudge"`.
+                - If the activity conflicts with the goals or an active restriction in memory / recent chat, return `assessment="distracted"` and `suggested_action="nudge"`.
                 - Use `suggested_action="overlay"` only for repeated distraction already reflected in the payload.
                 - `assessment` and `suggested_action` must agree:
                   focused -> none
@@ -166,6 +173,7 @@ enum MonitoringPromptTuning {
                 userTemplate: """
                 Decide AC's next action from this context.
                 Trust the perception summaries more than raw usage when they conflict.
+                Before deciding, check `freeFormMemory` and `recentUserMessages` for anything the user has told you about THIS specific activity or app — they override category defaults.
                 Use `recentInterventions` only to avoid repeating wording or escalating too fast.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
@@ -177,12 +185,14 @@ enum MonitoringPromptTuning {
                 Write one short nudge for a focus companion.
                 Keep it human, specific to the current activity, and different from recent nudges.
                 Avoid generic productivity slogans.
+                If `freeFormMemory` or `recentUserMessages` names this specific app or activity, reference that context — it will feel more caring and less generic.
                 Return exactly one JSON object: {"nudge":"..."}
                 """
             ,
                 userTemplate: """
                 Write the nudge for this situation.
                 Mention the actual activity when that helps.
+                Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory` — if that happened, the decision stage made a mistake and you should still produce something neutral-to-supportive.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
                 """
@@ -218,8 +228,16 @@ enum MonitoringPromptTuning {
                     }
                   ]
                 }
-                Create rules only when the event clearly implies a durable or time-bounded preference.
-                Prefer updating existing rules over duplicating them.
+
+                Create rules when the event implies a rule that will affect future nudges. Examples:
+                - User says "don't let me use Instagram today" → add_rule {kind:"disallow", scope:"app", target:"Instagram", expiresAt: end of local day}
+                - User says "WhatsApp is okay for the next hour" → add_rule {kind:"allow", scope:"app", target:"WhatsApp", expiresAt: now+1h}
+                - User says "I'm taking a break" → add_rule {kind:"allow", scope:"any", expiresAt: now+30m} (pick a reasonable default if unspecified)
+                - User says "you can let me watch YouTube" → add_rule {kind:"allow", scope:"app", target:"YouTube"} (no expiry if none implied)
+
+                The user's most recent statement is authoritative. If it contradicts an existing rule, either expire_rule or update_rule the old one — do NOT leave contradictory rules coexisting.
+
+                Prefer updating existing rules over duplicating them. Only emit operations that actually change state.
                 """
             ,
                 userTemplate: """

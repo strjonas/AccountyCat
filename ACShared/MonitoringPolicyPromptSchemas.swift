@@ -11,8 +11,10 @@ enum MonitoringPromptContextBudget {
     nonisolated static let goalCharacters = 180
     nonisolated static let appNameCharacters = 80
     nonisolated static let windowTitleCharacters = 180
-    nonisolated static let freeFormMemoryCharacters = 220
-    nonisolated static let freeFormMemoryLines = 2
+    /// Full memory context. AC is the authority on content; these caps only exist to keep
+    /// prompt latency predictable. Exceed them via consolidation, not truncation.
+    nonisolated static let freeFormMemoryCharacters = 2000
+    nonisolated static let freeFormMemoryLines = 15
     nonisolated static let policySummaryCharacters = 420
     nonisolated static let policySummaryLines = 4
     nonisolated static let titlePerceptionSwitchCount = 2
@@ -20,6 +22,10 @@ enum MonitoringPromptContextBudget {
     nonisolated static let decisionSwitchCount = 3
     nonisolated static let decisionUsageCount = 4
     nonisolated static let recentNudgeCount = 3
+    /// Last user chat messages passed into decision + nudge stages as a safety net
+    /// against memory extraction lag.
+    nonisolated static let recentUserChatCount = 3
+    nonisolated static let recentUserChatCharacters = 180
 }
 
 nonisolated struct MonitoringPromptHeuristicSummary: Codable, Hashable, Sendable {
@@ -76,8 +82,10 @@ nonisolated struct MonitoringVisionPerceptionPromptPayload: Encodable, Sendable 
 }
 
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
+    var now: Date
     var goals: String
     var freeFormMemory: String
+    var recentUserMessages: [String]
     var policySummary: String
     var appName: String
     var bundleIdentifier: String?
@@ -92,6 +100,8 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
     var goals: String
+    var freeFormMemory: String
+    var recentUserMessages: [String]
     var policySummary: String
     var appName: String
     var windowTitle: String?

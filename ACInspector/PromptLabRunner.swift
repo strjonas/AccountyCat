@@ -167,6 +167,7 @@ actor PromptLabRunner {
             runtimePath: normalizedRuntimePath,
             options: runtimeProfile.options(for: .decision),
             payload: MonitoringDecisionPromptPayload(
+                now: scenario.timestamp,
                 goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
                     maxLength: MonitoringPromptContextBudget.goalCharacters
                 ),
@@ -174,6 +175,7 @@ actor PromptLabRunner {
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                 ),
+                recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
                 policySummary: compactPolicySummary,
                 appName: compactAppName,
                 bundleIdentifier: scenario.bundleIdentifier.nilIfBlank,
@@ -214,6 +216,11 @@ actor PromptLabRunner {
                     goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
                         maxLength: MonitoringPromptContextBudget.goalCharacters
                     ),
+                    freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
+                        maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                        maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+                    ),
+                    recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
                     policySummary: compactPolicySummary,
                     appName: compactAppName,
                     windowTitle: compactWindowTitle,
@@ -525,6 +532,14 @@ actor PromptLabRunner {
         default:
             return rawOutput.cleanedSingleLine.prefix(220).description
         }
+    }
+
+    private static func compactRecentUserMessages(_ messages: [String]) -> [String] {
+        messages
+            .map { $0.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+            .prefix(MonitoringPromptContextBudget.recentUserChatCount)
+            .map { $0.truncatedForPrompt(maxLength: MonitoringPromptContextBudget.recentUserChatCharacters) }
     }
 
     private func compactRecentSwitches(

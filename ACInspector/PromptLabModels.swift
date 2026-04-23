@@ -260,6 +260,7 @@ struct PromptLabScenario: Codable, Hashable, Identifiable, Sendable {
     var timestamp: Date
     var goals: String
     var freeFormMemorySummary: String
+    var recentUserMessages: [String] = []
     var policyMemorySummary: String
     var policyMemoryJSON: String
     var recentSwitches: [PromptLabSwitchRecord]

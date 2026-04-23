@@ -177,12 +177,14 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             snapshot: input.snapshot,
             now: input.now
         )
-        let freeFormMemory = MonitoringLLMClient
-            .condensedMonitoringMemory(input.memory, goals: input.goals)
-            .truncatedMultilineForPrompt(
-                maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
-                maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
-            )
+        // `input.memory` is already pre-rendered with timestamps at the caller. We only
+        // cap it to the byte budget (a last-resort guard — normally consolidation keeps it
+        // under budget). No heuristic scoring or keyword filtering: AC decides what's relevant.
+        let freeFormMemory = input.memory.truncatedMultilineForPrompt(
+            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+        )
+        let recentUserMessages = Self.compactRecentUserMessages(input.recentUserMessages)
 
         var titlePerception: MonitoringPerceptionEnvelope?
         if pipelineProfile.usesTitlePerception {
@@ -224,10 +226,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             runtimePath: runtimePath,
             options: runtimeProfile.options(for: .decision),
             payload: MonitoringDecisionPromptPayload(
+                now: input.now,
                 goals: input.goals.cleanedSingleLine.truncatedForPrompt(
                     maxLength: MonitoringPromptContextBudget.goalCharacters
                 ),
                 freeFormMemory: freeFormMemory,
+                recentUserMessages: recentUserMessages,
                 policySummary: policySummary,
                 appName: compactAppName,
                 bundleIdentifier: input.snapshot.bundleIdentifier,
@@ -257,6 +261,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     goals: input.goals.cleanedSingleLine.truncatedForPrompt(
                         maxLength: MonitoringPromptContextBudget.goalCharacters
                     ),
+                    freeFormMemory: freeFormMemory,
+                    recentUserMessages: recentUserMessages,
                     policySummary: policySummary,
                     appName: compactAppName,
                     windowTitle: compactWindowTitle,
@@ -415,12 +421,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 goals: input.goals.cleanedSingleLine.truncatedForPrompt(
                     maxLength: MonitoringPromptContextBudget.goalCharacters
                 ),
-                freeFormMemory: MonitoringLLMClient
-                    .condensedMonitoringMemory(input.memory, goals: input.goals)
-                    .truncatedMultilineForPrompt(
-                        maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
-                        maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
-                    ),
+                freeFormMemory: input.memory.truncatedMultilineForPrompt(
+                    maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                    maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+                ),
                 policySummary: makePolicySummary(
                     policyMemory: input.policyMemory,
                     snapshot: input.snapshot,
@@ -695,6 +699,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 seconds: $0.seconds
             )
         }
+    }
+
+    static func compactRecentUserMessages(_ messages: [String]) -> [String] {
+        // Newest-first from the caller; take the last `recentUserChatCount` and render short.
+        messages
+            .map { $0.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+            .prefix(MonitoringPromptContextBudget.recentUserChatCount)
+            .map { $0.truncatedForPrompt(maxLength: MonitoringPromptContextBudget.recentUserChatCharacters) }
     }
 
     private func compactInterventionSummary(_ records: [ActionRecord]) -> MonitoringPromptInterventionSummary {

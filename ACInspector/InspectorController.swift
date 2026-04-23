@@ -754,7 +754,15 @@ final class InspectorController: ObservableObject {
             }
             if let memory = findString(in: payloadObject as Any, matching: ["freeFormMemory", "memory", "free_form_memory"]),
                !memory.cleanedSingleLine.isEmpty {
+                // Memory is multiline (timestamps + bullets) — preserve newlines for readability.
                 details.append(InspectorDetailRow(label: "Memory", value: memory))
+            }
+            let recentChat = findStringArray(in: payloadObject as Any, matching: ["recentUserMessages", "recent_user_messages"])
+            if !recentChat.isEmpty {
+                details.append(InspectorDetailRow(
+                    label: "Recent chat",
+                    value: recentChat.map { "• \($0.cleanedSingleLine)" }.joined(separator: "\n")
+                ))
             }
             if let policySummary = findString(in: payloadObject as Any, matching: ["policySummary", "policy_summary"]),
                !policySummary.cleanedSingleLine.isEmpty {
@@ -781,6 +789,17 @@ final class InspectorController: ObservableObject {
             if let goals = findString(in: payloadObject as Any, matching: ["goals"]),
                !goals.cleanedSingleLine.isEmpty {
                 details.append(InspectorDetailRow(label: "Goals", value: goals.cleanedSingleLine))
+            }
+            if let memory = findString(in: payloadObject as Any, matching: ["freeFormMemory", "free_form_memory", "memory"]),
+               !memory.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Memory", value: memory))
+            }
+            let recentChatNudge = findStringArray(in: payloadObject as Any, matching: ["recentUserMessages", "recent_user_messages"])
+            if !recentChatNudge.isEmpty {
+                details.append(InspectorDetailRow(
+                    label: "Recent chat",
+                    value: recentChatNudge.map { "• \($0.cleanedSingleLine)" }.joined(separator: "\n")
+                ))
             }
             if let policySummary = findString(in: payloadObject as Any, matching: ["policySummary", "policy_summary"]),
                !policySummary.cleanedSingleLine.isEmpty {

@@ -38,7 +38,7 @@ struct ACStateResetTests {
             consecutiveDistractedCount: 2,
             nextEvaluationAt: Date(timeIntervalSince1970: 4)
         )
-        state.memory = "User disliked YouTube nudges."
+        state.memoryEntries = [MemoryEntry(text: "User disliked YouTube nudges.")]
 
         state.resetAlgorithmProfile()
 
@@ -48,7 +48,7 @@ struct ACStateResetTests {
         #expect(state.usageByDay.isEmpty)
         #expect(state.algorithmState == AlgorithmStateEnvelope())
         #expect(state.distraction == DistractionMetadata())
-        #expect(state.memory.isEmpty)
+        #expect(state.memoryEntries.isEmpty)
         #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
         #expect(state.monitoringConfiguration.promptProfileID == "focus_default_v2")
         #expect(state.monitoringConfiguration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
