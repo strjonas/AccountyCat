@@ -27,6 +27,7 @@ private let chatSuggestions = [
 
 struct ChatView: View {
     @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
     @State private var draft = ""
     @State private var pendingClearAction: ChatClearAction?
     @State private var successMessage: String?
@@ -95,10 +96,12 @@ struct ChatView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.acCaramel)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(accent.opacity(0.13)))
             Text("Chat")
                 .font(.ac(13, weight: .semibold))
                 .foregroundStyle(Color.acTextPrimary)
@@ -117,13 +120,15 @@ struct ChatView: View {
                     Label("Clear memory", systemImage: "brain")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 22)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .frame(width: 22, height: 22)
+            .fixedSize()
         }
     }
 
@@ -135,7 +140,7 @@ struct ChatView: View {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if hasConversationMessages {
                         ForEach(conversationMessages) { message in
-                            CompactBubble(message: message)
+                            CompactBubble(message: message, accent: accent)
                                 .id(message.id)
                         }
                     } else if !controller.sendingChatMessage {
@@ -160,11 +165,11 @@ struct ChatView: View {
             }
             .frame(height: 220)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(nsColor: .underPageBackgroundColor).opacity(0.6))
+                RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                    .fill(Color(nsColor: .underPageBackgroundColor).opacity(0.55))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
                     )
             )
             .onAppear {
@@ -207,34 +212,35 @@ struct ChatView: View {
                 .onSubmit { sendDraft() }
                 .disabled(controller.sendingChatMessage)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 9)
+                .padding(.vertical, 10)
 
             Button(action: sendDraft) {
                 Image(systemName: controller.sendingChatMessage
                       ? "ellipsis"
                       : "arrow.up")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(canSend ? Color.white : Color.secondary.opacity(0.65))
+                    .foregroundStyle(canSend ? Color.white : Color.secondary.opacity(0.6))
                     .frame(width: 28, height: 28)
                     .background(
-                        Circle().fill(canSend
-                                      ? Color.acCaramel
-                                      : Color.secondary.opacity(0.18))
+                        Circle()
+                            .fill(canSend ? accent : Color.secondary.opacity(0.18))
+                            .shadow(color: canSend ? accent.opacity(0.35) : .clear, radius: 4, y: 2)
                     )
                     .symbolEffect(.bounce, value: controller.sendingChatMessage)
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
             .padding(.trailing, 5)
+            .animation(.acSnap, value: canSend)
         }
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.xl, style: .continuous)
                 .fill(Color(nsColor: .textBackgroundColor))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: ACRadius.xl, style: .continuous)
                         .stroke(inputFocused
-                                ? Color.acCaramel.opacity(0.55)
-                                : Color.secondary.opacity(0.22),
+                                ? accent.opacity(0.55)
+                                : Color.acHairline,
                                 lineWidth: 1)
                 )
         )
@@ -260,12 +266,18 @@ struct ChatView: View {
 private struct EmptyChatState: View {
     let suggestions: [String]
     let onSelect: (String) -> Void
+    @Environment(\.acAccent) private var accent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("How can I help?", systemImage: "sparkles")
-                .font(.ac(13, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
+            HStack(spacing: 7) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
+                Text("How can I help?")
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+            }
 
             Text("Try one of these quick prompts to start the conversation.")
                 .font(.ac(11))
@@ -273,14 +285,14 @@ private struct EmptyChatState: View {
 
             SuggestionChips(suggestions: suggestions, onSelect: onSelect)
         }
-        .padding(12)
+        .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                 .fill(Color(nsColor: .textBackgroundColor).opacity(0.65))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.10), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
                 )
         )
     }
@@ -302,6 +314,8 @@ private struct SuggestionChips: View {
 }
 
 private struct SuggestionChipStyle: ButtonStyle {
+    @Environment(\.acAccent) private var accent
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.ac(12))
@@ -312,13 +326,13 @@ private struct SuggestionChipStyle: ButtonStyle {
             .background(
                 Capsule(style: .continuous)
                     .fill(configuration.isPressed
-                          ? Color.acCaramel.opacity(0.22)
+                          ? accent.opacity(0.20)
                           : Color(nsColor: .windowBackgroundColor).opacity(0.85))
                     .overlay(
                         Capsule(style: .continuous)
                             .stroke(configuration.isPressed
-                                    ? Color.acCaramel.opacity(0.45)
-                                    : Color.secondary.opacity(0.20),
+                                    ? accent.opacity(0.45)
+                                    : Color.acHairline,
                                     lineWidth: 1)
                     )
             )
@@ -378,6 +392,7 @@ private struct FlowLayout: Layout {
 
 private struct CompactBubble: View {
     let message: ChatMessage
+    let accent: Color
 
     var body: some View {
         if message.role == .system {
@@ -394,11 +409,11 @@ private struct CompactBubble: View {
                 Text(message.text)
                     .font(.ac(13))
                     .foregroundStyle(message.role == .user
-                                     ? Color(red: 0.20, green: 0.12, blue: 0.04)
+                                     ? Color.black.opacity(0.82)
                                      : Color.primary)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
                     .background(bubbleBackground)
 
                 if message.role == .assistant { Spacer(minLength: 40) }
@@ -409,20 +424,24 @@ private struct CompactBubble: View {
     @ViewBuilder
     private var bubbleBackground: some View {
         if message.role == .user {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color.acCaramelLight, Color.acCaramelSoft],
+                        colors: [accent.opacity(0.45), accent.opacity(0.25)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                        .stroke(accent.opacity(0.30), lineWidth: 0.5)
+                )
         } else {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
                 )
         }
     }
@@ -445,11 +464,11 @@ private struct TypingIndicator: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                     .fill(Color(nsColor: .controlBackgroundColor))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
                     )
             )
             Spacer(minLength: 40)

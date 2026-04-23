@@ -364,7 +364,12 @@ final class WindowCoordinator {
         window.setFrame(screen.frame, display: false)
         window.orderFrontRegardless()
         if let hosting = window.contentViewController as? NSHostingController<NudgeBorderView> {
-            hosting.rootView = NudgeBorderView(visible: true)
+            let ch = controller.state.character
+            hosting.rootView = NudgeBorderView(
+                visible: true,
+                tint: ch.escalatedRingColor,
+                ringTint: ch.ringColor
+            )
         }
     }
 
@@ -373,14 +378,24 @@ final class WindowCoordinator {
               let hosting = window.contentViewController as? NSHostingController<NudgeBorderView> else {
             return
         }
-        hosting.rootView = NudgeBorderView(visible: false)
+        let ch = controller.state.character
+        hosting.rootView = NudgeBorderView(
+            visible: false,
+            tint: ch.escalatedRingColor,
+            ringTint: ch.ringColor
+        )
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             self?.nudgeBorderWindow?.orderOut(nil)
         }
     }
 
     private func makeNudgeBorderWindow(screen: NSScreen) -> NSWindow {
-        let hosting = NSHostingController(rootView: NudgeBorderView(visible: false))
+        let ch = controller.state.character
+        let hosting = NSHostingController(rootView: NudgeBorderView(
+            visible: false,
+            tint: ch.escalatedRingColor,
+            ringTint: ch.ringColor
+        ))
         let window = NSWindow(
             contentRect: screen.frame,
             styleMask: [.borderless],

@@ -75,18 +75,19 @@ struct SpeechBubble: View {
     }
 
     private var bubbleBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let accent = controller.state.character.accentColor
+        return ZStack {
+            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                 .fill(tailColor.opacity(colorScheme == .dark ? 0.95 : 0.97))
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                 .stroke(
-                    Color.primary.opacity(colorScheme == .dark ? 0.30 : 0.18),
+                    accent.opacity(colorScheme == .dark ? 0.55 : 0.40),
                     lineWidth: 1
                 )
         }
         .shadow(
-            color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.10),
-            radius: 8, y: 3
+            color: accent.opacity(colorScheme == .dark ? 0.35 : 0.18),
+            radius: 10, y: 3
         )
     }
 }

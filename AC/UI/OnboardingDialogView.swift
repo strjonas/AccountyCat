@@ -10,30 +10,41 @@ import SwiftUI
 
 struct OnboardingDialogView: View {
     @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: controller.state.setupStatus == .ready
+                      ? "checkmark.seal.fill"
+                      : "wand.and.stars")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(accent.opacity(0.14)))
+
+                VStack(alignment: .leading, spacing: 2) {
                     Text(controller.state.setupStatus == .ready
-                         ? "AccountyCat is ready ✓"
+                         ? "AccountyCat is ready"
                          : "Finish setup")
-                        .font(.ac(16, weight: .semibold))
+                        .font(.ac(15, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
 
                     Text(subtitle)
                         .font(.ac(12))
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Button("?") { controller.refreshSystemState() }
-                    .buttonStyle(ACSecondaryButton())
-                    .help("Refresh status")
+                Spacer(minLength: 8)
+                Button(action: { controller.refreshSystemState() }) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(ACIconButton())
+                .help("Refresh status")
             }
 
             // Step rows
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 SetupStepRow(
                     title: "Screen Recording",
                     state: permissionRequirements.requiresScreenRecording == false
@@ -55,12 +66,24 @@ struct OnboardingDialogView: View {
                     state: runtimeState
                 )
             }
+            .padding(.vertical, 2)
 
             // Error
             if let err = controller.setupErrorMessage {
-                Text(err)
-                    .font(.ac(11))
-                    .foregroundStyle(.red)
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.red.opacity(0.85))
+                    Text(err)
+                        .font(.ac(11))
+                        .foregroundStyle(.red.opacity(0.9))
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(Color.red.opacity(0.08))
+                )
             }
 
             // Action buttons
@@ -70,11 +93,11 @@ struct OnboardingDialogView: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.7))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
                 )
         )
     }
@@ -153,6 +176,7 @@ private enum SetupStepState { case done, progress, needed }
 private struct SetupStepRow: View {
     let title: String
     let state: SetupStepState
+    @Environment(\.acAccent) private var accent
 
     var body: some View {
         HStack(spacing: 10) {
@@ -166,8 +190,15 @@ private struct SetupStepRow: View {
                 .foregroundStyle(state == .done ? .secondary : Color.acTextPrimary)
 
             Spacer()
+
+            if state == .done {
+                Text("Ready")
+                    .font(.ac(10, weight: .medium))
+                    .foregroundStyle(.green.opacity(0.85))
+            }
         }
         .padding(.horizontal, 2)
+        .padding(.vertical, 3)
     }
 
     private var iconName: String {
@@ -181,7 +212,7 @@ private struct SetupStepRow: View {
     private var iconColor: Color {
         switch state {
         case .done:     return .green
-        case .progress: return .acCaramel
+        case .progress: return accent
         case .needed:   return Color.secondary.opacity(0.5)
         }
     }

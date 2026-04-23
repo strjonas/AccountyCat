@@ -2,20 +2,23 @@
 //  ACDesignSystem.swift
 //  AC
 //
-//  Shared design tokens — palette, typography, animation curves, dimensions, and button styles.
+//  Shared design tokens — palette, typography, animation curves, dimensions,
+//  radii, shadows, and button styles. All accent-aware components read the
+//  current character accent from the environment so the whole UI re-tints
+//  when the user picks a different character.
 //
 
 import AppKit
 import SwiftUI
 
-// MARK: - Color Palette
+// MARK: - Color Palette (legacy / shared)
 
 extension Color {
     // Warm neutrals
     static let acCream        = Color(red: 1.00, green: 0.97, blue: 0.93)
     static let acPaper        = Color(red: 0.99, green: 0.96, blue: 0.90)
 
-    // Caramel accent
+    // Caramel accent (Mochi default — also used as fallback when env accent is absent)
     static let acCaramel      = Color(red: 0.91, green: 0.66, blue: 0.35)
     static let acCaramelLight = Color(red: 0.97, green: 0.83, blue: 0.63)
     static let acCaramelSoft  = Color(red: 0.98, green: 0.90, blue: 0.75)
@@ -34,8 +37,22 @@ extension Color {
     // Text — adapts to light / dark mode
     static let acTextPrimary  = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 0.92, alpha: 1)   // near-white in dark mode
-            : NSColor(red: 0.18, green: 0.12, blue: 0.08, alpha: 1) // warm dark brown in light mode
+            ? NSColor(white: 0.94, alpha: 1)
+            : NSColor(red: 0.16, green: 0.11, blue: 0.07, alpha: 1)
+    })
+
+    /// Neutral surface fill that reads as a subtle card on either appearance.
+    static let acSurface = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1.0, alpha: 0.045)
+            : NSColor(white: 0.0, alpha: 0.025)
+    })
+
+    /// Hairline stroke that reads on both appearances.
+    static let acHairline = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1.0, alpha: 0.10)
+            : NSColor(white: 0.0, alpha: 0.08)
     })
 }
 
@@ -64,36 +81,157 @@ extension Animation {
 enum ACD {
     static let orbDiameter: CGFloat  = 72
     static let panelWidth: CGFloat   = 200
-    static let panelHeight: CGFloat  = 240   // room for bubble (with thumbs row) above orb
+    static let panelHeight: CGFloat  = 240
     static let popoverWidth: CGFloat = 472
+}
+
+/// Unified corner radii. Reach for these instead of literals so
+/// surfaces nest consistently across the whole UI.
+enum ACRadius {
+    static let xs: CGFloat = 6
+    static let sm: CGFloat = 10
+    static let md: CGFloat = 12
+    static let lg: CGFloat = 16
+    static let xl: CGFloat = 20
+    static let xxl: CGFloat = 28
+}
+
+/// Spacing scale.
+enum ACSpace {
+    static let xs: CGFloat = 4
+    static let sm: CGFloat = 8
+    static let md: CGFloat = 12
+    static let lg: CGFloat = 16
+    static let xl: CGFloat = 22
+}
+
+// MARK: - Accent environment
+
+private struct ACAccentKey: EnvironmentKey {
+    static let defaultValue: Color = Color(red: 0.91, green: 0.66, blue: 0.35) // Mochi
+}
+
+private struct ACAccentLightKey: EnvironmentKey {
+    static let defaultValue: Color = Color(red: 0.97, green: 0.83, blue: 0.63)
+}
+
+private struct ACAccentSoftKey: EnvironmentKey {
+    static let defaultValue: Color = Color(red: 0.98, green: 0.90, blue: 0.75)
+}
+
+extension EnvironmentValues {
+    var acAccent: Color {
+        get { self[ACAccentKey.self] }
+        set { self[ACAccentKey.self] = newValue }
+    }
+    var acAccentLight: Color {
+        get { self[ACAccentLightKey.self] }
+        set { self[ACAccentLightKey.self] = newValue }
+    }
+    var acAccentSoft: Color {
+        get { self[ACAccentSoftKey.self] }
+        set { self[ACAccentSoftKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Inject the accent palette of a character into this view subtree.
+    /// Every accent-aware component re-tints automatically.
+    func acAccent(for character: ACCharacter) -> some View {
+        self
+            .environment(\.acAccent, character.accentColor)
+            .environment(\.acAccentLight, character.accentLight)
+            .environment(\.acAccentSoft, character.accentSoft)
+            .tint(character.accentColor)
+    }
 }
 
 // MARK: - Button Styles
 
-/// Warm caramel primary action button.
+/// Filled accent action — used for the most important call to action in a row.
 struct ACPrimaryButton: ButtonStyle {
+    @Environment(\.acAccent) private var accent
+    @Environment(\.acAccentLight) private var accentLight
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.ac(13, weight: .semibold))
-            .foregroundStyle(Color(red: 0.20, green: 0.12, blue: 0.05))
+            .foregroundStyle(Color.black.opacity(0.82))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [accentLight, accent.opacity(0.92)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(Color.white.opacity(0.32), lineWidth: 0.5)
+                    )
+                    .shadow(color: accent.opacity(0.22), radius: 6, y: 2)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .opacity(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+/// Quiet neutral button — supporting actions next to a primary.
+struct ACSecondaryButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(13, weight: .medium))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.85))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(Capsule().fill(Color.acCaramelLight))
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.acSnap, value: configuration.isPressed)
     }
 }
 
-/// Neutral secondary action button.
-struct ACSecondaryButton: ButtonStyle {
+/// Destructive action (Reset, Quit). Red is universal — does not change with character.
+struct ACDangerButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.ac(13))
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+            .font(.ac(13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.red.opacity(configuration.isPressed ? 0.78 : 0.88))
+            )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+/// Subtle icon-only button — circular hit target with a hairline ring.
+struct ACIconButton: ButtonStyle {
+    var size: CGFloat = 28
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color.secondary)
+            .frame(width: size, height: size)
+            .background(
+                Circle()
+                    .fill(Color.acSurface)
+                    .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+            )
+            .scaleEffect(configuration.isPressed ? 0.94 : 1.0)
             .animation(.acSnap, value: configuration.isPressed)
     }
 }
@@ -177,7 +315,7 @@ extension ACCharacter {
         }
     }
 
-    // MARK: Header gradient (light / dark handled in ContentView)
+    // MARK: Header gradient
     var headerLightTop: Color {
         switch self {
         case .mochi: return Color(red: 1.00, green: 0.97, blue: 0.93)
@@ -204,6 +342,17 @@ extension ACCharacter {
         case .mochi: return Color(red: 0.18, green: 0.14, blue: 0.09)
         case .nova:  return Color(red: 0.09, green: 0.10, blue: 0.19)
         case .sage:  return Color(red: 0.08, green: 0.14, blue: 0.11)
+        }
+    }
+
+    // MARK: Display
+
+    /// Short personality label rendered next to the character name.
+    var moodLabel: String {
+        switch self {
+        case .mochi: return "warm"
+        case .nova:  return "sharp"
+        case .sage:  return "calm"
         }
     }
 }

@@ -23,10 +23,13 @@ struct OverlayView: View {
             secondaryButtonTitle: "Not yet"
         )
 
-        ZStack {
-            // Soft amber edge vignette — clear center so the user can see their work
+        let character = controller.state.character
+        let accent = character.accentColor
+
+        return ZStack {
+            // Soft accent edge vignette — clear center so the user can see their work
             RadialGradient(
-                colors: [Color.clear, Color.acCaramel.opacity(0.14)],
+                colors: [Color.clear, accent.opacity(0.14)],
                 center: .center,
                 startRadius: 220,
                 endRadius: 780
@@ -34,17 +37,20 @@ struct OverlayView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 26) {
-                // Cat avatar with warm gradient halo
+                // Cat avatar with warm gradient halo, tinted by character
                 ZStack {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [Color.acCream, Color.acCaramelLight],
+                                colors: [character.orbTopColor, character.orbBottomColor],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .shadow(color: Color.acCaramel.opacity(0.30), radius: 26, y: 10)
+                        .shadow(color: accent.opacity(0.32), radius: 26, y: 10)
+                        .overlay(
+                            Circle().stroke(Color.white.opacity(0.45), lineWidth: 1)
+                        )
 
                     CatFaceView(mood: .paused, isBlinking: false)
                         .padding(16)
@@ -85,14 +91,14 @@ struct OverlayView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                                 .fill(Color(nsColor: .textBackgroundColor))
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                                         .stroke(
                                             appealFocused
-                                                ? Color.acCaramel.opacity(0.55)
-                                                : Color.secondary.opacity(0.20),
+                                                ? accent.opacity(0.55)
+                                                : Color.acHairline,
                                             lineWidth: 1
                                         )
                                 )
@@ -128,35 +134,46 @@ struct OverlayView: View {
             .padding(36)
             .frame(maxWidth: 420)
             .background(
-                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
                             .stroke(Color.white.opacity(0.45), lineWidth: 1)
                     )
-                    .shadow(color: Color.black.opacity(0.12), radius: 32, y: 16)
+                    .shadow(color: accent.opacity(0.20), radius: 32, y: 16)
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .acAccent(for: character)
     }
 }
 
 // MARK: - Button style
 
 private struct OverlayPrimaryButton: ButtonStyle {
+    @Environment(\.acAccent) private var accent
+    @Environment(\.acAccentLight) private var accentLight
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.ac(15, weight: .semibold))
-            .foregroundStyle(Color(red: 0.18, green: 0.10, blue: 0.04))
-            .padding(.horizontal, 28)
-            .padding(.vertical, 12)
+            .foregroundStyle(Color.black.opacity(0.85))
+            .padding(.horizontal, 30)
+            .padding(.vertical, 13)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Color.acCaramelLight)
+                    .fill(
+                        LinearGradient(
+                            colors: [accentLight, accent.opacity(0.90)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(0.50), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.55), lineWidth: 1)
                     )
+                    .shadow(color: accent.opacity(0.35), radius: 10, y: 4)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.acSnap, value: configuration.isPressed)
