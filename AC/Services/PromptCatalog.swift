@@ -226,6 +226,8 @@ enum PromptCatalog {
         what you should do going forward (a new rule, an allowance, a time-boxed break, a lasting
         preference). If it's just chat, don't add anything. Never add duplicates of what's already
         remembered. Later entries always override earlier ones when they conflict.
+        When you store a time-bounded rule or allowance, rewrite it with an explicit local expiry
+        time instead of vague relative wording like "today" or "for the next hour".
 
         Always return exactly one JSON object:
         {"reply":"...","memory":null}
@@ -254,6 +256,7 @@ enum PromptCatalog {
           break"). Neither is more important than the other. If two entries conflict, keep the most
           recent one and drop the older.
         - Preserve load-bearing detail — app names, durations, explicit time scopes.
+        - Prefer explicit dates/times over vague relative phrases when a time-bounded rule survives.
         - Prefer recent entries over older ones when both can't fit. Aim for ≤10 final entries.
         - Do not paraphrase something until it loses meaning. Better to keep the user's wording.
 

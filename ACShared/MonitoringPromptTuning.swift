@@ -150,13 +150,18 @@ enum MonitoringPromptTuning {
                 \(decisionSchema)
 
                 Memory priority (READ CAREFULLY — this is the #1 cause of bad decisions):
-                - `freeFormMemory` lines are stamped with when they were added. A more recent line overrides an older one when they conflict.
-                - `recentUserMessages` is the last few things the user typed in chat. Treat them as the most recent ground truth — even if not yet consolidated into memory. If the user just said "WhatsApp is okay" or "let me watch YouTube for a bit", honour that over category heuristics.
+                - `freeFormMemory` lines and `recentUserMessages` entries are stamped with local wall-clock time in `YYYY-MM-DD HH:MM`.
+                - Resolve conflicts before deciding:
+                  1. Read `recentUserMessages` from oldest to newest; the newest relevant user statement wins.
+                  2. Then read `freeFormMemory`; newer memory overrides older memory when they conflict.
+                  3. Use `policySummary` as supporting structured context, but never let it override a newer explicit user statement from chat or free-form memory.
+                - `recentUserMessages` is the most recent ground truth even if not yet consolidated into memory. If the user just said "WhatsApp is okay" or "let me watch YouTube for a bit", honour that over category heuristics.
                 - An allowance ("X is okay", "I'm taking a break", "let me") is as authoritative as a restriction ("don't let me use X"). Do not override either with vibes about productivity.
-                - Use `now` + the memory timestamps to judge "today" / "this afternoon" etc. relative to the current time.
+                - Use `now` plus the timestamps to resolve temporary rules. If a temporary allowance or restriction has an explicit expiry, respect it until that time.
 
                 Decision rules:
                 - If the likely activity supports the goals or is covered by an allowance in memory / recent chat, return `assessment="focused"` and `suggested_action="none"`.
+                - If `recentUserMessages` contains a newer explicit allowance for the current app/activity than any competing restriction, return `assessment="focused"` and `suggested_action="none"`.
                 - If the activity is still genuinely unclear after using the whole payload, return `assessment="unclear"` and `suggested_action="abstain"`.
                 - If the activity conflicts with the goals or an active restriction in memory / recent chat, return `assessment="distracted"` and `suggested_action="nudge"`.
                 - Use `suggested_action="overlay"` only for repeated distraction already reflected in the payload.
@@ -173,7 +178,8 @@ enum MonitoringPromptTuning {
                 userTemplate: """
                 Decide AC's next action from this context.
                 Trust the perception summaries more than raw usage when they conflict.
-                Before deciding, check `freeFormMemory` and `recentUserMessages` for anything the user has told you about THIS specific activity or app — they override category defaults.
+                Before deciding, resolve rules in this order: newest `recentUserMessages`, then newer `freeFormMemory`, then `policySummary`.
+                Check for anything the user has told you about THIS specific activity or app — those explicit statements override category defaults.
                 Use `recentInterventions` only to avoid repeating wording or escalating too fast.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
@@ -192,7 +198,9 @@ enum MonitoringPromptTuning {
                 userTemplate: """
                 Write the nudge for this situation.
                 Mention the actual activity when that helps.
-                Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory` — if that happened, the decision stage made a mistake and you should still produce something neutral-to-supportive.
+                Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory`.
+                If chat/memory conflict, the newest timestamp wins.
+                If the decision stage made a mistake, still produce something neutral-to-supportive rather than scolding the user for an allowed activity.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
                 """
@@ -236,6 +244,9 @@ enum MonitoringPromptTuning {
                 - User says "you can let me watch YouTube" → add_rule {kind:"allow", scope:"app", target:"YouTube"} (no expiry if none implied)
 
                 The user's most recent statement is authoritative. If it contradicts an existing rule, either expire_rule or update_rule the old one — do NOT leave contradictory rules coexisting.
+                Convert relative scopes like "today", "this evening", or "for the next hour" into explicit `expiresAt` values relative to `now`.
+                Prefer the user's exact app/site names over generic categories.
+                Do not copy assistant phrasing back into policy memory — use the user's intent.
 
                 Prefer updating existing rules over duplicating them. Only emit operations that actually change state.
                 """

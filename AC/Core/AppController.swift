@@ -32,6 +32,7 @@ final class AppController: ObservableObject {
     @Published var activityStatusText = "Checking permissions and local runtime."
     @Published var chatMessages: [ChatMessage]
     @Published var sendingChatMessage = false
+    @Published var consolidatingMemory = false
     @Published var onboardingDismissed = false
     @Published var telemetrySessionID: String?
     /// Set by WindowCoordinator when the orb is snapped to a screen edge (peek mode).
@@ -282,6 +283,22 @@ final class AppController: ObservableObject {
         state.policyMemory = PolicyMemory()
         persistState()
         logActivity("memory", "Memory cleared")
+    }
+
+    var canConsolidateMemory: Bool {
+        !state.memoryEntries.isEmpty &&
+        state.setupStatus == .ready &&
+        setupDiagnostics.runtimePresent &&
+        !consolidatingMemory
+    }
+
+    func consolidateMemoryNow() {
+        guard !state.memoryEntries.isEmpty else { return }
+        guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else {
+            setupErrorMessage = "Finish setup first so AC can run memory consolidation locally."
+            return
+        }
+        startMemoryConsolidation(now: Date(), reason: "manual")
     }
 
     func resetAlgorithmProfile() {
@@ -694,7 +711,7 @@ final class AppController: ObservableObject {
             }
             self.logActivity("chat", "Assistant: \(result.reply)")
             self.schedulePolicyMemoryUpdate(
-                eventSummary: "User chat feedback: \(trimmedDraft.cleanedSingleLine)\nAssistant reply: \(result.reply.cleanedSingleLine)",
+                eventSummary: "Latest user chat message: \(trimmedDraft.cleanedSingleLine)",
                 context: SnapshotService.frontmostContext()
             )
             // Run consolidation lazily so the chat reply never waits for it.
@@ -771,18 +788,23 @@ final class AppController: ObservableObject {
     /// Trigger the consolidation pass if the memory exceeds the soft cap, or if a full
     /// day has passed since the last consolidation (stale "today" entries etc. get pruned).
     /// Runs asynchronously; the chat reply never waits for it.
-    private var consolidationInFlight = false
     private func maybeConsolidateMemory(now: Date = Date()) {
         guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
-        guard !consolidationInFlight else { return }
         let overCap = state.memoryExceedsSoftCap
         let staleSinceLastRun: Bool = {
             guard let last = state.lastMemoryConsolidationAt else { return !state.memoryEntries.isEmpty }
             return now.timeIntervalSince(last) >= 24 * 60 * 60
         }()
         guard overCap || staleSinceLastRun else { return }
+        startMemoryConsolidation(now: now, reason: overCap ? "overflow" : "stale")
+    }
 
-        consolidationInFlight = true
+    private func startMemoryConsolidation(now: Date, reason: String) {
+        guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
+        guard !consolidatingMemory else { return }
+        guard !state.memoryEntries.isEmpty else { return }
+
+        consolidatingMemory = true
         let entriesSnapshot = state.memoryEntries
         let goalsSnapshot = state.goalsText
         let runtimeOverride = state.runtimePathOverride
@@ -796,17 +818,20 @@ final class AppController: ObservableObject {
             )
             await MainActor.run {
                 guard let self else { return }
-                self.consolidationInFlight = false
+                self.consolidatingMemory = false
                 self.state.lastMemoryConsolidationAt = now
                 if let consolidated {
                     self.state.memoryEntries = consolidated
                     self.persistState()
                     self.logActivity(
                         "memory",
-                        "Consolidated \(entriesSnapshot.count) → \(consolidated.count) entries"
+                        "Consolidated \(entriesSnapshot.count) → \(consolidated.count) entries (\(reason))"
                     )
                 } else {
                     // Keep whatever is there; just record that we tried, so we back off a day.
+                    if reason == "manual" {
+                        self.setupErrorMessage = "Memory consolidation did not return a usable result."
+                    }
                     self.persistState()
                 }
             }

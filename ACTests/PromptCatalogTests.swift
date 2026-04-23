@@ -35,7 +35,8 @@ struct PromptCatalogTests {
 
         #expect(systemPrompt.contains("assessment` and `suggested_action` must agree"))
         #expect(systemPrompt.contains("Prefer silence over a false positive."))
-        #expect(systemPrompt.contains("recent interventions"))
+        #expect(systemPrompt.contains("policySummary"))
+        #expect(systemPrompt.contains("the newest relevant user statement wins"))
         #expect(perceptionPrompt.contains("Do not decide whether the activity matches the user's goals or policy rules yet."))
         #expect(runtimeProfile.options(for: .decision).ctxSize == 4096)
     }

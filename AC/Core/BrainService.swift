@@ -64,8 +64,7 @@ final class BrainService: NSObject {
         let userMessages = chatHistory
             .filter { $0.role == .user }
             .suffix(limit)
-            .map { $0.text.cleanedSingleLine }
-            .filter { !$0.isEmpty }
+            .compactMap(\.promptStampedLine)
         return Array(userMessages)
     }
 

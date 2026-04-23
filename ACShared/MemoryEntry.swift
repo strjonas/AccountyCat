@@ -10,12 +10,25 @@
 
 import Foundation
 
+public enum PromptTimestampFormatting {
+    /// Local wall-clock timestamp format used inside prompts and inspector memory.
+    /// Keep it absolute and compact so the model never has to interpret "today" /
+    /// "yesterday" relative to a separate hidden clock.
+    nonisolated public static func absoluteLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
 public struct MemoryEntry: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var createdAt: Date
     public var text: String
 
-    public init(id: UUID = UUID(), createdAt: Date = Date(), text: String) {
+    nonisolated public init(id: UUID = UUID(), createdAt: Date = Date(), text: String) {
         self.id = id
         self.createdAt = createdAt
         self.text = text
@@ -23,25 +36,12 @@ public struct MemoryEntry: Codable, Hashable, Sendable, Identifiable {
 }
 
 public enum MemoryRendering {
-    /// Prompt-facing timestamp format: short, unambiguous, under 20 chars.
-    /// Uses local time of the device. The decision prompt is told the current time
-    /// so the LLM can reason about "today" / "yesterday" etc. relative to these stamps.
-    public static func timestampLabel(for date: Date, now: Date) -> String {
-        let calendar = Calendar.current
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-
-        if calendar.isDate(date, inSameDayAs: now) {
-            formatter.dateFormat = "HH:mm"
-            return "today \(formatter.string(from: date))"
-        }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
-           calendar.isDate(date, inSameDayAs: yesterday) {
-            formatter.dateFormat = "HH:mm"
-            return "yesterday \(formatter.string(from: date))"
-        }
-        formatter.dateFormat = "MMM d HH:mm"
-        return formatter.string(from: date)
+    /// Prompt-facing timestamp format: local wall-clock absolute time.
+    /// We intentionally avoid relative labels like "today" / "yesterday" because they
+    /// force the model to do extra temporal reasoning on every request.
+    nonisolated public static func timestampLabel(for date: Date, now: Date) -> String {
+        let _ = now
+        return PromptTimestampFormatting.absoluteLabel(for: date)
     }
 
     /// Render entries to the compact bullet format the LLM sees.

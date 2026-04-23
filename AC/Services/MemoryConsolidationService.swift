@@ -43,9 +43,9 @@ actor MemoryConsolidationService {
         do {
             output = try await runtime.runTextInference(
                 runtimePath: runtimePath,
-                modelIdentifier: modelIdentifier,
                 systemPrompt: systemPrompt,
-                userPrompt: userPrompt
+                userPrompt: userPrompt,
+                options: Self.inferenceOptions(modelIdentifier: modelIdentifier)
             )
         } catch {
             await ActivityLogService.shared.append(
@@ -76,7 +76,8 @@ actor MemoryConsolidationService {
             .joined(separator: "\n")
 
         return """
-        Current time: \(iso.string(from: now))
+        Current local time: \(PromptTimestampFormatting.absoluteLabel(for: now))
+        Current ISO time: \(iso.string(from: now))
 
         User goals:
         \(goals.cleanedSingleLine)
@@ -88,6 +89,7 @@ actor MemoryConsolidationService {
         - Drop entries whose time scope has clearly passed (e.g. "today" but created yesterday or earlier, "this evening" once it's the next morning, "for the next hour" more than an hour ago).
         - Merge duplicates and near-duplicates into a single line.
         - Keep both restrictions ("don't let me use X") and allowances ("X is okay" / "taking a break") — neither is more important than the other. The newest version wins if they conflict.
+        - When a memory line uses relative time language, resolve it against the current time and prefer rewriting the surviving line with an explicit end time when that makes it clearer.
         - Prefer recent entries over older ones when both can't fit.
         - Preserve load-bearing detail (app names, durations, time scopes). Don't paraphrase things away.
         - Aim for 10 or fewer final entries. It is fine to return fewer.
@@ -96,8 +98,23 @@ actor MemoryConsolidationService {
         {"entries":[{"created":"ISO-8601 timestamp","text":"single concise bullet"}, ...]}
         - Use the original created timestamp when keeping/merging an entry (pick the most recent contributor).
         - Use the current time for any genuinely new summary line.
+        - In `text`, prefer explicit times over vague relative phrases when the expiry matters.
         - No markdown, no other keys, no commentary.
         """
+    }
+
+    nonisolated private static func inferenceOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            modelIdentifier: modelIdentifier,
+            maxTokens: 320,
+            temperature: 0.15,
+            topP: 0.9,
+            topK: 48,
+            ctxSize: 4096,
+            batchSize: 1024,
+            ubatchSize: 512,
+            timeoutSeconds: 45
+        )
     }
 
     nonisolated private static func parseEntries(

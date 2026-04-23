@@ -25,7 +25,7 @@ enum MonitoringPromptContextBudget {
     /// Last user chat messages passed into decision + nudge stages as a safety net
     /// against memory extraction lag.
     nonisolated static let recentUserChatCount = 3
-    nonisolated static let recentUserChatCharacters = 180
+    nonisolated static let recentUserChatCharacters = 240
 }
 
 nonisolated struct MonitoringPromptHeuristicSummary: Codable, Hashable, Sendable {

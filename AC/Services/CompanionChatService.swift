@@ -95,7 +95,7 @@ actor CompanionChatService {
         } else {
             historySection = history.map { msg in
                 let label = msg.role == .user ? "User" : "AccountyCat"
-                return "\(label): \(msg.text.cleanedSingleLine)"
+                return "[\(msg.promptTimestampLabel)] \(label): \(msg.text.cleanedSingleLine)"
             }.joined(separator: "\n")
         }
 
@@ -106,17 +106,17 @@ actor CompanionChatService {
         Frontmost app: \(context.frontmostAppName)
         Window: \(context.frontmostWindowTitle ?? "—")
         Idle: \(Int(context.idleSeconds))s
-        Time: \(context.timestamp.formatted(date: .abbreviated, time: .shortened))
+        Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
         Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
         Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
 
         [User goals]
         \(goals.cleanedSingleLine)
 
-        [Persistent memory — lines are stamped with when they were added; honour them and treat later lines as overriding earlier ones]
+        [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
         \(memorySection)
 
-        [Recent conversation]
+        [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
         \(historySection)
 
         [New user message]
@@ -133,6 +133,12 @@ actor CompanionChatService {
         Otherwise set `memory` to null. Be conservative — do NOT add a memory for every message.
         Add one memory only when it clearly adds value on top of what's already remembered, and
         phrase it so it still makes sense on its own days from now.
+        If the user gives a time-boxed rule or allowance, rewrite it with an explicit local expiry
+        time instead of relative words like "today", "tonight", or "for the next hour".
+        Good: "X.com is allowed until 2026-04-23 17:15"
+        Good: "Do not allow Instagram until 2026-04-23 23:59"
+        Bad: "X.com is okay for a bit"
+        Bad: "No Instagram today"
 
         Return exactly one JSON object: {"reply":"your response","memory":null}
         or {"reply":"your response","memory":"single concise bullet under 20 words"}

@@ -225,7 +225,7 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
     var text: String
     var timestamp: Date
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         role: ChatRole,
         text: String,
@@ -235,6 +235,16 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         self.role = role
         self.text = text
         self.timestamp = timestamp
+    }
+
+    nonisolated var promptTimestampLabel: String {
+        PromptTimestampFormatting.absoluteLabel(for: timestamp)
+    }
+
+    nonisolated var promptStampedLine: String? {
+        let cleaned = text.cleanedSingleLine
+        guard !cleaned.isEmpty else { return nil }
+        return "[\(promptTimestampLabel)] \(cleaned)"
     }
 }
 
@@ -410,6 +420,12 @@ struct ACState: Codable, Sendable {
     init() {}
 
     init(from decoder: Decoder) throws {
+        struct LegacyChatMessage: Decodable {
+            var id: UUID
+            var role: ChatRole
+            var text: String
+        }
+
         let container = try decoder.container(keyedBy: CodingKeys.self)
         character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
@@ -450,7 +466,24 @@ struct ACState: Codable, Sendable {
         }
         lastMemoryConsolidationAt = try container.decodeIfPresent(Date.self, forKey: .lastMemoryConsolidationAt)
         policyMemory = try container.decodeIfPresent(PolicyMemory.self, forKey: .policyMemory) ?? PolicyMemory()
-        chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
+        do {
+            chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
+        } catch {
+            let legacyHistory = (try? container.decode([LegacyChatMessage].self, forKey: .chatHistory)) ?? []
+            if legacyHistory.isEmpty {
+                chatHistory = []
+            } else {
+                let now = Date()
+                chatHistory = legacyHistory.enumerated().map { index, message in
+                    ChatMessage(
+                        id: message.id,
+                        role: message.role,
+                        text: message.text,
+                        timestamp: now.addingTimeInterval(-Double(legacyHistory.count - index) * 60)
+                    )
+                }
+            }
+        }
     }
 
     func encode(to encoder: Encoder) throws {

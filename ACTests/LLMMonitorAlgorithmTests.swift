@@ -124,6 +124,40 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func recentExplicitAllowanceOverrideShortCircuitsDistractingDecision() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = try #require(makeLocalPromptDate("2026-04-23 16:15"))
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-allow-override",
+                runtimeOverride: runtimeFixture.runtimePath,
+                snapshot: makeSnapshot(
+                    now: now,
+                    windowTitle: "Home / X"
+                ),
+                memory: """
+                [2026-04-23 16:05] Do not allow use of X.com today.
+                [2026-04-23 16:06] Nudge user if they visit X.com in the next hour.
+                """,
+                recentUserMessages: [
+                    "[2026-04-23 16:10] the next 1 hour x.com is okay",
+                ]
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.decision.assessment == .focused)
+        #expect(result.decision.reasonTags == ["recent_allow_override"])
+        #expect(result.policy.record.blockReason == "recent_allow_override")
+        #expect(result.evaluation.attempts.isEmpty)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(10 * 60))
+    }
+
+    @Test
     func scheduledFocusedFollowUpDoesNotReevaluateUntilDue() {
         let algorithm = makeAlgorithm()
         let context = FrontmostContext(
@@ -266,7 +300,10 @@ struct LLMMonitorAlgorithmTests {
         now: Date,
         evaluationID: String,
         runtimeOverride: String,
-        state: AlgorithmStateEnvelope? = nil
+        state: AlgorithmStateEnvelope? = nil,
+        snapshot: AppSnapshot? = nil,
+        memory: String = "Keep social media short during focused work.",
+        recentUserMessages: [String] = []
     ) -> MonitoringDecisionInput {
         var configuration = MonitoringConfiguration()
         configuration.pipelineProfileID = "title_only_default"
@@ -275,11 +312,12 @@ struct LLMMonitorAlgorithmTests {
         return MonitoringDecisionInput(
             now: now,
             evaluationID: evaluationID,
-            snapshot: makeSnapshot(now: now),
+            snapshot: snapshot ?? makeSnapshot(now: now),
             goals: "Ship AC and stay focused on engineering work.",
             recentActions: [],
             heuristics: makeHeuristics(),
-            memory: "Keep social media short during focused work.",
+            memory: memory,
+            recentUserMessages: recentUserMessages,
             policyMemory: PolicyMemory(),
             runtimeOverride: runtimeOverride,
             configuration: configuration,
@@ -309,21 +347,26 @@ struct LLMMonitorAlgorithmTests {
         )
     }
 
-    private func makeSnapshot(now: Date) -> AppSnapshot {
+    private func makeSnapshot(
+        now: Date,
+        appName: String = "Google Chrome",
+        windowTitle: String? = "Docs",
+        bundleIdentifier: String = "com.google.Chrome"
+    ) -> AppSnapshot {
         AppSnapshot(
-            bundleIdentifier: "com.google.Chrome",
-            appName: "Google Chrome",
-            windowTitle: "Docs",
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            windowTitle: windowTitle,
             recentSwitches: [
                 AppSwitchRecord(
                     fromAppName: "Xcode",
-                    toAppName: "Google Chrome",
-                    toWindowTitle: "Docs",
+                    toAppName: appName,
+                    toWindowTitle: windowTitle,
                     timestamp: now.addingTimeInterval(-15)
                 ),
             ],
             perAppDurations: [
-                AppUsageRecord(appName: "Google Chrome", seconds: 900),
+                AppUsageRecord(appName: appName, seconds: 900),
                 AppUsageRecord(appName: "Xcode", seconds: 3_600),
             ],
             screenshotArtifact: nil,
@@ -341,5 +384,13 @@ struct LLMMonitorAlgorithmTests {
             helpfulWindowTitle: true,
             periodicVisualReason: nil
         )
+    }
+
+    private func makeLocalPromptDate(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.date(from: value)
     }
 }

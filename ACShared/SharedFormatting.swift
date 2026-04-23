@@ -34,11 +34,11 @@ enum TelemetryTimestampCodec {
 }
 
 extension Date {
-    var acDayKey: String {
+    nonisolated var acDayKey: String {
         Self.acDayFormatter.string(from: self)
     }
 
-    static let acDayFormatter: DateFormatter = {
+    nonisolated static let acDayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")

@@ -283,7 +283,7 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
                 segments.append("avoid: \(rule.disallowedTopics.joined(separator: ", "))")
             }
             if let expiresAt = rule.schedule.expiresAt {
-                segments.append("until \(expiresAt.formatted(date: .abbreviated, time: .shortened))")
+                segments.append("until \(PromptTimestampFormatting.absoluteLabel(for: expiresAt))")
             }
             lines.append("• " + segments.joined(separator: " — "))
         }

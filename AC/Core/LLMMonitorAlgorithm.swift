@@ -185,6 +185,45 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
         )
         let recentUserMessages = Self.compactRecentUserMessages(input.recentUserMessages)
+        if Self.hasActiveExplicitAllowanceOverride(
+            snapshot: input.snapshot,
+            now: input.now,
+            recentUserMessages: recentUserMessages,
+            freeFormMemory: freeFormMemory
+        ) {
+            var updatedState = input.algorithmState
+            updatedState.llmPolicy.activeAppeal = nil
+            updatedState.llmPolicy.distraction.contextKey = updatedState.llmPolicy.currentContextKey
+            updatedState.llmPolicy.distraction.lastAssessment = .focused
+            updatedState.llmPolicy.distraction.consecutiveDistractedCount = 0
+            updatedState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(focusedFollowUp)
+
+            let decision = LLMDecision(
+                assessment: .focused,
+                suggestedAction: .none,
+                confidence: 1.0,
+                reasonTags: ["recent_allow_override"],
+                nudge: nil,
+                abstainReason: nil
+            )
+            return makeResult(
+                input: input,
+                execution: execution,
+                evaluation: LLMEvaluationResult(
+                    runtimePath: runtimePath,
+                    modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
+                    promptProfileID: descriptor.id,
+                    promptProfileVersion: descriptor.version,
+                    attempts: [],
+                    finalDecision: decision,
+                    failureMessage: nil
+                ),
+                decision: decision,
+                action: .none,
+                updatedState: updatedState,
+                blockReason: "recent_allow_override"
+            )
+        }
 
         var titlePerception: MonitoringPerceptionEnvelope?
         if pipelineProfile.usesTitlePerception {
@@ -702,7 +741,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     }
 
     static func compactRecentUserMessages(_ messages: [String]) -> [String] {
-        // Newest-first from the caller; take the last `recentUserChatCount` and render short.
+        // Caller already passes the last few user messages oldest→newest; keep that order so
+        // "newest wins" is visually obvious at the tail of the list.
         messages
             .map { $0.cleanedSingleLine }
             .filter { !$0.isEmpty }
@@ -725,6 +765,300 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
     }
 
+    nonisolated private static func hasActiveExplicitAllowanceOverride(
+        snapshot: AppSnapshot,
+        now: Date,
+        recentUserMessages: [String],
+        freeFormMemory: String
+    ) -> Bool {
+        let recentDirectives = recentUserMessages.compactMap(parseExplicitDirective(from:))
+        let memoryDirectives = freeFormMemory
+            .split(separator: "\n")
+            .compactMap { parseExplicitDirective(from: String($0)) }
+        let directives = recentDirectives + memoryDirectives
+
+        let matchingAllows = directives
+            .filter { $0.kind == .allow }
+            .filter { $0.isActive(at: now) }
+            .filter { directiveMatchesContext($0.target, snapshot: snapshot) }
+            .sorted { $0.sourceTime > $1.sourceTime }
+        guard let newestAllow = matchingAllows.first else { return false }
+
+        let matchingBlocks = directives
+            .filter { $0.kind == .block }
+            .filter { $0.isActive(at: now) }
+            .filter { directiveMatchesContext($0.target, snapshot: snapshot) }
+            .sorted { $0.sourceTime > $1.sourceTime }
+
+        guard let newestBlock = matchingBlocks.first else { return true }
+        return newestAllow.sourceTime >= newestBlock.sourceTime
+    }
+
+    nonisolated private static func parseExplicitDirective(from line: String) -> ExplicitDirective? {
+        let trimmed = line.cleanedSingleLine
+        guard let parsed = parseStampedLine(trimmed) else { return nil }
+        let body = parsed.body
+        let lowerBody = body.lowercased()
+
+        if let absoluteAllow = parseAbsoluteDirective(
+            body: body,
+            lowerBody: lowerBody,
+            separator: " is allowed until "
+        ) {
+            return ExplicitDirective(
+                kind: .allow,
+                target: absoluteAllow.target,
+                sourceTime: parsed.timestamp,
+                expiresAt: absoluteAllow.expiresAt
+            )
+        }
+        if let absoluteOkay = parseAbsoluteDirective(
+            body: body,
+            lowerBody: lowerBody,
+            separator: " is okay until "
+        ) {
+            return ExplicitDirective(
+                kind: .allow,
+                target: absoluteOkay.target,
+                sourceTime: parsed.timestamp,
+                expiresAt: absoluteOkay.expiresAt
+            )
+        }
+        if let relativeAllow = parseRelativeAllowance(body: body, lowerBody: lowerBody, sourceTime: parsed.timestamp) {
+            return relativeAllow
+        }
+        if let blockUntil = parseAbsoluteDirective(
+            body: body,
+            lowerBody: lowerBody,
+            separator: "do not allow use of ",
+            trailingSeparator: " until "
+        ) {
+            return ExplicitDirective(
+                kind: .block,
+                target: blockUntil.target,
+                sourceTime: parsed.timestamp,
+                expiresAt: blockUntil.expiresAt
+            )
+        }
+        if let blockUntil = parseAbsoluteDirective(
+            body: body,
+            lowerBody: lowerBody,
+            separator: "do not allow ",
+            trailingSeparator: " until "
+        ) {
+            return ExplicitDirective(
+                kind: .block,
+                target: blockUntil.target,
+                sourceTime: parsed.timestamp,
+                expiresAt: blockUntil.expiresAt
+            )
+        }
+        if let blockToday = parseTodayBlock(body: body, lowerBody: lowerBody, sourceTime: parsed.timestamp) {
+            return blockToday
+        }
+
+        return nil
+    }
+
+    nonisolated private static func parseStampedLine(_ line: String) -> (timestamp: Date, body: String)? {
+        guard line.hasPrefix("["),
+              let closingBracket = line.firstIndex(of: "]") else {
+            return nil
+        }
+        let label = String(line[line.index(after: line.startIndex)..<closingBracket])
+        let body = String(line[line.index(after: closingBracket)...]).trimmingCharacters(in: .whitespaces)
+        guard !body.isEmpty,
+              let timestamp = makeLocalPromptDateFormatter().date(from: label) else {
+            return nil
+        }
+        return (timestamp, body)
+    }
+
+    nonisolated private static func parseAbsoluteDirective(
+        body: String,
+        lowerBody: String,
+        separator: String
+    ) -> (target: String, expiresAt: Date)? {
+        guard let range = lowerBody.range(of: separator) else { return nil }
+        let target = body[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        let timeText = body[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard !target.isEmpty,
+              let expiresAt = makeLocalPromptDateFormatter().date(from: timeText) else {
+            return nil
+        }
+        return (target, expiresAt)
+    }
+
+    nonisolated private static func parseAbsoluteDirective(
+        body: String,
+        lowerBody: String,
+        separator: String,
+        trailingSeparator: String
+    ) -> (target: String, expiresAt: Date)? {
+        guard let prefixRange = lowerBody.range(of: separator),
+              prefixRange.lowerBound == lowerBody.startIndex,
+              let trailingRange = lowerBody.range(of: trailingSeparator),
+              trailingRange.lowerBound > prefixRange.upperBound else {
+            return nil
+        }
+        let target = body[prefixRange.upperBound..<trailingRange.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let timeText = body[trailingRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard !target.isEmpty,
+              let expiresAt = makeLocalPromptDateFormatter().date(from: timeText) else {
+            return nil
+        }
+        return (target, expiresAt)
+    }
+
+    nonisolated private static func parseRelativeAllowance(
+        body: String,
+        lowerBody: String,
+        sourceTime: Date
+    ) -> ExplicitDirective? {
+        if let range = lowerBody.range(of: " is okay for the next ") {
+            let target = body[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            let remainder = lowerBody[range.upperBound...]
+            guard !target.isEmpty,
+                  let duration = parseDuration(from: String(remainder)) else {
+                return nil
+            }
+            return ExplicitDirective(
+                kind: .allow,
+                target: target,
+                sourceTime: sourceTime,
+                expiresAt: sourceTime.addingTimeInterval(duration.seconds)
+            )
+        }
+
+        let prefixes = ["the next ", "for the next "]
+        for prefix in prefixes where lowerBody.hasPrefix(prefix) {
+            let remainder = String(lowerBody.dropFirst(prefix.count))
+            guard let duration = parseDuration(from: remainder),
+                  let okayRange = remainder.range(of: " is okay") else {
+                continue
+            }
+            let targetStart = remainder.index(remainder.startIndex, offsetBy: duration.offset)
+            let target = String(remainder[targetStart..<okayRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { continue }
+            return ExplicitDirective(
+                kind: .allow,
+                target: target,
+                sourceTime: sourceTime,
+                expiresAt: sourceTime.addingTimeInterval(duration.seconds)
+            )
+        }
+
+        return nil
+    }
+
+    nonisolated private static func parseDuration(from text: String) -> (seconds: TimeInterval, offset: Int)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count >= 2,
+              let amount = Double(parts[0]) else {
+            return nil
+        }
+        let unit = String(parts[1]).lowercased()
+        let seconds: TimeInterval
+        if unit.hasPrefix("hour") {
+            seconds = amount * 60 * 60
+        } else if unit.hasPrefix("minute") {
+            seconds = amount * 60
+        } else {
+            return nil
+        }
+        let prefix = "\(parts[0]) \(parts[1])"
+        return (seconds, prefix.count + 1)
+    }
+
+    nonisolated private static func parseTodayBlock(
+        body: String,
+        lowerBody: String,
+        sourceTime: Date
+    ) -> ExplicitDirective? {
+        let prefixes = ["do not allow use of ", "do not allow "]
+        let hasTodaySuffix = lowerBody.hasSuffix(" today.") || lowerBody.hasSuffix(" today")
+        for prefix in prefixes where lowerBody.hasPrefix(prefix) && hasTodaySuffix {
+            let suffixLength = lowerBody.hasSuffix(" today.") ? " today.".count : " today".count
+            let endIndex = body.index(body.endIndex, offsetBy: -suffixLength)
+            let startIndex = body.index(body.startIndex, offsetBy: prefix.count)
+            guard startIndex < endIndex else { continue }
+            let target = body[startIndex..<endIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { continue }
+            return ExplicitDirective(
+                kind: .block,
+                target: target,
+                sourceTime: sourceTime,
+                expiresAt: endOfDay(for: sourceTime)
+            )
+        }
+        return nil
+    }
+
+    nonisolated private static func directiveMatchesContext(_ target: String, snapshot: AppSnapshot) -> Bool {
+        let contextText = [
+            snapshot.appName,
+            snapshot.windowTitle ?? "",
+            snapshot.bundleIdentifier ?? "",
+        ]
+        .joined(separator: " ")
+        .lowercased()
+        let tokenSet = Set(
+            contextText.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+        )
+        let aliases = targetAliases(for: target)
+
+        for alias in aliases {
+            if alias.count <= 1 {
+                if tokenSet.contains(alias) {
+                    return true
+                }
+            } else if tokenSet.contains(alias) || contextText.contains(alias) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    nonisolated private static func targetAliases(for target: String) -> [String] {
+        let lowered = target.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = lowered.replacingOccurrences(
+            of: #"[^a-z0-9.]+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        let parts = sanitized.split(separator: " ").map(String.init)
+        var aliases = Set(parts)
+
+        if let domain = parts.first(where: { $0.contains(".") }),
+           let root = domain.split(separator: ".").first {
+            aliases.insert(String(root))
+        }
+        if !sanitized.isEmpty {
+            aliases.insert(sanitized.replacingOccurrences(of: " ", with: ""))
+        }
+        return Array(aliases.filter { !$0.isEmpty })
+    }
+
+    nonisolated private static func endOfDay(for date: Date) -> Date? {
+        let calendar = Calendar.current
+        guard let startOfNextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date)) else {
+            return nil
+        }
+        return startOfNextDay.addingTimeInterval(-60)
+    }
+
+    nonisolated private static func makeLocalPromptDateFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }
+
     private static func makeDecisionEnvelope(from decision: LLMDecision) -> MonitoringDecisionEnvelope {
         MonitoringDecisionEnvelope(
             assessment: decision.assessment,
@@ -739,6 +1073,23 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             submitButtonTitle: nil,
             secondaryButtonTitle: nil
         )
+    }
+}
+
+private struct ExplicitDirective: Sendable {
+    nonisolated enum Kind: Sendable {
+        case allow
+        case block
+    }
+
+    var kind: Kind
+    var target: String
+    var sourceTime: Date
+    var expiresAt: Date?
+
+    nonisolated func isActive(at now: Date) -> Bool {
+        guard let expiresAt else { return true }
+        return expiresAt >= now
     }
 }
 

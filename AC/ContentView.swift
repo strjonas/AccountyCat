@@ -282,6 +282,28 @@ struct ContentView: View {
     @ViewBuilder
     private var advancedContent: some View {
         VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Memory consolidation", systemImage: "brain.head.profile")
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+
+                Text("Runs AC's memory cleanup immediately. Useful when rules feel stale, contradictory, or too noisy.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button(controller.consolidatingMemory ? "Consolidating..." : "Consolidate memory") {
+                        controller.consolidateMemoryNow()
+                    }
+                    .buttonStyle(ACSecondaryButton())
+                    .disabled(!controller.canConsolidateMemory)
+
+                    Text("\(controller.state.memoryEntries.count) saved entries")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             // Reset
             VStack(alignment: .leading, spacing: 6) {
                 Label("Reset algorithm profile", systemImage: "arrow.counterclockwise")
