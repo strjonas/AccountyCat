@@ -39,11 +39,13 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             popoverHeader
-            Divider()
+            Divider().opacity(0.5)
             tabContent
         }
         .frame(width: ACD.popoverWidth)
         .background(Color(nsColor: .windowBackgroundColor))
+        .acAccent(for: controller.state.character)
+        .animation(.acFade, value: controller.state.character)
         .onAppear { controller.refreshSystemState() }
         .alert("Are you sure?", isPresented: Binding(
             get: { pendingSettingsAction != nil },
@@ -82,24 +84,21 @@ struct ContentView: View {
     // MARK: - Header
 
     private var popoverHeader: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "pawprint.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.acCaramel)
-                Text("AccountyCat")
-                    .font(.ac(15, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
+        HStack(spacing: 12) {
+            HStack(spacing: 9) {
+                HeaderMark(character: controller.state.character)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("AccountyCat")
+                        .font(.ac(15, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    StatusDot(status: controller.state.setupStatus,
+                              isPaused: controller.state.isPaused)
+                }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            StatusDot(status: controller.state.setupStatus,
-                      isPaused: controller.state.isPaused)
-
-            Spacer()
-
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 tabButton(.home)
                 tabButton(.settings)
                 if ACBuild.isDebug {
@@ -108,7 +107,7 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 13)
+        .padding(.vertical, 12)
         .background(headerBackground)
     }
 
@@ -117,16 +116,16 @@ struct ContentView: View {
             withAnimation(.acSnap) { selectedTab = tab }
         } label: {
             Image(systemName: tab.rawValue)
-                .font(.system(size: 13,
+                .font(.system(size: 12.5,
                               weight: selectedTab == tab ? .semibold : .regular))
                 .foregroundStyle(selectedTab == tab
-                                 ? Color.acCaramel
-                                 : Color.secondary.opacity(0.70))
-                .frame(width: 34, height: 28)
+                                 ? controller.state.character.accentColor
+                                 : Color.secondary.opacity(0.65))
+                .frame(width: 32, height: 26)
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .fill(selectedTab == tab
-                              ? Color.acCaramelSoft.opacity(0.45)
+                              ? controller.state.character.accentSoft.opacity(0.55)
                               : Color.clear)
                 )
         }
@@ -150,16 +149,15 @@ struct ContentView: View {
     // MARK: - Home Tab
 
     private var homeTab: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             if controller.state.setupStatus != .ready {
                 OnboardingDialogView()
                     .environmentObject(controller)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
-                StatsSection(stats: controller.todayStats)
+                StatsSection(stats: controller.todayStats,
+                             accent: controller.state.character.accentColor)
             }
-
-            Divider()
 
             ChatView()
                 .environmentObject(controller)
@@ -171,32 +169,25 @@ struct ContentView: View {
     // MARK: - Settings Tab
 
     private var settingsTab: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 22) {
 
             // ── Goals (always visible) ──
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Your goals", systemImage: "target")
-                    .font(.ac(14, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-
-                Text("AC nudges you back to these when you drift. Keep it short and specific.")
-                    .font(.ac(11))
-                    .foregroundStyle(.secondary)
-
+            SettingsSection(title: "Your goals", icon: "target",
+                            subtitle: "AC nudges you back to these when you drift. Keep it short and specific.") {
                 TextEditor(text: Binding(
                     get: { controller.state.goalsText },
                     set: { controller.updateGoals($0) }
                 ))
                 .font(.ac(13))
                 .frame(minHeight: 96, maxHeight: 140)
-                .padding(8)
+                .padding(10)
                 .scrollContentBackground(.hidden)
                 .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                         .fill(Color(nsColor: .textBackgroundColor))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.secondary.opacity(0.20), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                                .stroke(Color.acHairline, lineWidth: 1)
                         )
                 )
             }
@@ -207,11 +198,7 @@ struct ContentView: View {
                 onSelect: { controller.updateCharacter($0) }
             )
 
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Controls", systemImage: "switch.2")
-                    .font(.ac(14, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-
+            SettingsSection(title: "Controls", icon: "switch.2") {
                 HStack(spacing: 10) {
                     ToggleTile(
                         icon: controller.state.isPaused ? "play.circle.fill" : "pause.circle.fill",
@@ -234,15 +221,13 @@ struct ContentView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Rescue app", systemImage: "arrow.uturn.backward.circle")
-                    .font(.ac(13, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-
-                HStack {
+            SettingsSection(title: "Rescue app", icon: "arrow.uturn.backward.circle",
+                            subtitle: "Where AC sends you when you've drifted too far.") {
+                HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(controller.state.rescueApp.displayName)
-                            .font(.ac(13))
+                            .font(.ac(13, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary)
                         Text(controller.state.rescueApp.applicationPath
                              ?? controller.state.rescueApp.bundleIdentifier)
                             .font(.system(size: 10, design: .monospaced))
@@ -250,7 +235,7 @@ struct ContentView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     HStack(spacing: 6) {
                         Button("Choose") { controller.chooseRescueApp() }
                             .buttonStyle(ACSecondaryButton())
@@ -258,6 +243,16 @@ struct ContentView: View {
                             .buttonStyle(ACPrimaryButton())
                     }
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                                .stroke(Color.acHairline, lineWidth: 1)
+                        )
+                )
             }
 
             // ── Advanced (collapsible) ──
@@ -265,14 +260,14 @@ struct ContentView: View {
                 advancedContent
             }
 
-            Divider()
+            Divider().opacity(0.5)
 
             // ── Quit (always visible) ──
             HStack {
                 Spacer()
                 Button("Quit AccountyCat") { NSApp.terminate(nil) }
-                    .font(.ac(13))
-                    .foregroundStyle(Color.red.opacity(0.80))
+                    .font(.ac(12, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.78))
                     .buttonStyle(.plain)
             }
         }
@@ -281,18 +276,12 @@ struct ContentView: View {
 
     @ViewBuilder
     private var advancedContent: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Memory consolidation", systemImage: "brain.head.profile")
-                    .font(.ac(13, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-
-                Text("Runs AC's memory cleanup immediately. Useful when rules feel stale, contradictory, or too noisy.")
-                    .font(.ac(11))
-                    .foregroundStyle(.secondary)
-
+        VStack(alignment: .leading, spacing: 20) {
+            SettingsSection(title: "Memory consolidation",
+                            icon: "brain.head.profile",
+                            subtitle: "Runs AC's memory cleanup immediately. Useful when rules feel stale, contradictory, or too noisy.") {
                 HStack(spacing: 10) {
-                    Button(controller.consolidatingMemory ? "Consolidating..." : "Consolidate memory") {
+                    Button(controller.consolidatingMemory ? "Consolidating…" : "Consolidate memory") {
                         controller.consolidateMemoryNow()
                     }
                     .buttonStyle(ACSecondaryButton())
@@ -304,16 +293,9 @@ struct ContentView: View {
                 }
             }
 
-            // Reset
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Reset algorithm profile", systemImage: "arrow.counterclockwise")
-                    .font(.ac(13, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-
-                Text("Clears learned memory, recent behavior context, chat history, and usage context.")
-                    .font(.ac(11))
-                    .foregroundStyle(.secondary)
-
+            SettingsSection(title: "Reset algorithm profile",
+                            icon: "arrow.counterclockwise",
+                            subtitle: "Clears learned memory, recent behavior context, chat history, and usage context.") {
                 Button("Reset") { pendingSettingsAction = .resetAlgorithm }
                     .buttonStyle(ACDangerButton())
             }
@@ -505,26 +487,47 @@ struct ContentView: View {
 private struct StatusDot: View {
     let status: SetupStatus
     let isPaused: Bool
+    @Environment(\.acAccent) private var accent
+
+    @State private var pulse: Double = 0
 
     var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 7, height: 7)
+        HStack(spacing: 6) {
+            ZStack {
+                if status == .ready && !isPaused {
+                    Circle()
+                        .fill(dotColor.opacity(0.32))
+                        .frame(width: 12, height: 12)
+                        .scaleEffect(1 + pulse)
+                        .opacity(0.8 - pulse * 0.7)
+                }
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 6, height: 6)
+            }
+            .frame(width: 12, height: 12)
+
             Text(label)
-                .font(.ac(11))
+                .font(.ac(11, weight: .medium))
                 .foregroundStyle(.secondary)
+        }
+        .onAppear {
+            if status == .ready && !isPaused {
+                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                    pulse = 0.9
+                }
+            }
         }
     }
 
     private var dotColor: Color {
         switch status {
         case .ready:
-            return isPaused ? Color.acAmber : .green
+            return isPaused ? Color.acAmber : Color.green
         case .installing:
-            return .acCaramel
+            return accent
         default:
-            return .red.opacity(0.65)
+            return .red.opacity(0.7)
         }
     }
 
@@ -535,6 +538,37 @@ private struct StatusDot: View {
         case .checking:    return "Checking"
         default:           return "Setup needed"
         }
+    }
+}
+
+// MARK: - Header mark
+
+/// Small character-aware logo glyph used in the popover header. Pairs the AC
+/// wordmark with a hint of the active character's accent.
+private struct HeaderMark: View {
+    let character: ACCharacter
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [character.orbTopColor, character.orbBottomColor],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    Circle().stroke(Color.white.opacity(0.55), lineWidth: 0.6)
+                )
+                .shadow(color: character.shadowColor.opacity(0.25), radius: 4, y: 1.5)
+
+            Image(systemName: "pawprint.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(character.accentColor.opacity(0.85))
+        }
+        .frame(width: 24, height: 24)
+        .animation(.acFade, value: character)
     }
 }
 
@@ -551,11 +585,12 @@ private struct ToggleTile: View {
 
     var body: some View {
         Button { isOn.toggle() } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 11) {
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isOn ? tint : Color.secondary.opacity(0.75))
+                    .foregroundStyle(isOn ? tint : Color.secondary.opacity(0.7))
                     .frame(width: 22)
+                    .symbolEffect(.bounce, value: isOn)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
@@ -567,19 +602,17 @@ private struct ToggleTile: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isOn
-                          ? Color.acCaramelSoft.opacity(0.45)
-                          : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(isOn ? tint.opacity(0.10) : Color.acSurface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                             .stroke(isOn
-                                    ? tint.opacity(0.35)
-                                    : Color.secondary.opacity(0.18),
+                                    ? tint.opacity(0.45)
+                                    : Color.acHairline,
                                     lineWidth: 1)
                     )
             )
@@ -593,30 +626,29 @@ private struct ToggleTile: View {
 
 private struct StatsSection: View {
     let stats: AppController.TodayStats
+    let accent: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Today")
-                .font(.ac(11, weight: .semibold))
+                .font(.ac(10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
+                .tracking(0.6)
 
             HStack(spacing: 8) {
-                StatCard(
-                    icon: "clock.fill",
-                    value: formatDuration(stats.totalTrackedSeconds),
-                    label: "Tracked"
-                )
-                StatCard(
-                    icon: "bubble.left.fill",
-                    value: "\(stats.nudgeCount)",
-                    label: "Nudges"
-                )
-                StatCard(
-                    icon: "arrow.uturn.backward.circle.fill",
-                    value: "\(stats.backToWorkCount)",
-                    label: "Rescues"
-                )
+                StatCard(icon: "clock.fill",
+                         value: formatDuration(stats.totalTrackedSeconds),
+                         label: "Tracked",
+                         accent: accent)
+                StatCard(icon: "bubble.left.fill",
+                         value: "\(stats.nudgeCount)",
+                         label: "Nudges",
+                         accent: accent)
+                StatCard(icon: "arrow.uturn.backward.circle.fill",
+                         value: "\(stats.backToWorkCount)",
+                         label: "Rescues",
+                         accent: accent)
             }
         }
     }
@@ -635,16 +667,21 @@ private struct StatCard: View {
     let icon: String
     let value: String
     let label: String
+    let accent: Color
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.acCaramel)
+                .foregroundStyle(accent)
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle().fill(accent.opacity(0.12))
+                )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(value)
-                    .font(.ac(16, weight: .semibold))
+                    .font(.ac(17, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -653,18 +690,16 @@ private struct StatCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
                 )
         )
     }
@@ -675,6 +710,7 @@ private struct StatCard: View {
 private struct AdvancedDisclosure<Content: View>: View {
     @Binding var expanded: Bool
     @ViewBuilder let content: () -> Content
+    @Environment(\.acAccent) private var accent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -684,16 +720,17 @@ private struct AdvancedDisclosure<Content: View>: View {
                 HStack(spacing: 8) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.acCaramel)
+                        .foregroundStyle(accent)
                     Text("Advanced")
-                        .font(.ac(14, weight: .semibold))
+                        .font(.ac(13, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
+                .padding(.vertical, 4)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -706,18 +743,36 @@ private struct AdvancedDisclosure<Content: View>: View {
     }
 }
 
-// MARK: - Danger button
+// MARK: - Settings Section
 
-struct ACDangerButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.ac(13, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(Color.red.opacity(configuration.isPressed ? 0.82 : 0.92)))
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.acSnap, value: configuration.isPressed)
+/// Standard section header + optional subtitle wrapper used across settings.
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    let icon: String
+    var subtitle: String? = nil
+    @ViewBuilder let content: () -> Content
+    @Environment(\.acAccent) private var accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(accent.opacity(0.13)))
+                Text(title)
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 26)
+            }
+            content()
+        }
     }
 }
 
@@ -731,13 +786,31 @@ private struct CharacterPickerSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Style", systemImage: "theatermasks.fill")
-                .font(.ac(14, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
+            HStack(spacing: 8) {
+                Image(systemName: "theatermasks.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(selected.accentColor)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(selected.accentColor.opacity(0.13)))
+                Text("Style")
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+                Spacer()
+                Text(selected.displayName)
+                    .font(.ac(11, weight: .medium))
+                    .foregroundStyle(selected.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().fill(selected.accentColor.opacity(0.12))
+                    )
+                    .animation(.acFade, value: selected)
+            }
 
-            Text("Personalise AC's vibe. All styles are warm and supportive — this is just about energy.")
+            Text("Personalise AC's voice and palette. All styles are warm and supportive.")
                 .font(.ac(11))
                 .foregroundStyle(.secondary)
+                .padding(.leading, 26)
 
             HStack(spacing: 8) {
                 ForEach(ACCharacter.allCases, id: \.self) { character in
@@ -758,14 +831,12 @@ private struct CharacterCard: View {
     let isSelected: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            // Mini orb preview
+        VStack(spacing: 9) {
             ZStack {
                 if isSelected {
                     Circle()
-                        .stroke(character.accentColor, lineWidth: 2)
-                        .scaleEffect(1.18)
-                        .opacity(0.55)
+                        .stroke(character.accentColor.opacity(0.45), lineWidth: 1.5)
+                        .scaleEffect(1.22)
                 }
                 Circle()
                     .fill(
@@ -779,23 +850,22 @@ private struct CharacterCard: View {
                         Circle()
                             .stroke(
                                 isSelected ? character.accentColor.opacity(0.55) : Color.white.opacity(0.45),
-                                lineWidth: 1.5
+                                lineWidth: 1
                             )
                     )
-                    .shadow(color: character.shadowColor.opacity(0.22), radius: 6, y: 3)
+                    .shadow(color: character.shadowColor.opacity(0.25), radius: 6, y: 2)
 
-                // Tiny cat face
                 MiniCatFace(accentColor: character.accentColor)
-                    .padding(7)
+                    .padding(8)
             }
-            .frame(width: 44, height: 44)
+            .frame(width: 46, height: 46)
 
             VStack(spacing: 2) {
                 Text(character.displayName)
                     .font(.ac(12, weight: .semibold))
                     .foregroundStyle(isSelected ? character.accentColor : Color.acTextPrimary)
                 Text(character.tagline)
-                    .font(.ac(9))
+                    .font(.ac(9.5))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -803,17 +873,17 @@ private struct CharacterCard: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                 .fill(isSelected
-                      ? character.accentSoft.opacity(0.45)
-                      : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                      ? character.accentSoft.opacity(0.55)
+                      : Color.acSurface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                         .stroke(
-                            isSelected ? character.accentColor.opacity(0.50) : Color.secondary.opacity(0.18),
+                            isSelected ? character.accentColor.opacity(0.55) : Color.acHairline,
                             lineWidth: isSelected ? 1.5 : 1
                         )
                 )

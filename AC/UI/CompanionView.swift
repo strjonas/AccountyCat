@@ -101,6 +101,7 @@ struct CompanionView: View {
         }
         .animation(.acFade, value: controller.latestNudge)
         .animation(.acFade, value: showTooltip)
+        .acAccent(for: controller.state.character)
     }
 
     // MARK: - Mood helpers
