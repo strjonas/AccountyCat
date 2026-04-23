@@ -8,19 +8,6 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Build Flags
-
-enum ACBuild {
-    /// True for Debug configuration builds; false for Release.
-    /// Gate developer-only UI (test nudges, advanced pickers, telemetry browser) on this
-    /// so the shipping build is a clean, minimal surface.
-    #if DEBUG
-    static let isDebug = true
-    #else
-    static let isDebug = false
-    #endif
-}
-
 // MARK: - Color Palette
 
 extension Color {

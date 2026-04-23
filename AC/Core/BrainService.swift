@@ -70,6 +70,37 @@ final class BrainService: NSObject {
         self.telemetryStore = telemetryStore
     }
 
+    private func shouldPersistVerboseTelemetry(state: ACState? = nil) -> Bool {
+        let resolvedState = state ?? stateProvider?()
+        guard let resolvedState else {
+            return false
+        }
+        return TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: resolvedState.debugMode)
+    }
+
+    private func ensureTelemetrySessionIfNeeded(for state: ACState) async -> TelemetrySessionDescriptor? {
+        guard shouldPersistVerboseTelemetry(state: state) else {
+            return nil
+        }
+        return try? await telemetryStore.ensureCurrentSession(reason: "runtime")
+    }
+
+    private func cleanupEphemeralScreenshotIfNeeded(_ snapshot: AppSnapshot, sessionID: String?) {
+        guard sessionID == nil,
+              let screenshotPath = snapshot.screenshotPath,
+              !screenshotPath.isEmpty else {
+            return
+        }
+
+        let screenshotURL = URL(fileURLWithPath: screenshotPath).standardizedFileURL
+        let temporaryRoot = FileManager.default.temporaryDirectory.standardizedFileURL.path
+        guard screenshotURL.path.hasPrefix(temporaryRoot) else {
+            return
+        }
+
+        try? FileManager.default.removeItem(at: screenshotURL)
+    }
+
     func start() {
         guard timer == nil, contextProbeTimer == nil else { return }
 
@@ -132,31 +163,33 @@ final class BrainService: NSObject {
     }
 
     func recordUserReaction(_ reaction: UserReactionRecord, endEpisodeReason: EpisodeEndReason? = nil) {
-        Task {
-            let sessionID = (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
-            if let sessionID {
-                try? await telemetryStore.appendEvent(
-                    TelemetryEvent(
-                        id: UUID().uuidString,
-                        kind: .userReaction,
-                        timestamp: Date(),
-                        sessionID: sessionID,
-                        episodeID: activeEpisode?.id,
-                        episode: activeEpisode,
-                        session: nil,
-                        observation: nil,
-                        evaluation: nil,
-                        modelInput: nil,
-                        modelOutput: nil,
-                        parsedOutput: nil,
-                        policy: nil,
-                        action: nil,
-                        reaction: reaction,
-                        annotation: nil,
-                        failure: nil
-                    ),
-                    sessionID: sessionID
-                )
+        if shouldPersistVerboseTelemetry() {
+            Task {
+                let sessionID = (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
+                if let sessionID {
+                    try? await telemetryStore.appendEvent(
+                        TelemetryEvent(
+                            id: UUID().uuidString,
+                            kind: .userReaction,
+                            timestamp: Date(),
+                            sessionID: sessionID,
+                            episodeID: activeEpisode?.id,
+                            episode: activeEpisode,
+                            session: nil,
+                            observation: nil,
+                            evaluation: nil,
+                            modelInput: nil,
+                            modelOutput: nil,
+                            parsedOutput: nil,
+                            policy: nil,
+                            action: nil,
+                            reaction: reaction,
+                            annotation: nil,
+                            failure: nil
+                        ),
+                        sessionID: sessionID
+                    )
+                }
             }
         }
 
@@ -452,7 +485,7 @@ final class BrainService: NSObject {
                 : "Evaluating \(context.appName) from title and usage context.")
         }
 
-        let session = try? await telemetryStore.ensureCurrentSession(reason: "runtime")
+        let session = await ensureTelemetrySessionIfNeeded(for: state)
         let episodeTransition = ensureEpisode(for: context, sessionID: session?.id ?? "unknown", at: now)
         let evaluationEpisode = activeEpisode
         let algorithmDescriptor: MonitoringAlgorithmDescriptor
@@ -514,6 +547,9 @@ final class BrainService: NSObject {
                 episode: evaluationEpisode
             )
             return
+        }
+        defer {
+            cleanupEphemeralScreenshotIfNeeded(snapshot, sessionID: session?.id)
         }
 
         let preEvaluationDistraction = currentDistractionMetadata(from: state)
@@ -649,6 +685,7 @@ final class BrainService: NSObject {
         evaluationID: String,
         requiresScreenshot: Bool
     ) async throws -> AppSnapshot {
+        let persistVerboseTelemetry = shouldPersistVerboseTelemetry(state: state)
         let screenshotURL: URL?
         if requiresScreenshot {
             screenshotURL = try await SnapshotService.captureScreenshot()
@@ -662,7 +699,7 @@ final class BrainService: NSObject {
             .sorted { $0.seconds > $1.seconds }
 
         let screenshotArtifacts: StoredImageArtifacts?
-        if let sessionID, let screenshotURL {
+        if persistVerboseTelemetry, let sessionID, let screenshotURL {
             screenshotArtifacts = try? await telemetryStore.writeScreenshotArtifacts(
                 from: screenshotURL,
                 sessionID: sessionID,
@@ -673,7 +710,7 @@ final class BrainService: NSObject {
         }
 
         let fallbackArtifact: ArtifactRef?
-        if let screenshotURL {
+        if persistVerboseTelemetry, let screenshotURL {
             fallbackArtifact = ArtifactRef(
                 id: UUID().uuidString,
                 kind: .screenshotOriginal,
@@ -821,6 +858,10 @@ final class BrainService: NSObject {
         episode.endReason = reason
         activeEpisode = nil
 
+        guard shouldPersistVerboseTelemetry(state: state) else {
+            return
+        }
+
         if let context {
             let heuristics = MonitoringHeuristics.telemetrySnapshot(for: context)
             let observation = ObservationRecord(
@@ -873,6 +914,9 @@ final class BrainService: NSObject {
         transition: ObservationTransition,
         endReason: EpisodeEndReason?
     ) async {
+        guard shouldPersistVerboseTelemetry(state: state) else {
+            return
+        }
         guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
             return
         }
@@ -923,6 +967,7 @@ final class BrainService: NSObject {
         promptVersion: String,
         execution: MonitoringExecutionMetadata
     ) async {
+        guard shouldPersistVerboseTelemetry() else { return }
         guard let sessionID else { return }
         try? await telemetryStore.appendEvent(
             TelemetryEvent(
@@ -964,6 +1009,7 @@ final class BrainService: NSObject {
         heuristics: TelemetryHeuristicSnapshot,
         distraction: DistractionMetadata
     ) async {
+        guard shouldPersistVerboseTelemetry(state: state) else { return }
         guard let sessionID else { return }
 
         let contextRecord = TelemetryContextRecord(
@@ -1121,6 +1167,7 @@ final class BrainService: NSObject {
         episode: EpisodeRecord?,
         policy: PolicyDecisionRecord
     ) async {
+        guard shouldPersistVerboseTelemetry() else { return }
         guard let sessionID else { return }
         try? await telemetryStore.appendEvent(
             TelemetryEvent(
@@ -1153,6 +1200,7 @@ final class BrainService: NSObject {
         action: CompanionAction,
         execution: MonitoringExecutionMetadata
     ) async {
+        guard shouldPersistVerboseTelemetry() else { return }
         guard let sessionID else { return }
         guard action != .none else { return }
         try? await telemetryStore.appendEvent(
@@ -1186,6 +1234,9 @@ final class BrainService: NSObject {
     }
 
     private func recordImplicitReaction(_ reaction: UserReactionRecord, at now: Date) async {
+        guard shouldPersistVerboseTelemetry() else {
+            return
+        }
         guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
             return
         }
@@ -1242,6 +1293,9 @@ final class BrainService: NSObject {
         evaluationID: String?,
         episode: EpisodeRecord? = nil
     ) async {
+        guard shouldPersistVerboseTelemetry() else {
+            return
+        }
         guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
             return
         }

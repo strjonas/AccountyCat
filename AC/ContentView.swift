@@ -62,7 +62,7 @@ struct ContentView: View {
         } message: {
             switch pendingSettingsAction {
             case .resetAlgorithm:
-                Text("This clears saved chat history, learned memory, recent context, and usage profile, but keeps raw telemetry files.")
+                Text("This clears saved chat history, learned memory, recent context, and usage profile.")
             case .none:
                 Text("")
             }
@@ -282,7 +282,7 @@ struct ContentView: View {
                     .font(.ac(13, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
 
-                Text("Clears learned memory, recent behavior context, chat history, and usage context. Raw telemetry is kept.")
+                Text("Clears learned memory, recent behavior context, chat history, and usage context.")
                     .font(.ac(11))
                     .foregroundStyle(.secondary)
 

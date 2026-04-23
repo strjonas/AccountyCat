@@ -7,6 +7,23 @@
 
 import Foundation
 
+enum ACBuild {
+    /// True for Debug configuration builds; false for Release.
+    static let isDebug: Bool = {
+        #if DEBUG
+        true
+        #else
+        false
+        #endif
+    }()
+}
+
+enum TelemetryPersistencePolicy {
+    static func storesVerboseTelemetry(debugMode: Bool) -> Bool {
+        ACBuild.isDebug && debugMode
+    }
+}
+
 enum PermissionState: String, Codable, Sendable {
     case unknown
     case granted
@@ -273,7 +290,7 @@ struct ACState: Codable, Sendable {
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
     var isPaused = false
-    var debugMode = true
+    var debugMode = ACBuild.isDebug
     var goalsText = Self.defaultGoalsText
     var rescueApp = RescueAppTarget.xcode
     var runtimePathOverride: String?
@@ -347,7 +364,7 @@ struct ACState: Codable, Sendable {
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
-        debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? true
+        debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? ACBuild.isDebug
         goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
         rescueApp = try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
         runtimePathOverride = try container.decodeIfPresent(String.self, forKey: .runtimePathOverride)
