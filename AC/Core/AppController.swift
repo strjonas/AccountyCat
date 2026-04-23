@@ -92,6 +92,10 @@ final class AppController: ObservableObject {
         logActivity("app", "Bootstrapping AccountyCat")
         Task { @MainActor [weak self] in
             guard let self else { return }
+            guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: self.state.debugMode) else {
+                self.telemetrySessionID = nil
+                return
+            }
             if let session = try? await self.telemetryStore.startSession(reason: "app_launch") {
                 self.telemetrySessionID = session.id
             }
@@ -209,6 +213,17 @@ final class AppController: ObservableObject {
         state.debugMode = enabled
         logActivity("app", enabled ? "Debug mode enabled" : "Debug mode disabled")
         persistState()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: enabled) else {
+                await self.telemetryStore.endCurrentSession(reason: "debug_mode_disabled")
+                self.telemetrySessionID = nil
+                return
+            }
+            if let session = try? await self.telemetryStore.ensureCurrentSession(reason: "debug_mode_enabled") {
+                self.telemetrySessionID = session.id
+            }
+        }
     }
 
     func sendTestNudge() {
