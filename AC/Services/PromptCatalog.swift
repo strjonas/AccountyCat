@@ -307,8 +307,9 @@ enum PromptCatalog {
         return (asset, load(asset: asset))
     }
 
-    nonisolated static func loadChatSystemPrompt() -> String {
-        load(asset: chatSystemPrompt)
+    nonisolated static func loadChatSystemPrompt(character: ACCharacter = .mochi) -> String {
+        let base = load(asset: chatSystemPrompt)
+        return character.personalityPrefix + "\n\n" + base
     }
 
     nonisolated static func loadMemoryConsolidationSystemPrompt() -> String {

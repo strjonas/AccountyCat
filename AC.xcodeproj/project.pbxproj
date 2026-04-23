@@ -540,16 +540,16 @@
 			};
 			name = Release;
 		};
-			007DA5932F8BEEEA0050179A /* Debug */ = {
-				isa = XCBuildConfiguration;
-				buildSettings = {
-					BUNDLE_LOADER = "$(TEST_HOST)";
-					CODE_SIGN_IDENTITY = "Apple Development";
-					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-					CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
-					GENERATE_INFOPLIST_FILE = YES;
+		007DA5932F8BEEEA0050179A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.4;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ACCOUNTYCAT_BUNDLE_ID_PREFIX).ACTests";
@@ -563,16 +563,16 @@
 			};
 			name = Debug;
 		};
-			007DA5942F8BEEEA0050179A /* Release */ = {
-				isa = XCBuildConfiguration;
-				buildSettings = {
-					BUNDLE_LOADER = "$(TEST_HOST)";
-					CODE_SIGN_IDENTITY = "Apple Development";
-					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-					CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
-					GENERATE_INFOPLIST_FILE = YES;
+		007DA5942F8BEEEA0050179A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.4;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ACCOUNTYCAT_BUNDLE_ID_PREFIX).ACTests";
@@ -586,15 +586,15 @@
 			};
 			name = Release;
 		};
-			007DA5962F8BEEEA0050179A /* Debug */ = {
-				isa = XCBuildConfiguration;
-				buildSettings = {
-					CODE_SIGN_IDENTITY = "Apple Development";
-					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-					CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
-					GENERATE_INFOPLIST_FILE = YES;
+		007DA5962F8BEEEA0050179A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ACCOUNTYCAT_BUNDLE_ID_PREFIX).ACUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -607,15 +607,15 @@
 			};
 			name = Debug;
 		};
-			007DA5972F8BEEEA0050179A /* Release */ = {
-				isa = XCBuildConfiguration;
-				buildSettings = {
-					CODE_SIGN_IDENTITY = "Apple Development";
-					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-					CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
-					GENERATE_INFOPLIST_FILE = YES;
+		007DA5972F8BEEEA0050179A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "$(ACCOUNTYCAT_DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ACCOUNTYCAT_BUNDLE_ID_PREFIX).ACUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -201,6 +201,12 @@ struct ContentView: View {
                 )
             }
 
+            // ── Character ──
+            CharacterPickerSection(
+                selected: controller.state.character,
+                onSelect: { controller.updateCharacter($0) }
+            )
+
             VStack(alignment: .leading, spacing: 10) {
                 Label("Controls", systemImage: "switch.2")
                     .font(.ac(14, weight: .semibold))
@@ -215,7 +221,7 @@ struct ContentView: View {
                             get: { !controller.state.isPaused },
                             set: { _ in controller.togglePause() }
                         ),
-                        tint: .acCaramel
+                        tint: controller.state.character.accentColor
                     )
 
                     ToggleTile(
@@ -223,7 +229,7 @@ struct ContentView: View {
                         title: "Sound",
                         subtitle: soundEnabled ? "On for nudges" : "Muted",
                         isOn: $soundEnabled,
-                        tint: .acCaramel
+                        tint: controller.state.character.accentColor
                     )
                 }
             }
@@ -451,13 +457,11 @@ struct ContentView: View {
     // MARK: - Visual helpers
 
     private var headerBackground: some View {
+        let ch = controller.state.character
         if colorScheme == .dark {
             return AnyView(
                 LinearGradient(
-                    colors: [
-                        Color(red: 0.22, green: 0.18, blue: 0.13),
-                        Color(red: 0.18, green: 0.14, blue: 0.09),
-                    ],
+                    colors: [ch.headerDarkTop, ch.headerDarkBottom],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -465,10 +469,7 @@ struct ContentView: View {
         } else {
             return AnyView(
                 LinearGradient(
-                    colors: [
-                        Color(red: 1.00, green: 0.97, blue: 0.93),
-                        Color(red: 0.99, green: 0.94, blue: 0.87),
-                    ],
+                    colors: [ch.headerLightTop, ch.headerLightBottom],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -695,5 +696,149 @@ struct ACDangerButton: ButtonStyle {
             .background(Capsule().fill(Color.red.opacity(configuration.isPressed ? 0.82 : 0.92)))
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+// MARK: - Character Picker Section
+
+/// Three-card character picker shown in the Settings tab.
+/// Selecting a card immediately updates the character and animates the orb palette.
+private struct CharacterPickerSection: View {
+    let selected: ACCharacter
+    let onSelect: (ACCharacter) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Style", systemImage: "theatermasks.fill")
+                .font(.ac(14, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+
+            Text("Personalise AC's vibe. All styles are warm and supportive — this is just about energy.")
+                .font(.ac(11))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                ForEach(ACCharacter.allCases, id: \.self) { character in
+                    CharacterCard(character: character, isSelected: selected == character)
+                        .onTapGesture {
+                            withAnimation(.acSpring) { onSelect(character) }
+                        }
+                }
+            }
+        }
+    }
+}
+
+private struct CharacterCard: View {
+    let character: ACCharacter
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Mini orb preview
+            ZStack {
+                if isSelected {
+                    Circle()
+                        .stroke(character.accentColor, lineWidth: 2)
+                        .scaleEffect(1.18)
+                        .opacity(0.55)
+                }
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [character.orbTopColor, character.orbBottomColor],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                isSelected ? character.accentColor.opacity(0.55) : Color.white.opacity(0.45),
+                                lineWidth: 1.5
+                            )
+                    )
+                    .shadow(color: character.shadowColor.opacity(0.22), radius: 6, y: 3)
+
+                // Tiny cat face
+                MiniCatFace(accentColor: character.accentColor)
+                    .padding(7)
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(spacing: 2) {
+                Text(character.displayName)
+                    .font(.ac(12, weight: .semibold))
+                    .foregroundStyle(isSelected ? character.accentColor : Color.acTextPrimary)
+                Text(character.tagline)
+                    .font(.ac(9))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isSelected
+                      ? character.accentSoft.opacity(0.45)
+                      : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(
+                            isSelected ? character.accentColor.opacity(0.50) : Color.secondary.opacity(0.18),
+                            lineWidth: isSelected ? 1.5 : 1
+                        )
+                )
+        )
+        .scaleEffect(isSelected ? 1.02 : 1.0)
+        .animation(.acSpring, value: isSelected)
+    }
+}
+
+/// Simplified cat face used inside the character picker cards.
+private struct MiniCatFace: View {
+    let accentColor: Color
+
+    var body: some View {
+        ZStack {
+            // Left ear
+            Triangle()
+                .fill(Color.acFurDark)
+                .frame(width: 10, height: 8)
+                .offset(x: -8, y: -10)
+            // Right ear
+            Triangle()
+                .fill(Color.acFurDark)
+                .frame(width: 10, height: 8)
+                .offset(x: 8, y: -10)
+            // Face
+            Circle().fill(Color.acFur)
+            // Eyes
+            HStack(spacing: 6) {
+                Capsule().frame(width: 3.5, height: 4.5).foregroundStyle(Color.acEyeColor)
+                Capsule().frame(width: 3.5, height: 4.5).foregroundStyle(Color.acEyeColor)
+            }
+            .offset(y: -2)
+            // Nose
+            Circle()
+                .fill(Color.acNoseColor)
+                .frame(width: 2.5, height: 2.5)
+                .offset(y: 3)
+        }
+    }
+}
+
+private struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.closeSubpath()
+        return p
     }
 }

@@ -54,6 +54,8 @@ struct MonitoringDecisionInput: Sendable {
     var runtimeOverride: String?
     var configuration: MonitoringConfiguration
     var algorithmState: AlgorithmStateEnvelope
+    /// Personality prefix from the selected ACCharacter — threaded into nudge copy prompts.
+    var characterPersonalityPrefix: String = ""
 }
 
 struct MonitoringDecisionResult: Sendable {

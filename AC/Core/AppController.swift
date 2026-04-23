@@ -154,6 +154,13 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+    func updateCharacter(_ character: ACCharacter) {
+        guard state.character != character else { return }
+        state.character = character
+        logActivity("app", "Selected character: \(character.displayName)")
+        persistState()
+    }
+
     func updateRuntimeOverride(_ path: String) {
         state.runtimePathOverride = path.isEmpty ? nil : path
         refreshSystemState()
@@ -665,6 +672,7 @@ final class AppController: ObservableObject {
                 context: makeChatContext(),
                 history: Array(historyWindow),
                 memory: renderedMemory,
+                character: state.character,
                 runtimeOverride: state.runtimePathOverride
             ) {
                 result = response
