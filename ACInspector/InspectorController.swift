@@ -536,14 +536,24 @@ final class InspectorController: ObservableObject {
                     evaluationID: modelInput.evaluationID,
                     promptMode: modelInput.promptMode,
                     timestamp: indexedEvent.timestamp,
+                    promptTemplatePath: nil,
                     promptPayloadPath: nil,
                     renderedPromptPath: nil,
+                    runtimePath: nil,
+                    modelIdentifier: nil,
+                    runtimeOptions: nil,
                     stdoutPath: nil,
                     stderrPath: nil,
                     stdoutPreview: nil,
                     stderrPreview: nil,
                     parsedOutputJSON: nil
                 )
+                if let template = modelInput.promptTemplateArtifact {
+                    attempt.promptTemplatePath = await telemetryStore.absoluteArtifactURL(
+                        for: template,
+                        sessionID: indexedEvent.sessionID
+                    ).path
+                }
                 if let payload = modelInput.promptPayloadArtifact {
                     attempt.promptPayloadPath = await telemetryStore.absoluteArtifactURL(
                         for: payload,
@@ -568,14 +578,21 @@ final class InspectorController: ObservableObject {
                     evaluationID: modelOutput.evaluationID,
                     promptMode: modelOutput.promptMode,
                     timestamp: indexedEvent.timestamp,
+                    promptTemplatePath: nil,
                     promptPayloadPath: nil,
                     renderedPromptPath: nil,
+                    runtimePath: nil,
+                    modelIdentifier: nil,
+                    runtimeOptions: nil,
                     stdoutPath: nil,
                     stderrPath: nil,
                     stdoutPreview: nil,
                     stderrPreview: nil,
                     parsedOutputJSON: nil
                 )
+                attempt.runtimePath = modelOutput.runtimePath
+                attempt.modelIdentifier = modelOutput.modelIdentifier
+                attempt.runtimeOptions = modelOutput.runtimeOptions
                 if let stdoutArtifact = modelOutput.stdoutArtifact {
                     attempt.stdoutPath = await telemetryStore.absoluteArtifactURL(
                         for: stdoutArtifact,
@@ -611,8 +628,12 @@ final class InspectorController: ObservableObject {
                     evaluationID: policy.evaluationID,
                     promptMode: promptMode,
                     timestamp: indexedEvent.timestamp,
+                    promptTemplatePath: nil,
                     promptPayloadPath: nil,
                     renderedPromptPath: nil,
+                    runtimePath: nil,
+                    modelIdentifier: nil,
+                    runtimeOptions: nil,
                     stdoutPath: nil,
                     stderrPath: nil,
                     stdoutPreview: nil,
@@ -853,8 +874,12 @@ final class InspectorController: ObservableObject {
             title: stageTitle(for: promptMode),
             summary: summary,
             details: details,
+            promptTemplatePath: attempt.promptTemplatePath,
             promptPayloadPath: attempt.promptPayloadPath,
             renderedPromptPath: attempt.renderedPromptPath,
+            runtimePath: attempt.runtimePath,
+            modelIdentifier: attempt.modelIdentifier,
+            runtimeOptions: attempt.runtimeOptions,
             stdoutPath: attempt.stdoutPath,
             stderrPath: attempt.stderrPath,
             stdoutPreview: attempt.stdoutPreview,

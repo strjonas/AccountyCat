@@ -26,6 +26,22 @@ struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
     var timeoutSeconds: UInt64
 }
 
+extension TelemetryRuntimeOptions {
+    nonisolated init(_ options: RuntimeInferenceOptions) {
+        self.init(
+            modelIdentifier: options.modelIdentifier,
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK,
+            ctxSize: options.ctxSize,
+            batchSize: options.batchSize,
+            ubatchSize: options.ubatchSize,
+            timeoutSeconds: options.timeoutSeconds
+        )
+    }
+}
+
 struct LLMPolicyPipelineProfile: Hashable, Sendable {
     var descriptor: MonitoringPipelineProfileDescriptor
     var usesTitlePerception: Bool

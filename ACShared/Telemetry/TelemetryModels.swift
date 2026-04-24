@@ -256,10 +256,23 @@ nonisolated struct ModelOutputRecord: Codable, Hashable, Sendable {
     var runtimePath: String
     var modelIdentifier: String
     var promptMode: String
+    var runtimeOptions: TelemetryRuntimeOptions?
     var stdoutArtifact: ArtifactRef?
     var stderrArtifact: ArtifactRef?
     var stdoutPreview: String
     var stderrPreview: String
+}
+
+nonisolated struct TelemetryRuntimeOptions: Codable, Hashable, Sendable {
+    var modelIdentifier: String
+    var maxTokens: Int
+    var temperature: Double
+    var topP: Double
+    var topK: Int
+    var ctxSize: Int
+    var batchSize: Int
+    var ubatchSize: Int
+    var timeoutSeconds: UInt64
 }
 
 nonisolated enum TelemetryCompanionActionKind: String, Codable, Sendable {

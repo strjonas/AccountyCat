@@ -71,8 +71,12 @@ struct IndexedModelAttempt: Identifiable, Hashable, Sendable {
     var evaluationID: String
     var promptMode: String
     var timestamp: Date
+    var promptTemplatePath: String?
     var promptPayloadPath: String?
     var renderedPromptPath: String?
+    var runtimePath: String?
+    var modelIdentifier: String?
+    var runtimeOptions: TelemetryRuntimeOptions?
     var stdoutPath: String?
     var stderrPath: String?
     var stdoutPreview: String?
@@ -112,8 +116,12 @@ struct IndexedEvaluationStage: Identifiable, Hashable, Sendable {
     var title: String
     var summary: String
     var details: [InspectorDetailRow]
+    var promptTemplatePath: String?
     var promptPayloadPath: String?
     var renderedPromptPath: String?
+    var runtimePath: String?
+    var modelIdentifier: String?
+    var runtimeOptions: TelemetryRuntimeOptions?
     var stdoutPath: String?
     var stderrPath: String?
     var stdoutPreview: String?

@@ -890,10 +890,24 @@ private struct InspectorDetailView: View {
                             }
                         }
 
-                        filePreview(title: "Prompt payload", path: attempt.promptPayloadPath)
-                        filePreview(title: "Rendered prompt", path: attempt.renderedPromptPath)
-                        filePreview(title: "Raw stdout", path: attempt.stdoutPath, fallbackText: attempt.stdoutPreview)
-                        filePreview(title: "Raw stderr", path: attempt.stderrPath, fallbackText: attempt.stderrPreview)
+                        InspectorDebugPanel(
+                            promptText: exactPromptText(
+                                promptTemplatePath: attempt.promptTemplatePath,
+                                renderedPromptPath: attempt.renderedPromptPath
+                            ),
+                            responseText: exactResponseText(
+                                stdoutPath: attempt.stdoutPath,
+                                stdoutPreview: attempt.stdoutPreview,
+                                stderrPath: attempt.stderrPath,
+                                stderrPreview: attempt.stderrPreview
+                            ),
+                            parametersText: callParametersText(
+                                promptMode: attempt.promptMode,
+                                runtimePath: attempt.runtimePath,
+                                modelIdentifier: attempt.modelIdentifier,
+                                runtimeOptions: attempt.runtimeOptions
+                            )
+                        )
                     }
                     .padding(16)
                     .background(
@@ -1049,12 +1063,24 @@ private struct InspectorDetailView: View {
             }
 
             DisclosureGroup("Debug") {
-                VStack(alignment: .leading, spacing: 12) {
-                    filePreview(title: "Prompt payload", path: stage.promptPayloadPath)
-                    filePreview(title: "Rendered prompt", path: stage.renderedPromptPath)
-                    filePreview(title: "Raw stdout", path: stage.stdoutPath, fallbackText: stage.stdoutPreview)
-                    filePreview(title: "Raw stderr", path: stage.stderrPath, fallbackText: stage.stderrPreview)
-                }
+                InspectorDebugPanel(
+                    promptText: exactPromptText(
+                        promptTemplatePath: stage.promptTemplatePath,
+                        renderedPromptPath: stage.renderedPromptPath
+                    ),
+                    responseText: exactResponseText(
+                        stdoutPath: stage.stdoutPath,
+                        stdoutPreview: stage.stdoutPreview,
+                        stderrPath: stage.stderrPath,
+                        stderrPreview: stage.stderrPreview
+                    ),
+                    parametersText: callParametersText(
+                        promptMode: stage.promptMode,
+                        runtimePath: stage.runtimePath,
+                        modelIdentifier: stage.modelIdentifier,
+                        runtimeOptions: stage.runtimeOptions
+                    )
+                )
                 .padding(.top, 8)
             }
         }
@@ -1103,6 +1129,147 @@ private struct InspectorDetailView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func exactPromptText(
+        promptTemplatePath: String?,
+        renderedPromptPath: String?
+    ) -> String {
+        let systemPrompt = readTextFile(at: promptTemplatePath)
+        let userPrompt = readTextFile(at: renderedPromptPath)
+
+        switch (systemPrompt, userPrompt) {
+        case let (system?, user?) where !system.isEmpty || !user.isEmpty:
+            return """
+            SYSTEM
+            \(system)
+
+            USER
+            \(user)
+            """
+        case let (_, user?) where !user.isEmpty:
+            return user
+        case let (system?, _) where !system.isEmpty:
+            return system
+        default:
+            return "No prompt stored."
+        }
+    }
+
+    private func exactResponseText(
+        stdoutPath: String?,
+        stdoutPreview: String?,
+        stderrPath: String?,
+        stderrPreview: String?
+    ) -> String {
+        if let stdout = readTextFile(at: stdoutPath), !stdout.isEmpty {
+            return stdout
+        }
+        if let stdoutPreview, !stdoutPreview.isEmpty {
+            return stdoutPreview
+        }
+        if let stderr = readTextFile(at: stderrPath), !stderr.isEmpty {
+            return stderr
+        }
+        if let stderrPreview, !stderrPreview.isEmpty {
+            return stderrPreview
+        }
+        return "No response stored."
+    }
+
+    private func callParametersText(
+        promptMode: String,
+        runtimePath: String?,
+        modelIdentifier: String?,
+        runtimeOptions: TelemetryRuntimeOptions?
+    ) -> String {
+        struct InspectorCallParameters: Encodable {
+            var promptMode: String
+            var runtimePath: String?
+            var modelIdentifier: String?
+            var runtimeOptions: TelemetryRuntimeOptions?
+        }
+
+        let payload = InspectorCallParameters(
+            promptMode: promptMode,
+            runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
+            runtimeOptions: runtimeOptions
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(payload),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return "No call parameters stored."
+    }
+
+    private func readTextFile(at path: String?) -> String? {
+        guard let path else { return nil }
+        return try? String(contentsOfFile: path, encoding: .utf8)
+    }
+}
+
+private struct InspectorDebugPanel: View {
+    let promptText: String
+    let responseText: String
+    let parametersText: String
+
+    @State private var promptExpanded = true
+    @State private var responseExpanded = true
+    @State private var parametersExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Spacer()
+                Button("Copy all") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(formattedExport, forType: .string)
+                }
+            }
+
+            DisclosureGroup("Exact Prompt", isExpanded: $promptExpanded) {
+                debugTextBlock(promptText)
+                    .padding(.top, 8)
+            }
+
+            DisclosureGroup("Exact Response", isExpanded: $responseExpanded) {
+                debugTextBlock(responseText)
+                    .padding(.top, 8)
+            }
+
+            DisclosureGroup("Call Parameters", isExpanded: $parametersExpanded) {
+                debugTextBlock(parametersText)
+                    .padding(.top, 8)
+            }
+        }
+    }
+
+    private var formattedExport: String {
+        [
+            "EXACT PROMPT",
+            promptText,
+            "",
+            "EXACT RESPONSE",
+            responseText,
+            "",
+            "CALL PARAMETERS",
+            parametersText
+        ].joined(separator: "\n")
+    }
+
+    @ViewBuilder
+    private func debugTextBlock(_ text: String) -> some View {
+        ScrollView {
+            Text(text)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .frame(minHeight: 110)
     }
 }
 

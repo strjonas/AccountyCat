@@ -15,6 +15,7 @@ struct LLMEvaluationAttempt: Sendable {
     var templateContents: String
     var payloadJSON: String
     var renderedPrompt: String
+    var runtimeOptions: TelemetryRuntimeOptions?
     var runtimeOutput: RuntimeProcessOutput?
     var parsedDecision: LLMDecision?
 }
@@ -250,15 +251,17 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
         }
 
         do {
+            let visionOptions = Self.legacyVisionOptions(
+                modelIdentifier: modelIdentifier,
+                runtimeProfileID: runtimeProfileID
+            )
+            attempts[0].runtimeOptions = TelemetryRuntimeOptions(visionOptions)
             let perceptionOutput = try await runtime.runVisionInference(
                 runtimePath: runtimePath,
                 snapshotPath: screenshotPath,
                 systemPrompt: perceptionAttempt.templateContents,
                 userPrompt: perceptionAttempt.renderedPrompt,
-                options: Self.legacyVisionOptions(
-                    modelIdentifier: modelIdentifier,
-                    runtimeProfileID: runtimeProfileID
-                )
+                options: visionOptions
             )
             attempts[0].runtimeOutput = perceptionOutput
             let rawPerceptionOutput = perceptionOutput.stdout + "\n" + perceptionOutput.stderr
@@ -280,14 +283,16 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                 stage: .decision
             )
             attempts.append(decisionAttempt)
+            let decisionOptions = Self.legacyDecisionOptions(
+                modelIdentifier: modelIdentifier,
+                runtimeProfileID: runtimeProfileID
+            )
+            attempts[1].runtimeOptions = TelemetryRuntimeOptions(decisionOptions)
             let decisionOutput = try await runtime.runTextInference(
                 runtimePath: runtimePath,
                 systemPrompt: decisionAttempt.templateContents,
                 userPrompt: decisionAttempt.renderedPrompt,
-                options: Self.legacyDecisionOptions(
-                    modelIdentifier: modelIdentifier,
-                    runtimeProfileID: runtimeProfileID
-                )
+                options: decisionOptions
             )
             attempts[1].runtimeOutput = decisionOutput
             attempts[1].parsedDecision = LLMOutputParsing.extractDecision(
@@ -319,14 +324,16 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
                     stage: .decisionFallback
                 )
                 attempts.append(fallbackAttempt)
+                let fallbackOptions = Self.legacyDecisionFallbackOptions(
+                    modelIdentifier: modelIdentifier,
+                    runtimeProfileID: runtimeProfileID
+                )
+                attempts[2].runtimeOptions = TelemetryRuntimeOptions(fallbackOptions)
                 let fallbackOutput = try await runtime.runTextInference(
                     runtimePath: runtimePath,
                     systemPrompt: fallbackAttempt.templateContents,
                     userPrompt: fallbackAttempt.renderedPrompt,
-                    options: Self.legacyDecisionFallbackOptions(
-                        modelIdentifier: modelIdentifier,
-                        runtimeProfileID: runtimeProfileID
-                    )
+                    options: fallbackOptions
                 )
                 attempts[2].runtimeOutput = fallbackOutput
                 attempts[2].parsedDecision = LLMOutputParsing.extractDecision(
@@ -427,6 +434,7 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             templateContents: systemPrompt,
             payloadJSON: payloadJSON,
             renderedPrompt: renderedPrompt,
+            runtimeOptions: nil,
             runtimeOutput: nil,
             parsedDecision: nil
         )
@@ -471,6 +479,7 @@ actor MonitoringLLMClient: MonitoringLLMEvaluating {
             templateContents: systemPrompt,
             payloadJSON: payloadJSON,
             renderedPrompt: renderedPrompt,
+            runtimeOptions: nil,
             runtimeOutput: nil,
             parsedDecision: nil
         )

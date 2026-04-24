@@ -1142,6 +1142,7 @@ final class BrainService: NSObject {
                             runtimePath: evaluation.runtimePath,
                             modelIdentifier: evaluation.modelIdentifier,
                             promptMode: attempt.promptMode,
+                            runtimeOptions: attempt.runtimeOptions,
                             stdoutArtifact: stdoutArtifact,
                             stderrArtifact: stderrArtifact,
                             stdoutPreview: output.stdout.cleanedSingleLine.prefix(220).description,

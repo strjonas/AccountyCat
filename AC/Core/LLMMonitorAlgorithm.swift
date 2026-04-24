@@ -634,6 +634,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 templateContents: systemPrompt,
                 payloadJSON: payloadJSON,
                 renderedPrompt: userPrompt,
+                runtimeOptions: TelemetryRuntimeOptions(options),
                 runtimeOutput: nil,
                 parsedDecision: nil
             )
@@ -685,6 +686,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 templateContents: systemPrompt,
                 payloadJSON: payloadJSON,
                 renderedPrompt: userPrompt,
+                runtimeOptions: TelemetryRuntimeOptions(options),
                 runtimeOutput: nil,
                 parsedDecision: nil
             )
