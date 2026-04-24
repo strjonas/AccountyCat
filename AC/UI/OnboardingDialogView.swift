@@ -43,6 +43,12 @@ struct OnboardingDialogView: View {
                 .help("Refresh status")
             }
 
+            if controller.showingOnboardingCompletion && controller.state.setupStatus == .ready {
+                completionBanner
+            } else if controller.installingRuntime {
+                downloadExpectationBanner
+            }
+
             // Step rows
             VStack(spacing: 4) {
                 SetupStepRow(
@@ -86,6 +92,20 @@ struct OnboardingDialogView: View {
                 )
             }
 
+            if controller.installingRuntime,
+               let progress = controller.setupProgressValue {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+
+                    Text(controller.setupProgressMessage ?? "Downloading model…")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(.top, 2)
+            }
+
             // Action buttons
             if controller.state.setupStatus != .ready {
                 actionButtons
@@ -99,6 +119,45 @@ struct OnboardingDialogView: View {
                     RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                         .stroke(Color.acHairline, lineWidth: 1)
                 )
+        )
+    }
+
+    // MARK: - Banners
+
+    private var completionBanner: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.green)
+            Text("Setup complete — AC is now watching.")
+                .font(.ac(12, weight: .medium))
+                .foregroundStyle(Color.acTextPrimary)
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.green.opacity(0.12))
+        )
+        .transition(.opacity)
+    }
+
+    private var downloadExpectationBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("First-time setup downloads ~4.5 GB. Depending on your connection this can take 5–20 minutes. You can keep using your Mac — AC will notify you here when it's ready.")
+                .font(.ac(11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
         )
     }
 
@@ -132,9 +191,7 @@ struct OnboardingDialogView: View {
                     .buttonStyle(ACPrimaryButton())
                     .disabled(controller.installingDependencies)
                 } else if runtimeState != .done {
-                    Button(controller.installingRuntime
-                           ? "Building runtime…"
-                           : "Install runtime") {
+                    Button(primaryRuntimeActionTitle) {
                         controller.installRuntime()
                     }
                     .buttonStyle(ACPrimaryButton())
@@ -166,6 +223,20 @@ struct OnboardingDialogView: View {
         if controller.setupDiagnostics.isReady { return .done }
         if controller.installingRuntime         { return .progress }
         return .needed
+    }
+
+    private var primaryRuntimeActionTitle: String {
+        if controller.installingRuntime {
+            if controller.setupDiagnostics.runtimePresent {
+                return "Downloading model…"
+            }
+            return "Building runtime…"
+        }
+
+        if controller.setupDiagnostics.runtimePresent {
+            return "Download model"
+        }
+        return "Install runtime"
     }
 }
 

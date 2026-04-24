@@ -613,10 +613,11 @@ struct RuntimeDiagnostics: Sendable {
     var runtimePresent: Bool
     var modelCachePath: String
     var modelCachePresent: Bool
+    var modelArtifactsPresent: Bool
     var missingTools: [String]
 
     var isReady: Bool {
-        runtimePresent && modelCachePresent && missingTools.isEmpty
+        runtimePresent && modelArtifactsPresent && missingTools.isEmpty
     }
 
     var canInstall: Bool {

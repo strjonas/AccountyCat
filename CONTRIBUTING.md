@@ -25,3 +25,33 @@ If you touch the inspector, also build it:
 ```bash
 xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=NO
 ```
+
+## Where to look
+
+- Architecture overview: [`docs/system-overview.md`](docs/system-overview.md). Start there before touching anything non-trivial.
+- First-run / setup flow: `AC/Core/AppController.swift`, `AC/Services/RuntimeSetupService.swift`, `AC/Services/LocalModelRuntime.swift`, `AC/UI/OnboardingDialogView.swift`.
+- Monitoring algorithms: `AC/Core/BrainService.swift` and the three `*Algorithm.swift` files under `AC/Core/`.
+
+## Testing with a different model
+
+The shipped build is pinned to one model (`unsloth/gemma-4-E2B-it-GGUF:Q4_0`). For development you can swap it by exporting `AC_MODEL_IDENTIFIER` before launching AC:
+
+```bash
+AC_MODEL_IDENTIFIER="unsloth/Qwen3-4B-GGUF:Q4_0" open -a AC
+```
+
+Caveats:
+
+- The output-parsing logic in `AC/Services/LLMOutputParsing.swift` is tuned for Gemma. Qwen and Phi currently need their own parsing tweaks — see the notes in [`ACShared/DevelopmentModelConfiguration.swift`](ACShared/DevelopmentModelConfiguration.swift).
+- Multimodal projector support varies between model families; the Phi GGUFs on the hub are text-only variants at the time of writing.
+
+## Changing the setup / first-run experience
+
+AC's first run does a lot of work: permission prompts, tool install, llama.cpp clone + build, model download, warm-up, readiness polling. If you touch any of it, please keep:
+
+- a disk-space check before anything that writes >1 GB (`RuntimeSetupService.verifyFreeDiskSpace`),
+- partial-download cleanup on retry (`cleanupInterruptedDownloads`),
+- a user-readable error on subprocess failure (don't let raw `git clone` or `cmake` errors leak through),
+- an explicit "done" signal for the user when setup completes.
+
+When in doubt, test on a clean macOS environment (VM or a fresh user account) with no llama.cpp checkout and no HF cache.

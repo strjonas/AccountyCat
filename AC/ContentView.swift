@@ -150,7 +150,7 @@ struct ContentView: View {
 
     private var homeTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if controller.state.setupStatus != .ready {
+            if controller.state.setupStatus != .ready || controller.showingOnboardingCompletion {
                 OnboardingDialogView()
                     .environmentObject(controller)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))

@@ -57,21 +57,23 @@ enum LLMOutputParsing {
 
             let assessmentString =
                 (object["assessment"] as? String) ??
-                (object["verdict"] as? String)
+                                (object["verdict"] as? String) ??
+                                (object["focus_guess"] as? String)
             guard let assessmentString,
-                  let assessment = ModelAssessment(rawValue: assessmentString) else {
+                                    let assessment = parsedAssessment(from: assessmentString) else {
                 continue
             }
 
             let suggestedActionString =
                 (object["suggested_action"] as? String) ??
                 (object["suggestedAction"] as? String) ??
+                (object["action"] as? String) ??
                 inferredSuggestedAction(
                     assessment: assessment,
                     nudge: object["nudge"] as? String
                 )
 
-            let suggestedAction = ModelSuggestedAction(rawValue: suggestedActionString) ?? .abstain
+            let suggestedAction = parsedSuggestedAction(from: suggestedActionString)
             let confidence = object["confidence"] as? Double
             let reasonTags =
                 (object["reason_tags"] as? [String]) ??
@@ -196,6 +198,46 @@ enum LLMOutputParsing {
                 return suggestedAction
             }
             return (nudge?.cleanedSingleLine.isEmpty == false) ? .nudge : .abstain
+        }
+    }
+
+    nonisolated private static func parsedAssessment(from rawValue: String) -> ModelAssessment? {
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if let direct = ModelAssessment(rawValue: normalized) {
+            return direct
+        }
+
+        switch normalized {
+        case "focus", "on_task":
+            return .focused
+        case "off_task", "distract", "distracted":
+            return .distracted
+        case "unknown", "abstain":
+            return .unclear
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func parsedSuggestedAction(from rawValue: String) -> ModelSuggestedAction {
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if let direct = ModelSuggestedAction(rawValue: normalized) {
+            return direct
+        }
+
+        switch normalized {
+        case "no_action", "no-action":
+            return .none
+        case "escalate", "interrupt":
+            return .overlay
+        default:
+            return .abstain
         }
     }
 }

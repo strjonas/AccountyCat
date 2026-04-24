@@ -383,10 +383,69 @@ Prompt Lab is inspector-local on purpose:
 - it mirrors the production staged pipeline concepts
 - it does not directly depend on the app target
 
-## 12. Files to Start With
+## 12. First-Run Setup Flow
+
+On first launch AC has nothing useful locally — no runtime, no model, and no permissions. The onboarding card in the Home tab walks the user through the whole sequence. Everything stays on-device.
+
+```mermaid
+flowchart TB
+    Launch["App launch"] --> Inspect["RuntimeSetupService.inspect()"]
+    Inspect --> Perms{"Permissions<br/>granted?"}
+    Perms -- "no" --> AskPerms["Screen Recording + Accessibility<br/>(runtime requests)"]
+    AskPerms --> Perms
+    Perms -- "yes" --> Tools{"git, cmake, ninja<br/>installed?"}
+    Tools -- "no" --> InstallTools["DependencyInstallerService<br/>(Homebrew)"]
+    InstallTools --> Tools
+    Tools -- "yes" --> DiskCheck["RuntimeSetupService.verifyFreeDiskSpace<br/>(≥ 6 GB required)"]
+    DiskCheck --> Build["installRuntime: git clone + cmake build<br/>of pinned llama.cpp commit"]
+    Build --> Cleanup["cleanupInterruptedDownloads<br/>(HF cache)"]
+    Cleanup --> WarmUp["warmUpRuntime: llama-cli -hf<br/>pulls model + runs 8-token warm prompt"]
+    WarmUp --> Ready["setupStatus = .ready<br/>→ BrainService.start() ticks"]
+    Ready --> Banner["OnboardingDialogView<br/>shows 'Setup complete' for 5s"]
+```
+
+Key properties:
+
+- **Pinned commit**: `RuntimeSetupService.pinnedLlamaCommit` pins llama.cpp so the same binary ships for every user. Bumping the commit is an explicit code change.
+- **Disk space check**: `verifyFreeDiskSpace` refuses to start an install with less than `requiredFreeBytesForInstall` (6 GB) on the target volume. Both `installRuntime` and `warmUpRuntime` call it.
+- **Resume story**: llama.cpp's `-hf` downloader does not reliably resume. On every `warmUpRuntime` attempt AC first calls `cleanupInterruptedDownloads` to delete stale `*.incomplete` / `*.partial` / `*.tmp` / `*.downloading` files older than 60s, so a retry starts from a clean slate rather than tripping over a truncated blob.
+- **Progress surfacing**: `AppController.updateSetupProgress` only treats a `\d{1,3}%` match as real progress if the line also contains one of `download`, `fetch`, `pull`, `resolving`, `receiving`, `loading model`, `loading weights`, `load_tensors`, `warming`, or `warm up`. This avoids cmake/llama.cpp percentage noise from unrelated output jittering the progress bar.
+- **Error surfacing**: `runStreaming` keeps a rolling 40-line stderr tail for each subprocess. `RuntimeSetupError.commandFailed` wraps this in a user-friendly message — e.g. `git clone` failures become "Couldn't download the llama.cpp runtime. Check your internet connection and try again."
+- **Completion signal**: when `setupStatus` transitions to `.ready`, `AppController` sets `showingOnboardingCompletion = true` for 5 seconds. `ContentView` keeps the onboarding card mounted during that window and `OnboardingDialogView` shows a green "Setup complete — AC is now watching." banner, so the user gets an explicit "done" signal rather than the card silently vanishing.
+- **Stale server cleanup**: `LocalModelRuntime.killStalePIDIfNeeded` reads `~/Library/Application Support/AC/llama-server.pid` on launch, verifies the PID still points at a `llama-server` process, and kills it. This catches llama-server orphans left behind by a crash or force-quit during a previous session.
+
+### 12.1 Model caching
+
+AC uses `llama.cpp`'s `-hf` flag to pull GGUF models directly from Hugging Face. The cache is rooted at:
+
+```
+~/Library/Application Support/AC/runtime/hf-cache
+```
+
+via the `HF_HOME` environment variable. Inspection also walks two fallback roots so previously-downloaded models are reused without a fresh pull:
+
+- `$HF_HOME/hub/models--<org>--<name>/…` if `HF_HOME` is exported in the user's shell
+- `~/.cache/huggingface/hub/models--<org>--<name>/…` (standard `huggingface_hub` default)
+
+`hasModelArtifacts` considers the cache populated when the newest snapshot directory contains at least one non-`mmproj` `.gguf` whose basename matches the requested quantisation (e.g. `:Q4_0`).
+
+### 12.2 Directory structure
+
+- `AC/` — main macOS app target (UI, controllers, services).
+- `ACShared/` — types shared between the app and the inspector (telemetry payloads, monitoring configuration, `DevelopmentModelConfiguration`).
+- `ACInspector/` — standalone debugging / replay tool (Prompt Lab, episode browser). Does not depend on the app target.
+- `ACTests/` — unit tests for algorithms and services.
+- `docs/` — architecture docs; this file is the entry point.
+
+## 13. Files to Start With
 
 If you are tracing the current architecture, start here:
 
+- [AC/Core/AppController.swift](../AC/Core/AppController.swift) — app-wide state, setup orchestration, onboarding transitions
+- [AC/Services/RuntimeSetupService.swift](../AC/Services/RuntimeSetupService.swift) — disk-space check, install, warm-up, error wrapping
+- [AC/Services/LocalModelRuntime.swift](../AC/Services/LocalModelRuntime.swift) — llama.cpp subprocess + HF cache + stale-server cleanup
+- [AC/UI/OnboardingDialogView.swift](../AC/UI/OnboardingDialogView.swift) — first-run checklist + completion banner
+- [ACShared/DevelopmentModelConfiguration.swift](../ACShared/DevelopmentModelConfiguration.swift) — model identifier + `AC_MODEL_IDENTIFIER` override
 - [AC/Core/BrainService.swift](../AC/Core/BrainService.swift)
 - [AC/Core/MonitoringAlgorithm.swift](../AC/Core/MonitoringAlgorithm.swift)
 - [AC/Core/LLMMonitorAlgorithm.swift](../AC/Core/LLMMonitorAlgorithm.swift)

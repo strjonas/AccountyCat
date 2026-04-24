@@ -405,6 +405,7 @@ actor LocalModelRuntime {
             input: input,
             options: options
         )
+        process.environment = Self.processEnvironment()
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -501,6 +502,7 @@ actor LocalModelRuntime {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: config.executablePath)
         process.currentDirectoryURL = repositoryURL(forRuntimePath: config.runtimePath)
+        process.environment = Self.processEnvironment()
 
         var arguments = [
             "-m", config.modelPath,
@@ -733,46 +735,89 @@ actor LocalModelRuntime {
 
         let repository = String(repositoryComponent)
         let quant = components.count > 1 ? String(components[1]) : nil
-        let cacheRoot = repositoryURL(forRuntimePath: runtimePath)
-            .appendingPathComponent(repository, isDirectory: true)
-            .appendingPathComponent(
-                "models--\(repository.replacingOccurrences(of: "/", with: "--"))",
-                isDirectory: true
+        for cacheRoot in modelCacheRoots(runtimePath: runtimePath, repository: repository)
+        where FileManager.default.fileExists(atPath: cacheRoot.path) {
+            let snapshotsRoot = cacheRoot.appendingPathComponent("snapshots", isDirectory: true)
+            guard let snapshotURL = resolvedSnapshotURL(cacheRoot: cacheRoot, snapshotsRoot: snapshotsRoot) else {
+                continue
+            }
+
+            guard
+                let files = try? FileManager.default.contentsOfDirectory(
+                    at: snapshotURL,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+            else {
+                continue
+            }
+
+            let ggufFiles = files.filter { $0.pathExtension.lowercased() == "gguf" }
+            let projectorPath = ggufFiles
+                .first(where: { $0.lastPathComponent.lowercased().contains("mmproj") })?
+                .path
+
+            let modelCandidates = ggufFiles.filter { !$0.lastPathComponent.lowercased().contains("mmproj") }
+            guard let modelURL = Self.selectModelFile(from: modelCandidates, quant: quant) else {
+                continue
+            }
+
+            return CachedModelArtifacts(
+                modelPath: modelURL.path,
+                multimodalProjectorPath: projectorPath
             )
-
-        guard FileManager.default.fileExists(atPath: cacheRoot.path) else {
-            return nil
         }
 
-        let snapshotsRoot = cacheRoot.appendingPathComponent("snapshots", isDirectory: true)
-        guard let snapshotURL = resolvedSnapshotURL(cacheRoot: cacheRoot, snapshotsRoot: snapshotsRoot) else {
-            return nil
-        }
+        return nil
+    }
 
-        guard
-            let files = try? FileManager.default.contentsOfDirectory(
-                at: snapshotURL,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
+    private func modelCacheRoots(runtimePath: String, repository: String) -> [URL] {
+        let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
+        var roots: [URL] = [
+            repositoryURL(forRuntimePath: runtimePath)
+                .appendingPathComponent(repository, isDirectory: true)
+                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
+        ]
+
+        if let hfHome = ProcessInfo.processInfo.environment["HF_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !hfHome.isEmpty {
+            roots.append(
+                URL(fileURLWithPath: hfHome, isDirectory: true)
+                    .appendingPathComponent("hub", isDirectory: true)
+                    .appendingPathComponent(cacheDirectoryName, isDirectory: true)
             )
-        else {
-            return nil
         }
 
-        let ggufFiles = files.filter { $0.pathExtension.lowercased() == "gguf" }
-        let projectorPath = ggufFiles
-            .first(where: { $0.lastPathComponent.lowercased().contains("mmproj") })?
-            .path
-
-        let modelCandidates = ggufFiles.filter { !$0.lastPathComponent.lowercased().contains("mmproj") }
-        guard let modelURL = Self.selectModelFile(from: modelCandidates, quant: quant) else {
-            return nil
-        }
-
-        return CachedModelArtifacts(
-            modelPath: modelURL.path,
-            multimodalProjectorPath: projectorPath
+        roots.append(
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cache", isDirectory: true)
+                .appendingPathComponent("huggingface", isDirectory: true)
+                .appendingPathComponent("hub", isDirectory: true)
+                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
         )
+
+        roots.append(
+            Self.defaultHuggingFaceCacheURL()
+                .appendingPathComponent("hub", isDirectory: true)
+                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
+        )
+
+        return roots
+    }
+
+    private nonisolated static func defaultHuggingFaceCacheURL() -> URL {
+        TelemetryPaths.applicationSupportURL()
+            .appendingPathComponent("runtime", isDirectory: true)
+            .appendingPathComponent("hf-cache", isDirectory: true)
+    }
+
+    private nonisolated static func processEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let cacheURL = defaultHuggingFaceCacheURL()
+        try? FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+        environment["HF_HOME"] = cacheURL.path
+        return environment
     }
 
     private func resolvedSnapshotURL(cacheRoot: URL, snapshotsRoot: URL) -> URL? {

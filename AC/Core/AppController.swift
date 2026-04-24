@@ -26,6 +26,8 @@ final class AppController: ObservableObject {
     @Published var sendingOverlayAppeal = false
     @Published var installingRuntime = false
     @Published var installingDependencies = false
+    @Published var setupProgressValue: Double?
+    @Published var setupProgressMessage: String?
     @Published var setupErrorMessage: String?
     @Published var dependencyInstallPromptVisible = false
     @Published var showingOnboardingCompletion = false
@@ -464,6 +466,8 @@ final class AppController: ObservableObject {
         }
 
         installingRuntime = true
+        setupProgressValue = nil
+        setupProgressMessage = nil
         setupLog = ""
         setupErrorMessage = nil
         logActivity("setup", "Runtime install started")
@@ -471,21 +475,32 @@ final class AppController: ObservableObject {
 
         Task {
             do {
-                try await RuntimeSetupService.installRuntime { [weak self] chunk in
-                    self?.appendSetupLog(chunk)
+                let diagnosticsBeforeInstall = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
+                if diagnosticsBeforeInstall.runtimePresent {
+                    appendSetupLog("Runtime already installed. Skipping build and warming selected model.")
+                } else {
+                    try await RuntimeSetupService.installRuntime { [weak self] chunk in
+                        self?.appendSetupLog(chunk)
+                    }
                 }
 
                 let diagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
                 try await RuntimeSetupService.warmUpRuntime(runtimePath: diagnostics.runtimePath) { [weak self] chunk in
                     self?.appendSetupLog(chunk)
                 }
-                logActivity("setup", "Runtime install and warm-up finished")
+
+                // Warm-up can complete slightly before cache metadata settles; poll
+                // briefly so setup/chat unlocks without requiring an app restart.
+                await waitForRuntimeReadinessAfterWarmUp(timeoutSeconds: 12)
+                logActivity("setup", "Runtime setup warm-up finished")
             } catch {
                 setupErrorMessage = error.localizedDescription
-                logActivity("setup", "Runtime install failed: \(error.localizedDescription)")
+                logActivity("setup", "Runtime setup failed: \(error.localizedDescription)")
             }
 
             installingRuntime = false
+            setupProgressValue = nil
+            setupProgressMessage = nil
             refreshSystemState()
         }
     }
@@ -802,6 +817,60 @@ final class AppController: ObservableObject {
             setupLog += "\n" + sanitizedChunk
         }
         logActivity("setup-output", sanitizedChunk)
+        updateSetupProgress(from: sanitizedChunk)
+    }
+
+    private func updateSetupProgress(from chunk: String) {
+        let line = chunk
+            .split(whereSeparator: { $0.isNewline })
+            .last
+            .map(String.init) ?? chunk
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedLine.isEmpty else { return }
+
+        let lowered = trimmedLine.lowercased()
+        // Keywords that indicate this line is about download / load progress.
+        // We deliberately do NOT treat every `\d+%` as progress — llama.cpp and
+        // cmake both log percentages for unrelated things (sampling parameters,
+        // build fractions), which made the progress bar jump around.
+        let progressKeywords = [
+            "download",
+            "fetch",
+            "pull",
+            "resolving",
+            "receiving",
+            "loading model",
+            "loading weights",
+            "load_tensors",
+            "warming",
+            "warm up",
+        ]
+        let looksLikeProgress = progressKeywords.contains(where: lowered.contains)
+
+        if looksLikeProgress,
+           let range = trimmedLine.range(of: #"\b(\d{1,3})%"#, options: .regularExpression) {
+            let percentString = String(trimmedLine[range]).replacingOccurrences(of: "%", with: "")
+            if let percent = Double(percentString), (0...100).contains(percent) {
+                setupProgressValue = max(0, min(1, percent / 100))
+                setupProgressMessage = trimmedLine
+                return
+            }
+        }
+
+        if looksLikeProgress {
+            setupProgressMessage = trimmedLine
+        }
+    }
+
+    private func waitForRuntimeReadinessAfterWarmUp(timeoutSeconds: TimeInterval) async {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            refreshSystemState(persist: false)
+            if setupDiagnostics.isReady {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
     }
 
     private func makeChatContext() -> ChatContext {
@@ -982,6 +1051,7 @@ final class AppController: ObservableObject {
         guard hasPerformedInitialRefresh else { return }
 
         if newStatus == .ready {
+            configureBrainIfNeeded()
             onboardingCompletionTask?.cancel()
             onboardingDismissed = false
             showingOnboardingCompletion = true
@@ -990,7 +1060,7 @@ final class AppController: ObservableObject {
                 self?.showingOnboardingCompletion = false
             }
             onboardingCompletionTask = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.8, execute: workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: workItem)
         } else {
             onboardingCompletionTask?.cancel()
             showingOnboardingCompletion = false
@@ -1040,6 +1110,9 @@ private enum AppControllerSetupSupport {
         if installingDependencies {
             return "Installing missing dependencies."
         } else if installingRuntime {
+            if diagnostics.runtimePresent {
+                return "Downloading and warming the selected local model."
+            }
             return "Building and warming the local runtime."
         } else if !state.permissions.satisfies(requirements) {
             if requirements.requiresScreenRecording {
@@ -1050,6 +1123,8 @@ private enum AppControllerSetupSupport {
             return "Install the missing build tools before AC can finish setup."
         } else if !diagnostics.runtimePresent || !diagnostics.modelCachePresent {
             return "Install and warm up the local runtime before AC can watch or chat."
+        } else if !diagnostics.modelArtifactsPresent {
+            return "Model files are downloading or warming up. AC will start monitoring automatically when ready."
         } else if state.isPaused {
             return "Monitoring is paused."
         } else {
