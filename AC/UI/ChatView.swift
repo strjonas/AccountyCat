@@ -40,7 +40,7 @@ struct ChatView: View {
             if !controller.shouldPresentChatAsAvailable {
                 Text("Finish setup to start chatting.")
                     .font(.ac(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.68))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 24)
             } else {
@@ -122,7 +122,7 @@ struct ChatView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.68))
                     .frame(width: 24, height: 22)
                     .contentShape(Rectangle())
             }
@@ -219,11 +219,11 @@ struct ChatView: View {
                       ? "ellipsis"
                       : "arrow.up")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(canSend ? Color.white : Color.secondary.opacity(0.6))
+                    .foregroundStyle(canSend ? Color.white : Color.acTextPrimary.opacity(0.5))
                     .frame(width: 28, height: 28)
                     .background(
                         Circle()
-                            .fill(canSend ? accent : Color.secondary.opacity(0.18))
+                            .fill(canSend ? accent : Color.acSurface)
                             .shadow(color: canSend ? accent.opacity(0.35) : .clear, radius: 4, y: 2)
                     )
                     .symbolEffect(.bounce, value: controller.sendingChatMessage)
@@ -281,7 +281,7 @@ private struct EmptyChatState: View {
 
             Text("Try one of these quick prompts to start the conversation.")
                 .font(.ac(11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.72))
 
             SuggestionChips(suggestions: suggestions, onSelect: onSelect)
         }
@@ -398,7 +398,7 @@ private struct CompactBubble: View {
         if message.role == .system {
             Text(message.text)
                 .font(.ac(12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 4)
@@ -408,9 +408,7 @@ private struct CompactBubble: View {
 
                 Text(message.text)
                     .font(.ac(13))
-                    .foregroundStyle(message.role == .user
-                                     ? Color.black.opacity(0.82)
-                                     : Color.primary)
+                    .foregroundStyle(Color.white)
                     .textSelection(.enabled)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
@@ -457,7 +455,7 @@ private struct TypingIndicator: View {
             HStack(spacing: 4) {
                 ForEach(0..<3) { i in
                     Circle()
-                        .fill(Color.secondary.opacity(phase == i ? 0.85 : 0.35))
+                        .fill(Color.acTextPrimary.opacity(phase == i ? 0.75 : 0.45))
                         .frame(width: 5, height: 5)
                 }
             }

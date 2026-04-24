@@ -33,7 +33,7 @@ struct OnboardingDialogView: View {
 
                     Text(subtitle)
                         .font(.ac(12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                 }
                 Spacer(minLength: 8)
                 Button(action: { controller.refreshSystemState() }) {
@@ -100,7 +100,7 @@ struct OnboardingDialogView: View {
 
                     Text(controller.setupProgressMessage ?? "Downloading model…")
                         .font(.ac(10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                         .lineLimit(2)
                 }
                 .padding(.top, 2)
@@ -147,17 +147,17 @@ struct OnboardingDialogView: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "arrow.down.circle")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.68))
             Text("First-time setup downloads ~4.5 GB. Depending on your connection this can take 5–20 minutes. You can keep using your Mac — AC will notify you here when it's ready.")
                 .font(.ac(11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                .fill(Color.secondary.opacity(0.08))
+                .fill(Color.acSurface)
         )
     }
 
@@ -258,7 +258,7 @@ private struct SetupStepRow: View {
 
             Text(title)
                 .font(.ac(13))
-                .foregroundStyle(state == .done ? .secondary : Color.acTextPrimary)
+                .foregroundStyle(state == .done ? Color.acTextPrimary.opacity(0.68) : Color.acTextPrimary)
 
             Spacer()
 
@@ -284,7 +284,7 @@ private struct SetupStepRow: View {
         switch state {
         case .done:     return .green
         case .progress: return accent
-        case .needed:   return Color.secondary.opacity(0.5)
+        case .needed:   return Color.acTextPrimary.opacity(0.55)
         }
     }
 }

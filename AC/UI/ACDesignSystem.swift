@@ -156,7 +156,7 @@ struct ACPrimaryButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.ac(13, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.82))
+            .foregroundStyle(Color.white)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
             .background(
@@ -224,7 +224,7 @@ struct ACIconButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Color.secondary)
+            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
             .frame(width: size, height: size)
             .background(
                 Circle()

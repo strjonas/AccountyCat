@@ -66,7 +66,7 @@ struct OverlayView: View {
 
                     Text(presentation.body)
                         .font(.ac(14))
-                        .foregroundStyle(Color.secondary)
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                         .multilineTextAlignment(.center)
                         .lineSpacing(2)
                 }
@@ -127,7 +127,7 @@ struct OverlayView: View {
                         controller.dismissOverlay()
                     }
                     .font(.ac(13))
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                     .buttonStyle(.plain)
                 }
             }
@@ -157,7 +157,7 @@ private struct OverlayPrimaryButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.ac(15, weight: .semibold))
-            .foregroundStyle(Color.black.opacity(0.85))
+            .foregroundStyle(Color.white)
             .padding(.horizontal, 30)
             .padding(.vertical, 13)
             .background(
