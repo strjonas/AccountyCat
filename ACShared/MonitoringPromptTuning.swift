@@ -82,6 +82,10 @@ struct MonitoringRuntimeDefinition: Codable, Hashable, Identifiable, Sendable {
 }
 
 enum MonitoringPromptTuning {
+    nonisolated private static var developmentDefaultModelIdentifier: String {
+        DevelopmentModelConfiguration.defaultModelIdentifier
+    }
+
     private static let decisionSchema = """
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional","overlay_headline":"optional","overlay_body":"optional","overlay_prompt":"optional","submit_button_title":"optional","secondary_button_title":"optional"}
     """
@@ -98,7 +102,7 @@ enum MonitoringPromptTuning {
                 Infer the user's current activity from app, title, recent switches, and short usage history.
                 Do not decide whether the activity matches the user's goals or policy rules yet.
                 Return exactly one JSON object:
-                {"activity_summary":"<=24 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
+                {"activity_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
                 Rules:
                 - Name the likely task or content when the title supports it.
                 - Prefer concrete activity labels over generic app labels.
@@ -122,7 +126,7 @@ enum MonitoringPromptTuning {
                 Describe what the user is actually doing on screen, not what AC should do next.
                 Do not decide whether the activity matches the user's goals or policy rules yet.
                 Return exactly one JSON object:
-                {"scene_summary":"<=24 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
+                {"scene_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
                 Rules:
                 - Name the likely task or content when visible.
                 - Distinguish typing or replying from passive scrolling when the screenshot supports it.
@@ -274,7 +278,7 @@ enum MonitoringPromptTuning {
                 Infer the user's likely activity from titles, switches, and short usage history.
                 Do not decide whether the activity matches goals or rules yet.
                 Return one JSON object only:
-                {"activity_summary":"<=24 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
+                {"activity_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
                 Prefer a concrete activity label. Prefer `unclear` over overclaiming.
                 """
             ,
@@ -290,7 +294,7 @@ enum MonitoringPromptTuning {
                 Describe what is happening on screen for a focus coach.
                 Do not decide whether the activity matches goals or rules yet.
                 Return one JSON object only:
-                {"scene_summary":"<=24 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
+                {"scene_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
                 Be concrete about the exact activity and content when visible.
                 """
             ,
@@ -452,14 +456,14 @@ enum MonitoringPromptTuning {
             displayName: "Gemma Balanced",
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -467,14 +471,14 @@ enum MonitoringPromptTuning {
             displayName: "Gemma Low RAM",
             summary: "Lower context and token limits for lighter local tests.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 150, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0", maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 150, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
         MonitoringRuntimeDefinition(

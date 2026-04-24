@@ -8,9 +8,11 @@
 import Foundation
 
 enum RuntimeSetupService {
-    nonisolated private static let modelCacheRelativePath = "unsloth/gemma-4-E2B-it-GGUF/models--unsloth--gemma-4-E2B-it-GGUF"
     nonisolated private static let runtimeRepositoryRemote = "https://github.com/ggml-org/llama.cpp.git"
     nonisolated private static let pinnedLlamaCommit = "a279d0f0f4e746d1ef3429d8e9d02d2990b2daa7"
+    nonisolated private static var modelCacheRelativePath: String {
+        DevelopmentModelConfiguration.cacheRelativePath()
+    }
 
     nonisolated private static var preferredBaseDirectory: URL {
         TelemetryPaths.applicationSupportURL()
@@ -110,7 +112,7 @@ enum RuntimeSetupService {
         try await runStreaming(
             launchPath: runtimePath,
             arguments: [
-                "-hf", "unsloth/gemma-4-E2B-it-GGUF:Q4_0",
+                "-hf", DevelopmentModelConfiguration.defaultModelIdentifier,
                 "-p", "Reply with OK.",
                 "-n", "8",
                 "--reasoning", "off",

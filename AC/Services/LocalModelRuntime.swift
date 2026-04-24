@@ -165,7 +165,9 @@ nonisolated private final class LocalModelServerHandle: @unchecked Sendable {
 }
 
 actor LocalModelRuntime {
-    static let defaultModelIdentifier = "unsloth/gemma-4-E2B-it-GGUF:Q4_0"
+    nonisolated static var defaultModelIdentifier: String {
+        DevelopmentModelConfiguration.defaultModelIdentifier
+    }
 
     private let urlSession: URLSession
     private var sharedServer: LocalModelServerHandle?

@@ -154,7 +154,7 @@ struct PromptLabRuntimeProfile: Codable, Hashable, Identifiable, Sendable {
     nonisolated func options(for stage: PromptLabStage) -> PromptLabRuntimeOptions {
         optionsByStage.first(where: { $0.stage == stage })?.options
         ?? PromptLabRuntimeOptions(
-            modelIdentifier: "unsloth/gemma-4-E2B-it-GGUF:Q4_0",
+            modelIdentifier: DevelopmentModelConfiguration.defaultModelIdentifier,
             maxTokens: 180,
             temperature: 0.2,
             topP: 0.95,
