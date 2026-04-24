@@ -173,6 +173,7 @@ actor LocalModelRuntime {
     private var sharedServer: LocalModelServerHandle?
 
     init() {
+        Self.killStalePIDIfNeeded()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 300
         configuration.timeoutIntervalForResource = 300
@@ -541,6 +542,7 @@ actor LocalModelRuntime {
         process.standardError = stderr
 
         try process.run()
+        Self.writePID(process.processIdentifier)
 
         let serverHandle = LocalModelServerHandle(
             process: process,
@@ -564,6 +566,7 @@ actor LocalModelRuntime {
     private func stopSharedServer(reason: String) async {
         guard let sharedServer else { return }
         self.sharedServer = nil
+        Self.deletePIDFile()
 
         sharedServer.stdoutPipe.fileHandleForReading.readabilityHandler = nil
         sharedServer.stderrPipe.fileHandleForReading.readabilityHandler = nil
@@ -1007,6 +1010,45 @@ actor LocalModelRuntime {
         }
 
         return Int(UInt16(bigEndian: boundAddress.sin_port))
+    }
+
+    // MARK: - Stale-server PID file
+
+    private nonisolated static var pidFileURL: URL {
+        let appSupport = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return appSupport.appendingPathComponent("AC/llama-server.pid")
+    }
+
+    /// On launch, kill any llama-server left over from a previous crashed/force-killed session.
+    private nonisolated static func killStalePIDIfNeeded() {
+        let url = pidFileURL
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8),
+              let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 0 else {
+            return
+        }
+        // Verify the process is still a llama-server before killing it (guards against PID reuse).
+        var pathBuffer = [CChar](repeating: 0, count: 4096)
+        if proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0,
+           String(cString: pathBuffer).contains("llama-server") {
+            Darwin.kill(pid, SIGKILL)
+        }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private nonisolated static func writePID(_ pid: Int32) {
+        let url = pidFileURL
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? String(pid).write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private nonisolated static func deletePIDFile() {
+        try? FileManager.default.removeItem(at: pidFileURL)
     }
 
     private nonisolated static func terminate(process: Process) {

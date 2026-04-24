@@ -76,6 +76,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controller.shutdown()
+        // Block until llama-server is actually killed. Without this the process
+        // exits before the async Task inside shutdown() can run, orphaning the server.
+        // Calling shutdown() a second time is a no-op if the server is already gone.
+        let sema = DispatchSemaphore(value: 0)
+        Task.detached {
+            await AppController.shared.localModelRuntime.shutdown()
+            sema.signal()
+        }
+        _ = sema.wait(timeout: .now() + 5)
     }
 
     // MARK: - Status item
