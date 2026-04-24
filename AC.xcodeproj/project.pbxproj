@@ -484,6 +484,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "AccountyCat reads browser tab titles to understand your current context.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "AccountyCat reads your current calendar event on-device to infer what you want to focus on. Events never leave your Mac.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "AccountyCat reads your current calendar event on-device to infer what you want to focus on. Events never leave your Mac.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -521,6 +523,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "AccountyCat reads browser tab titles to understand your current context.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "AccountyCat reads your current calendar event on-device to infer what you want to focus on. Events never leave your Mac.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "AccountyCat reads your current calendar event on-device to infer what you want to focus on. Events never leave your Mac.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

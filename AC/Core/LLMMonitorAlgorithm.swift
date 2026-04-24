@@ -282,7 +282,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     state: input.algorithmState.llmPolicy.distraction.telemetryState
                 ),
                 titlePerception: titlePerception,
-                visionPerception: visionPerception
+                visionPerception: visionPerception,
+                calendarContext: input.calendarContext
             ),
             attempts: &attempts,
             decoder: MonitoringDecisionEnvelope.self
@@ -310,7 +311,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     recentNudges: Array(
                         input.algorithmState.llmPolicy.recentNudgeMessages
                             .prefix(MonitoringPromptContextBudget.recentNudgeCount)
-                    )
+                    ),
+                    calendarContext: input.calendarContext
                 ),
                 attempts: &attempts,
                 decoder: MonitoringNudgeEnvelope.self
