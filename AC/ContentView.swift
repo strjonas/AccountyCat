@@ -221,6 +221,9 @@ struct ContentView: View {
                 }
             }
 
+            CalendarIntelligenceSection()
+                .environmentObject(controller)
+
             SettingsSection(title: "Rescue app", icon: "arrow.uturn.backward.circle",
                             subtitle: "Where AC sends you when you've drifted too far.") {
                 HStack(spacing: 12) {
@@ -772,6 +775,183 @@ private struct SettingsSection<Content: View>: View {
                     .padding(.leading, 26)
             }
             content()
+        }
+    }
+}
+
+// MARK: - Calendar Intelligence Section
+
+/// Opt-in section in Settings. Collapsed by default with just the toggle + an
+/// info tooltip. Once enabled it expands to show permission status, a link to
+/// System Settings if the user denied, and a multi-select list of calendars.
+///
+/// This is deliberately NOT part of onboarding — it's a "hidden gem" feature
+/// users discover via Settings or docs. The info button on hover teaches the
+/// value prop without another onboarding dialog.
+private struct CalendarIntelligenceSection: View {
+    @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
+    @State private var hoveringInfo = false
+
+    private var isOn: Bool { controller.state.calendarIntelligenceEnabled }
+    private var calendarGranted: Bool { controller.state.permissions.calendar == .granted }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+
+            Toggle(isOn: Binding(
+                get: { isOn },
+                set: { controller.setCalendarIntelligence(enabled: $0) }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Use my calendar")
+                        .font(.ac(13, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Text("Read-only. Never leaves your Mac.")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(accent)
+
+            if isOn {
+                if calendarGranted {
+                    calendarPicker
+                } else {
+                    permissionPrompt
+                }
+            }
+        }
+        .onAppear {
+            if isOn && calendarGranted {
+                controller.refreshAvailableCalendars()
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(accent.opacity(0.13)))
+            Text("Calendar Intelligence")
+                .font(.ac(13, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+
+            // Info button with hover tooltip explaining the value prop.
+            Image(systemName: "info.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .help("""
+                Let AC read your current calendar event to infer what you want \
+                to focus on — so it stays out of the way with less effort \
+                from you. Works with any calendar already in Apple Calendar \
+                (iCloud, Google, Exchange, Fastmail, …). Events are read \
+                locally and never leave your Mac.
+                """)
+                .onHover { hoveringInfo = $0 }
+                .opacity(hoveringInfo ? 1.0 : 0.75)
+        }
+    }
+
+    private var permissionPrompt: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Calendar access is required. If you denied it earlier, re-enable it in System Settings → Privacy & Security → Calendars.")
+                .font(.ac(11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button("Request access") {
+                    controller.setCalendarIntelligence(enabled: false)
+                    controller.setCalendarIntelligence(enabled: true)
+                }
+                .buttonStyle(ACSecondaryButton())
+
+                Button("Open System Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(ACSecondaryButton())
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var calendarPicker: some View {
+        if controller.availableCalendars.isEmpty {
+            HStack(spacing: 8) {
+                Text("No calendars found in Apple Calendar.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Refresh") { controller.refreshAvailableCalendars() }
+                    .buttonStyle(ACSecondaryButton())
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Which calendars should AC watch?")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                ForEach(controller.availableCalendars) { cal in
+                    HStack(spacing: 10) {
+                        Toggle(isOn: Binding(
+                            get: { controller.isCalendarEnabled(cal.id) },
+                            set: { _ in controller.toggleCalendarEnabled(cal.id) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(cal.title)
+                                    .font(.ac(12, weight: .medium))
+                                    .foregroundStyle(Color.acTextPrimary)
+                                    .lineLimit(1)
+                                Text(cal.sourceTitle)
+                                    .font(.ac(10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .tint(accent)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                    .stroke(Color.acHairline, lineWidth: 1)
+                            )
+                    )
+                }
+            }
         }
     }
 }

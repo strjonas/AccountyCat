@@ -96,6 +96,13 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var distraction: MonitoringPromptDistractionSummary
     var titlePerception: MonitoringPerceptionEnvelope?
     var visionPerception: MonitoringPerceptionEnvelope?
+    /// Current calendar event rendered as a short single-line string, or nil
+    /// when the user has Calendar Intelligence off / no event is active.
+    /// A soft hint about intent — ranked below `recentUserMessages`,
+    /// `freeFormMemory`, and `policySummary`. Calendars can be wrong (plans
+    /// change), so the prompt instructs the model to use this as a tiebreaker,
+    /// not authority.
+    var calendarContext: String?
 }
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
@@ -108,6 +115,10 @@ nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
     var titlePerception: String?
     var visionPerception: String?
     var recentNudges: [String]
+    /// Mirrors `calendarContext` on the decision payload. The copywriter uses
+    /// it to phrase nudges more specifically (e.g. "didn't you block this hour
+    /// for writing?") without treating it as ground truth.
+    var calendarContext: String?
 }
 
 nonisolated struct MonitoringAppealPromptPayload: Encodable, Sendable {

@@ -73,6 +73,9 @@ enum PermissionState: String, Codable, Sendable {
 struct PermissionsSnapshot: Codable, Sendable {
     var screenRecording: PermissionState = .unknown
     var accessibility: PermissionState = .unknown
+    /// Calendar permission is opt-in and never blocks core monitoring. It's
+    /// tracked here only so the Settings UI can mirror the current grant state.
+    var calendar: PermissionState = .unknown
 
     var isReady: Bool {
         screenRecording == .granted && accessibility == .granted
@@ -82,6 +85,31 @@ struct PermissionsSnapshot: Codable, Sendable {
         let accessibilityReady = !requirements.requiresAccessibility || accessibility == .granted
         let screenReady = !requirements.requiresScreenRecording || screenRecording == .granted
         return accessibilityReady && screenReady
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case screenRecording
+        case accessibility
+        case calendar
+    }
+
+    init(
+        screenRecording: PermissionState = .unknown,
+        accessibility: PermissionState = .unknown,
+        calendar: PermissionState = .unknown
+    ) {
+        self.screenRecording = screenRecording
+        self.accessibility = accessibility
+        self.calendar = calendar
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        screenRecording = try container.decodeIfPresent(PermissionState.self, forKey: .screenRecording) ?? .unknown
+        accessibility = try container.decodeIfPresent(PermissionState.self, forKey: .accessibility) ?? .unknown
+        // Older persisted snapshots predate calendar support — default to
+        // `.unknown` so the UI treats it as "not yet decided" rather than denied.
+        calendar = try container.decodeIfPresent(PermissionState.self, forKey: .calendar) ?? .unknown
     }
 }
 
@@ -362,6 +390,17 @@ struct ACState: Codable, Sendable {
     var policyMemory = PolicyMemory()
     /// Persistent chat history excluding the synthetic system opener.
     var chatHistory: [ChatMessage] = []
+    /// Hidden-gem feature: when true, AC reads the user's current calendar
+    /// event (via EventKit, local-only) and feeds it into the decision + nudge
+    /// prompts as a soft hint about intent. Off by default — surfaced in
+    /// Settings, not in onboarding. Flipping it on triggers the system
+    /// calendar permission prompt (see AppController.setCalendarIntelligence).
+    var calendarIntelligenceEnabled: Bool = false
+    /// Multi-select of which calendars AC is allowed to read. Empty set means
+    /// "all calendars" (the simple default right after opting in). The user
+    /// can narrow the list from the picker to exclude noisy shared calendars.
+    /// Stored as an array on disk for stable Codable encoding.
+    var enabledCalendarIdentifiers: Set<String> = []
 
     enum CodingKeys: String, CodingKey {
         case character
@@ -384,6 +423,8 @@ struct ACState: Codable, Sendable {
         case lastMemoryConsolidationAt
         case policyMemory
         case chatHistory
+        case calendarIntelligenceEnabled
+        case enabledCalendarIdentifiers
     }
 
 
@@ -466,6 +507,12 @@ struct ACState: Codable, Sendable {
         }
         lastMemoryConsolidationAt = try container.decodeIfPresent(Date.self, forKey: .lastMemoryConsolidationAt)
         policyMemory = try container.decodeIfPresent(PolicyMemory.self, forKey: .policyMemory) ?? PolicyMemory()
+        calendarIntelligenceEnabled = try container.decodeIfPresent(Bool.self, forKey: .calendarIntelligenceEnabled) ?? false
+        if let identifiers = try container.decodeIfPresent([String].self, forKey: .enabledCalendarIdentifiers) {
+            enabledCalendarIdentifiers = Set(identifiers)
+        } else {
+            enabledCalendarIdentifiers = []
+        }
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -507,6 +554,8 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(lastMemoryConsolidationAt, forKey: .lastMemoryConsolidationAt)
         try container.encode(policyMemory, forKey: .policyMemory)
         try container.encode(chatHistory, forKey: .chatHistory)
+        try container.encode(calendarIntelligenceEnabled, forKey: .calendarIntelligenceEnabled)
+        try container.encode(Array(enabledCalendarIdentifiers).sorted(), forKey: .enabledCalendarIdentifiers)
     }
 
     mutating func resetAlgorithmProfile() {

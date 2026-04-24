@@ -155,9 +155,11 @@ enum MonitoringPromptTuning {
                   1. Read `recentUserMessages` from oldest to newest; the newest relevant user statement wins.
                   2. Then read `freeFormMemory`; newer memory overrides older memory when they conflict.
                   3. Use `policySummary` as supporting structured context, but never let it override a newer explicit user statement from chat or free-form memory.
+                  4. Use `calendarContext` (if present) as a SOFT hint about current intent — ranked BELOW memory and chat. Plans change; the calendar may be stale or wrong. Never override an explicit user statement or memory rule with the calendar.
                 - `recentUserMessages` is the most recent ground truth even if not yet consolidated into memory. If the user just said "WhatsApp is okay" or "let me watch YouTube for a bit", honour that over category heuristics.
                 - An allowance ("X is okay", "I'm taking a break", "let me") is as authoritative as a restriction ("don't let me use X"). Do not override either with vibes about productivity.
                 - Use `now` plus the timestamps to resolve temporary rules. If a temporary allowance or restriction has an explicit expiry, respect it until that time.
+                - `calendarContext` shows the user's current calendar event. When it names a task, treat the apps and sites that clearly serve that task as focused — even if they'd normally look distracting. Example: if `calendarContext` says "Summarise the r/foo subreddit", opening reddit.com/r/foo is focused, not distracted. If the event is vague ("Work", "Meeting"), do not derive strong inferences from it.
 
                 Decision rules:
                 - If the likely activity supports the goals or is covered by an allowance in memory / recent chat, return `assessment="focused"` and `suggested_action="none"`.
@@ -192,14 +194,15 @@ enum MonitoringPromptTuning {
                 Keep it human, specific to the current activity, and different from recent nudges.
                 Avoid generic productivity slogans.
                 If `freeFormMemory` or `recentUserMessages` names this specific app or activity, reference that context — it will feel more caring and less generic.
+                `calendarContext` (when present) can make the nudge feel more specific (e.g. reference the current meeting or focus block) — but treat it as a soft hint, not ground truth, and rank it below memory and chat.
                 Return exactly one JSON object: {"nudge":"..."}
                 """
             ,
                 userTemplate: """
                 Write the nudge for this situation.
                 Mention the actual activity when that helps.
-                Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory`.
-                If chat/memory conflict, the newest timestamp wins.
+                Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory`, or clearly implied by `calendarContext`.
+                If chat/memory conflict, the newest timestamp wins. Calendar is a tiebreaker only.
                 If the decision stage made a mistake, still produce something neutral-to-supportive rather than scolding the user for an allowed activity.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.

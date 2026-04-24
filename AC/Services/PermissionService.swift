@@ -8,6 +8,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import EventKit
 import Foundation
 import ScreenCaptureKit
 
@@ -15,8 +16,43 @@ enum PermissionService {
     static func currentSnapshot() -> PermissionsSnapshot {
         PermissionsSnapshot(
             screenRecording: CGPreflightScreenCaptureAccess() ? .granted : .denied,
-            accessibility: AXIsProcessTrusted() ? .granted : .denied
+            accessibility: AXIsProcessTrusted() ? .granted : .denied,
+            calendar: currentCalendarState()
         )
+    }
+
+    /// Calendar permission is opt-in (hidden behind the Calendar Intelligence
+    /// toggle in Settings). We report its state here so the UI can mirror it,
+    /// but never gate core monitoring on it.
+    static func currentCalendarState() -> PermissionState {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if #available(macOS 14.0, *) {
+            switch status {
+            case .fullAccess: return .granted
+            case .denied, .restricted, .writeOnly: return .denied
+            case .notDetermined: return .unknown
+            @unknown default: return .unknown
+            }
+        } else {
+            switch status {
+            case .authorized, .fullAccess: return .granted
+            case .denied, .restricted, .writeOnly: return .denied
+            case .notDetermined: return .unknown
+            @unknown default: return .unknown
+            }
+        }
+    }
+
+    /// Prompts for calendar access via EventKit. On denial or prior denial,
+    /// bounces the user to the system Privacy pane so they can flip it back
+    /// on — same fallback pattern used for Screen Recording and Accessibility.
+    @discardableResult
+    static func requestCalendarAccess() async -> Bool {
+        let granted = await CalendarService.shared.requestAccess()
+        if !granted, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+            await MainActor.run { NSWorkspace.shared.open(url) }
+        }
+        return granted
     }
 
     @discardableResult

@@ -37,6 +37,10 @@ final class AppController: ObservableObject {
     @Published var telemetrySessionID: String?
     /// Set by WindowCoordinator when the orb is snapped to a screen edge (peek mode).
     @Published var peekingEdge: NSRectEdge? = nil
+    /// Populated by `refreshAvailableCalendars()` once Calendar Intelligence is
+    /// enabled and permission is granted. Empty while the feature is off so the
+    /// Settings UI has nothing to render before the user opts in.
+    @Published var availableCalendars: [ACCalendarInfo] = []
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 6
@@ -345,6 +349,76 @@ final class AppController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.refreshSystemState()
         }
+    }
+
+    // MARK: - Calendar Intelligence
+
+    /// Flip the Calendar Intelligence toggle. When turning ON we ask for
+    /// EventKit permission and, on grant, load the calendar list so the
+    /// Settings picker has something to render. When turning OFF we clear
+    /// the cache but leave the saved calendar selection in place so it
+    /// comes back automatically if the user flips it on again later.
+    func setCalendarIntelligence(enabled: Bool) {
+        guard state.calendarIntelligenceEnabled != enabled else { return }
+        state.calendarIntelligenceEnabled = enabled
+        persistState()
+        logActivity("calendar", "Calendar Intelligence \(enabled ? "enabled" : "disabled")")
+
+        if enabled {
+            Task { [weak self] in
+                let granted = await PermissionService.requestCalendarAccess()
+                guard let self else { return }
+                await MainActor.run {
+                    self.refreshSystemState()
+                    if granted {
+                        self.refreshAvailableCalendars()
+                    }
+                }
+            }
+        } else {
+            availableCalendars = []
+            Task { await CalendarService.shared.invalidateCache() }
+        }
+    }
+
+    /// Called after the user grants permission, or when opening Settings, to
+    /// refresh the pickable calendar list. Safe to call even if permission
+    /// is still pending — EventKit just returns an empty list.
+    func refreshAvailableCalendars() {
+        Task { [weak self] in
+            let calendars = await CalendarService.shared.availableCalendars()
+            await MainActor.run {
+                self?.availableCalendars = calendars
+            }
+        }
+    }
+
+    /// Toggle a specific calendar in the multi-select picker. Empty selection
+    /// means "use all calendars" (sensible default right after opt-in), so the
+    /// first explicit toggle switches from "all" to a single-calendar selection.
+    func toggleCalendarEnabled(_ calendarID: String) {
+        // First tap on a fresh install: start from "all selected" so the
+        // toggled-off calendar leaves every other one enabled rather than
+        // collapsing to just the one the user clicked off.
+        if state.enabledCalendarIdentifiers.isEmpty {
+            let allIDs = Set(availableCalendars.map(\.id))
+            state.enabledCalendarIdentifiers = allIDs
+        }
+        if state.enabledCalendarIdentifiers.contains(calendarID) {
+            state.enabledCalendarIdentifiers.remove(calendarID)
+        } else {
+            state.enabledCalendarIdentifiers.insert(calendarID)
+        }
+        persistState()
+        Task { await CalendarService.shared.invalidateCache() }
+    }
+
+    /// Convenience for the picker — a calendar is treated as enabled when
+    /// either the user has explicitly selected it, or the selection set is
+    /// empty (meaning "all").
+    func isCalendarEnabled(_ calendarID: String) -> Bool {
+        state.enabledCalendarIdentifiers.isEmpty ||
+            state.enabledCalendarIdentifiers.contains(calendarID)
     }
 
     func installMissingDependencies() {

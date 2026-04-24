@@ -563,6 +563,22 @@ final class BrainService: NSObject {
         }
 
         let preEvaluationDistraction = currentDistractionMetadata(from: state)
+
+        // Calendar Intelligence: fetch the current event before kicking off the
+        // evaluation task. Opt-in, never blocks — any failure (permission
+        // denied, no event, EventKit hiccup) simply yields nil and the prompt
+        // falls back to memory + chat as before.
+        let calendarContext: String?
+        if state.calendarIntelligenceEnabled,
+           state.permissions.calendar == .granted {
+            calendarContext = await CalendarService.shared.currentEventContext(
+                now: now,
+                enabledCalendarIdentifiers: state.enabledCalendarIdentifiers
+            )
+        } else {
+            calendarContext = nil
+        }
+
         let evaluationTask = Task { [monitoringAlgorithmRegistry] in
             try await monitoringAlgorithmRegistry.evaluate(
                 input: MonitoringDecisionInput(
@@ -581,7 +597,8 @@ final class BrainService: NSObject {
                 runtimeOverride: state.runtimePathOverride,
                 configuration: state.monitoringConfiguration,
                 algorithmState: state.algorithmState,
-                characterPersonalityPrefix: state.character.personalityPrefix
+                characterPersonalityPrefix: state.character.personalityPrefix,
+                calendarContext: calendarContext
                 )
             )
         }

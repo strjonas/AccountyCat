@@ -56,6 +56,10 @@ struct MonitoringDecisionInput: Sendable {
     var algorithmState: AlgorithmStateEnvelope
     /// Personality prefix from the selected ACCharacter — threaded into nudge copy prompts.
     var characterPersonalityPrefix: String = ""
+    /// Optional Calendar Intelligence context (compact, single-line). Threaded
+    /// into both the decision and the nudge-copy prompts as a soft hint.
+    /// See `MonitoringDecisionPromptPayload.calendarContext` for ranking notes.
+    var calendarContext: String? = nil
 }
 
 struct MonitoringDecisionResult: Sendable {
