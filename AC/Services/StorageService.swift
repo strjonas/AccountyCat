@@ -6,14 +6,18 @@
 //
 
 import Foundation
+import os.log
 
 final class StorageService {
+    private static let log = Logger(subsystem: "dev.accountycat", category: "storage")
+
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let stateURL: URL
 
     init(fileManager: FileManager = .default) {
-        let supportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let supportURL = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
             .appendingPathComponent("AC", isDirectory: true)
         self.stateURL = supportURL.appendingPathComponent("state.json")
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -36,7 +40,7 @@ final class StorageService {
             let data = try encoder.encode(state)
             try data.write(to: stateURL, options: .atomic)
         } catch {
-            NSLog("AC failed to save state: %@", error.localizedDescription)
+            Self.log.error("failed to save state: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

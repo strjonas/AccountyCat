@@ -9,7 +9,10 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 import ImageIO
+import os.log
 import UniformTypeIdentifiers
+
+private let telemetryLog = Logger(subsystem: "dev.accountycat", category: "telemetry")
 
 struct StoredImageArtifacts: Sendable {
     var original: ArtifactRef
@@ -19,7 +22,8 @@ struct StoredImageArtifacts: Sendable {
 
 enum TelemetryPaths {
     nonisolated static func applicationSupportURL(fileManager: FileManager = .default) -> URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
             .appendingPathComponent("AC", isDirectory: true)
     }
 
@@ -153,7 +157,7 @@ actor TelemetryStore {
             currentSession.endedAt = endedAt
             try await saveSessionDescriptor(currentSession)
         } catch {
-            NSLog("AC failed to close telemetry session: %@", error.localizedDescription)
+            telemetryLog.error("failed to close telemetry session: \(error.localizedDescription, privacy: .public)")
         }
 
         self.currentSession = nil
