@@ -408,7 +408,7 @@ private struct CompactBubble: View {
 
                 Text(message.text)
                     .font(.ac(13))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(message.role == .user ? Color.white : Color.acTextPrimary)
                     .textSelection(.enabled)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
