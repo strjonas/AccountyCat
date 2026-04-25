@@ -29,6 +29,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     var runtimeProfileID: String
     var selectionMode: MonitoringSelectionMode
     var experimentArmOverride: String?
+    var modelOverride: String?
+    var thinkingEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case algorithmID
@@ -37,6 +39,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         case runtimeProfileID
         case selectionMode
         case experimentArmOverride
+        case modelOverride
+        case thinkingEnabled
     }
 
     init(
@@ -45,7 +49,9 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         pipelineProfileID: String = Self.defaultPipelineProfileID,
         runtimeProfileID: String = Self.defaultRuntimeProfileID,
         selectionMode: MonitoringSelectionMode = .fixed,
-        experimentArmOverride: String? = nil
+        experimentArmOverride: String? = nil,
+        modelOverride: String? = nil,
+        thinkingEnabled: Bool = false
     ) {
         self.algorithmID = Self.normalizedAlgorithmID(algorithmID)
         self.promptProfileID = promptProfileID
@@ -53,6 +59,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         self.runtimeProfileID = runtimeProfileID
         self.selectionMode = selectionMode
         self.experimentArmOverride = experimentArmOverride
+        self.modelOverride = modelOverride
+        self.thinkingEnabled = thinkingEnabled
     }
 
     nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
@@ -95,6 +103,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         runtimeProfileID = try c.decodeIfPresent(String.self, forKey: .runtimeProfileID) ?? Self.defaultRuntimeProfileID
         selectionMode = try c.decodeIfPresent(MonitoringSelectionMode.self, forKey: .selectionMode) ?? .fixed
         experimentArmOverride = try c.decodeIfPresent(String.self, forKey: .experimentArmOverride)
+        modelOverride = try c.decodeIfPresent(String.self, forKey: .modelOverride)
+        thinkingEnabled = try c.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -105,6 +115,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         try c.encode(runtimeProfileID, forKey: .runtimeProfileID)
         try c.encode(selectionMode, forKey: .selectionMode)
         try c.encodeIfPresent(experimentArmOverride, forKey: .experimentArmOverride)
+        try c.encodeIfPresent(modelOverride, forKey: .modelOverride)
+        try c.encode(thinkingEnabled, forKey: .thinkingEnabled)
     }
 }
 

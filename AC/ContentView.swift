@@ -218,6 +218,17 @@ struct ContentView: View {
                         isOn: $soundEnabled,
                         tint: controller.state.character.accentColor
                     )
+
+                    ToggleTile(
+                        icon: controller.visionEnabled ? "camera.fill" : "camera.slash.fill",
+                        title: "Vision",
+                        subtitle: controller.visionEnabled ? "Screenshot on" : "Title only — no screenshot",
+                        isOn: Binding(
+                            get: { controller.visionEnabled },
+                            set: { controller.updateVisionEnabled($0) }
+                        ),
+                        tint: controller.state.character.accentColor
+                    )
                 }
             }
 
@@ -373,6 +384,66 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Model override")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                TextField(
+                    DevelopmentModelConfiguration.fallbackModelIdentifier,
+                    text: Binding(
+                        get: { controller.state.monitoringConfiguration.modelOverride ?? "" },
+                        set: { controller.updateModelOverride($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                modelQuickPickButtons
+            }
+
+            Toggle(isOn: Binding(
+                get: { controller.state.monitoringConfiguration.thinkingEnabled },
+                set: { controller.updateThinkingEnabled($0) }
+            )) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Thinking / reasoning")
+                        .font(.ac(11, weight: .semibold))
+                    Text("Enables <think> chain-of-thought output (Qwen3). Off by default.")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var modelQuickPickButtons: some View {
+        let activeModel = controller.state.monitoringConfiguration.modelOverride ?? ""
+        let knownModels: [(String, String)] = [
+            ("Gemma", "unsloth/gemma-4-E2B-it-GGUF:Q4_0"),
+            ("Qwen3", "unsloth/Qwen3-4B-GGUF:Q4_0"),
+            ("Phi-4", "unsloth/Phi-4-mini-instruct-GGUF:Q4_K_M"),
+            ("Gemma 4", "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"),
+        ]
+        HStack(spacing: 6) {
+            ForEach(knownModels, id: \.0) { name, id in
+                modelPickerButton(label: name, modelID: id, activeModel: activeModel)
+            }
+            modelPickerButton(label: "Clear", modelID: "", activeModel: activeModel)
+        }
+    }
+
+    @ViewBuilder
+    private func modelPickerButton(label: String, modelID: String, activeModel: String) -> some View {
+        let isActive = activeModel == modelID
+        if isActive {
+            Button(label) { controller.updateModelOverride(modelID) }
+                .buttonStyle(ACPrimaryButton())
+                .font(.ac(10))
+        } else {
+            Button(label) { controller.updateModelOverride(modelID) }
+                .buttonStyle(ACSecondaryButton())
+                .font(.ac(10))
         }
     }
 

@@ -70,4 +70,65 @@ struct MonitoringConfigurationTests {
         #expect(configuration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(configuration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
     }
+
+    @Test
+    func runtimeInspectionUsesTheSelectedModelCache() throws {
+      let fileManager = FileManager.default
+      let rootURL = fileManager.temporaryDirectory
+        .appendingPathComponent("ac-runtime-setup-\(UUID().uuidString)", isDirectory: true)
+      let runtimePath = rootURL
+        .appendingPathComponent("runtime/llama.cpp/build/bin/llama-cli")
+        .path
+      let cacheRootURL = rootURL
+        .appendingPathComponent("runtime/llama.cpp/unsloth/Qwen3-4B-GGUF/models--unsloth--Qwen3-4B-GGUF", isDirectory: true)
+      let refsURL = cacheRootURL.appendingPathComponent("refs", isDirectory: true)
+      let snapshotsURL = cacheRootURL.appendingPathComponent("snapshots", isDirectory: true)
+      let snapshotID = "snapshot-123"
+      let snapshotURL = snapshotsURL.appendingPathComponent(snapshotID, isDirectory: true)
+
+      try fileManager.createDirectory(
+        at: URL(fileURLWithPath: runtimePath).deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try fileManager.createDirectory(at: refsURL, withIntermediateDirectories: true)
+      try fileManager.createDirectory(at: snapshotURL, withIntermediateDirectories: true)
+
+      _ = fileManager.createFile(
+        atPath: runtimePath,
+        contents: Data(),
+        attributes: [.posixPermissions: 0o755]
+      )
+      try fileManager.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: runtimePath
+      )
+      try "\(snapshotID)".write(
+        to: refsURL.appendingPathComponent("main"),
+        atomically: true,
+        encoding: .utf8
+      )
+      _ = fileManager.createFile(
+        atPath: snapshotURL.appendingPathComponent("model.Q4_0.gguf").path,
+        contents: Data([0x00]),
+        attributes: nil
+      )
+
+      defer { try? fileManager.removeItem(at: rootURL) }
+
+      let selectedModel = "unsloth/Qwen3-4B-GGUF:Q4_0"
+      let diagnostics = RuntimeSetupService.inspect(
+        runtimeOverride: runtimePath,
+        modelIdentifier: selectedModel
+      )
+      let otherDiagnostics = RuntimeSetupService.inspect(
+        runtimeOverride: runtimePath,
+        modelIdentifier: "example.invalid/NoSuchModel:Q4_0"
+      )
+
+      #expect(diagnostics.runtimePresent)
+      #expect(diagnostics.modelCachePresent)
+      #expect(diagnostics.modelArtifactsPresent)
+      #expect(otherDiagnostics.modelCachePresent == false)
+      #expect(otherDiagnostics.modelArtifactsPresent == false)
+    }
 }

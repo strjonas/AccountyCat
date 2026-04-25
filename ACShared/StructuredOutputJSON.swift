@@ -9,20 +9,21 @@ import Foundation
 
 enum StructuredOutputJSON {
     nonisolated static func jsonObjects(in text: String) -> [String] {
+        let source = strippingThinkingBlocks(from: text)
         var results: [(String.Index, String)] = []
-        var index = text.startIndex
+        var index = source.startIndex
 
-        while index < text.endIndex {
-            guard text[index] == "{" else {
-                index = text.index(after: index)
+        while index < source.endIndex {
+            guard source[index] == "{" else {
+                index = source.index(after: index)
                 continue
             }
 
-            if let object = jsonObject(in: text, startingAt: index) {
+            if let object = jsonObject(in: source, startingAt: index) {
                 results.append((index, object))
             }
 
-            index = text.index(after: index)
+            index = source.index(after: index)
         }
 
         var seen = Set<String>()
@@ -33,6 +34,18 @@ enum StructuredOutputJSON {
             }
         }
         return ordered
+    }
+
+    // Strips <think>...</think> blocks emitted by reasoning models (e.g. Qwen3)
+    // before the actual JSON payload.
+    nonisolated private static func strippingThinkingBlocks(from text: String) -> String {
+        guard text.contains("<think>") else { return text }
+        var result = text
+        while let openRange = result.range(of: "<think>"),
+              let closeRange = result.range(of: "</think>", range: openRange.upperBound..<result.endIndex) {
+            result.removeSubrange(openRange.lowerBound..<closeRange.upperBound)
+        }
+        return result
     }
 
     nonisolated static func decode<T: Decodable>(_ type: T.Type, from output: String) -> T? {

@@ -16,8 +16,8 @@ enum RuntimeSetupService {
     /// artifacts, HF cache metadata, and user margin.
     nonisolated static let requiredFreeBytesForInstall: Int64 = 6 * 1024 * 1024 * 1024
 
-    nonisolated private static var modelCacheRelativePath: String {
-        DevelopmentModelConfiguration.cacheRelativePath()
+    nonisolated private static func modelCacheRelativePath(for modelIdentifier: String) -> String {
+        DevelopmentModelConfiguration.cacheRelativePath(for: modelIdentifier)
     }
 
     nonisolated private static var preferredBaseDirectory: URL {
@@ -38,12 +38,12 @@ enum RuntimeSetupService {
         runtimeRepositoryURL(in: resolvedBaseDirectory()).path
     }
 
-    nonisolated static func inspect(runtimeOverride: String?) -> RuntimeDiagnostics {
+    nonisolated static func inspect(runtimeOverride: String?, modelIdentifier: String = DevelopmentModelConfiguration.defaultModelIdentifier) -> RuntimeDiagnostics {
         let runtimePath = normalizedRuntimePath(from: runtimeOverride)
         let runtimeDirectory = runtimeDirectoryPath(for: runtimePath)
         let modelCacheRoots = modelCacheRoots(
             forRuntimePath: runtimePath,
-            modelIdentifier: DevelopmentModelConfiguration.defaultModelIdentifier
+            modelIdentifier: modelIdentifier
         )
         let existingModelCacheRoot = modelCacheRoots.first {
             FileManager.default.fileExists(atPath: $0.path)
@@ -52,7 +52,7 @@ enum RuntimeSetupService {
         let modelCachePresent = existingModelCacheRoot != nil
         let modelArtifactsPresent = hasModelArtifacts(
             cacheRoots: modelCacheRoots,
-            modelIdentifier: DevelopmentModelConfiguration.defaultModelIdentifier
+            modelIdentifier: modelIdentifier
         )
         let tools = ["git", "cmake", "ninja"]
         let missingTools = tools.filter { tool in
@@ -124,7 +124,11 @@ enum RuntimeSetupService {
         )
     }
 
-    static func warmUpRuntime(runtimePath: String, log: @escaping @MainActor (String) -> Void) async throws {
+    static func warmUpRuntime(
+        runtimePath: String,
+        modelIdentifier: String = DevelopmentModelConfiguration.defaultModelIdentifier,
+        log: @escaping @MainActor (String) -> Void
+    ) async throws {
         let runtimeURL = URL(fileURLWithPath: runtimePath)
         let repoURL = runtimeURL
             .deletingLastPathComponent()
@@ -144,7 +148,7 @@ enum RuntimeSetupService {
         try await runStreaming(
             launchPath: runtimePath,
             arguments: [
-                "-hf", DevelopmentModelConfiguration.defaultModelIdentifier,
+                "-hf", modelIdentifier,
                 "-p", "Reply with OK.",
                 "-n", "8",
                 "--reasoning", "off",
@@ -205,9 +209,9 @@ enum RuntimeSetupService {
             .deletingLastPathComponent()
     }
 
-    nonisolated private static func modelCacheURL(forRuntimePath runtimePath: String) -> URL {
+    nonisolated private static func modelCacheURL(forRuntimePath runtimePath: String, modelIdentifier: String) -> URL {
         runtimeRepositoryURL(forRuntimePath: runtimePath)
-            .appendingPathComponent(modelCacheRelativePath, isDirectory: true)
+            .appendingPathComponent(modelCacheRelativePath(for: modelIdentifier), isDirectory: true)
     }
 
     nonisolated private static func hasModelArtifacts(
@@ -272,7 +276,7 @@ enum RuntimeSetupService {
         let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
 
         var roots: [URL] = [
-            modelCacheURL(forRuntimePath: runtimePath)
+            modelCacheURL(forRuntimePath: runtimePath, modelIdentifier: modelIdentifier)
         ]
 
         if let hfHome = ProcessInfo.processInfo.environment["HF_HOME"]?

@@ -24,6 +24,31 @@ struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
     var batchSize: Int
     var ubatchSize: Int
     var timeoutSeconds: UInt64
+    var thinkingEnabled: Bool
+
+    init(
+        modelIdentifier: String,
+        maxTokens: Int,
+        temperature: Double,
+        topP: Double,
+        topK: Int,
+        ctxSize: Int,
+        batchSize: Int,
+        ubatchSize: Int,
+        timeoutSeconds: UInt64,
+        thinkingEnabled: Bool = false
+    ) {
+        self.modelIdentifier = modelIdentifier
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+        self.ctxSize = ctxSize
+        self.batchSize = batchSize
+        self.ubatchSize = ubatchSize
+        self.timeoutSeconds = timeoutSeconds
+        self.thinkingEnabled = thinkingEnabled
+    }
 }
 
 extension TelemetryRuntimeOptions {

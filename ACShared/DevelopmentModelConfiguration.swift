@@ -9,13 +9,21 @@ import Foundation
 
 enum DevelopmentModelConfiguration {
     nonisolated static let overrideEnvironmentKey = "AC_MODEL_IDENTIFIER"
-    nonisolated static let fallbackModelIdentifier = "unsloth/gemma-4-E2B-it-GGUF:Q4_0"  
-    // works with gemma 
-    // qwen (and phi) parsing isn't working. So they need their own logic... this is still to fix. 
-    // phi error for image, parameters adjust or not multimodal version maybe
-    // unsloth/Qwen3-4B-GGUF:Q4_0" "unsloth/gemma-4-E2B-it-GGUF:Q4_0" "unsloth/Phi-4-mini-instruct-GGUF:Q4_K_M" 
+    // Swap via AC_MODEL_IDENTIFIER env var for evaluation: ( can be done in GUI - overwrites from there in runtime)
+    //   unsloth/gemma-4-E2B-it-GGUF:Q4_0       (multimodal, default)
+    //   unsloth/Qwen3-4B-GGUF:Q4_0              (text-only;  groundwork blocks stripped automatically)
+    //   unsloth/Phi-4-mini-instruct-GGUF:Q4_K_M (text-only; vision gracefully downgraded to text)
+    nonisolated static let fallbackModelIdentifier = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
  
     
+
+    /// Returns false for models that are text-only and cannot process images.
+    nonisolated static func supportsVision(for modelIdentifier: String) -> Bool {
+        let lower = modelIdentifier.lowercased()
+        if lower.contains("qwen") && !lower.contains("vl") { return false }
+        if lower.contains("phi") && !lower.contains("vision") && !lower.contains("multimodal") { return false }
+        return true
+    }
 
     nonisolated static var defaultModelIdentifier: String {
         if

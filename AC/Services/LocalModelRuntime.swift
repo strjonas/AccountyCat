@@ -290,9 +290,21 @@ actor LocalModelRuntime {
                 }
             }
 
+            // Text-only local models (no multimodal projector) cannot process images.
+            // Downgrade vision input to text so the CLI doesn't pass --image to a
+            // model that will refuse it (e.g. Phi-4-mini-instruct).
+            let cliInput: RuntimeInferenceInput
+            if case let .vision(_, userPrompt) = input,
+               case let .local(artifacts) = modelSource,
+               artifacts.multimodalProjectorPath == nil {
+                cliInput = .text(userPrompt: userPrompt)
+            } else {
+                cliInput = input
+            }
+
             return try await runCLIInference(
                 runtimePath: runtimePath,
-                input: input,
+                input: cliInput,
                 systemPrompt: systemPrompt,
                 modelSource: modelSource,
                 options: options,
@@ -662,7 +674,7 @@ actor LocalModelRuntime {
             ]
         }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": modelIdentifier,
             "messages": messages,
             "max_tokens": options.maxTokens,
@@ -670,9 +682,11 @@ actor LocalModelRuntime {
             "top_p": options.topP,
             "top_k": options.topK,
             "cache_prompt": false,
-            "reasoning_format": "none",
             "stream": false,
         ]
+        if !options.thinkingEnabled {
+            body["reasoning_format"] = "none"
+        }
 
         return try JSONSerialization.data(withJSONObject: body, options: [])
     }
@@ -889,7 +903,6 @@ actor LocalModelRuntime {
             "-cnv",
             "-st",
             "-n", String(options.maxTokens),
-            "--reasoning", "off",
             "--temp", String(options.temperature),
             "--top-p", String(options.topP),
             "--top-k", String(options.topK),
@@ -899,6 +912,10 @@ actor LocalModelRuntime {
             "--offline",
             "--no-display-prompt",
         ])
+
+        if !options.thinkingEnabled {
+            arguments.append(contentsOf: ["--reasoning", "off"])
+        }
 
         return arguments
     }

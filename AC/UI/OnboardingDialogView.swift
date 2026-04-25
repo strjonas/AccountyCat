@@ -104,6 +104,17 @@ struct OnboardingDialogView: View {
                         .lineLimit(2)
                 }
                 .padding(.top, 2)
+            } else if controller.installingRuntime {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+
+                    Text(controller.setupProgressMessage ?? "Downloading model…")
+                        .font(.ac(10))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                        .lineLimit(2)
+                }
+                .padding(.top, 2)
             }
 
             // Action buttons

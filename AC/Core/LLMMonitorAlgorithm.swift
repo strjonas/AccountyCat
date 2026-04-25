@@ -125,6 +125,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
         let pipelineProfile = LLMPolicyCatalog.pipelineProfile(id: input.configuration.pipelineProfileID)
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
+        let effectiveModelIdentifier = input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
+            ?? runtimeProfile.descriptor.modelIdentifier
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
@@ -140,7 +142,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 execution: execution,
                 evaluation: LLMEvaluationResult(
                     runtimePath: runtimePath,
-                    modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
+                    modelIdentifier: effectiveModelIdentifier,
                     promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
                     attempts: [],
@@ -211,7 +213,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 execution: execution,
                 evaluation: LLMEvaluationResult(
                     runtimePath: runtimePath,
-                    modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
+                    modelIdentifier: effectiveModelIdentifier,
                     promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
                     attempts: [],
@@ -230,7 +232,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             titlePerception = await runTextStage(
                 stage: .perceptionTitle,
                 runtimePath: runtimePath,
-                options: runtimeProfile.options(for: .perceptionTitle),
+                options: applyOverrides(runtimeProfile.options(for: .perceptionTitle), configuration: input.configuration),
                 payload: MonitoringTitlePerceptionPromptPayload(
                     appName: compactAppName,
                     bundleIdentifier: input.snapshot.bundleIdentifier,
@@ -250,7 +252,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 stage: .perceptionVision,
                 runtimePath: runtimePath,
                 snapshotPath: screenshotPath,
-                options: runtimeProfile.options(for: .perceptionVision),
+                options: applyOverrides(runtimeProfile.options(for: .perceptionVision), configuration: input.configuration),
                 payload: MonitoringVisionPerceptionPromptPayload(
                     appName: compactAppName,
                     windowTitle: compactWindowTitle
@@ -263,7 +265,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let decisionEnvelope = await runTextStage(
             stage: .decision,
             runtimePath: runtimePath,
-            options: runtimeProfile.options(for: .decision),
+            options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
             payload: MonitoringDecisionPromptPayload(
                 now: input.now,
                 goals: input.goals.cleanedSingleLine.truncatedForPrompt(
@@ -296,7 +298,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let nudgeEnvelope = await runTextStage(
                 stage: .nudgeCopy,
                 runtimePath: runtimePath,
-                options: runtimeProfile.options(for: .nudgeCopy),
+                options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
                 payload: MonitoringNudgePromptPayload(
                     goals: input.goals.cleanedSingleLine.truncatedForPrompt(
                         maxLength: MonitoringPromptContextBudget.goalCharacters
@@ -326,7 +328,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimePath,
-            modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
+            modelIdentifier: effectiveModelIdentifier,
             promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
             attempts: attempts,
@@ -453,11 +455,13 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
+        let effectiveModelIdentifier = input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
+            ?? runtimeProfile.descriptor.modelIdentifier
         var attempts: [LLMEvaluationAttempt] = []
         let envelope = await runTextStage(
             stage: .appealReview,
             runtimePath: runtimePath,
-            options: runtimeProfile.options(for: .appealReview),
+            options: applyOverrides(runtimeProfile.options(for: .appealReview), configuration: input.configuration),
             payload: MonitoringAppealPromptPayload(
                 appealText: input.appealText,
                 goals: input.goals.cleanedSingleLine.truncatedForPrompt(
@@ -487,7 +491,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimePath,
-            modelIdentifier: runtimeProfile.descriptor.modelIdentifier,
+            modelIdentifier: effectiveModelIdentifier,
             promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
             attempts: attempts,
@@ -713,6 +717,18 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         from output: String
     ) -> T? {
         StructuredOutputJSON.decode(type, from: output)
+    }
+
+    private func applyOverrides(
+        _ opts: RuntimeInferenceOptions,
+        configuration: MonitoringConfiguration
+    ) -> RuntimeInferenceOptions {
+        var result = opts
+        if let modelOverride = configuration.modelOverride, !modelOverride.isEmpty {
+            result.modelIdentifier = modelOverride
+        }
+        result.thinkingEnabled = configuration.thinkingEnabled
+        return result
     }
 
     private static func sha256Hex(_ input: String) -> String {

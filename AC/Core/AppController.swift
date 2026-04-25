@@ -83,7 +83,10 @@ final class AppController: ObservableObject {
         )
         let loadedState = storageService.loadState()
         self.state = loadedState
-        self.setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: loadedState.runtimePathOverride)
+        self.setupDiagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: loadedState.runtimePathOverride,
+            modelIdentifier: Self.effectiveSetupModelIdentifier(for: loadedState.monitoringConfiguration)
+        )
         self.chatMessages = Self.makeChatMessages(from: loadedState.chatHistory)
 
         Task { @MainActor [weak self] in
@@ -127,7 +130,10 @@ final class AppController: ObservableObject {
 
         let previousStatus = state.setupStatus
         state.permissions = PermissionService.currentSnapshot()
-        setupDiagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
+        setupDiagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        )
         let permissionRequirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
 
         if installingRuntime || installingDependencies {
@@ -210,8 +216,41 @@ final class AppController: ObservableObject {
         guard state.monitoringConfiguration.runtimeProfileID != descriptor.id else { return }
         state.monitoringConfiguration.runtimeProfileID = descriptor.id
         brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState()
         persistState()
         logActivity("monitoring", "Selected runtime profile: \(descriptor.id)")
+    }
+
+    var visionEnabled: Bool {
+        !["title_only_default", "title_split_copy"].contains(state.monitoringConfiguration.pipelineProfileID)
+    }
+
+    func updateVisionEnabled(_ enabled: Bool) {
+        let target = enabled ? MonitoringConfiguration.defaultPipelineProfileID : "title_only_default"
+        updateMonitoringPipelineProfile(target)
+    }
+
+    func updateModelOverride(_ identifier: String) {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newValue: String? = trimmed.isEmpty ? nil : trimmed
+        guard state.monitoringConfiguration.modelOverride != newValue else { return }
+        state.monitoringConfiguration.modelOverride = newValue
+        // Auto-disable vision for text-only models so the screenshot call is skipped entirely
+        let effectiveModel = newValue ?? DevelopmentModelConfiguration.fallbackModelIdentifier
+        if !DevelopmentModelConfiguration.supportsVision(for: effectiveModel) && visionEnabled {
+            state.monitoringConfiguration.pipelineProfileID = "title_only_default"
+        }
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState()
+        persistState()
+        logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
+    }
+
+    func updateThinkingEnabled(_ enabled: Bool) {
+        guard state.monitoringConfiguration.thinkingEnabled != enabled else { return }
+        state.monitoringConfiguration.thinkingEnabled = enabled
+        persistState()
+        logActivity("monitoring", "Thinking \(enabled ? "enabled" : "disabled")")
     }
 
     func togglePause() {
@@ -475,7 +514,11 @@ final class AppController: ObservableObject {
 
         Task {
             do {
-                let diagnosticsBeforeInstall = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
+                let setupModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+                let diagnosticsBeforeInstall = RuntimeSetupService.inspect(
+                    runtimeOverride: state.runtimePathOverride,
+                    modelIdentifier: setupModelIdentifier
+                )
                 if diagnosticsBeforeInstall.runtimePresent {
                     appendSetupLog("Runtime already installed. Skipping build and warming selected model.")
                 } else {
@@ -484,8 +527,14 @@ final class AppController: ObservableObject {
                     }
                 }
 
-                let diagnostics = RuntimeSetupService.inspect(runtimeOverride: state.runtimePathOverride)
-                try await RuntimeSetupService.warmUpRuntime(runtimePath: diagnostics.runtimePath) { [weak self] chunk in
+                let diagnostics = RuntimeSetupService.inspect(
+                    runtimeOverride: state.runtimePathOverride,
+                    modelIdentifier: setupModelIdentifier
+                )
+                try await RuntimeSetupService.warmUpRuntime(
+                    runtimePath: diagnostics.runtimePath,
+                    modelIdentifier: setupModelIdentifier
+                ) { [weak self] chunk in
                     self?.appendSetupLog(chunk)
                 }
 
@@ -1012,6 +1061,15 @@ final class AppController: ObservableObject {
         }
 
         refreshSystemState()
+    }
+
+    private static func effectiveSetupModelIdentifier(for configuration: MonitoringConfiguration) -> String {
+        let override = configuration.modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let override, !override.isEmpty {
+            return override
+        }
+
+        return LLMPolicyCatalog.runtimeProfile(id: configuration.runtimeProfileID).descriptor.modelIdentifier
     }
 
     private func repairInvalidMonitoringConfigurationIfNeeded() {
