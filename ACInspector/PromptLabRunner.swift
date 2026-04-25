@@ -220,6 +220,7 @@ actor PromptLabRunner {
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                     ),
+                    characterPersonalityPrefix: "",
                     recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
                     policySummary: compactPolicySummary,
                     appName: compactAppName,
