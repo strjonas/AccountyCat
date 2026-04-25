@@ -158,6 +158,37 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func plainLanguageAllowForNowOverridesOlderMemoryBlock() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = try #require(makeLocalPromptDate("2026-04-25 14:15"))
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-allow-for-now",
+                runtimeOverride: runtimeFixture.runtimePath,
+                snapshot: makeSnapshot(
+                    now: now,
+                    windowTitle: "Instagram"
+                ),
+                memory: """
+                [2026-04-25 12:00] do not allow instagram
+                """,
+                recentUserMessages: [
+                    "[2026-04-25 14:10] allow instagram for now",
+                ]
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.decision.assessment == .focused)
+        #expect(result.decision.reasonTags == ["recent_allow_override"])
+        #expect(result.policy.record.blockReason == "recent_allow_override")
+        #expect(result.evaluation.attempts.isEmpty)
+    }
+
+    @Test
     func scheduledFocusedFollowUpDoesNotReevaluateUntilDue() {
         let algorithm = makeAlgorithm()
         let context = FrontmostContext(

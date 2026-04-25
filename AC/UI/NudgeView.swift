@@ -15,23 +15,17 @@ struct SpeechBubble: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.colorScheme) private var colorScheme
 
-    private static let maxScrollableTextHeight: CGFloat = 156
-
     var body: some View {
         VStack(spacing: 0) {
             // Bubble body
             VStack(spacing: 6) {
-                ScrollView(.vertical, showsIndicators: false) {
-                    Text(text)
-                        .font(.ac(13.5, weight: .medium))
-                        .foregroundStyle(bubbleTextColor)
-                        .multilineTextAlignment(.center)
-                        .allowsTightening(true)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity)
-                }
-                .frame(maxHeight: Self.maxScrollableTextHeight)
-                .accessibilityLabel("Nudge message")
+                Text(text)
+                    .font(.ac(13.5, weight: .medium))
+                    .foregroundStyle(bubbleTextColor)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("Nudge message")
 
                 // Thumbs up / down feedback row
                 HStack(spacing: 12) {

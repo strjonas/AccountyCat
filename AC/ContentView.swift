@@ -33,7 +33,6 @@ struct ContentView: View {
     @State private var selectedTab: ACPopoverTab = .home
     @State private var pendingSettingsAction: SettingsAlertAction?
     @State private var settingsSuccessMessage: String?
-    @State private var advancedExpanded = false
     @AppStorage("acSoundEnabled") private var soundEnabled: Bool = false
 
     var body: some View {
@@ -169,7 +168,7 @@ struct ContentView: View {
     // MARK: - Settings Tab
 
     private var settingsTab: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 24) {
 
             // ── Goals (always visible) ──
             SettingsSection(title: "Your goals", icon: "target",
@@ -198,6 +197,8 @@ struct ContentView: View {
                 onSelect: { controller.updateCharacter($0) }
             )
 
+            Divider().opacity(0.3)
+
             SettingsSection(title: "Controls", icon: "switch.2") {
                 HStack(spacing: 10) {
                     ToggleTile(
@@ -222,7 +223,7 @@ struct ContentView: View {
                     ToggleTile(
                         icon: controller.visionEnabled ? "camera.fill" : "camera.slash.fill",
                         title: "Vision",
-                        subtitle: controller.visionEnabled ? "Screenshot on" : "Title only — no screenshot",
+                        subtitle: controller.visionEnabled ? "Screenshot on" : "Title only",
                         isOn: Binding(
                             get: { controller.visionEnabled },
                             set: { controller.updateVisionEnabled($0) }
@@ -269,30 +270,9 @@ struct ContentView: View {
                 )
             }
 
-            // ── Advanced (collapsible) ──
-            AdvancedDisclosure(expanded: $advancedExpanded) {
-                advancedContent
-            }
+            Divider().opacity(0.3)
 
-            Divider().opacity(0.5)
-
-            // ── Quit (always visible) ──
-            HStack {
-                Spacer()
-                Button("Quit AccountyCat") { NSApp.terminate(nil) }
-                    .font(.ac(12, weight: .medium))
-                    .foregroundStyle(Color.red.opacity(0.78))
-                    .buttonStyle(.plain)
-            }
-        }
-        .padding(20)
-    }
-
-    @ViewBuilder
-    private var advancedContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            SettingsSection(title: "Memory consolidation",
-                            icon: "brain.head.profile",
+            SettingsSection(title: "Memory", icon: "brain.head.profile",
                             subtitle: "Runs AC's memory cleanup immediately. Useful when rules feel stale, contradictory, or too noisy.") {
                 HStack(spacing: 10) {
                     Button(controller.consolidatingMemory ? "Consolidating…" : "Consolidate memory") {
@@ -317,7 +297,19 @@ struct ContentView: View {
             if ACBuild.isDebug {
                 developerSection
             }
+
+            Divider().opacity(0.5)
+
+            // ── Quit (always visible) ──
+            HStack {
+                Spacer()
+                Button("Quit AccountyCat") { NSApp.terminate(nil) }
+                    .font(.ac(12, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.78))
+                    .buttonStyle(.plain)
+            }
         }
+        .padding(20)
     }
 
     // MARK: - Developer (DEBUG only)
@@ -677,7 +669,7 @@ private struct ToggleTile: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 13)
-            .padding(.vertical, 11)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
@@ -779,44 +771,6 @@ private struct StatCard: View {
     }
 }
 
-// MARK: - Advanced disclosure
-
-private struct AdvancedDisclosure<Content: View>: View {
-    @Binding var expanded: Bool
-    @ViewBuilder let content: () -> Content
-    @Environment(\.acAccent) private var accent
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button {
-                withAnimation(.acSnap) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(accent)
-                    Text("Advanced")
-                        .font(.ac(13, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if expanded {
-                content()
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-}
-
 // MARK: - Settings Section
 
 /// Standard section header + optional subtitle wrapper used across settings.
@@ -863,6 +817,7 @@ private struct CalendarIntelligenceSection: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
     @State private var hoveringInfo = false
+    @State private var calendarListExpanded = true
 
     private var isOn: Bool { controller.state.calendarIntelligenceEnabled }
     private var calendarGranted: Bool { controller.state.permissions.calendar == .granted }
@@ -985,44 +940,74 @@ private struct CalendarIntelligenceSection: View {
                     )
             )
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Which calendars should AC watch?")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                ForEach(controller.availableCalendars) { cal in
-                    HStack(spacing: 10) {
-                        Toggle(isOn: Binding(
-                            get: { controller.isCalendarEnabled(cal.id) },
-                            set: { _ in controller.toggleCalendarEnabled(cal.id) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(cal.title)
-                                    .font(.ac(12, weight: .medium))
-                                    .foregroundStyle(Color.acTextPrimary)
-                                    .lineLimit(1)
-                                Text(cal.sourceTitle)
-                                    .font(.ac(10))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .toggleStyle(.switch)
-                        .tint(accent)
-                        Spacer(minLength: 0)
+            let enabledCount = controller.availableCalendars.filter { controller.isCalendarEnabled($0.id) }.count
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    withAnimation(.acSnap) { calendarListExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Calendars")
+                            .font(.ac(12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(enabledCount) of \(controller.availableCalendars.count) active")
+                            .font(.ac(11))
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.secondary.opacity(0.6))
+                            .rotationEffect(.degrees(calendarListExpanded ? 90 : 0))
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                            .fill(Color.acSurface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                    .stroke(Color.acHairline, lineWidth: 1)
-                            )
-                    )
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if calendarListExpanded {
+                    Divider().opacity(0.4)
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(Array(controller.availableCalendars.enumerated()), id: \.element.id) { index, cal in
+                                Toggle(isOn: Binding(
+                                    get: { controller.isCalendarEnabled(cal.id) },
+                                    set: { _ in controller.toggleCalendarEnabled(cal.id) }
+                                )) {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(cal.title)
+                                            .font(.ac(12, weight: .medium))
+                                            .foregroundStyle(Color.acTextPrimary)
+                                            .lineLimit(1)
+                                        Text(cal.sourceTitle)
+                                            .font(.ac(10))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                .toggleStyle(.switch)
+                                .tint(accent)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+
+                                if index < controller.availableCalendars.count - 1 {
+                                    Divider().opacity(0.3).padding(.leading, 12)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous))
         }
     }
 }

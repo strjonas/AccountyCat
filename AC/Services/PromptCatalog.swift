@@ -252,9 +252,13 @@ enum PromptCatalog {
           created on a previous day; "this evening" once it's the next morning; "for the next hour"
           if more than an hour has elapsed.
         - Merge duplicates and near-duplicates into one concise bullet.
+                - Treat the most recent user interaction as the source of truth for active rules and
+                    preferences. If a newer message changes, cancels, or narrows an older memory, rewrite the
+                    memory so the final list stays consistent and does not preserve both sides of the
+                    contradiction.
         - Keep both restrictions ("don't let me use X") and allowances ("X is okay", "taking a
-          break"). Neither is more important than the other. If two entries conflict, keep the most
-          recent one and drop the older.
+                    break"). Neither is more important than the other. If two entries conflict, keep the most
+                    recent one and drop the older.
         - Preserve load-bearing detail — app names, durations, explicit time scopes.
         - Prefer explicit dates/times over vague relative phrases when a time-bounded rule survives.
         - Prefer recent entries over older ones when both can't fit. Aim for ≤10 final entries.

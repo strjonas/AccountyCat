@@ -29,6 +29,7 @@ actor MemoryConsolidationService {
     func consolidate(
         entries: [MemoryEntry],
         goals: String,
+        recentUserMessages: [String],
         now: Date,
         runtimeOverride: String?
     ) async -> [MemoryEntry]? {
@@ -37,7 +38,12 @@ actor MemoryConsolidationService {
         guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
 
         let systemPrompt = PromptCatalog.loadMemoryConsolidationSystemPrompt()
-        let userPrompt = Self.makeUserPrompt(entries: entries, goals: goals, now: now)
+        let userPrompt = Self.makeUserPrompt(
+            entries: entries,
+            goals: goals,
+            recentUserMessages: recentUserMessages,
+            now: now
+        )
 
         let output: RuntimeProcessOutput
         do {
@@ -62,6 +68,7 @@ actor MemoryConsolidationService {
     nonisolated private static func makeUserPrompt(
         entries: [MemoryEntry],
         goals: String,
+        recentUserMessages: [String],
         now: Date
     ) -> String {
         let iso = ISO8601DateFormatter()
@@ -75,12 +82,20 @@ actor MemoryConsolidationService {
             }
             .joined(separator: "\n")
 
+        let recentMessages = recentUserMessages
+            .map { $0.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
         return """
         Current local time: \(PromptTimestampFormatting.absoluteLabel(for: now))
         Current ISO time: \(iso.string(from: now))
 
         User goals:
         \(goals.cleanedSingleLine)
+
+        Recent user chat messages (oldest first):
+        \(recentMessages.isEmpty ? "(none)" : recentMessages)
 
         Current memory (oldest first):
         \(payload.isEmpty ? "(empty)" : payload)
@@ -89,6 +104,7 @@ actor MemoryConsolidationService {
         - Drop entries whose time scope has clearly passed (e.g. "today" but created yesterday or earlier, "this evening" once it's the next morning, "for the next hour" more than an hour ago).
         - Merge duplicates and near-duplicates into a single line.
         - Keep both restrictions ("don't let me use X") and allowances ("X is okay" / "taking a break") — neither is more important than the other. The newest version wins if they conflict.
+        - Treat explicit directives in recent user chat messages as fresh ground truth even if they are not yet present in memory.
         - When a memory line uses relative time language, resolve it against the current time and prefer rewriting the surviving line with an explicit end time when that makes it clearer.
         - Prefer recent entries over older ones when both can't fit.
         - Preserve load-bearing detail (app names, durations, time scopes). Don't paraphrase things away.

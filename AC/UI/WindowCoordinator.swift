@@ -23,6 +23,7 @@ final class WindowCoordinator {
     private var nudgeRestoreFrame: NSRect?
     private var nudgeAdjustedFrame: NSRect?
     private var nudgeRestorePeekingEdge: NSRectEdge?
+    private var nudgePanelExpanded = false
 
     // Native-event drag state (replaces SwiftUI DragGesture)
     private var dragEventMonitor: Any?
@@ -208,6 +209,7 @@ final class WindowCoordinator {
 
     func showNudge(message: String) {
         adjustCompanionForVisibleNudgeIfNeeded()
+        expandPanelForNudge()
         controller.latestNudge = message
         showNudgeBorder()
         triggerHaptic()
@@ -225,6 +227,25 @@ final class WindowCoordinator {
         }
         dismissNudgeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: work)
+    }
+
+    private func expandPanelForNudge() {
+        guard let panel = companionPanel, !nudgePanelExpanded else { return }
+        let screen = screenContaining(panel) ?? activeScreen()
+        var f = panel.frame
+        let bonus: CGFloat = 360
+        let topCap = screen.visibleFrame.maxY - 8
+        f.size.height = min(f.size.height + bonus, max(topCap - f.minY, ACD.panelHeight + 80))
+        panel.setFrame(f, display: false)
+        nudgePanelExpanded = true
+    }
+
+    private func collapsePanelAfterNudge() {
+        guard let panel = companionPanel, nudgePanelExpanded else { return }
+        var f = panel.frame
+        f.size.height = ACD.panelHeight
+        panel.setFrame(f, display: false)
+        nudgePanelExpanded = false
     }
 
     // MARK: - Overlay
@@ -477,35 +498,41 @@ final class WindowCoordinator {
     }
 
     /// Restore the previous edge-peek frame after the nudge disappears unless
-    /// the user moved the orb while the nudge was visible.
+    /// the user moved the orb while the nudge was visible. Always collapses the
+    /// expanded panel height regardless of whether position was restored.
     private func restoreCompanionAfterNudgeIfNeeded() {
-        guard let panel = companionPanel,
-              let restore = nudgeRestoreFrame,
-              let adjusted = nudgeAdjustedFrame else {
-            nudgeRestoreFrame = nil
-            nudgeAdjustedFrame = nil
-            nudgeRestorePeekingEdge = nil
-            return
-        }
-
-        let dx = panel.frame.origin.x - adjusted.origin.x
-        let dy = panel.frame.origin.y - adjusted.origin.y
-        let movedDuringNudge = hypot(dx, dy) > 2
-
         defer {
             nudgeRestoreFrame = nil
             nudgeAdjustedFrame = nil
             nudgeRestorePeekingEdge = nil
         }
 
-        guard !movedDuringNudge else { return }
-
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            panel.animator().setFrame(restore, display: true)
+        guard let panel = companionPanel else {
+            nudgePanelExpanded = false
+            return
         }
-        peekingEdge = nudgeRestorePeekingEdge
-        saveCompanionPosition()
+
+        // If we had repositioned the orb for the nudge, restore position.
+        // nudgeRestoreFrame has the pre-expansion height, so restoring it
+        // also implicitly restores the height in the animated frame.
+        if let restore = nudgeRestoreFrame, let adjusted = nudgeAdjustedFrame {
+            let dx = panel.frame.origin.x - adjusted.origin.x
+            let dy = panel.frame.origin.y - adjusted.origin.y
+            let movedDuringNudge = hypot(dx, dy) > 2
+            nudgePanelExpanded = false
+            if !movedDuringNudge {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    panel.animator().setFrame(restore, display: true)
+                }
+                peekingEdge = nudgeRestorePeekingEdge
+                saveCompanionPosition()
+                return
+            }
+        }
+
+        // No position restore (or user moved orb) — just collapse height.
+        collapsePanelAfterNudge()
     }
 
     // MARK: - Helpers

@@ -792,10 +792,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         recentUserMessages: [String],
         freeFormMemory: String
     ) -> Bool {
-        let recentDirectives = recentUserMessages.compactMap(parseExplicitDirective(from:))
+        let recentDirectives = recentUserMessages.enumerated().compactMap { index, message in
+            // If a caller passes plain chat text without a stamped prefix, synthesise
+            // an ordering timestamp so newer chat lines still outrank older memory.
+            let fallbackTimestamp = now.addingTimeInterval(-Double(max(recentUserMessages.count - index, 1)))
+            return parseExplicitDirective(from: message, fallbackTimestamp: fallbackTimestamp)
+        }
         let memoryDirectives = freeFormMemory
             .split(separator: "\n")
-            .compactMap { parseExplicitDirective(from: String($0)) }
+            .compactMap { parseExplicitDirective(from: String($0), fallbackTimestamp: nil) }
         let directives = recentDirectives + memoryDirectives
 
         let matchingAllows = directives
@@ -815,10 +820,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         return newestAllow.sourceTime >= newestBlock.sourceTime
     }
 
-    nonisolated private static func parseExplicitDirective(from line: String) -> ExplicitDirective? {
+    nonisolated private static func parseExplicitDirective(
+        from line: String,
+        fallbackTimestamp: Date?
+    ) -> ExplicitDirective? {
         let trimmed = line.cleanedSingleLine
-        guard let parsed = parseStampedLine(trimmed) else { return nil }
-        let body = parsed.body
+        let parsed = parseStampedLine(trimmed)
+        let sourceTime = parsed?.timestamp ?? fallbackTimestamp
+        let body = parsed?.body ?? trimmed
+        guard let sourceTime else { return nil }
         let lowerBody = body.lowercased()
 
         if let absoluteAllow = parseAbsoluteDirective(
@@ -829,7 +839,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return ExplicitDirective(
                 kind: .allow,
                 target: absoluteAllow.target,
-                sourceTime: parsed.timestamp,
+                sourceTime: sourceTime,
                 expiresAt: absoluteAllow.expiresAt
             )
         }
@@ -841,12 +851,20 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return ExplicitDirective(
                 kind: .allow,
                 target: absoluteOkay.target,
-                sourceTime: parsed.timestamp,
+                sourceTime: sourceTime,
                 expiresAt: absoluteOkay.expiresAt
             )
         }
-        if let relativeAllow = parseRelativeAllowance(body: body, lowerBody: lowerBody, sourceTime: parsed.timestamp) {
+        if let relativeAllow = parseRelativeAllowance(body: body, lowerBody: lowerBody, sourceTime: sourceTime) {
             return relativeAllow
+        }
+        if let simpleAllowTarget = parseSimpleAllowTarget(body: body, lowerBody: lowerBody) {
+            return ExplicitDirective(
+                kind: .allow,
+                target: simpleAllowTarget,
+                sourceTime: sourceTime,
+                expiresAt: nil
+            )
         }
         if let blockUntil = parseAbsoluteDirective(
             body: body,
@@ -857,7 +875,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return ExplicitDirective(
                 kind: .block,
                 target: blockUntil.target,
-                sourceTime: parsed.timestamp,
+                sourceTime: sourceTime,
                 expiresAt: blockUntil.expiresAt
             )
         }
@@ -870,15 +888,78 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return ExplicitDirective(
                 kind: .block,
                 target: blockUntil.target,
-                sourceTime: parsed.timestamp,
+                sourceTime: sourceTime,
                 expiresAt: blockUntil.expiresAt
             )
         }
-        if let blockToday = parseTodayBlock(body: body, lowerBody: lowerBody, sourceTime: parsed.timestamp) {
+        if let blockToday = parseTodayBlock(body: body, lowerBody: lowerBody, sourceTime: sourceTime) {
             return blockToday
+        }
+        if let simpleBlockTarget = parseSimpleBlockTarget(body: body, lowerBody: lowerBody) {
+            return ExplicitDirective(
+                kind: .block,
+                target: simpleBlockTarget,
+                sourceTime: sourceTime,
+                expiresAt: nil
+            )
         }
 
         return nil
+    }
+
+    nonisolated private static func parseSimpleAllowTarget(body: String, lowerBody: String) -> String? {
+        if let target = parsePrefixedTarget(
+            body: body,
+            lowerBody: lowerBody,
+            prefixes: ["allow ", "let me use "]
+        ) {
+            return target
+        }
+
+        let suffixes = [" is okay", " is allowed"]
+        for suffix in suffixes where lowerBody.contains(suffix) {
+            guard let range = lowerBody.range(of: suffix) else { continue }
+            let target = body[..<range.lowerBound]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { continue }
+            return cleanedDirectiveTarget(target)
+        }
+
+        return nil
+    }
+
+    nonisolated private static func parseSimpleBlockTarget(body: String, lowerBody: String) -> String? {
+        parsePrefixedTarget(
+            body: body,
+            lowerBody: lowerBody,
+            prefixes: ["do not allow use of ", "do not allow ", "don't let me use ", "dont let me use "]
+        )
+    }
+
+    nonisolated private static func parsePrefixedTarget(
+        body: String,
+        lowerBody: String,
+        prefixes: [String]
+    ) -> String? {
+        for prefix in prefixes where lowerBody.hasPrefix(prefix) {
+            let start = body.index(body.startIndex, offsetBy: prefix.count)
+            let target = body[start...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { continue }
+            return cleanedDirectiveTarget(target)
+        }
+        return nil
+    }
+
+    nonisolated private static func cleanedDirectiveTarget(_ text: String) -> String {
+        var result = text
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        let lower = result.lowercased()
+        for suffix in [" for now", " right now"] where lower.hasSuffix(suffix) {
+            result = String(result.dropLast(suffix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            break
+        }
+        return result
     }
 
     nonisolated private static func parseStampedLine(_ line: String) -> (timestamp: Date, body: String)? {

@@ -999,12 +999,17 @@ final class AppController: ObservableObject {
         consolidatingMemory = true
         let entriesSnapshot = state.memoryEntries
         let goalsSnapshot = state.goalsText
+        let recentUserMessagesSnapshot = BrainService.recentUserMessages(
+            chatHistory: state.chatHistory,
+            limit: max(MonitoringPromptContextBudget.recentUserChatCount, 6)
+        )
         let runtimeOverride = state.runtimePathOverride
 
         Task { [weak self, memoryConsolidationService] in
             let consolidated = await memoryConsolidationService.consolidate(
                 entries: entriesSnapshot,
                 goals: goalsSnapshot,
+                recentUserMessages: recentUserMessagesSnapshot,
                 now: now,
                 runtimeOverride: runtimeOverride
             )

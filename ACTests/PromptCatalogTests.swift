@@ -50,4 +50,13 @@ struct PromptCatalogTests {
         #expect(chatPrompt.contains("sharp-minded, energetic focus co-pilot"))
         #expect(nudgePrompt.contains("characterPersonalityPrefix"))
     }
+
+    @Test
+    func memoryConsolidationPromptPrefersLatestUserInstruction() {
+        let prompt = PromptCatalog.loadMemoryConsolidationSystemPrompt()
+
+        #expect(prompt.contains("most recent user interaction"))
+        #expect(prompt.contains("source of truth"))
+        #expect(prompt.contains("preserve both sides"))
+    }
 }
