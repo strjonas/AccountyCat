@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os.log
 
 extension Notification.Name {
     static let acActivityLogDidChange = Notification.Name("acActivityLogDidChange")
@@ -14,11 +15,14 @@ extension Notification.Name {
 actor ActivityLogService {
     static let shared = ActivityLogService()
 
+    private static let log = Logger(subsystem: "dev.accountycat", category: "activity-log")
+
     private let logURL: URL
     private let formatter: ISO8601DateFormatter
 
     init(fileManager: FileManager = .default) {
-        let supportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let supportURL = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
             .appendingPathComponent("AC", isDirectory: true)
             .appendingPathComponent("logs", isDirectory: true)
         self.logURL = supportURL.appendingPathComponent("activity.log")
@@ -53,7 +57,7 @@ actor ActivityLogService {
                 NotificationCenter.default.post(name: .acActivityLogDidChange, object: nil)
             }
         } catch {
-            NSLog("AC failed to append activity log: %@", error.localizedDescription)
+            Self.log.error("failed to append activity log: \(error.localizedDescription, privacy: .public)")
         }
     }
 

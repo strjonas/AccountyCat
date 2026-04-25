@@ -1,6 +1,6 @@
 # AC System Overview
 
-This document reflects the current shipped architecture in the repo as of April 2026.
+This document reflects the current shipped architecture in the repo as of April 2026. It is the single canonical architecture reference — start here.
 
 The monitoring stack now has three production algorithms behind one seam:
 
@@ -98,7 +98,7 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Timer as Timer (2s)
+    participant Timer as Tick timer (10s)
     participant Brain as BrainService
     participant Snap as SnapshotService
     participant Reg as MonitoringAlgorithmRegistry
@@ -129,6 +129,7 @@ sequenceDiagram
 
 Important runtime behavior:
 
+- Two timers run in parallel: a 10s tick timer drives `tick()` (full evaluation pipeline) and a 2s context-probe timer drives `probeForContextChange()` (cheap front-app/title checks that can promote a tick early). Both intervals live as constants on `BrainService`.
 - `BrainService` does not branch on algorithm id. It asks the selected algorithm for an evaluation plan, then builds a snapshot only if needed.
 - Screenshot capture is profile-aware. Title-only policy profiles do not capture screenshots.
 - Telemetry records the effective algorithm, prompt profile, pipeline profile, and runtime profile in `MonitoringExecutionMetadata`.
@@ -431,11 +432,12 @@ via the `HF_HOME` environment variable. Inspection also walks two fallback roots
 
 ### 12.2 Directory structure
 
-- `AC/` — main macOS app target (UI, controllers, services).
-- `ACShared/` — types shared between the app and the inspector (telemetry payloads, monitoring configuration, `DevelopmentModelConfiguration`).
+- `AC/` — main macOS app target. Subdivided into `Core/` (orchestration + algorithms), `Services/` (LLM runtime, storage, snapshot, calendar, permissions, etc.), `Models/` (Codable state types), `UI/` (SwiftUI views + window coordinator), and `Resources/Prompts/` (versioned prompt assets loaded by `PromptCatalog`).
+- `ACShared/` — types shared between the app and the inspector (telemetry payloads, monitoring configuration, `DevelopmentModelConfiguration`, structured-output JSON parsing).
 - `ACInspector/` — standalone debugging / replay tool (Prompt Lab, episode browser). Does not depend on the app target.
-- `ACTests/` — unit tests for algorithms and services.
-- `docs/` — architecture docs; this file is the entry point.
+- `ACTests/` — unit tests for algorithms, services, telemetry, and prompt rendering. `ACUITests/` is a thin UI-test target placeholder.
+- `Config/` — shared `.xcconfig` files. `Config/LocalOverrides.xcconfig` is gitignored and the place to put your dev team / signing identity.
+- `docs/` — `system-overview.md` is the only doc and the entry point.
 
 ## 13. Files to Start With
 

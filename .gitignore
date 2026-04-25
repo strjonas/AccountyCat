@@ -14,3 +14,7 @@ MD/
 .derivedData/
 
 unsloth/
+
+# Ad-hoc compile probes at repo root
+test_compile
+test_compile.swift

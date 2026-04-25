@@ -38,9 +38,7 @@ Everything stays under `~/Library/Application Support/AC` — screenshots, telem
 
 ## Docs
 
-- [Architecture](docs/architecture.md)
-- [Runtime](docs/runtime.md)
-- [Prompt And Algorithm Verification](MD/prompttesting.md)
+- [System overview](docs/system-overview.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
