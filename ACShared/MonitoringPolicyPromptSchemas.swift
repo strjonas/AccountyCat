@@ -108,6 +108,7 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
     var goals: String
     var freeFormMemory: String
+    var characterPersonalityPrefix: String
     var recentUserMessages: [String]
     var policySummary: String
     var appName: String

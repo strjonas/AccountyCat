@@ -40,4 +40,14 @@ struct PromptCatalogTests {
         #expect(perceptionPrompt.contains("Do not decide whether the activity matches the user's goals or policy rules yet."))
         #expect(runtimeProfile.options(for: .decision).ctxSize == 4096)
     }
+
+    @Test
+    func chatAndNudgePromptsReferenceCharacterVoice() {
+        let chatPrompt = PromptCatalog.loadChatSystemPrompt(character: .nova)
+        let nudgePrompt = MonitoringPromptTuning.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt
+
+        #expect(chatPrompt.contains("Character voice:"))
+        #expect(chatPrompt.contains("sharp-minded, energetic focus co-pilot"))
+        #expect(nudgePrompt.contains("characterPersonalityPrefix"))
+    }
 }

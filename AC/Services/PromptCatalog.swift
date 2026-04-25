@@ -312,7 +312,12 @@ enum PromptCatalog {
 
     nonisolated static func loadChatSystemPrompt(character: ACCharacter = .mochi) -> String {
         let base = load(asset: chatSystemPrompt)
-        return character.personalityPrefix + "\n\n" + base
+        return """
+        Character voice:
+        \(character.personalityPrefix)
+
+        \(base)
+        """
     }
 
     nonisolated static func loadMemoryConsolidationSystemPrompt() -> String {

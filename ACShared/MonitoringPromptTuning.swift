@@ -197,6 +197,7 @@ enum MonitoringPromptTuning {
                 Write one short nudge for a focus companion.
                 Keep it human, specific to the current activity, and different from recent nudges.
                 Avoid generic productivity slogans.
+                `characterPersonalityPrefix` is the active AC voice. Fold it into the wording naturally, but do not let it override the user's vibe or the meaning of the nudge.
                 If `freeFormMemory` or `recentUserMessages` names this specific app or activity, reference that context — it will feel more caring and less generic.
                 `calendarContext` (when present) can make the nudge feel more specific (e.g. reference the current meeting or focus block) — but treat it as a soft hint, not ground truth, and rank it below memory and chat.
                 Return exactly one JSON object: {"nudge":"..."}

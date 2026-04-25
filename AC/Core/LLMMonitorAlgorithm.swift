@@ -302,6 +302,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                         maxLength: MonitoringPromptContextBudget.goalCharacters
                     ),
                     freeFormMemory: freeFormMemory,
+                    characterPersonalityPrefix: input.characterPersonalityPrefix,
                     recentUserMessages: recentUserMessages,
                     policySummary: policySummary,
                     appName: compactAppName,
