@@ -34,13 +34,19 @@ struct CompanionView: View {
         return min(max((h * 0.070).rounded(), 58), 84)
     }
 
+    /// Give nudges room to breathe while still capping width on very large displays.
+    private var nudgeBubbleMaxWidth: CGFloat {
+        let w = NSScreen.main?.visibleFrame.width ?? 1280
+        return min(max((w * 0.34).rounded(), 220), 420)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
 
             // ── Speech bubble (appears only while latestNudge is set) ──
             if let nudge = controller.latestNudge {
                 SpeechBubble(text: nudge)
-                    .frame(maxWidth: 188)
+                    .frame(maxWidth: nudgeBubbleMaxWidth)
                     .transition(.asymmetric(
                         insertion: .scale(scale: 0.82, anchor: .bottom)
                             .combined(with: .opacity),
