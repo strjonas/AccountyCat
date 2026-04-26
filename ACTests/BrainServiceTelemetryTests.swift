@@ -74,7 +74,11 @@ struct BrainServiceTelemetryTests {
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
             nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
-            policyMemoryService: PolicyMemoryService(runtime: runtime)
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
         )
         return BrainService(
             monitoringAlgorithmRegistry: registry,

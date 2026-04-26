@@ -81,6 +81,25 @@ nonisolated struct MonitoringVisionPerceptionPromptPayload: Encodable, Sendable 
     var windowTitle: String?
 }
 
+nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
+    var now: Date
+    var goals: String
+    var characterPersonalityPrefix: String
+    var freeFormMemory: String
+    var recentUserMessages: [String]
+    var policySummary: String
+    var appName: String
+    var bundleIdentifier: String?
+    var windowTitle: String?
+    var recentSwitches: [MonitoringPromptSwitchRecord]
+    var usage: [MonitoringPromptUsageRecord]
+    var recentInterventions: MonitoringPromptInterventionSummary
+    var distraction: MonitoringPromptDistractionSummary
+    var heuristics: MonitoringPromptHeuristicSummary
+    var calendarContext: String?
+    var screenshotIncluded: Bool
+}
+
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var now: Date
     var goals: String

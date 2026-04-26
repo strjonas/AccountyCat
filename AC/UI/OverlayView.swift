@@ -26,17 +26,23 @@ struct OverlayView: View {
         let character = controller.state.character
         let accent = character.accentColor
 
-        return ZStack {
-            // Soft accent edge vignette — clear center so the user can see their work
-            RadialGradient(
-                colors: [Color.clear, accent.opacity(0.14)],
-                center: .center,
-                startRadius: 220,
-                endRadius: 780
-            )
-            .ignoresSafeArea()
+        return GeometryReader { proxy in
+            let cardWidth = min(max(proxy.size.width - 56, 360), 460)
 
-            VStack(spacing: 26) {
+            ZStack {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+
+                // Soft accent edge vignette — clear center so the user can see their work
+                RadialGradient(
+                    colors: [Color.clear, accent.opacity(0.14)],
+                    center: .center,
+                    startRadius: 220,
+                    endRadius: 780
+                )
+                .ignoresSafeArea()
+
+                VStack(spacing: 26) {
                 // Cat avatar with warm gradient halo, tinted by character
                 ZStack {
                     Circle()
@@ -78,34 +84,44 @@ struct OverlayView: View {
                             .font(.ac(13, weight: .medium))
                             .foregroundStyle(Color.acTextPrimary)
 
-                        TextField(
-                            "Explain why this is actually helping…",
-                            text: $controller.overlayAppealDraft,
-                            axis: .vertical
-                        )
-                        .font(.ac(13))
-                        .lineLimit(2...5)
-                        .textFieldStyle(.plain)
-                        .focused($appealFocused)
-                        .disabled(controller.sendingOverlayAppeal)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
+                        ZStack(alignment: .topLeading) {
+                            // Background and border
                             RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                                 .fill(Color(nsColor: .textBackgroundColor))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                                         .stroke(
                                             appealFocused
-                                                ? accent.opacity(0.55)
-                                                : Color.acHairline,
-                                            lineWidth: 1
+                                                ? accent.opacity(0.65)
+                                                : Color.acHairline.opacity(0.5),
+                                            lineWidth: 1.5
                                         )
                                 )
-                        )
+                            
+                            // TextField - no complex modifier chains
+                            TextField(
+                                "Explain why this is actually helping…",
+                                text: $controller.overlayAppealDraft,
+                                axis: .vertical
+                            )
+                            .font(.ac(13))
+                            .lineLimit(2...5)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .focused($appealFocused)
+                            .opacity(controller.sendingOverlayAppeal ? 0.6 : 1.0)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 64)
                         .animation(.acSnap, value: appealFocused)
                     }
-                    .onAppear { appealFocused = true }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onAppear { 
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            appealFocused = true
+                        }
+                    }
                 }
 
                 // Actions
@@ -126,13 +142,17 @@ struct OverlayView: View {
                     Button(presentation.secondaryButtonTitle) {
                         controller.dismissOverlay()
                     }
-                    .font(.ac(13))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                    .font(.ac(13, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                     .buttonStyle(.plain)
                 }
             }
             .padding(36)
-            .frame(maxWidth: 420)
+            .frame(width: cardWidth)
+            .fixedSize(horizontal: false, vertical: true)
             .background(
                 RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
                     .fill(.ultraThinMaterial)
@@ -142,8 +162,9 @@ struct OverlayView: View {
                     )
                     .shadow(color: accent.opacity(0.20), radius: 32, y: 16)
             )
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .acAccent(for: character)
     }
 }

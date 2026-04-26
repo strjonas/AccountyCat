@@ -429,6 +429,24 @@ enum PromptCatalog {
                 subdirectory: "Prompts/Policy",
                 fallbackContents: sharedPrompt.userTemplate
             )
+        case (.onlineDecision, .system):
+            return PromptAsset(
+                id: "policy.online_decision.system",
+                version: "llm_monitor_v1",
+                resourceName: "online_decision_system",
+                fileExtension: "md",
+                subdirectory: "Prompts/Policy",
+                fallbackContents: sharedPrompt.systemPrompt
+            )
+        case (.onlineDecision, .user):
+            return PromptAsset(
+                id: "policy.online_decision.user",
+                version: "llm_monitor_v1",
+                resourceName: "online_decision_user",
+                fileExtension: "md",
+                subdirectory: "Prompts/Policy",
+                fallbackContents: sharedPrompt.userTemplate
+            )
         case (.decision, .system):
             return PromptAsset(
                 id: "policy.decision.system",
@@ -580,6 +598,8 @@ enum PromptCatalog {
             return .perceptionTitle
         case .perceptionVision:
             return .perceptionVision
+        case .onlineDecision:
+            return .onlineDecision
         case .decision:
             return .decision
         case .nudgeCopy:

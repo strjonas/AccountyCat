@@ -20,16 +20,22 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let defaultAlgorithmID = currentLLMMonitorAlgorithmID
     nonisolated static let defaultPromptProfileID = "focus_default_v2"
     nonisolated static let defaultPipelineProfileID = "vision_split_default"
+    nonisolated static let defaultOnlineVisionPipelineProfileID = "online_single_round_vision"
+    nonisolated static let defaultOnlineTextPipelineProfileID = "online_single_round_text"
     nonisolated static let defaultRuntimeProfileID = "gemma_balanced_v1"
+    nonisolated static let defaultInferenceBackend: MonitoringInferenceBackend = .local
+    nonisolated static let defaultOnlineModelIdentifier = "google/gemma-4-31b-it:free"
     nonisolated static let banditAlgorithmID = "bandit_focus_v1"
 
     var algorithmID: String
     var promptProfileID: String
     var pipelineProfileID: String
     var runtimeProfileID: String
+    var inferenceBackend: MonitoringInferenceBackend
     var selectionMode: MonitoringSelectionMode
     var experimentArmOverride: String?
     var modelOverride: String?
+    var onlineModelIdentifier: String
     var thinkingEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -37,9 +43,11 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         case promptProfileID
         case pipelineProfileID
         case runtimeProfileID
+        case inferenceBackend
         case selectionMode
         case experimentArmOverride
         case modelOverride
+        case onlineModelIdentifier
         case thinkingEnabled
     }
 
@@ -48,18 +56,22 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         promptProfileID: String = Self.defaultPromptProfileID,
         pipelineProfileID: String = Self.defaultPipelineProfileID,
         runtimeProfileID: String = Self.defaultRuntimeProfileID,
+        inferenceBackend: MonitoringInferenceBackend = Self.defaultInferenceBackend,
         selectionMode: MonitoringSelectionMode = .fixed,
         experimentArmOverride: String? = nil,
         modelOverride: String? = nil,
+        onlineModelIdentifier: String = Self.defaultOnlineModelIdentifier,
         thinkingEnabled: Bool = false
     ) {
         self.algorithmID = Self.normalizedAlgorithmID(algorithmID)
         self.promptProfileID = promptProfileID
         self.pipelineProfileID = pipelineProfileID
         self.runtimeProfileID = runtimeProfileID
+        self.inferenceBackend = inferenceBackend
         self.selectionMode = selectionMode
         self.experimentArmOverride = experimentArmOverride
         self.modelOverride = modelOverride
+        self.onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(onlineModelIdentifier)
         self.thinkingEnabled = thinkingEnabled
     }
 
@@ -87,10 +99,33 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         experimentArmOverride ?? [
             selectionMode.rawValue,
             Self.normalizedAlgorithmID(algorithmID),
+            inferenceBackend.rawValue,
             pipelineProfileID,
             runtimeProfileID,
             promptProfileID,
         ].joined(separator: ":")
+    }
+
+    nonisolated var usesOnlineInference: Bool {
+        inferenceBackend == .openRouter
+    }
+
+    nonisolated static func normalizedOnlineModelIdentifier(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return defaultOnlineModelIdentifier
+        }
+
+        if let url = URL(string: trimmed),
+           let host = url.host?.lowercased(),
+           host.contains("openrouter.ai") {
+            let parts = url.pathComponents.filter { $0 != "/" }
+            if parts.count >= 2, parts[0] != "api", parts[0] != "docs" {
+                return "\(parts[0])/\(parts[1])"
+            }
+        }
+
+        return trimmed
     }
 
     init(from decoder: Decoder) throws {
@@ -101,9 +136,13 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         promptProfileID = try c.decodeIfPresent(String.self, forKey: .promptProfileID) ?? Self.defaultPromptProfileID
         pipelineProfileID = try c.decodeIfPresent(String.self, forKey: .pipelineProfileID) ?? Self.defaultPipelineProfileID
         runtimeProfileID = try c.decodeIfPresent(String.self, forKey: .runtimeProfileID) ?? Self.defaultRuntimeProfileID
+        inferenceBackend = try c.decodeIfPresent(MonitoringInferenceBackend.self, forKey: .inferenceBackend) ?? Self.defaultInferenceBackend
         selectionMode = try c.decodeIfPresent(MonitoringSelectionMode.self, forKey: .selectionMode) ?? .fixed
         experimentArmOverride = try c.decodeIfPresent(String.self, forKey: .experimentArmOverride)
         modelOverride = try c.decodeIfPresent(String.self, forKey: .modelOverride)
+        onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(
+            try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifier) ?? Self.defaultOnlineModelIdentifier
+        )
         thinkingEnabled = try c.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? false
     }
 
@@ -113,9 +152,11 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         try c.encode(promptProfileID, forKey: .promptProfileID)
         try c.encode(pipelineProfileID, forKey: .pipelineProfileID)
         try c.encode(runtimeProfileID, forKey: .runtimeProfileID)
+        try c.encode(inferenceBackend, forKey: .inferenceBackend)
         try c.encode(selectionMode, forKey: .selectionMode)
         try c.encodeIfPresent(experimentArmOverride, forKey: .experimentArmOverride)
         try c.encodeIfPresent(modelOverride, forKey: .modelOverride)
+        try c.encode(onlineModelIdentifier, forKey: .onlineModelIdentifier)
         try c.encode(thinkingEnabled, forKey: .thinkingEnabled)
     }
 }

@@ -189,6 +189,77 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func noInterventionLanguageForCurrentAppShortCircuitsDecision() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = try #require(makeLocalPromptDate("2026-04-25 14:28"))
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-never-flag-instagram",
+                runtimeOverride: runtimeFixture.runtimePath,
+                snapshot: makeSnapshot(
+                    now: now,
+                    windowTitle: "(1) Instagram"
+                ),
+                memory: """
+                [2026-04-25 14:13] Never again flag Instagram as a distraction.
+                """,
+                recentUserMessages: [
+                    "[2026-04-25 14:01] DO NOT DISTRUB ME ON INSTAGRAM",
+                    "[2026-04-25 14:13] never again flag instagram as a distraction",
+                ]
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.decision.assessment == .focused)
+        #expect(result.decision.reasonTags == ["recent_allow_override"])
+        #expect(result.policy.record.blockReason == "recent_allow_override")
+        #expect(result.evaluation.attempts.isEmpty)
+    }
+
+    @Test
+    func repeatedMatchingNudgesEscalateDistractedNudgeDecisionToOverlay() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = try #require(makeLocalPromptDate("2026-04-25 10:52"))
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-repeated-instagram",
+                runtimeOverride: runtimeFixture.runtimePath,
+                snapshot: makeSnapshot(
+                    now: now,
+                    windowTitle: "Instagram"
+                ),
+                memory: """
+                [2026-04-25 10:51] Do not allow Instagram until 2026-04-25 23:59
+                """,
+                recentUserMessages: [
+                    "[2026-04-25 10:51] Don't let me use Instagram today",
+                ],
+                recentActions: [
+                    ActionRecord(kind: .nudge, message: "That Instagram feed is distracting. Return to studying.", timestamp: now.addingTimeInterval(-120)),
+                    ActionRecord(kind: .nudge, message: "You're looking at Instagram stories. Return to studying.", timestamp: now.addingTimeInterval(-240)),
+                ]
+            )
+        )
+
+        if case let .showOverlay(presentation) = result.policy.action {
+            #expect(presentation.evaluationID == "eval-repeated-instagram")
+            #expect(presentation.body.contains("after a few nudges"))
+        } else {
+            Issue.record("Expected repeated nudges to escalate, got \(result.policy.action)")
+        }
+        #expect(result.policy.record.blockReason == "repeated_nudge_escalation")
+        #expect(result.updatedAlgorithmState.llmPolicy.lastOverlayAt == now)
+        #expect(result.updatedAlgorithmState.llmPolicy.activeAppeal?.evaluationID == "eval-repeated-instagram")
+    }
+
+    @Test
     func scheduledFocusedFollowUpDoesNotReevaluateUntilDue() {
         let algorithm = makeAlgorithm()
         let context = FrontmostContext(
@@ -267,6 +338,44 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func onlineVisionPipelineUsesSingleRoundDecisionAndNudge() async throws {
+        let onlineService = StubOnlineModelService(
+            output: RuntimeProcessOutput(
+                stdout: """
+                {"assessment":"distracted","suggested_action":"nudge","confidence":0.91,"reason_tags":["doomscrolling"],"nudge":"Back to the build."}
+                """,
+                stderr: ""
+            )
+        )
+        let algorithm = makeAlgorithm(onlineModelService: onlineService)
+        let now = Date(timeIntervalSince1970: 7_950)
+
+        var configuration = MonitoringConfiguration()
+        configuration.inferenceBackend = .openRouter
+        configuration.pipelineProfileID = MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-online",
+                runtimeOverride: "/tmp/missing-runtime",
+                snapshot: makeSnapshot(
+                    now: now,
+                    screenshotPath: "/tmp/fake-screenshot.png"
+                ),
+                configuration: configuration
+            )
+        )
+
+        #expect(result.policy.action == .showNudge("Back to the build."))
+        #expect(result.evaluation.attempts.map(\.promptMode) == ["online_decision"])
+        let requests = await onlineService.requests()
+        #expect(requests.count == 1)
+        #expect(requests.first?.imagePath == "/tmp/fake-screenshot.png")
+        #expect(requests.first?.modelIdentifier == MonitoringConfiguration.defaultOnlineModelIdentifier)
+    }
+
+    @Test
     func appealReviewAppliesPolicyMemoryUpdateAndClearsSessionWhenAllowed() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.appealReview = """
@@ -279,7 +388,11 @@ struct LLMMonitorAlgorithmTests {
         let runtime = LocalModelRuntime()
         let algorithm = LLMMonitorAlgorithm(
             runtime: runtime,
-            policyMemoryService: PolicyMemoryService(runtime: runtime)
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
         )
         let now = Date(timeIntervalSince1970: 8_000)
         var state = AlgorithmStateEnvelope()
@@ -319,11 +432,17 @@ struct LLMMonitorAlgorithmTests {
         #expect(result?.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(45))
     }
 
-    private func makeAlgorithm() -> LLMMonitorAlgorithm {
+    private func makeAlgorithm(
+        onlineModelService: any OnlineModelServing = OnlineModelService()
+    ) -> LLMMonitorAlgorithm {
         let runtime = LocalModelRuntime()
         return LLMMonitorAlgorithm(
             runtime: runtime,
-            policyMemoryService: PolicyMemoryService(runtime: runtime)
+            onlineModelService: onlineModelService,
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
         )
     }
 
@@ -334,10 +453,14 @@ struct LLMMonitorAlgorithmTests {
         state: AlgorithmStateEnvelope? = nil,
         snapshot: AppSnapshot? = nil,
         memory: String = "Keep social media short during focused work.",
-        recentUserMessages: [String] = []
+        recentUserMessages: [String] = [],
+        recentActions: [ActionRecord] = [],
+        configuration: MonitoringConfiguration? = nil
     ) -> MonitoringDecisionInput {
-        var configuration = MonitoringConfiguration()
-        configuration.pipelineProfileID = "title_only_default"
+        var configuration = configuration ?? MonitoringConfiguration()
+        if configuration == MonitoringConfiguration() {
+            configuration.pipelineProfileID = "title_only_default"
+        }
         let algorithmState = state ?? AlgorithmStateEnvelope()
 
         return MonitoringDecisionInput(
@@ -345,7 +468,7 @@ struct LLMMonitorAlgorithmTests {
             evaluationID: evaluationID,
             snapshot: snapshot ?? makeSnapshot(now: now),
             goals: "Ship AC and stay focused on engineering work.",
-            recentActions: [],
+            recentActions: recentActions,
             heuristics: makeHeuristics(),
             memory: memory,
             recentUserMessages: recentUserMessages,
@@ -382,7 +505,8 @@ struct LLMMonitorAlgorithmTests {
         now: Date,
         appName: String = "Google Chrome",
         windowTitle: String? = "Docs",
-        bundleIdentifier: String = "com.google.Chrome"
+        bundleIdentifier: String = "com.google.Chrome",
+        screenshotPath: String? = nil
     ) -> AppSnapshot {
         AppSnapshot(
             bundleIdentifier: bundleIdentifier,
@@ -402,7 +526,7 @@ struct LLMMonitorAlgorithmTests {
             ],
             screenshotArtifact: nil,
             screenshotThumbnail: nil,
-            screenshotPath: nil,
+            screenshotPath: screenshotPath,
             idle: false,
             timestamp: now
         )
@@ -423,5 +547,23 @@ struct LLMMonitorAlgorithmTests {
         formatter.timeZone = .current
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter.date(from: value)
+    }
+}
+
+private actor StubOnlineModelService: OnlineModelServing {
+    private let output: RuntimeProcessOutput
+    private var recordedRequests: [OnlineModelRequest] = []
+
+    init(output: RuntimeProcessOutput) {
+        self.output = output
+    }
+
+    func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput {
+        recordedRequests.append(request)
+        return output
+    }
+
+    func requests() -> [OnlineModelRequest] {
+        recordedRequests
     }
 }

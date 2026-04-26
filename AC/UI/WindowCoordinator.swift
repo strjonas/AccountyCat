@@ -332,7 +332,7 @@ final class WindowCoordinator {
 
     private func makeOverlayWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: OverlayView().environmentObject(controller))
-        let window = NSWindow(
+        let window = OverlayWindow(
             contentRect: activeScreen().frame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -344,6 +344,17 @@ final class WindowCoordinator {
         window.isOpaque = false
         window.hasShadow = false
         window.contentViewController = hosting
+
+        // Borderless windows do not become key by default; this custom
+        // subclass allows TextField focus and button interaction.
+        window.acceptsMouseMovedEvents = true
+        window.ignoresMouseEvents = false
+
+        let hostingView = hosting.view
+        hostingView.wantsLayer = true
+        hostingView.layer?.isOpaque = false
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+
         return window
     }
 
@@ -561,6 +572,11 @@ final class WindowCoordinator {
 final class PassivePanel: NSPanel {
     override var canBecomeKey: Bool  { false }
     override var canBecomeMain: Bool { false }
+}
+
+final class OverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }
 
 // MARK: - CGFloat clamping helper

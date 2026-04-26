@@ -197,6 +197,34 @@ struct ContentView: View {
                 onSelect: { controller.updateCharacter($0) }
             )
 
+            SettingsSection(
+                title: "Mode",
+                icon: "network",
+                subtitle: controller.usingOnlineMonitoring
+                    ? "Online uses OpenRouter — smart, free models available. Vision controls whether screenshots are uploaded."
+                    : "Local runs on your Mac — fully private. Switch to Online if you want a stronger model without the download."
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker(
+                        "Backend",
+                        selection: Binding(
+                            get: { controller.state.monitoringConfiguration.inferenceBackend },
+                            set: { controller.updateMonitoringInferenceBackend($0) }
+                        )
+                    ) {
+                        ForEach(MonitoringInferenceBackend.allCases, id: \.self) { backend in
+                            Text(backend.displayName).tag(backend)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if controller.usingOnlineMonitoring {
+                        OpenRouterKeyField(compact: true)
+                            .environmentObject(controller)
+                    }
+                }
+            }
+
             Divider().opacity(0.3)
 
             SettingsSection(title: "Controls", icon: "switch.2") {
@@ -223,7 +251,9 @@ struct ContentView: View {
                     ToggleTile(
                         icon: controller.visionEnabled ? "camera.fill" : "camera.slash.fill",
                         title: "Vision",
-                        subtitle: controller.visionEnabled ? "Screenshot on" : "Title only",
+                        subtitle: controller.usingOnlineMonitoring
+                            ? (controller.visionEnabled ? "Uploads screenshot" : "Text only")
+                            : (controller.visionEnabled ? "Screenshot on" : "Title only"),
                         isOn: Binding(
                             get: { controller.visionEnabled },
                             set: { controller.updateVisionEnabled($0) }
@@ -378,7 +408,7 @@ struct ContentView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Model override")
+                Text("Local model override")
                     .font(.ac(11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 TextField(
@@ -391,6 +421,24 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
                 modelQuickPickButtons
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("OpenRouter model")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                TextField(
+                    MonitoringConfiguration.defaultOnlineModelIdentifier,
+                    text: Binding(
+                        get: { controller.state.monitoringConfiguration.onlineModelIdentifier },
+                        set: { controller.updateOnlineModelIdentifier($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                Text("Model ID (e.g. google/gemma-4-31b-it:free) or full openrouter.ai URL.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
             }
 
             Toggle(isOn: Binding(

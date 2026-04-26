@@ -34,6 +34,7 @@ struct TelemetryMetadataTests {
             experimentArm: [
                 "fixed",
                 MonitoringConfiguration.defaultAlgorithmID,
+                MonitoringInferenceBackend.local.rawValue,
                 MonitoringConfiguration.defaultPipelineProfileID,
                 MonitoringConfiguration.defaultRuntimeProfileID,
                 "focus_default_v2",

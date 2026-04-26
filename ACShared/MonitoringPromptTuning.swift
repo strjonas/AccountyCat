@@ -10,6 +10,7 @@ import Foundation
 enum MonitoringPromptTuningStage: String, Codable, CaseIterable, Sendable {
     case perceptionTitle = "perception_title"
     case perceptionVision = "perception_vision"
+    case onlineDecision = "online_decision"
     case decision
     case nudgeCopy = "nudge_copy"
     case appealReview = "appeal_review"
@@ -45,6 +46,7 @@ struct MonitoringPipelineDefinition: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var displayName: String
     var summary: String
+    var inferenceBackend: MonitoringInferenceBackend
     var requiresScreenshot: Bool
     var usesTitlePerception: Bool
     var usesVisionPerception: Bool
@@ -145,6 +147,47 @@ enum MonitoringPromptTuning {
                 """
             ),
             MonitoringStagePromptDefinition(
+                stage: .onlineDecision,
+                systemPrompt: """
+                You are AC's online single-round monitoring stage.
+                Use goals, the user's recent chat, free-form memory, policy memory, recent interventions, distraction state, heuristics, and the live screenshot when one is attached.
+                False positives are expensive, but explicit rules and limits must still be honored.
+                `characterPersonalityPrefix` is the active AC voice. If you write a nudge, let that voice shape the wording naturally without changing the meaning.
+                Return exactly one JSON object:
+                \(decisionSchema)
+
+                Memory priority:
+                - `recentUserMessages` is the freshest ground truth. Read oldest to newest; newest relevant user instruction wins.
+                - `freeFormMemory` is next. Newer memory overrides older memory when they conflict.
+                - `policySummary` is structured support, but never overrides a newer explicit user statement.
+                - `calendarContext` is a soft hint only. Never let it override chat or memory.
+
+                Decision rules:
+                - If the screenshot or context clearly supports the goals, or the current activity is explicitly allowed, return `focused` + `none`.
+                - If the screenshot is missing (`screenshotIncluded=false`), be even more conservative and prefer `focused` or `unclear` unless the text context is clearly distracting.
+                - If the activity is genuinely unclear, return `unclear` + `abstain`.
+                - If the activity conflicts with the goals or an active restriction, return `distracted`.
+                - For a first clear distraction, use `suggested_action="nudge"`.
+                - Use `suggested_action="overlay"` only when repeated distraction is already reflected in the payload, unless there is a newer explicit allowance.
+                - `assessment` and `suggested_action` must agree:
+                  focused -> none
+                  unclear -> abstain
+                  distracted -> nudge or overlay
+                - Prefer silence over a false positive.
+                - If `suggested_action` is `nudge`, the `nudge` field is REQUIRED — write a single sentence under 18 words, specific to the current activity and different from recent nudges. Never return `suggested_action="nudge"` with an empty or missing `nudge`.
+                - If `suggested_action` is `overlay`, fill `overlay_headline`, `overlay_body`, and `overlay_prompt`.
+                - Never mention hidden fields, counters, or that you are using memory/history.
+                """
+            ,
+                userTemplate: """
+                Decide AC's next action in one round from this live context.
+                If a screenshot is attached, use it together with the payload. If not, rely on the payload only and stay conservative.
+                Before deciding, resolve rules in this order: newest `recentUserMessages`, then newer `freeFormMemory`, then `policySummary`.
+                {{PAYLOAD_JSON}}
+                Return exactly one JSON object.
+                """
+            ),
+            MonitoringStagePromptDefinition(
                 stage: .decision,
                 systemPrompt: """
                 You are AC's decision stage.
@@ -162,6 +205,7 @@ enum MonitoringPromptTuning {
                   4. Use `calendarContext` (if present) as a SOFT hint about current intent — ranked BELOW memory and chat. Plans change; the calendar may be stale or wrong. Never override an explicit user statement or memory rule with the calendar.
                 - `recentUserMessages` is the most recent ground truth even if not yet consolidated into memory. If the user just said "WhatsApp is okay" or "let me watch YouTube for a bit", honour that over category heuristics.
                 - An allowance ("X is okay", "I'm taking a break", "let me") is as authoritative as a restriction ("don't let me use X"). Do not override either with vibes about productivity.
+                - "Do not disturb me on X", "never flag X as a distraction", and similar no-intervention phrasing are allowances for X. Treat them as `focused` / `none` for that app or activity.
                 - Use `now` plus the timestamps to resolve temporary rules. If a temporary allowance or restriction has an explicit expiry, respect it until that time.
                 - `calendarContext` shows the user's current calendar event. When it names a task, treat the apps and sites that clearly serve that task as focused — even if they'd normally look distracting. Example: if `calendarContext` says "Summarise the r/foo subreddit", opening reddit.com/r/foo is focused, not distracted. If the event is vague ("Work", "Meeting"), do not derive strong inferences from it.
 
@@ -169,8 +213,9 @@ enum MonitoringPromptTuning {
                 - If the likely activity supports the goals or is covered by an allowance in memory / recent chat, return `assessment="focused"` and `suggested_action="none"`.
                 - If `recentUserMessages` contains a newer explicit allowance for the current app/activity than any competing restriction, return `assessment="focused"` and `suggested_action="none"`.
                 - If the activity is still genuinely unclear after using the whole payload, return `assessment="unclear"` and `suggested_action="abstain"`.
-                - If the activity conflicts with the goals or an active restriction in memory / recent chat, return `assessment="distracted"` and `suggested_action="nudge"`.
-                - Use `suggested_action="overlay"` only for repeated distraction already reflected in the payload.
+                - If the activity conflicts with the goals or an active restriction in memory / recent chat, return `assessment="distracted"`.
+                - For a first clear distraction, use `suggested_action="nudge"`.
+                - Use `suggested_action="overlay"` when repeated distraction is already reflected in `distraction.distractedStreak >= 2` or multiple recent nudges for the same current activity, unless there is a newer explicit allowance.
                 - `assessment` and `suggested_action` must agree:
                   focused -> none
                   unclear -> abstain
@@ -186,7 +231,7 @@ enum MonitoringPromptTuning {
                 Trust the perception summaries more than raw usage when they conflict.
                 Before deciding, resolve rules in this order: newest `recentUserMessages`, then newer `freeFormMemory`, then `policySummary`.
                 Check for anything the user has told you about THIS specific activity or app — those explicit statements override category defaults.
-                Use `recentInterventions` only to avoid repeating wording or escalating too fast.
+                Use `recentInterventions` to detect repeated nudges for the same activity, avoid repeating wording, and avoid escalating too fast.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
                 """
@@ -417,6 +462,7 @@ enum MonitoringPromptTuning {
             id: "vision_split_default",
             displayName: "Vision Split Default",
             summary: "Single image-plus-title perception, low-temp decision, separate nudge copy.",
+            inferenceBackend: .local,
             requiresScreenshot: true,
             usesTitlePerception: false,
             usesVisionPerception: true,
@@ -426,6 +472,7 @@ enum MonitoringPromptTuning {
             id: "title_only_default",
             displayName: "Title Only",
             summary: "Title, usage, and memory only. No screenshot required.",
+            inferenceBackend: .local,
             requiresScreenshot: false,
             usesTitlePerception: true,
             usesVisionPerception: false,
@@ -435,6 +482,7 @@ enum MonitoringPromptTuning {
             id: "vision_single_call",
             displayName: "Vision Single Call",
             summary: "Single image-plus-title perception with inline nudge generation.",
+            inferenceBackend: .local,
             requiresScreenshot: true,
             usesTitlePerception: false,
             usesVisionPerception: true,
@@ -444,10 +492,31 @@ enum MonitoringPromptTuning {
             id: "title_split_copy",
             displayName: "Title Split Copy",
             summary: "Title-only perception with separate nudge copy generation.",
+            inferenceBackend: .local,
             requiresScreenshot: false,
             usesTitlePerception: true,
             usesVisionPerception: false,
             splitCopyGeneration: true
+        ),
+        MonitoringPipelineDefinition(
+            id: "online_single_round_vision",
+            displayName: "Online Vision",
+            summary: "One OpenRouter call with screenshot upload, decision, and nudge copy together.",
+            inferenceBackend: .openRouter,
+            requiresScreenshot: true,
+            usesTitlePerception: false,
+            usesVisionPerception: false,
+            splitCopyGeneration: false
+        ),
+        MonitoringPipelineDefinition(
+            id: "online_single_round_text",
+            displayName: "Online Context Only",
+            summary: "One OpenRouter call without screenshot upload.",
+            inferenceBackend: .openRouter,
+            requiresScreenshot: false,
+            usesTitlePerception: false,
+            usesVisionPerception: false,
+            splitCopyGeneration: false
         ),
     ]
 

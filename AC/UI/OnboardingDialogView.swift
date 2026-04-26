@@ -2,10 +2,8 @@
 //  OnboardingDialogView.swift
 //  AC
 //
-//  Compact setup checklist embedded in the Home tab of the popover.
-//  No longer a modal overlay — just a clean inline card.
-//
 
+import AppKit
 import SwiftUI
 
 struct OnboardingDialogView: View {
@@ -14,39 +12,18 @@ struct OnboardingDialogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Header
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: controller.state.setupStatus == .ready
-                      ? "checkmark.seal.fill"
-                      : "wand.and.stars")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(accent.opacity(0.14)))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(controller.state.setupStatus == .ready
-                         ? "AccountyCat is ready"
-                         : "Finish setup")
-                        .font(.ac(15, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
-
-                    Text(subtitle)
-                        .font(.ac(12))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                }
-                Spacer(minLength: 8)
-                Button(action: { controller.refreshSystemState() }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(ACIconButton())
-                .help("Refresh status")
-            }
+            header
 
             if controller.showingOnboardingCompletion && controller.state.setupStatus == .ready {
                 completionBanner
             } else if controller.installingRuntime {
                 downloadExpectationBanner
+            }
+
+            // Mode chooser is always visible during onboarding so the user
+            // can switch direction without diving into Settings.
+            if controller.state.setupStatus != .ready {
+                modeChooser
             }
 
             // Step rows
@@ -63,16 +40,28 @@ struct OnboardingDialogView: View {
                         ? .done
                         : (controller.state.permissions.accessibility == .granted ? .done : .needed)
                 )
-                SetupStepRow(
-                    title: "Build tools",
-                    state: controller.setupDiagnostics.missingTools.isEmpty ? .done : .needed
-                )
-                SetupStepRow(
-                    title: "Local runtime",
-                    state: runtimeState
-                )
+                if controller.usingOnlineMonitoring {
+                    SetupStepRow(
+                        title: "OpenRouter API key",
+                        state: controller.hasOnlineAPIKeyConfigured ? .done : .needed
+                    )
+                } else {
+                    SetupStepRow(
+                        title: "Build tools",
+                        state: controller.setupDiagnostics.missingTools.isEmpty ? .done : .needed
+                    )
+                    SetupStepRow(
+                        title: "Local model",
+                        state: runtimeState
+                    )
+                }
             }
             .padding(.vertical, 2)
+
+            if controller.usingOnlineMonitoring,
+               controller.state.setupStatus != .ready {
+                openRouterKeyPanel
+            }
 
             // Error
             if let err = controller.setupErrorMessage {
@@ -130,6 +119,108 @@ struct OnboardingDialogView: View {
                     RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                         .stroke(Color.acHairline, lineWidth: 1)
                 )
+        )
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: controller.state.setupStatus == .ready
+                  ? "checkmark.seal.fill"
+                  : "wand.and.stars")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(accent.opacity(0.14)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(controller.state.setupStatus == .ready
+                     ? "AccountyCat is ready"
+                     : "Pick how AC monitors")
+                    .font(.ac(15, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+
+                Text(subtitle)
+                    .font(.ac(12))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+            }
+            Spacer(minLength: 8)
+            Button(action: { controller.refreshSystemState() }) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(ACIconButton())
+            .help("Refresh status")
+        }
+    }
+
+    // MARK: - Mode chooser
+
+    private var modeChooser: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Two ways to run AC — both work great.")
+                .font(.ac(11, weight: .medium))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+
+            HStack(alignment: .top, spacing: 8) {
+                ModeCard(
+                    title: "Local",
+                    tagline: "Fully private",
+                    bullets: [
+                        "Runs on your Mac — nothing leaves it",
+                        "~4.5 GB one-time download",
+                        "Free forever, slower & smaller model"
+                    ],
+                    isSelected: !controller.usingOnlineMonitoring,
+                    accent: accent,
+                    onSelect: { controller.updateMonitoringInferenceBackend(.local) }
+                )
+                ModeCard(
+                    title: "Online",
+                    tagline: "Smarter, lighter",
+                    bullets: [
+                        "Free models like Gemma available",
+                        "No download — just an API key",
+                        "Open source: only sends what AI tools usually see"
+                    ],
+                    isSelected: controller.usingOnlineMonitoring,
+                    accent: accent,
+                    onSelect: { controller.updateMonitoringInferenceBackend(.openRouter) }
+                )
+            }
+
+            Text("You can switch any time in Settings.")
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
+        )
+    }
+
+    // MARK: - OpenRouter key panel (inline during onboarding)
+
+    private var openRouterKeyPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            OpenRouterKeyField()
+                .environmentObject(controller)
+
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("AccountyCat is open source. With Vision off, only the active app and window title are sent. With Vision on, a screenshot is also sent — same as you'd paste into ChatGPT.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
         )
     }
 
@@ -193,7 +284,9 @@ struct OnboardingDialogView: View {
                     .buttonStyle(ACPrimaryButton())
                 }
 
-                if !controller.setupDiagnostics.missingTools.isEmpty {
+                if controller.usingOnlineMonitoring {
+                    EmptyView()
+                } else if !controller.setupDiagnostics.missingTools.isEmpty {
                     Button(controller.installingDependencies
                            ? "Installing tools…"
                            : "Install tools") {
@@ -221,9 +314,17 @@ struct OnboardingDialogView: View {
 
     private var subtitle: String {
         if controller.state.setupStatus == .ready {
+            if controller.usingOnlineMonitoring {
+                return permissionRequirements.requiresScreenRecording
+                    ? "Online monitoring is active with screenshot upload."
+                    : "Online monitoring is active with text-only context."
+            }
             return "Running locally — fully private."
         }
-        return "Everything stays on-device. One-time setup."
+        if controller.usingOnlineMonitoring {
+            return "Add your OpenRouter key below — free models work great."
+        }
+        return "Local setup downloads a small model. Everything stays on your Mac."
     }
 
     private var permissionRequirements: MonitoringPermissionRequirements {
@@ -231,12 +332,18 @@ struct OnboardingDialogView: View {
     }
 
     private var runtimeState: SetupStepState {
+        if controller.usingOnlineMonitoring {
+            return controller.hasOnlineAPIKeyConfigured ? .done : .needed
+        }
         if controller.setupDiagnostics.isReady { return .done }
         if controller.installingRuntime         { return .progress }
         return .needed
     }
 
     private var primaryRuntimeActionTitle: String {
+        if controller.usingOnlineMonitoring {
+            return "Configure OpenRouter"
+        }
         if controller.installingRuntime {
             if controller.setupDiagnostics.runtimePresent {
                 return "Downloading model…"
@@ -247,7 +354,59 @@ struct OnboardingDialogView: View {
         if controller.setupDiagnostics.runtimePresent {
             return "Download model"
         }
-        return "Install runtime"
+        return "Install local model"
+    }
+}
+
+// MARK: - Mode chooser card
+
+private struct ModeCard: View {
+    let title: String
+    let tagline: String
+    let bullets: [String]
+    let isSelected: Bool
+    let accent: Color
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(isSelected ? accent : Color.secondary.opacity(0.6))
+                    Text(title)
+                        .font(.ac(13, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Spacer(minLength: 0)
+                }
+                Text(tagline)
+                    .font(.ac(10, weight: .medium))
+                    .foregroundStyle(accent.opacity(0.85))
+                ForEach(bullets, id: \.self) { bullet in
+                    HStack(alignment: .top, spacing: 4) {
+                        Text("•")
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                        Text(bullet)
+                            .font(.ac(10))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.78))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.10) : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(isSelected ? accent.opacity(0.55) : Color.acHairline, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

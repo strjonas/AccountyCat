@@ -55,6 +55,7 @@ struct MonitoringConfigurationTests {
             == [
                 "fixed",
                 MonitoringConfiguration.legacyLLMFocusAlgorithmID,
+                MonitoringInferenceBackend.local.rawValue,
                 MonitoringConfiguration.defaultPipelineProfileID,
                 MonitoringConfiguration.defaultRuntimeProfileID,
                 MonitoringConfiguration.defaultPromptProfileID,
@@ -67,8 +68,10 @@ struct MonitoringConfigurationTests {
         let configuration = MonitoringConfiguration()
 
         #expect(configuration.algorithmID == MonitoringConfiguration.currentLLMMonitorAlgorithmID)
+        #expect(configuration.inferenceBackend == .local)
         #expect(configuration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(configuration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
+        #expect(configuration.onlineModelIdentifier == MonitoringConfiguration.defaultOnlineModelIdentifier)
     }
 
     @Test

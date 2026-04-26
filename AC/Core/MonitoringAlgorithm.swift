@@ -145,6 +145,7 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
         screenStateExtractor: some ScreenStateExtracting,
         nudgeCopywriter: any NudgeCopywriting,
         runtime: LocalModelRuntime,
+        onlineModelService: any OnlineModelServing,
         policyMemoryService: PolicyMemoryServicing
     ) {
         self.legacyLLMFocusAlgorithm = LegacyLLMFocusAlgorithm(
@@ -152,6 +153,7 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
         )
         self.llmMonitorAlgorithm = LLMMonitorAlgorithm(
             runtime: runtime,
+            onlineModelService: onlineModelService,
             policyMemoryService: policyMemoryService
         )
         self.banditFocusAlgorithm = BanditMonitoringAlgorithm(

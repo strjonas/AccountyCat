@@ -37,6 +37,7 @@ final class AppController: ObservableObject {
     @Published var consolidatingMemory = false
     @Published var onboardingDismissed = false
     @Published var telemetrySessionID: String?
+    @Published var onlineAPIKeyDraft: String
     /// Set by WindowCoordinator when the orb is snapped to a screen edge (peek mode).
     @Published var peekingEdge: NSRectEdge? = nil
     /// Populated by `refreshAvailableCalendars()` once Calendar Intelligence is
@@ -50,6 +51,7 @@ final class AppController: ObservableObject {
     let storageService = StorageService()
     let telemetryStore = TelemetryStore.shared
     let localModelRuntime: LocalModelRuntime
+    let onlineModelService: OnlineModelService
     let monitoringLLMClient: MonitoringLLMClient
     let companionChatService: CompanionChatService
     let memoryConsolidationService: MemoryConsolidationService
@@ -65,11 +67,22 @@ final class AppController: ObservableObject {
 
     private init() {
         let runtime = LocalModelRuntime()
+        let onlineModelService = OnlineModelService()
         let monitoringLLMClient = MonitoringLLMClient(runtime: runtime)
-        let companionChatService = CompanionChatService(runtime: runtime)
-        let memoryConsolidationService = MemoryConsolidationService(runtime: runtime)
-        let policyMemoryService = PolicyMemoryService(runtime: runtime)
+        let companionChatService = CompanionChatService(
+            runtime: runtime,
+            onlineModelService: onlineModelService
+        )
+        let memoryConsolidationService = MemoryConsolidationService(
+            runtime: runtime,
+            onlineModelService: onlineModelService
+        )
+        let policyMemoryService = PolicyMemoryService(
+            runtime: runtime,
+            onlineModelService: onlineModelService
+        )
         self.localModelRuntime = runtime
+        self.onlineModelService = onlineModelService
         self.monitoringLLMClient = monitoringLLMClient
         self.companionChatService = companionChatService
         self.memoryConsolidationService = memoryConsolidationService
@@ -79,10 +92,12 @@ final class AppController: ObservableObject {
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
             nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
+            onlineModelService: onlineModelService,
             policyMemoryService: policyMemoryService
         )
         let loadedState = storageService.loadState()
         self.state = loadedState
+        self.onlineAPIKeyDraft = OnlineModelCredentialStore.loadAPIKey() ?? ""
         self.setupDiagnostics = RuntimeSetupService.inspect(
             runtimeOverride: loadedState.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: loadedState.monitoringConfiguration)
@@ -135,11 +150,14 @@ final class AppController: ObservableObject {
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
         let permissionRequirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
+        let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
 
         if installingRuntime || installingDependencies {
             state.setupStatus = .installing
         } else if !state.permissions.satisfies(permissionRequirements) {
             state.setupStatus = .needsPermissions
+        } else if usesOnlineInference {
+            state.setupStatus = hasOnlineAPIKeyConfigured ? .ready : .needsRuntime
         } else if setupDiagnostics.isReady {
             state.setupStatus = .ready
         } else if !setupDiagnostics.canInstall {
@@ -222,12 +240,45 @@ final class AppController: ObservableObject {
     }
 
     var visionEnabled: Bool {
-        !["title_only_default", "title_split_copy"].contains(state.monitoringConfiguration.pipelineProfileID)
+        LLMPolicyCatalog.pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
+            .descriptor
+            .requiresScreenshot
     }
 
     func updateVisionEnabled(_ enabled: Bool) {
-        let target = enabled ? MonitoringConfiguration.defaultPipelineProfileID : "title_only_default"
+        let target: String
+        if state.monitoringConfiguration.usesOnlineInference {
+            target = enabled
+                ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+                : MonitoringConfiguration.defaultOnlineTextPipelineProfileID
+        } else {
+            target = enabled ? MonitoringConfiguration.defaultPipelineProfileID : "title_only_default"
+        }
         updateMonitoringPipelineProfile(target)
+    }
+
+    var hasOnlineAPIKeyConfigured: Bool {
+        !onlineAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var usingOnlineMonitoring: Bool {
+        state.monitoringConfiguration.usesOnlineInference
+    }
+
+    func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
+        guard state.monitoringConfiguration.inferenceBackend != backend else { return }
+        state.monitoringConfiguration.inferenceBackend = backend
+        state.monitoringConfiguration.pipelineProfileID = backend == .openRouter
+            ? (visionEnabled
+                ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+                : MonitoringConfiguration.defaultOnlineTextPipelineProfileID)
+            : (visionEnabled
+                ? MonitoringConfiguration.defaultPipelineProfileID
+                : "title_only_default")
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Inference backend: \(backend.rawValue)")
     }
 
     func updateModelOverride(_ identifier: String) {
@@ -244,6 +295,22 @@ final class AppController: ObservableObject {
         refreshSystemState()
         persistState()
         logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
+    }
+
+    func updateOnlineModelIdentifier(_ identifier: String) {
+        let normalized = MonitoringConfiguration.normalizedOnlineModelIdentifier(identifier)
+        guard state.monitoringConfiguration.onlineModelIdentifier != normalized else { return }
+        state.monitoringConfiguration.onlineModelIdentifier = normalized
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Online model: \(normalized)")
+    }
+
+    func updateOnlineAPIKey(_ value: String) {
+        onlineAPIKeyDraft = value
+        _ = OnlineModelCredentialStore.saveAPIKey(value)
+        refreshSystemState()
     }
 
     func updateThinkingEnabled(_ enabled: Bool) {
@@ -331,16 +398,24 @@ final class AppController: ObservableObject {
     }
 
     var canConsolidateMemory: Bool {
-        !state.memoryEntries.isEmpty &&
-        state.setupStatus == .ready &&
-        setupDiagnostics.runtimePresent &&
-        !consolidatingMemory
+        guard !state.memoryEntries.isEmpty,
+              state.setupStatus == .ready,
+              !consolidatingMemory else {
+            return false
+        }
+        // Online mode does not need a local runtime to consolidate; the call
+        // routes through OpenRouter.
+        return state.monitoringConfiguration.usesOnlineInference || setupDiagnostics.runtimePresent
     }
 
     func consolidateMemoryNow() {
         guard !state.memoryEntries.isEmpty else { return }
-        guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else {
-            setupErrorMessage = "Finish setup first so AC can run memory consolidation locally."
+        guard state.setupStatus == .ready else {
+            setupErrorMessage = "Finish setup before AC can run memory consolidation."
+            return
+        }
+        if !state.monitoringConfiguration.usesOnlineInference, !setupDiagnostics.runtimePresent {
+            setupErrorMessage = "Install the local runtime first, or switch to online mode."
             return
         }
         startMemoryConsolidation(now: Date(), reason: "manual")
@@ -813,11 +888,19 @@ final class AppController: ObservableObject {
             .map { $0 }
         let renderedMemory = state.memoryForPrompt(now: Date())
 
+        let backend = state.monitoringConfiguration.inferenceBackend
+        let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
+        let usingOnline = state.monitoringConfiguration.usesOnlineInference
+        let chatReady = state.setupStatus == .ready &&
+            (usingOnline || setupDiagnostics.runtimePresent)
+
         Task {
             let result: CompanionChatResult
-            if state.setupStatus != .ready || !setupDiagnostics.runtimePresent {
+            if !chatReady {
                 result = CompanionChatResult(
-                    reply: "Finish setup first, then I can answer from the local runtime.",
+                    reply: usingOnline
+                        ? "Add your OpenRouter API key in Settings, then I can chat."
+                        : "Finish local setup first, or switch to online mode in Settings.",
                     memoryUpdate: nil
                 )
             } else if let response = await companionChatService.chat(
@@ -828,12 +911,16 @@ final class AppController: ObservableObject {
                 history: Array(historyWindow),
                 memory: renderedMemory,
                 character: state.character,
-                runtimeOverride: state.runtimePathOverride
+                runtimeOverride: state.runtimePathOverride,
+                inferenceBackend: backend,
+                onlineModelIdentifier: onlineModelIdentifier
             ) {
                 result = response
             } else {
                 result = CompanionChatResult(
-                    reply: "I couldn't answer just now. Check the logs and local runtime status.",
+                    reply: usingOnline
+                        ? "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
+                        : "I couldn't answer just now. Check the logs and local runtime status.",
                     memoryUpdate: nil
                 )
             }
@@ -961,7 +1048,9 @@ final class AppController: ObservableObject {
             eventSummary: eventSummary,
             recentActions: state.recentActions,
             context: context,
-            runtimeProfileID: state.monitoringConfiguration.runtimeProfileID
+            runtimeProfileID: state.monitoringConfiguration.runtimeProfileID,
+            inferenceBackend: state.monitoringConfiguration.inferenceBackend,
+            onlineModelIdentifier: state.monitoringConfiguration.onlineModelIdentifier
         )
 
         Task {
@@ -981,7 +1070,10 @@ final class AppController: ObservableObject {
     /// day has passed since the last consolidation (stale "today" entries etc. get pruned).
     /// Runs asynchronously; the chat reply never waits for it.
     private func maybeConsolidateMemory(now: Date = Date()) {
-        guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
+        guard state.setupStatus == .ready else { return }
+        if !state.monitoringConfiguration.usesOnlineInference, !setupDiagnostics.runtimePresent {
+            return
+        }
         let overCap = state.memoryExceedsSoftCap
         let staleSinceLastRun: Bool = {
             guard let last = state.lastMemoryConsolidationAt else { return !state.memoryEntries.isEmpty }
@@ -992,7 +1084,10 @@ final class AppController: ObservableObject {
     }
 
     private func startMemoryConsolidation(now: Date, reason: String) {
-        guard state.setupStatus == .ready, setupDiagnostics.runtimePresent else { return }
+        guard state.setupStatus == .ready else { return }
+        if !state.monitoringConfiguration.usesOnlineInference, !setupDiagnostics.runtimePresent {
+            return
+        }
         guard !consolidatingMemory else { return }
         guard !state.memoryEntries.isEmpty else { return }
 
@@ -1004,6 +1099,8 @@ final class AppController: ObservableObject {
             limit: max(MonitoringPromptContextBudget.recentUserChatCount, 6)
         )
         let runtimeOverride = state.runtimePathOverride
+        let backend = state.monitoringConfiguration.inferenceBackend
+        let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
 
         Task { [weak self, memoryConsolidationService] in
             let consolidated = await memoryConsolidationService.consolidate(
@@ -1011,7 +1108,9 @@ final class AppController: ObservableObject {
                 goals: goalsSnapshot,
                 recentUserMessages: recentUserMessagesSnapshot,
                 now: now,
-                runtimeOverride: runtimeOverride
+                runtimeOverride: runtimeOverride,
+                inferenceBackend: backend,
+                onlineModelIdentifier: onlineModelIdentifier
             )
             await MainActor.run {
                 guard let self else { return }
@@ -1069,6 +1168,10 @@ final class AppController: ObservableObject {
     }
 
     private static func effectiveSetupModelIdentifier(for configuration: MonitoringConfiguration) -> String {
+        if configuration.usesOnlineInference {
+            return configuration.onlineModelIdentifier
+        }
+
         let override = configuration.modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let override, !override.isEmpty {
             return override
@@ -1089,11 +1192,28 @@ final class AppController: ObservableObject {
 
         guard !monitoringAlgorithmRegistry.containsAlgorithm(id: algorithmID) else {
             if !LLMPolicyCatalog.availablePipelineProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID }) {
-                state.monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
+                state.monitoringConfiguration.pipelineProfileID = state.monitoringConfiguration.usesOnlineInference
+                    ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+                    : MonitoringConfiguration.defaultPipelineProfileID
+            }
+            if let pipeline = LLMPolicyCatalog.availablePipelineProfiles.first(
+                where: { $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID }
+            ),
+               pipeline.inferenceBackend != state.monitoringConfiguration.inferenceBackend {
+                state.monitoringConfiguration.pipelineProfileID = state.monitoringConfiguration.usesOnlineInference
+                    ? (pipeline.descriptor.requiresScreenshot
+                        ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+                        : MonitoringConfiguration.defaultOnlineTextPipelineProfileID)
+                    : (pipeline.descriptor.requiresScreenshot
+                        ? MonitoringConfiguration.defaultPipelineProfileID
+                        : "title_only_default")
             }
             if !LLMPolicyCatalog.availableRuntimeProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.runtimeProfileID }) {
                 state.monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
             }
+            state.monitoringConfiguration.onlineModelIdentifier = MonitoringConfiguration.normalizedOnlineModelIdentifier(
+                state.monitoringConfiguration.onlineModelIdentifier
+            )
             state.hasMigratedPolicyAlgorithmDefault = true
             return
         }
@@ -1132,6 +1252,12 @@ final class AppController: ObservableObject {
     }
 
     private func maybePromptForMissingDependencies() {
+        if state.monitoringConfiguration.usesOnlineInference {
+            lastPromptedDependencySignature = nil
+            dependencyInstallPromptVisible = false
+            return
+        }
+
         let signature = setupDiagnostics.missingTools.sorted().joined(separator: ",")
         if signature.isEmpty {
             lastPromptedDependencySignature = nil
@@ -1170,6 +1296,10 @@ private enum AppControllerSetupSupport {
         installingDependencies: Bool
     ) -> String {
         let requirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
+        let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
+        let hasOnlineAPIKey = !(OnlineModelCredentialStore.loadAPIKey() ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
         if installingDependencies {
             return "Installing missing dependencies."
         } else if installingRuntime {
@@ -1182,6 +1312,14 @@ private enum AppControllerSetupSupport {
                 return "Waiting for Screen Recording and Accessibility permissions."
             }
             return "Waiting for Accessibility permission."
+        } else if usesOnlineInference && !hasOnlineAPIKey {
+            return "Add your OpenRouter API key in Settings before AC can monitor online."
+        } else if usesOnlineInference && state.isPaused {
+            return "Monitoring is paused."
+        } else if usesOnlineInference {
+            return requirements.requiresScreenRecording
+                ? "Monitoring is active via OpenRouter with screenshot upload."
+                : "Monitoring is active via OpenRouter without screenshot upload."
         } else if !diagnostics.missingTools.isEmpty {
             return "Install the missing build tools before AC can finish setup."
         } else if !diagnostics.runtimePresent || !diagnostics.modelCachePresent {

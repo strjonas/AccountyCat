@@ -20,7 +20,11 @@ struct BrainServiceConfigurationTests {
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
             nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
-            policyMemoryService: PolicyMemoryService(runtime: runtime)
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
         )
         let brainService = BrainService(
             monitoringAlgorithmRegistry: registry,
@@ -63,7 +67,11 @@ struct BrainServiceConfigurationTests {
             screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
             nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
-            policyMemoryService: PolicyMemoryService(runtime: runtime)
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
         )
 
         #expect(throws: MonitoringAlgorithmResolutionError.self) {

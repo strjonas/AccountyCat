@@ -54,8 +54,6 @@ struct CompanionView: View {
                     ))
             }
 
-            Spacer(minLength: 0)
-
             // ── Cat orb ──
             ZStack {
                 if controller.companionMood == .nudging || controller.companionMood == .escalated {

@@ -420,7 +420,7 @@ private extension PromptLabStage {
             self = .perceptionTitle
         case .perceptionVision:
             self = .perceptionVision
-        case .decision, .legacyDecision, .legacyDecisionFallback:
+        case .decision, .onlineDecision, .legacyDecision, .legacyDecisionFallback:
             self = .decision
         case .nudgeCopy:
             self = .nudgeCopy

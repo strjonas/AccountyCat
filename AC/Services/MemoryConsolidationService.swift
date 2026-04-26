@@ -11,13 +11,16 @@ import Foundation
 
 actor MemoryConsolidationService {
     private let runtime: LocalModelRuntime
+    private let onlineModelService: any OnlineModelServing
     private let modelIdentifier: String
 
     init(
         runtime: LocalModelRuntime,
+        onlineModelService: any OnlineModelServing,
         modelIdentifier: String = LocalModelRuntime.defaultModelIdentifier
     ) {
         self.runtime = runtime
+        self.onlineModelService = onlineModelService
         self.modelIdentifier = modelIdentifier
     }
 
@@ -31,11 +34,11 @@ actor MemoryConsolidationService {
         goals: String,
         recentUserMessages: [String],
         now: Date,
-        runtimeOverride: String?
+        runtimeOverride: String?,
+        inferenceBackend: MonitoringInferenceBackend = .local,
+        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier
     ) async -> [MemoryEntry]? {
         guard !entries.isEmpty else { return nil }
-        let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
-        guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
 
         let systemPrompt = PromptCatalog.loadMemoryConsolidationSystemPrompt()
         let userPrompt = Self.makeUserPrompt(
@@ -47,12 +50,26 @@ actor MemoryConsolidationService {
 
         let output: RuntimeProcessOutput
         do {
-            output = try await runtime.runTextInference(
-                runtimePath: runtimePath,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                options: Self.inferenceOptions(modelIdentifier: modelIdentifier)
-            )
+            if inferenceBackend == .openRouter {
+                output = try await onlineModelService.runInference(
+                    OnlineModelRequest(
+                        modelIdentifier: onlineModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        imagePath: nil,
+                        options: Self.inferenceOptions(modelIdentifier: onlineModelIdentifier)
+                    )
+                )
+            } else {
+                let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
+                guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                output = try await runtime.runTextInference(
+                    runtimePath: runtimePath,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    options: Self.inferenceOptions(modelIdentifier: modelIdentifier)
+                )
+            }
         } catch {
             await ActivityLogService.shared.append(
                 category: "memory-consolidation-error",

@@ -15,6 +15,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     )
 
     private let runtime: LocalModelRuntime
+    private let onlineModelService: any OnlineModelServing
     private let policyMemoryService: PolicyMemoryServicing
     private let stabilityWindow: TimeInterval = 6
     private let focusedFollowUp: TimeInterval = 10 * 60
@@ -23,9 +24,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     init(
         runtime: LocalModelRuntime,
+        onlineModelService: any OnlineModelServing,
         policyMemoryService: PolicyMemoryServicing
     ) {
         self.runtime = runtime
+        self.onlineModelService = onlineModelService
         self.policyMemoryService = policyMemoryService
     }
 
@@ -125,8 +128,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
         let pipelineProfile = LLMPolicyCatalog.pipelineProfile(id: input.configuration.pipelineProfileID)
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
-        let effectiveModelIdentifier = input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
-            ?? runtimeProfile.descriptor.modelIdentifier
+        let usesOnlineInference = input.configuration.usesOnlineInference
+        let effectiveModelIdentifier = usesOnlineInference
+            ? input.configuration.onlineModelIdentifier
+            : (input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
+                ?? runtimeProfile.descriptor.modelIdentifier)
+        let runtimeLocation = usesOnlineInference ? OnlineModelService.endpointURLString : runtimePath
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
             algorithmVersion: descriptor.version,
@@ -136,12 +143,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             experimentArm: input.configuration.experimentArm
         )
 
-        guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
+        if !usesOnlineInference && !FileManager.default.isExecutableFile(atPath: runtimePath) {
             return makeResult(
                 input: input,
                 execution: execution,
                 evaluation: LLMEvaluationResult(
-                    runtimePath: runtimePath,
+                    runtimePath: runtimeLocation,
                     modelIdentifier: effectiveModelIdentifier,
                     promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
@@ -212,7 +219,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 input: input,
                 execution: execution,
                 evaluation: LLMEvaluationResult(
-                    runtimePath: runtimePath,
+                    runtimePath: runtimeLocation,
                     modelIdentifier: effectiveModelIdentifier,
                     promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
@@ -228,106 +235,141 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         var titlePerception: MonitoringPerceptionEnvelope?
-        if pipelineProfile.usesTitlePerception {
-            titlePerception = await runTextStage(
-                stage: .perceptionTitle,
-                runtimePath: runtimePath,
-                options: applyOverrides(runtimeProfile.options(for: .perceptionTitle), configuration: input.configuration),
-                payload: MonitoringTitlePerceptionPromptPayload(
-                    appName: compactAppName,
-                    bundleIdentifier: input.snapshot.bundleIdentifier,
-                    windowTitle: compactWindowTitle,
-                    recentSwitches: Array(compactSwitches.prefix(MonitoringPromptContextBudget.titlePerceptionSwitchCount)),
-                    usage: Array(compactUsage.prefix(MonitoringPromptContextBudget.titlePerceptionUsageCount))
-                ),
-                attempts: &attempts,
-                decoder: MonitoringPerceptionEnvelope.self
-            )
-        }
-
         var visionPerception: MonitoringPerceptionEnvelope?
-        if pipelineProfile.usesVisionPerception,
-           let screenshotPath = input.snapshot.screenshotPath {
-            visionPerception = await runVisionStage(
-                stage: .perceptionVision,
-                runtimePath: runtimePath,
-                snapshotPath: screenshotPath,
-                options: applyOverrides(runtimeProfile.options(for: .perceptionVision), configuration: input.configuration),
-                payload: MonitoringVisionPerceptionPromptPayload(
-                    appName: compactAppName,
-                    windowTitle: compactWindowTitle
-                ),
-                attempts: &attempts,
-                decoder: MonitoringPerceptionEnvelope.self
-            )
-        }
+        let effectiveDecisionEnvelope: MonitoringDecisionEnvelope?
+        var decision: LLMDecision
 
-        let decisionEnvelope = await runTextStage(
-            stage: .decision,
-            runtimePath: runtimePath,
-            options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
-            payload: MonitoringDecisionPromptPayload(
-                now: input.now,
-                goals: input.goals.cleanedSingleLine.truncatedForPrompt(
-                    maxLength: MonitoringPromptContextBudget.goalCharacters
-                ),
+        if usesOnlineInference {
+            let onlineDecisionEnvelope = await runOnlineDecisionStage(
+                input: input,
+                compactAppName: compactAppName,
+                compactWindowTitle: compactWindowTitle,
+                compactSwitches: compactSwitches,
+                compactUsage: compactUsage,
+                compactInterventions: compactInterventions,
+                policySummary: policySummary,
                 freeFormMemory: freeFormMemory,
                 recentUserMessages: recentUserMessages,
-                policySummary: policySummary,
-                appName: compactAppName,
-                bundleIdentifier: input.snapshot.bundleIdentifier,
-                windowTitle: compactWindowTitle,
-                recentSwitches: compactSwitches,
-                usage: compactUsage,
-                recentInterventions: compactInterventions,
-                distraction: MonitoringPromptDistractionSummary(
-                    state: input.algorithmState.llmPolicy.distraction.telemetryState
-                ),
-                titlePerception: titlePerception,
-                visionPerception: visionPerception,
-                calendarContext: input.calendarContext
-            ),
-            attempts: &attempts,
-            decoder: MonitoringDecisionEnvelope.self
-        )
+                runtimeProfile: runtimeProfile,
+                attempts: &attempts
+            )
+            effectiveDecisionEnvelope = onlineDecisionEnvelope ?? attempts.last?.parsedDecision.map(Self.makeDecisionEnvelope)
+            decision = effectiveDecisionEnvelope?.asLLMDecision ?? .unclear
+        } else {
+            if pipelineProfile.usesTitlePerception {
+                titlePerception = await runTextStage(
+                    stage: .perceptionTitle,
+                    runtimePath: runtimePath,
+                    configuration: input.configuration,
+                    options: applyOverrides(runtimeProfile.options(for: .perceptionTitle), configuration: input.configuration),
+                    payload: MonitoringTitlePerceptionPromptPayload(
+                        appName: compactAppName,
+                        bundleIdentifier: input.snapshot.bundleIdentifier,
+                        windowTitle: compactWindowTitle,
+                        recentSwitches: Array(compactSwitches.prefix(MonitoringPromptContextBudget.titlePerceptionSwitchCount)),
+                        usage: Array(compactUsage.prefix(MonitoringPromptContextBudget.titlePerceptionUsageCount))
+                    ),
+                    attempts: &attempts,
+                    decoder: MonitoringPerceptionEnvelope.self
+                )
+            }
 
-        let effectiveDecisionEnvelope = decisionEnvelope ?? attempts.last?.parsedDecision.map(Self.makeDecisionEnvelope)
-        var decision = effectiveDecisionEnvelope?.asLLMDecision ?? .unclear
-        if pipelineProfile.splitCopyGeneration,
-           decision.suggestedAction == ModelSuggestedAction.nudge {
-            let nudgeEnvelope = await runTextStage(
-                stage: .nudgeCopy,
+            if pipelineProfile.usesVisionPerception,
+               let screenshotPath = input.snapshot.screenshotPath {
+                visionPerception = await runVisionStage(
+                    stage: .perceptionVision,
+                    runtimePath: runtimePath,
+                    configuration: input.configuration,
+                    snapshotPath: screenshotPath,
+                    options: applyOverrides(runtimeProfile.options(for: .perceptionVision), configuration: input.configuration),
+                    payload: MonitoringVisionPerceptionPromptPayload(
+                        appName: compactAppName,
+                        windowTitle: compactWindowTitle
+                    ),
+                    attempts: &attempts,
+                    decoder: MonitoringPerceptionEnvelope.self
+                )
+            }
+
+            let decisionEnvelope = await runTextStage(
+                stage: .decision,
                 runtimePath: runtimePath,
-                options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
-                payload: MonitoringNudgePromptPayload(
+                configuration: input.configuration,
+                options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
+                payload: MonitoringDecisionPromptPayload(
+                    now: input.now,
                     goals: input.goals.cleanedSingleLine.truncatedForPrompt(
                         maxLength: MonitoringPromptContextBudget.goalCharacters
                     ),
                     freeFormMemory: freeFormMemory,
-                    characterPersonalityPrefix: input.characterPersonalityPrefix,
                     recentUserMessages: recentUserMessages,
                     policySummary: policySummary,
                     appName: compactAppName,
+                    bundleIdentifier: input.snapshot.bundleIdentifier,
                     windowTitle: compactWindowTitle,
-                    titlePerception: titlePerception?.activitySummary,
-                    visionPerception: visionPerception?.activitySummary,
-                    recentNudges: Array(
-                        input.algorithmState.llmPolicy.recentNudgeMessages
-                            .prefix(MonitoringPromptContextBudget.recentNudgeCount)
+                    recentSwitches: compactSwitches,
+                    usage: compactUsage,
+                    recentInterventions: compactInterventions,
+                    distraction: MonitoringPromptDistractionSummary(
+                        state: input.algorithmState.llmPolicy.distraction.telemetryState
                     ),
+                    titlePerception: titlePerception,
+                    visionPerception: visionPerception,
                     calendarContext: input.calendarContext
                 ),
                 attempts: &attempts,
-                decoder: MonitoringNudgeEnvelope.self
+                decoder: MonitoringDecisionEnvelope.self
             )
-            if let nudge = nudgeEnvelope?.nudge?.cleanedSingleLine,
-               !nudge.isEmpty {
+
+            effectiveDecisionEnvelope = decisionEnvelope ?? attempts.last?.parsedDecision.map(Self.makeDecisionEnvelope)
+            decision = effectiveDecisionEnvelope?.asLLMDecision ?? .unclear
+            if pipelineProfile.splitCopyGeneration,
+               decision.suggestedAction == ModelSuggestedAction.nudge {
+                if let nudge = await generateNudgeCopy(
+                    input: input,
+                    runtimePath: runtimePath,
+                    runtimeProfile: runtimeProfile,
+                    titlePerception: titlePerception,
+                    visionPerception: visionPerception,
+                    freeFormMemory: freeFormMemory,
+                    recentUserMessages: recentUserMessages,
+                    policySummary: policySummary,
+                    compactAppName: compactAppName,
+                    compactWindowTitle: compactWindowTitle,
+                    attempts: &attempts
+                ) {
+                    decision.nudge = nudge
+                }
+            }
+        }
+
+        // Free online models (and small local models) sometimes return
+        // suggested_action="nudge" without filling the nudge field. One extra
+        // focused nudge-copy call beats silently dropping to no-action.
+        // Skipped when split-copy already attempted above for this evaluation.
+        if decision.assessment == .distracted,
+           decision.suggestedAction == ModelSuggestedAction.nudge,
+           (decision.nudge?.cleanedSingleLine.isEmpty ?? true),
+           !attempts.contains(where: { $0.promptMode == LLMPolicyStage.nudgeCopy.rawValue }) {
+            if let nudge = await generateNudgeCopy(
+                input: input,
+                runtimePath: runtimePath,
+                runtimeProfile: runtimeProfile,
+                titlePerception: titlePerception,
+                visionPerception: visionPerception,
+                freeFormMemory: freeFormMemory,
+                recentUserMessages: recentUserMessages,
+                policySummary: policySummary,
+                compactAppName: compactAppName,
+                compactWindowTitle: compactWindowTitle,
+                attempts: &attempts
+            ) {
                 decision.nudge = nudge
             }
         }
 
         let evaluation = LLMEvaluationResult(
-            runtimePath: runtimePath,
+            runtimePath: runtimeLocation,
             modelIdentifier: effectiveModelIdentifier,
             promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
@@ -395,7 +437,30 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 blockReason = nil
 
             case .nudge:
-                if let nudge = decision.nudge?.cleanedSingleLine,
+                if shouldEscalateRepeatedNudgeToOverlay(
+                    input: input,
+                    relevantActions: relevantActions,
+                    distraction: distraction,
+                    decision: decision
+                ) {
+                    let presentation = OverlayPresentation.defaultRepeatedDistraction(
+                        appName: input.snapshot.appName,
+                        evaluationID: input.evaluationID
+                    )
+                    policyState.lastOverlayAt = input.now
+                    policyState.lastInterventionAt = input.now
+                    policyState.activeAppeal = MonitoringAppealSession(
+                        evaluationID: input.evaluationID,
+                        contextKey: distraction.contextKey ?? "unknown",
+                        appName: input.snapshot.appName,
+                        prompt: presentation.prompt ?? "Why should I let you continue on this?",
+                        createdAt: input.now,
+                        lastSubmittedAt: nil,
+                        lastResult: nil
+                    )
+                    action = .showOverlay(presentation)
+                    blockReason = "repeated_nudge_escalation"
+                } else if let nudge = decision.nudge?.cleanedSingleLine,
                    !nudge.isEmpty {
                     policyState.lastNudgeAt = input.now
                     policyState.lastInterventionAt = input.now
@@ -434,15 +499,19 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput? {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
-        guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
+        let usesOnlineInference = input.configuration.usesOnlineInference
+        let runtimeLocation = usesOnlineInference ? OnlineModelService.endpointURLString : runtimePath
+        if !usesOnlineInference && !FileManager.default.isExecutableFile(atPath: runtimePath) {
             return MonitoringAppealReviewOutput(
                 result: AppealReviewResult(
                     decision: .deferDecision,
                     message: "I couldn't review that right now. Try again or head back to work."
                 ),
                 evaluation: LLMEvaluationResult(
-                    runtimePath: runtimePath,
-                    modelIdentifier: LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID).descriptor.modelIdentifier,
+                    runtimePath: runtimeLocation,
+                    modelIdentifier: usesOnlineInference
+                        ? input.configuration.onlineModelIdentifier
+                        : LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID).descriptor.modelIdentifier,
                     promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
                     attempts: [],
@@ -455,12 +524,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
-        let effectiveModelIdentifier = input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
-            ?? runtimeProfile.descriptor.modelIdentifier
+        let effectiveModelIdentifier = usesOnlineInference
+            ? input.configuration.onlineModelIdentifier
+            : (input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
+                ?? runtimeProfile.descriptor.modelIdentifier)
         var attempts: [LLMEvaluationAttempt] = []
         let envelope = await runTextStage(
             stage: .appealReview,
             runtimePath: runtimePath,
+            configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .appealReview), configuration: input.configuration),
             payload: MonitoringAppealPromptPayload(
                 appealText: input.appealText,
@@ -490,7 +562,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             message: "I’m not sure yet. If it really helps your goals, explain a bit more."
         )
         let evaluation = LLMEvaluationResult(
-            runtimePath: runtimePath,
+            runtimePath: runtimeLocation,
             modelIdentifier: effectiveModelIdentifier,
             promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
@@ -515,7 +587,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                         windowTitle: $0.windowTitle
                     )
                 },
-                runtimeProfileID: input.configuration.runtimeProfileID
+                runtimeProfileID: input.configuration.runtimeProfileID,
+                inferenceBackend: input.configuration.inferenceBackend,
+                onlineModelIdentifier: input.configuration.onlineModelIdentifier
             ),
             runtimeOverride: input.runtimeOverride
         ) {
@@ -613,9 +687,125 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
     }
 
+    private func runOnlineDecisionStage(
+        input: MonitoringDecisionInput,
+        compactAppName: String,
+        compactWindowTitle: String?,
+        compactSwitches: [MonitoringPromptSwitchRecord],
+        compactUsage: [MonitoringPromptUsageRecord],
+        compactInterventions: MonitoringPromptInterventionSummary,
+        policySummary: String,
+        freeFormMemory: String,
+        recentUserMessages: [String],
+        runtimeProfile: MonitoringRuntimeProfile,
+        attempts: inout [LLMEvaluationAttempt]
+    ) async -> MonitoringDecisionEnvelope? {
+        let payload = MonitoringOnlineDecisionPromptPayload(
+            now: input.now,
+            goals: input.goals.cleanedSingleLine.truncatedForPrompt(
+                maxLength: MonitoringPromptContextBudget.goalCharacters
+            ),
+            characterPersonalityPrefix: input.characterPersonalityPrefix,
+            freeFormMemory: freeFormMemory,
+            recentUserMessages: recentUserMessages,
+            policySummary: policySummary,
+            appName: compactAppName,
+            bundleIdentifier: input.snapshot.bundleIdentifier,
+            windowTitle: compactWindowTitle,
+            recentSwitches: compactSwitches,
+            usage: compactUsage,
+            recentInterventions: compactInterventions,
+            distraction: MonitoringPromptDistractionSummary(
+                state: input.algorithmState.llmPolicy.distraction.telemetryState
+            ),
+            heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
+            calendarContext: input.calendarContext,
+            screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration)
+        )
+
+        let screenshotPath = visionEnabled(for: input.configuration)
+            ? input.snapshot.screenshotPath
+            : nil
+
+        if let screenshotPath {
+            return await runVisionStage(
+                stage: .onlineDecision,
+                runtimePath: RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride),
+                configuration: input.configuration,
+                snapshotPath: screenshotPath,
+                options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
+                payload: payload,
+                attempts: &attempts,
+                decoder: MonitoringDecisionEnvelope.self
+            )
+        }
+
+        return await runTextStage(
+            stage: .onlineDecision,
+            runtimePath: RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride),
+            configuration: input.configuration,
+            options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
+            payload: payload,
+            attempts: &attempts,
+            decoder: MonitoringDecisionEnvelope.self
+        )
+    }
+
+    private func visionEnabled(for configuration: MonitoringConfiguration) -> Bool {
+        LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
+            .descriptor
+            .requiresScreenshot
+    }
+
+    private func generateNudgeCopy(
+        input: MonitoringDecisionInput,
+        runtimePath: String,
+        runtimeProfile: MonitoringRuntimeProfile,
+        titlePerception: MonitoringPerceptionEnvelope?,
+        visionPerception: MonitoringPerceptionEnvelope?,
+        freeFormMemory: String,
+        recentUserMessages: [String],
+        policySummary: String,
+        compactAppName: String,
+        compactWindowTitle: String?,
+        attempts: inout [LLMEvaluationAttempt]
+    ) async -> String? {
+        let nudgeEnvelope = await runTextStage(
+            stage: .nudgeCopy,
+            runtimePath: runtimePath,
+            configuration: input.configuration,
+            options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
+            payload: MonitoringNudgePromptPayload(
+                goals: input.goals.cleanedSingleLine.truncatedForPrompt(
+                    maxLength: MonitoringPromptContextBudget.goalCharacters
+                ),
+                freeFormMemory: freeFormMemory,
+                characterPersonalityPrefix: input.characterPersonalityPrefix,
+                recentUserMessages: recentUserMessages,
+                policySummary: policySummary,
+                appName: compactAppName,
+                windowTitle: compactWindowTitle,
+                titlePerception: titlePerception?.activitySummary,
+                visionPerception: visionPerception?.activitySummary,
+                recentNudges: Array(
+                    input.algorithmState.llmPolicy.recentNudgeMessages
+                        .prefix(MonitoringPromptContextBudget.recentNudgeCount)
+                ),
+                calendarContext: input.calendarContext
+            ),
+            attempts: &attempts,
+            decoder: MonitoringNudgeEnvelope.self
+        )
+        guard let nudge = nudgeEnvelope?.nudge?.cleanedSingleLine, !nudge.isEmpty else {
+            return nil
+        }
+        return nudge
+    }
+
     private func runTextStage<T: Decodable & Sendable, P: Encodable>(
         stage: LLMPolicyStage,
         runtimePath: String,
+        configuration: MonitoringConfiguration,
         options: RuntimeInferenceOptions,
         payload: P,
         attempts: inout [LLMEvaluationAttempt],
@@ -646,14 +836,27 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
 
         do {
-            let output = try await runtime.runTextInference(
-                runtimePath: runtimePath,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                options: options
-            )
+            let output: RuntimeProcessOutput
+            if configuration.usesOnlineInference {
+                output = try await onlineModelService.runInference(
+                    OnlineModelRequest(
+                        modelIdentifier: configuration.onlineModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        imagePath: nil,
+                        options: options
+                    )
+                )
+            } else {
+                output = try await runtime.runTextInference(
+                    runtimePath: runtimePath,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    options: options
+                )
+            }
             attempts[attemptIndex].runtimeOutput = output
-            if stage == .decision {
+            if stage == .decision || stage == .onlineDecision {
                 attempts[attemptIndex].parsedDecision = LLMOutputParsing.extractDecision(
                     from: output.stdout + "\n" + output.stderr
                 )
@@ -667,6 +870,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private func runVisionStage<T: Decodable & Sendable, P: Encodable>(
         stage: LLMPolicyStage,
         runtimePath: String,
+        configuration: MonitoringConfiguration,
         snapshotPath: String,
         options: RuntimeInferenceOptions,
         payload: P,
@@ -698,14 +902,32 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
 
         do {
-            let output = try await runtime.runVisionInference(
-                runtimePath: runtimePath,
-                snapshotPath: snapshotPath,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                options: options
-            )
+            let output: RuntimeProcessOutput
+            if configuration.usesOnlineInference {
+                output = try await onlineModelService.runInference(
+                    OnlineModelRequest(
+                        modelIdentifier: configuration.onlineModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        imagePath: snapshotPath,
+                        options: options
+                    )
+                )
+            } else {
+                output = try await runtime.runVisionInference(
+                    runtimePath: runtimePath,
+                    snapshotPath: snapshotPath,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    options: options
+                )
+            }
             attempts[attemptIndex].runtimeOutput = output
+            if stage == .onlineDecision {
+                attempts[attemptIndex].parsedDecision = LLMOutputParsing.extractDecision(
+                    from: output.stdout + "\n" + output.stderr
+                )
+            }
             return Self.decodeJSON(decoder, from: output.stdout + "\n" + output.stderr)
         } catch {
             return nil
@@ -784,6 +1006,52 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             lastActionKind: lastAction?.kind.rawValue,
             lastActionMessage: lastAction?.message?.truncatedForPrompt(maxLength: 120)
         )
+    }
+
+    private func shouldEscalateRepeatedNudgeToOverlay(
+        input: MonitoringDecisionInput,
+        relevantActions: [ActionRecord],
+        distraction: DistractionMetadata,
+        decision: LLMDecision
+    ) -> Bool {
+        guard decision.assessment == .distracted,
+              decision.suggestedAction == .nudge,
+              (decision.confidence ?? 0.75) >= 0.75,
+              input.algorithmState.llmPolicy.activeAppeal == nil else {
+            return false
+        }
+
+        // Much shorter cooldown: only 3 minutes. If user keeps getting distracted after overlay,
+        // they need escalation, not a long wait period.
+        if let lastOverlayAt = input.algorithmState.llmPolicy.lastOverlayAt,
+           input.now.timeIntervalSince(lastOverlayAt) < 3 * 60 {
+            return false
+        }
+
+        // Escalate if already 2+ consecutive distractions in this context
+        if distraction.consecutiveDistractedCount >= 2 {
+            return true
+        }
+
+        // Escalate if 3+ recent nudges for the same context in 30 mins (was 2 before)
+        let matchingRecentNudges = relevantActions
+            .filter { $0.kind == .nudge }
+            .filter { input.now.timeIntervalSince($0.timestamp) <= 30 * 60 }
+            .filter { actionMentionsCurrentContext($0, snapshot: input.snapshot) }
+            .count
+        return matchingRecentNudges >= 3
+    }
+
+    private func actionMentionsCurrentContext(_ action: ActionRecord, snapshot: AppSnapshot) -> Bool {
+        guard let message = action.message?.cleanedSingleLine.lowercased(),
+              !message.isEmpty else {
+            return false
+        }
+
+        let aliases = Self.contextAliases(for: snapshot)
+        return aliases.contains { alias in
+            alias.count > 1 && message.contains(alias)
+        }
     }
 
     nonisolated private static func hasActiveExplicitAllowanceOverride(
@@ -920,6 +1188,47 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         for suffix in suffixes where lowerBody.contains(suffix) {
             guard let range = lowerBody.range(of: suffix) else { continue }
             let target = body[..<range.lowerBound]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { continue }
+            return cleanedDirectiveTarget(target)
+        }
+
+        if let target = parseNoInterventionAllowTarget(body: body, lowerBody: lowerBody) {
+            return target
+        }
+
+        return nil
+    }
+
+    nonisolated private static func parseNoInterventionAllowTarget(body: String, lowerBody: String) -> String? {
+        let disturbPrefixes = [
+            "do not disturb me on ",
+            "don't disturb me on ",
+            "dont disturb me on ",
+            "do not distrub me on ",
+            "don't distrub me on ",
+            "dont distrub me on ",
+        ]
+        if let target = parsePrefixedTarget(body: body, lowerBody: lowerBody, prefixes: disturbPrefixes) {
+            return target
+        }
+
+        let flagPrefixes = [
+            "never again flag ",
+            "never flag ",
+            "do not flag ",
+            "don't flag ",
+            "dont flag ",
+        ]
+        for prefix in flagPrefixes where lowerBody.hasPrefix(prefix) {
+            guard let suffixRange = lowerBody.range(of: " as a distraction"),
+                  suffixRange.lowerBound > lowerBody.index(lowerBody.startIndex, offsetBy: prefix.count) else {
+                continue
+            }
+            let startIndex = body.index(body.startIndex, offsetBy: prefix.count)
+            let suffixOffset = lowerBody.distance(from: lowerBody.startIndex, to: suffixRange.lowerBound)
+            let endIndex = body.index(body.startIndex, offsetBy: suffixOffset)
+            let target = body[startIndex..<endIndex]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !target.isEmpty else { continue }
             return cleanedDirectiveTarget(target)
@@ -1099,17 +1408,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     }
 
     nonisolated private static func directiveMatchesContext(_ target: String, snapshot: AppSnapshot) -> Bool {
-        let contextText = [
-            snapshot.appName,
-            snapshot.windowTitle ?? "",
-            snapshot.bundleIdentifier ?? "",
-        ]
-        .joined(separator: " ")
-        .lowercased()
-        let tokenSet = Set(
-            contextText.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-                .map(String.init)
-        )
+        let contextText = contextText(for: snapshot)
+        let tokenSet = contextTokenSet(for: contextText)
         let aliases = targetAliases(for: target)
 
         for alias in aliases {
@@ -1123,6 +1423,39 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         return false
+    }
+
+    nonisolated private static func contextAliases(for snapshot: AppSnapshot) -> [String] {
+        let contextText = contextText(for: snapshot)
+        let tokenSet = contextTokenSet(for: contextText)
+        var aliases = Set(tokenSet.filter { $0.count > 2 })
+
+        if let host = snapshot.bundleIdentifier?.split(separator: ".").last {
+            aliases.insert(String(host).lowercased())
+        }
+        if let windowTitle = snapshot.windowTitle {
+            aliases.formUnion(targetAliases(for: windowTitle))
+        }
+        aliases.formUnion(targetAliases(for: snapshot.appName))
+
+        return Array(aliases.filter { !$0.isEmpty })
+    }
+
+    nonisolated private static func contextText(for snapshot: AppSnapshot) -> String {
+        [
+            snapshot.appName,
+            snapshot.windowTitle ?? "",
+            snapshot.bundleIdentifier ?? "",
+        ]
+        .joined(separator: " ")
+        .lowercased()
+    }
+
+    nonisolated private static func contextTokenSet(for contextText: String) -> Set<String> {
+        Set(
+            contextText.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+        )
     }
 
     nonisolated private static func targetAliases(for target: String) -> [String] {
@@ -1229,6 +1562,23 @@ private extension MonitoringDecisionEnvelope {
             secondaryButtonTitle: secondaryButtonTitle?.cleanedSingleLine.isEmpty == false
                 ? secondaryButtonTitle!.cleanedSingleLine
                 : "Back to work"
+        )
+    }
+}
+
+private extension OverlayPresentation {
+    static func defaultRepeatedDistraction(
+        appName: String,
+        evaluationID: String
+    ) -> OverlayPresentation {
+        OverlayPresentation(
+            headline: "Pause for a second.",
+            body: "This still looks off-track in \(appName), even after a few nudges.",
+            prompt: "Why should I let you continue on this?",
+            appName: appName,
+            evaluationID: evaluationID,
+            submitButtonTitle: "Submit",
+            secondaryButtonTitle: "Back to work"
         )
     }
 }

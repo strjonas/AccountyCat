@@ -17,13 +17,16 @@ struct CompanionChatResult: Sendable {
 
 actor CompanionChatService {
     private let runtime: LocalModelRuntime
+    private let onlineModelService: any OnlineModelServing
     private let modelIdentifier: String
 
     init(
         runtime: LocalModelRuntime,
+        onlineModelService: any OnlineModelServing,
         modelIdentifier: String = LocalModelRuntime.defaultModelIdentifier
     ) {
         self.runtime = runtime
+        self.onlineModelService = onlineModelService
         self.modelIdentifier = modelIdentifier
     }
 
@@ -35,17 +38,10 @@ actor CompanionChatService {
         history: [ChatMessage] = [],
         memory: String = "",
         character: ACCharacter = .mochi,
-        runtimeOverride: String?
+        runtimeOverride: String?,
+        inferenceBackend: MonitoringInferenceBackend = .local,
+        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier
     ) async -> CompanionChatResult? {
-        let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
-        guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
-            await ActivityLogService.shared.append(
-                category: "chat-error",
-                message: "Runtime missing at \(runtimePath)."
-            )
-            return nil
-        }
-
         let systemPrompt = PromptCatalog.loadChatSystemPrompt(character: character)
         let prompt = Self.makeChatPrompt(
             userMessage: userMessage,
@@ -56,22 +52,34 @@ actor CompanionChatService {
             memory: memory
         )
 
+        let output: RuntimeProcessOutput
         do {
-            let output = try await runtime.runTextInference(
-                runtimePath: runtimePath,
-                modelIdentifier: modelIdentifier,
-                systemPrompt: systemPrompt,
-                userPrompt: prompt
-            )
-            let combined = [output.stdout, output.stderr]
-                .filter { !$0.isEmpty }
-                .joined(separator: "\n")
-            if let parsed = LLMOutputParsing.extractChatResult(from: combined) {
-                return parsed
+            if inferenceBackend == .openRouter {
+                output = try await onlineModelService.runInference(
+                    OnlineModelRequest(
+                        modelIdentifier: onlineModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: prompt,
+                        imagePath: nil,
+                        options: Self.onlineChatOptions(modelIdentifier: onlineModelIdentifier)
+                    )
+                )
+            } else {
+                let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
+                guard FileManager.default.isExecutableFile(atPath: runtimePath) else {
+                    await ActivityLogService.shared.append(
+                        category: "chat-error",
+                        message: "Runtime missing at \(runtimePath)."
+                    )
+                    return nil
+                }
+                output = try await runtime.runTextInference(
+                    runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
+                    systemPrompt: systemPrompt,
+                    userPrompt: prompt
+                )
             }
-            // Legacy/fallback: pull a plain reply, no memory update.
-            let reply = LLMOutputParsing.cleanChatOutput(combined)
-            return reply.isEmpty ? nil : CompanionChatResult(reply: reply, memoryUpdate: nil)
         } catch {
             await ActivityLogService.shared.append(
                 category: "chat-error",
@@ -79,6 +87,30 @@ actor CompanionChatService {
             )
             return nil
         }
+
+        let combined = [output.stdout, output.stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        if let parsed = LLMOutputParsing.extractChatResult(from: combined) {
+            return parsed
+        }
+        // Legacy/fallback: pull a plain reply, no memory update.
+        let reply = LLMOutputParsing.cleanChatOutput(combined)
+        return reply.isEmpty ? nil : CompanionChatResult(reply: reply, memoryUpdate: nil)
+    }
+
+    nonisolated private static func onlineChatOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            modelIdentifier: modelIdentifier,
+            maxTokens: 320,
+            temperature: 0.5,
+            topP: 0.95,
+            topK: 64,
+            ctxSize: 4096,
+            batchSize: 1024,
+            ubatchSize: 512,
+            timeoutSeconds: 60
+        )
     }
 
     private static func makeChatPrompt(

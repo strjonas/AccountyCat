@@ -14,6 +14,8 @@ struct PolicyMemoryUpdateRequest: Sendable {
     var recentActions: [ActionRecord]
     var context: FrontmostContext?
     var runtimeProfileID: String
+    var inferenceBackend: MonitoringInferenceBackend
+    var onlineModelIdentifier: String
 }
 
 protocol PolicyMemoryServicing: Sendable {
@@ -25,18 +27,20 @@ protocol PolicyMemoryServicing: Sendable {
 
 actor PolicyMemoryService: PolicyMemoryServicing {
     private let runtime: LocalModelRuntime
+    private let onlineModelService: any OnlineModelServing
 
-    init(runtime: LocalModelRuntime) {
+    init(
+        runtime: LocalModelRuntime,
+        onlineModelService: any OnlineModelServing
+    ) {
         self.runtime = runtime
+        self.onlineModelService = onlineModelService
     }
 
     func deriveUpdate(
         request: PolicyMemoryUpdateRequest,
         runtimeOverride: String?
     ) async -> PolicyMemoryUpdateResponse? {
-        let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
-        guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
-
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: request.runtimeProfileID)
         let options = runtimeProfile.options(for: .policyMemory)
         let systemPrompt = PromptCatalog.loadPolicyMemorySystemPrompt()
@@ -46,12 +50,26 @@ actor PolicyMemoryService: PolicyMemoryServicing {
 
         let output: RuntimeProcessOutput
         do {
-            output = try await runtime.runTextInference(
-                runtimePath: runtimePath,
-                systemPrompt: systemPrompt,
-                userPrompt: userPrompt,
-                options: options
-            )
+            if request.inferenceBackend == .openRouter {
+                output = try await onlineModelService.runInference(
+                    OnlineModelRequest(
+                        modelIdentifier: request.onlineModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        imagePath: nil,
+                        options: options
+                    )
+                )
+            } else {
+                let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
+                guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                output = try await runtime.runTextInference(
+                    runtimePath: runtimePath,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    options: options
+                )
+            }
         } catch {
             await ActivityLogService.shared.append(
                 category: "policy-memory-error",

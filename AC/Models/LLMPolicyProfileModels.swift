@@ -8,6 +8,7 @@ import Foundation
 enum LLMPolicyStage: String, Codable, CaseIterable, Sendable {
     case perceptionTitle = "perception_title"
     case perceptionVision = "perception_vision"
+    case onlineDecision = "online_decision"
     case decision
     case nudgeCopy = "nudge_copy"
     case appealReview = "appeal_review"
@@ -69,6 +70,7 @@ extension TelemetryRuntimeOptions {
 
 struct LLMPolicyPipelineProfile: Hashable, Sendable {
     var descriptor: MonitoringPipelineProfileDescriptor
+    var inferenceBackend: MonitoringInferenceBackend
     var usesTitlePerception: Bool
     var usesVisionPerception: Bool
     var splitCopyGeneration: Bool
@@ -153,6 +155,7 @@ enum LLMPolicyCatalog {
                 summary: definition.summary,
                 requiresScreenshot: definition.requiresScreenshot
             ),
+            inferenceBackend: definition.inferenceBackend,
             usesTitlePerception: definition.usesTitlePerception,
             usesVisionPerception: definition.usesVisionPerception,
             splitCopyGeneration: definition.splitCopyGeneration
@@ -200,6 +203,8 @@ enum LLMPolicyCatalog {
             return .perceptionTitle
         case .perceptionVision:
             return .perceptionVision
+        case .onlineDecision:
+            return nil
         case .decision:
             return .decision
         case .nudgeCopy:
