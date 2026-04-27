@@ -28,6 +28,9 @@ struct ACCalendarInfo: Identifiable, Hashable, Sendable {
 actor CalendarService {
     static let shared = CalendarService()
 
+    private static let googleTasksEditDisclaimerPattern =
+        #"Changes made to the title, description, or attachments will not be saved\.\s*To make edits, please go to:\s*https?://tasks\.google\.com/\S+"#
+
     private let store = EKEventStore()
 
     // Small cache so repeated calls within a monitor tick don't hit EventKit.
@@ -159,8 +162,7 @@ actor CalendarService {
 
         let title = (event.title ?? "Untitled event")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let notes = (event.notes ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = Self.sanitizeNotesForPrompt(event.notes ?? "")
 
         // Keep the rendered string small and single-line — it sits inside a
         // JSON payload that the local model parses each monitor tick.
@@ -172,12 +174,9 @@ actor CalendarService {
 
         var parts: [String] = ["\(title) (ends \(endLabel))"]
         if !notes.isEmpty {
-            let compactedNotes = notes
-                .replacingOccurrences(of: "\n", with: " ")
-                .replacingOccurrences(of: "\r", with: " ")
-            let capped = compactedNotes.count > 160
-                ? String(compactedNotes.prefix(160)) + "…"
-                : compactedNotes
+            let capped = notes.count > 160
+                ? String(notes.prefix(160)) + "…"
+                : notes
             parts.append("notes: \(capped)")
         }
 
@@ -193,5 +192,29 @@ actor CalendarService {
     func invalidateCache() {
         cachedContextAt = nil
         cachedContext = nil
+    }
+
+    nonisolated static func sanitizeNotesForPrompt(_ notes: String) -> String {
+        var sanitized = notes
+
+        if let regex = try? NSRegularExpression(
+            pattern: googleTasksEditDisclaimerPattern,
+            options: [.caseInsensitive]
+        ) {
+            let range = NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
+            sanitized = regex.stringByReplacingMatches(
+                in: sanitized,
+                options: [],
+                range: range,
+                withTemplate: ""
+            )
+        }
+
+        sanitized = sanitized
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+
+        return sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
