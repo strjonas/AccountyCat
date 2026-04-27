@@ -50,7 +50,10 @@ private struct EpisodesRootView: View {
         NavigationSplitView {
             List(selection: Binding(
                 get: { controller.selectedEpisodeID },
-                set: { id in controller.selectedEpisodeID = id }
+                set: { id in
+                    guard controller.selectedEpisodeID != id else { return }
+                    controller.selectedEpisodeID = id
+                }
             )) {
                 ForEach(controller.episodes) { episode in
                     VStack(alignment: .leading, spacing: 4) {
@@ -112,7 +115,10 @@ private struct PromptLabRootView: View {
         NavigationSplitView {
             List(selection: Binding(
                 get: { controller.selectedPromptLabScenarioID },
-                set: { id in controller.selectedPromptLabScenarioID = id }
+                set: { id in
+                    guard controller.selectedPromptLabScenarioID != id else { return }
+                    controller.selectedPromptLabScenarioID = id
+                }
             )) {
                 ForEach(controller.promptLabScenarios) { scenario in
                     VStack(alignment: .leading, spacing: 4) {

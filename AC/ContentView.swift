@@ -86,12 +86,18 @@ struct ContentView: View {
         HStack(spacing: 12) {
             HStack(spacing: 9) {
                 HeaderMark(character: controller.state.character)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("AccountyCat")
                         .font(.ac(15, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
-                    StatusDot(status: controller.state.setupStatus,
-                              isPaused: controller.state.isPaused)
+                    HStack(spacing: 5) {
+                        StatusDot(status: controller.state.setupStatus,
+                                  isPaused: controller.state.isPaused)
+                        Text(controller.activeModelShortName)
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
 

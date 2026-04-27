@@ -552,7 +552,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         // explicitly granted a temporary window (e.g. "let me watch Instagram for 30 min") and
         // we must not let that accumulate toward safelist promotion.
         let activeRulesForObservation: [PolicyRule]
-        if let observationContext {
+        if observationContext != nil {
             activeRulesForObservation = input.policyMemory.activeRules(
                 at: input.now,
                 matching: frontmost

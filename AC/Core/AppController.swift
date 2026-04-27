@@ -246,6 +246,45 @@ final class AppController: ObservableObject {
         state.monitoringConfiguration.usesOnlineInference
     }
 
+    /// Short human-readable name for the model currently configured, suitable for
+    /// compact display in the header or settings footnote.
+    var activeModelShortName: String {
+        let id = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        return Self.shortModelName(for: id)
+    }
+
+    /// Converts a full OpenRouter/local model identifier to a compact display name.
+    static func shortModelName(for identifier: String) -> String {
+        let raw = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isFree = raw.hasSuffix(":free")
+        let base = isFree ? String(raw.dropLast(5)) : raw
+
+        // Known models → friendly names
+        switch base {
+        case "google/gemma-4-31b-it":              return isFree ? "Gemma 4 · free" : "Gemma 4"
+        case "google/gemma-3-27b-it":              return isFree ? "Gemma 3 · free" : "Gemma 3"
+        case "mistralai/mistral-small-3.1-24b-instruct": return "Mistral Small 3.1"
+        case "mistralai/mistral-small-24b-instruct-2501": return "Mistral Small"
+        case "meta-llama/llama-4-scout":           return isFree ? "Llama 4 Scout · free" : "Llama 4 Scout"
+        case "meta-llama/llama-4-maverick":        return isFree ? "Llama 4 Maverick · free" : "Llama 4 Maverick"
+        case "anthropic/claude-3.5-haiku":         return "Claude 3.5 Haiku"
+        case "anthropic/claude-3.5-sonnet":        return "Claude 3.5 Sonnet"
+        case "anthropic/claude-3-haiku":           return "Claude 3 Haiku"
+        case "google/gemini-flash-1.5":            return "Gemini Flash 1.5"
+        case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
+        case "qwen/qwen2.5-vl-72b-instruct":       return isFree ? "Qwen 2.5 VL · free" : "Qwen 2.5 VL"
+        default: break
+        }
+
+        // Generic fallback: strip provider prefix, truncate version noise
+        let modelPart = base.components(separatedBy: "/").last ?? base
+        let cleaned = modelPart
+            .replacingOccurrences(of: "-instruct", with: "")
+            .replacingOccurrences(of: "-it", with: "")
+        let suffix = isFree ? " · free" : ""
+        return cleaned + suffix
+    }
+
     func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
         guard state.monitoringConfiguration.inferenceBackend != backend else { return }
         state.monitoringConfiguration.inferenceBackend = backend

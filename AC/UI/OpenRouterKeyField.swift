@@ -55,7 +55,7 @@ struct OpenRouterKeyField: View {
             .font(.system(size: 11, design: .monospaced))
 
             Text(controller.hasOnlineAPIKeyConfigured
-                 ? "Saved in your macOS Keychain. Default model: google/gemma-4-31b-it:free (free)."
+                 ? "Saved in your macOS Keychain. Model: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifier))."
                  : "Stored only in your macOS Keychain. Free Gemma model is selected by default.")
                 .font(.ac(10))
                 .foregroundStyle(.secondary)

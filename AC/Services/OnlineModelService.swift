@@ -99,6 +99,7 @@ enum OnlineModelCredentialStore {
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
     nonisolated static let fallbackNonFreeModelIdentifier = "google/gemma-4-31b-it"
+    nonisolated static let zdrFallbackModelIdentifier = "mistralai/mistral-small-3.1-24b-instruct"
 
     private let session: URLSession
 
@@ -114,27 +115,50 @@ actor OnlineModelService: OnlineModelServing {
     }
 
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput {
+        // Try the requested model first.
+        var lastError: OnlineModelError
         do {
-            return try await runInference(request, modelIdentifier: request.modelIdentifier)
-        } catch let error as OnlineModelError {
-            guard let fallbackModelIdentifier = Self.fallbackModelIdentifier(
-                for: request.modelIdentifier,
-                error: error
-            ) else {
-                throw error
-            }
-
-            await ActivityLogService.shared.append(
-                category: "chat-error",
-                message: "OpenRouter rate-limited \(request.modelIdentifier); retrying with \(fallbackModelIdentifier)."
+            return try await runInference(
+                request,
+                modelIdentifier: request.modelIdentifier,
+                enforceZDR: true
             )
-            return try await runInference(request, modelIdentifier: fallbackModelIdentifier)
+        } catch let error as OnlineModelError {
+            lastError = error
         }
+
+        // Build a prioritised fallback chain from the first failure.
+        let chain = Self.fallbackChain(for: request.modelIdentifier, error: lastError)
+        guard !chain.isEmpty else { throw lastError }
+
+        for fallbackID in chain {
+            await ActivityLogService.shared.append(
+                category: "chat-fallback",
+                message: "OpenRouter couldn't serve \(request.modelIdentifier); retrying with \(fallbackID) (ZDR enforced)."
+            )
+            do {
+                return try await runInference(
+                    request,
+                    modelIdentifier: fallbackID,
+                    enforceZDR: true
+                )
+            } catch let error as OnlineModelError {
+                lastError = error
+                // Only keep walking the chain for ZDR unavailability — any other
+                // error (rate-limit on fallback, auth, etc.) should surface immediately.
+                guard Self.isZDRUnavailableFallbackWarranted(error: error) else {
+                    throw error
+                }
+            }
+        }
+
+        throw lastError
     }
 
     private func runInference(
         _ request: OnlineModelRequest,
-        modelIdentifier: String
+        modelIdentifier: String,
+        enforceZDR: Bool
     ) async throws -> RuntimeProcessOutput {
         let apiKey = (OnlineModelCredentialStore.loadAPIKey() ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -182,6 +206,10 @@ actor OnlineModelService: OnlineModelServing {
             "response_format": [
                 "type": "json_object",
             ],
+            "provider": [
+                "sort": "latency",
+                "zdr": enforceZDR,
+            ],
         ]
 
         var urlRequest = URLRequest(url: endpointURL)
@@ -221,17 +249,39 @@ actor OnlineModelService: OnlineModelServing {
         )
     }
 
-    nonisolated private static func fallbackModelIdentifier(
+    /// Returns an ordered list of model identifiers to try after `modelIdentifier`
+    /// fails with `error`.  The caller walks this chain in order, stopping as
+    /// soon as one succeeds (or a non-retryable error is thrown).
+    nonisolated private static func fallbackChain(
         for modelIdentifier: String,
         error: OnlineModelError
-    ) -> String? {
-        guard let fallbackModelIdentifier = nonFreeModelIdentifier(from: modelIdentifier),
-              fallbackModelIdentifier != modelIdentifier,
-              isRateLimitFallbackWarranted(error: error) else {
-            return nil
+    ) -> [String] {
+        if isRateLimitFallbackWarranted(error: error) {
+            // Rate-limited: try the paid variant of the same model only.
+            if let nonFree = nonFreeModelIdentifier(from: modelIdentifier),
+               nonFree != modelIdentifier {
+                return [nonFree]
+            }
+            return []
         }
 
-        return fallbackModelIdentifier
+        if isZDRUnavailableFallbackWarranted(error: error) {
+            var chain: [String] = []
+            // 1. Try paid variant of same model first — different provider pool,
+            //    higher chance of finding a ZDR-capable endpoint.
+            if let nonFree = nonFreeModelIdentifier(from: modelIdentifier),
+               nonFree != modelIdentifier {
+                chain.append(nonFree)
+            }
+            // 2. Fall back to the designated ZDR fallback model (different family).
+            if modelIdentifier != zdrFallbackModelIdentifier,
+               !chain.contains(zdrFallbackModelIdentifier) {
+                chain.append(zdrFallbackModelIdentifier)
+            }
+            return chain
+        }
+
+        return []
     }
 
     nonisolated private static func nonFreeModelIdentifier(from modelIdentifier: String) -> String? {
@@ -249,6 +299,15 @@ actor OnlineModelService: OnlineModelServing {
         }
 
         return String(trimmed.dropLast(5))
+    }
+
+    nonisolated private static func isZDRUnavailableFallbackWarranted(error: OnlineModelError) -> Bool {
+        guard case let .httpFailure(statusCode, message, rawBody) = error,
+              statusCode == 404 else {
+            return false
+        }
+        let combined = [message, rawBody].joined(separator: " ").lowercased()
+        return combined.contains("data policy") || combined.contains("zero data retention")
     }
 
     nonisolated private static func isRateLimitFallbackWarranted(error: OnlineModelError) -> Bool {
