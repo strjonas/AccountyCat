@@ -633,6 +633,11 @@ final class BrainService: NSObject {
 
         state.algorithmState = decisionResult.updatedAlgorithmState
 
+        if let policyMemoryUpdate = decisionResult.policyMemoryUpdate,
+           !policyMemoryUpdate.operations.isEmpty {
+            state.policyMemory.apply(policyMemoryUpdate, now: now)
+        }
+
         await appendPolicyDecisionEvent(
             sessionID: session?.id,
             episode: evaluationEpisode,

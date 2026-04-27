@@ -244,6 +244,7 @@ struct LLMMonitorAlgorithmTests {
                 recentActions: [
                     ActionRecord(kind: .nudge, message: "That Instagram feed is distracting. Return to studying.", timestamp: now.addingTimeInterval(-120)),
                     ActionRecord(kind: .nudge, message: "You're looking at Instagram stories. Return to studying.", timestamp: now.addingTimeInterval(-240)),
+                    ActionRecord(kind: .nudge, message: "Still scrolling Instagram — get back to your goals.", timestamp: now.addingTimeInterval(-360)),
                 ]
             )
         )

@@ -141,6 +141,37 @@ nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
     var calendarContext: String?
 }
 
+nonisolated struct MonitoringSafelistAppealPromptPayload: Encodable, Sendable {
+    var appName: String
+    var bundleIdentifier: String?
+    var sampleWindowTitles: [String]
+    var goals: String
+    var focusedCount: Int
+    var distinctDays: Int
+    var isBrowser: Bool
+}
+
+nonisolated enum MonitoringSafelistScopeKind: String, Codable, Sendable {
+    case bundle
+    case titlePattern = "title_pattern"
+}
+
+nonisolated struct MonitoringSafelistAppealEnvelope: Codable, Sendable {
+    var approve: Bool
+    var scopeKind: MonitoringSafelistScopeKind
+    var titlePattern: String?
+    var summary: String?
+    var reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case approve
+        case scopeKind = "scope_kind"
+        case titlePattern = "title_pattern"
+        case summary
+        case reason
+    }
+}
+
 nonisolated struct MonitoringAppealPromptPayload: Encodable, Sendable {
     var appealText: String
     var goals: String
