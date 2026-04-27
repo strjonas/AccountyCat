@@ -15,6 +15,7 @@ import SwiftUI
 
 enum ACPopoverTab: String {
     case home     = "house.fill"
+    case brain    = "brain.head.profile"
     case settings = "gearshape.fill"
     case logs     = "scroll.fill"
 }
@@ -105,6 +106,7 @@ struct ContentView: View {
 
             HStack(spacing: 4) {
                 tabButton(.home)
+                tabButton(.brain)
                 tabButton(.settings)
                 if ACBuild.isDebug {
                     tabButton(.logs)
@@ -144,6 +146,7 @@ struct ContentView: View {
         ScrollView {
             switch selectedTab {
             case .home:     homeTab
+            case .brain:    BrainView().environmentObject(controller)
             case .settings: settingsTab
             case .logs:     logsTab
             }
@@ -181,27 +184,6 @@ struct ContentView: View {
 
     private var settingsTab: some View {
         VStack(alignment: .leading, spacing: 24) {
-
-            // ── Goals (always visible) ──
-            SettingsSection(title: "Your goals", icon: "target",
-                            subtitle: "AC nudges you back to these when you drift. Keep it short and specific.") {
-                TextEditor(text: Binding(
-                    get: { controller.state.goalsText },
-                    set: { controller.updateGoals($0) }
-                ))
-                .font(.ac(13))
-                .frame(minHeight: 96, maxHeight: 140)
-                .padding(10)
-                .scrollContentBackground(.hidden)
-                .background(
-                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                        .fill(Color(nsColor: .textBackgroundColor))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                                .stroke(Color.acHairline, lineWidth: 1)
-                        )
-                )
-            }
 
             // ── Character ──
             CharacterPickerSection(

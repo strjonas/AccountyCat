@@ -56,6 +56,14 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
     var maxMinutesPerDay: Int?
     var tonePreference: PolicyTonePreference?
     var active: Bool
+    /// When true, AC will not autonomously modify or delete this rule.
+    var isLocked: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, summary, source, createdAt, updatedAt, priority
+        case scope, schedule, allowedTopics, disallowedTopics
+        case maxMinutesPerDay, tonePreference, active, isLocked
+    }
 
     init(
         id: String = UUID().uuidString,
@@ -71,7 +79,8 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         disallowedTopics: [String] = [],
         maxMinutesPerDay: Int? = nil,
         tonePreference: PolicyTonePreference? = nil,
-        active: Bool = true
+        active: Bool = true,
+        isLocked: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -87,6 +96,26 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         self.maxMinutesPerDay = maxMinutesPerDay
         self.tonePreference = tonePreference
         self.active = active
+        self.isLocked = isLocked
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(PolicyRuleKind.self, forKey: .kind)
+        summary = try c.decode(String.self, forKey: .summary)
+        source = try c.decode(PolicyRuleSource.self, forKey: .source)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        priority = try c.decode(Int.self, forKey: .priority)
+        scope = try c.decode(PolicyRuleScope.self, forKey: .scope)
+        schedule = try c.decode(PolicyRuleSchedule.self, forKey: .schedule)
+        allowedTopics = try c.decode([String].self, forKey: .allowedTopics)
+        disallowedTopics = try c.decode([String].self, forKey: .disallowedTopics)
+        maxMinutesPerDay = try c.decodeIfPresent(Int.self, forKey: .maxMinutesPerDay)
+        tonePreference = try c.decodeIfPresent(PolicyTonePreference.self, forKey: .tonePreference)
+        active = try c.decode(Bool.self, forKey: .active)
+        isLocked = (try? c.decode(Bool.self, forKey: .isLocked)) ?? false
     }
 
     func isActive(at now: Date, calendar: Calendar = .current) -> Bool {
@@ -189,6 +218,7 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
             case .addRule:
                 guard let rule = operation.rule else { continue }
                 if let existingIndex = rules.firstIndex(where: { $0.id == rule.id }) {
+                    guard !rules[existingIndex].isLocked else { continue }
                     rules[existingIndex] = rule
                 } else {
                     rules.append(rule)
@@ -202,6 +232,7 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
                       let index = rules.firstIndex(where: { $0.id == targetID }) else {
                     continue
                 }
+                guard !rules[index].isLocked else { continue }
                 if let replacement = operation.rule {
                     rules[index] = replacement
                     if let tonePreference = replacement.tonePreference {
@@ -228,13 +259,14 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
 
             case .removeRule:
                 guard let targetID = operation.ruleID ?? operation.rule?.id else { continue }
-                rules.removeAll { $0.id == targetID }
+                rules.removeAll { $0.id == targetID && !$0.isLocked }
 
             case .expireRule:
                 guard let targetID = operation.ruleID ?? operation.rule?.id,
                       let index = rules.firstIndex(where: { $0.id == targetID }) else {
                     continue
                 }
+                guard !rules[index].isLocked else { continue }
                 rules[index].active = false
                 rules[index].updatedAt = now
             }

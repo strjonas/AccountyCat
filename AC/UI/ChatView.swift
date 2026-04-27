@@ -21,8 +21,8 @@ private enum ChatClearAction: String, Identifiable {
 private let chatSuggestions = [
     "Don't let me use Instagram today",
     "I'm taking a break — social apps are fine",
-    "Be strict with me for the next 2 hours",
-    "Go easy on me today",
+    "What does the 'limit' rule mean?",
+    "Please help me stick to making my presentation, don't even let me code",
 ]
 
 struct ChatView: View {

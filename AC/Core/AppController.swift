@@ -183,6 +183,38 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+    // MARK: - Brain — rule management
+
+    func addUserRule(_ summary: String, kind: PolicyRuleKind, appName: String? = nil) {
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var scope = PolicyRuleScope()
+        if let name = appName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            scope.appName = name
+        }
+        let rule = PolicyRule(kind: kind, summary: trimmed, source: .explicitFeedback, priority: 75, scope: scope)
+        state.policyMemory.apply(PolicyMemoryUpdateResponse(operations: [
+            PolicyMemoryOperation(type: .addRule, rule: rule)
+        ]))
+        persistState()
+        logActivity("brain", "User added rule: \(trimmed)")
+    }
+
+    func deleteRule(id: String) {
+        state.policyMemory.rules.removeAll { $0.id == id }
+        state.policyMemory.lastUpdatedAt = Date()
+        persistState()
+        logActivity("brain", "User deleted rule: \(id)")
+    }
+
+    func toggleRuleLocked(id: String) {
+        guard let i = state.policyMemory.rules.firstIndex(where: { $0.id == id }) else { return }
+        state.policyMemory.rules[i].isLocked.toggle()
+        state.policyMemory.rules[i].updatedAt = Date()
+        persistState()
+        logActivity("brain", "Rule \(state.policyMemory.rules[i].isLocked ? "locked" : "unlocked"): \(id)")
+    }
+
     func updateCharacter(_ character: ACCharacter) {
         guard state.character != character else { return }
         state.character = character
