@@ -6,19 +6,18 @@
 import AppKit
 import SwiftUI
 
-/// Shared label-row + secure key field used by both the onboarding card and
-/// the Settings → Mode section. Keeps the placeholder, the openrouter.ai/keys
-/// link, and the Keychain footnote in one place so they don't drift.
+/// Shared API key field used by the onboarding wizard and Settings → AI.
+/// Provides inline guidance for users who don't have an OpenRouter account yet.
 struct OpenRouterKeyField: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
 
-    /// `compact` uses smaller label sizing for the Settings section header,
-    /// where the field sits inside an existing `SettingsSection` title.
+    /// `compact` trims the header label size for use inside existing SettingsSections.
     var compact: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header row
             HStack(spacing: 6) {
                 if !compact {
                     Image(systemName: "key.fill")
@@ -30,9 +29,7 @@ struct OpenRouterKeyField: View {
                     .foregroundStyle(compact ? .secondary : Color.acTextPrimary)
                 Spacer(minLength: 0)
                 Button {
-                    if let url = URL(string: "https://openrouter.ai/keys") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    NSWorkspace.shared.open(URL(string: "https://openrouter.ai/keys")!)
                 } label: {
                     HStack(spacing: 3) {
                         Text("Get a free key")
@@ -44,6 +41,7 @@ struct OpenRouterKeyField: View {
                 .foregroundStyle(accent)
             }
 
+            // Key field
             SecureField(
                 "Paste your sk-or-… key",
                 text: Binding(
@@ -54,11 +52,60 @@ struct OpenRouterKeyField: View {
             .textFieldStyle(.roundedBorder)
             .font(.system(size: 11, design: .monospaced))
 
-            Text(controller.hasOnlineAPIKeyConfigured
-                 ? "Saved in your macOS Keychain. Model: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifier))."
-                 : "Stored only in your macOS Keychain. Free Gemma model is selected by default.")
+            // Status / guidance
+            if controller.hasOnlineAPIKeyConfigured {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.green)
+                    Text("Key saved to macOS Keychain · Model: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifier))")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                // Inline quick-start guide shown until a key is entered
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No account yet? It takes 2 minutes:")
+                        .font(.ac(10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        guidanceStep("1", "Go to openrouter.ai and sign up (free)")
+                        guidanceStep("2", "Open Settings → Keys → Create Key")
+                        guidanceStep("3", "Paste the key above — no credits needed for free models")
+                    }
+                    Button("openrouter.ai/keys →") {
+                        NSWorkspace.shared.open(URL(string: "https://openrouter.ai/keys")!)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(accent)
+                    .font(.ac(10, weight: .medium))
+                    .padding(.top, 2)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .stroke(Color.acHairline, lineWidth: 1)
+                        )
+                )
+            }
+        }
+    }
+
+    private func guidanceStep(_ number: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(number)
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(accent)
+                .frame(width: 14, height: 14)
+                .background(Circle().fill(accent.opacity(0.12)))
+            Text(text)
                 .font(.ac(10))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

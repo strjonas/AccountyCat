@@ -38,6 +38,9 @@ final class AppController: ObservableObject {
     @Published var onboardingDismissed = false
     @Published var telemetrySessionID: String?
     @Published var onlineAPIKeyDraft: String
+    /// True once the user has completed the first-run onboarding wizard. Stored in
+    /// UserDefaults (not ACState) so it survives state resets.
+    @Published var hasCompletedOnboardingWizard: Bool
     /// Set by WindowCoordinator when the orb is snapped to a screen edge (peek mode).
     @Published var peekingEdge: NSRectEdge? = nil
     /// Populated by `refreshAvailableCalendars()` once Calendar Intelligence is
@@ -97,6 +100,7 @@ final class AppController: ObservableObject {
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: loadedState.monitoringConfiguration)
         )
         self.chatMessages = Self.makeChatMessages(from: loadedState.chatHistory)
+        self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
         Task { @MainActor [weak self] in
             self?.activityLog = await ActivityLogService.shared.loadRecentContents()
@@ -272,6 +276,8 @@ final class AppController: ObservableObject {
         case "anthropic/claude-3-haiku":           return "Claude 3 Haiku"
         case "google/gemini-flash-1.5":            return "Gemini Flash 1.5"
         case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
+        case "google/gemini-2.5-flash":            return "Gemini 2.5 Flash"
+        case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
         case "qwen/qwen2.5-vl-72b-instruct":       return isFree ? "Qwen 2.5 VL · free" : "Qwen 2.5 VL"
         default: break
         }
@@ -295,6 +301,8 @@ final class AppController: ObservableObject {
             : (visionEnabled
                 ? MonitoringConfiguration.defaultPipelineProfileID
                 : "title_only_default")
+        // Re-apply the current tier's model for the new backend
+        applyTierToActiveBackend()
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState(persist: false)
         persistState()
@@ -331,6 +339,37 @@ final class AppController: ObservableObject {
         onlineAPIKeyDraft = value
         _ = OnlineModelCredentialStore.saveAPIKey(value)
         refreshSystemState()
+    }
+
+    // MARK: - Onboarding wizard
+
+    func completeOnboardingWizard() {
+        hasCompletedOnboardingWizard = true
+        UserDefaults.standard.set(true, forKey: "acOnboardingWizardCompleted")
+        refreshSystemState()
+    }
+
+    // MARK: - AI tier
+
+    var currentAITier: AITier { state.aiTier }
+
+    func updateAITier(_ tier: AITier) {
+        guard state.aiTier != tier else { return }
+        state.aiTier = tier
+        applyTierToActiveBackend()
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState()
+        persistState()
+        logActivity("monitoring", "AI tier: \(tier.rawValue)")
+    }
+
+    private func applyTierToActiveBackend() {
+        switch state.monitoringConfiguration.inferenceBackend {
+        case .openRouter:
+            state.monitoringConfiguration.onlineModelIdentifier = state.aiTier.byokModelIdentifier
+        case .local:
+            state.monitoringConfiguration.modelOverride = state.aiTier.localModelOverride
+        }
     }
 
     func updateThinkingEnabled(_ enabled: Bool) {

@@ -155,8 +155,14 @@ struct ContentView: View {
 
     private var homeTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if controller.state.setupStatus != .ready || controller.showingOnboardingCompletion {
-                OnboardingDialogView()
+            if !controller.hasCompletedOnboardingWizard && controller.state.setupStatus != .ready {
+                // New user: show the multi-screen wizard
+                OnboardingWizardView()
+                    .environmentObject(controller)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else if controller.state.setupStatus != .ready || controller.showingOnboardingCompletion {
+                // Wizard done but still setting up (e.g. local download in progress)
+                OnboardingDialogView(showModeChooser: false)
                     .environmentObject(controller)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
@@ -203,33 +209,8 @@ struct ContentView: View {
                 onSelect: { controller.updateCharacter($0) }
             )
 
-            SettingsSection(
-                title: "Mode",
-                icon: "network",
-                subtitle: controller.usingOnlineMonitoring
-                    ? "Online uses OpenRouter — smart, free models available. Vision controls whether screenshots are uploaded."
-                    : "Local runs on your Mac — fully private. Switch to Online if you want a stronger model without the download."
-            ) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker(
-                        "Backend",
-                        selection: Binding(
-                            get: { controller.state.monitoringConfiguration.inferenceBackend },
-                            set: { controller.updateMonitoringInferenceBackend($0) }
-                        )
-                    ) {
-                        ForEach(MonitoringInferenceBackend.allCases, id: \.self) { backend in
-                            Text(backend.displayName).tag(backend)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if controller.usingOnlineMonitoring {
-                        OpenRouterKeyField(compact: true)
-                            .environmentObject(controller)
-                    }
-                }
-            }
+            AISettingsSection()
+                .environmentObject(controller)
 
             Divider().opacity(0.3)
 
@@ -333,6 +314,10 @@ struct ContentView: View {
             if ACBuild.isDebug {
                 developerSection
             }
+
+            Divider().opacity(0.3)
+
+            AboutSection()
 
             Divider().opacity(0.5)
 
@@ -1215,5 +1200,222 @@ private struct Triangle: Shape {
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
         p.closeSubpath()
         return p
+    }
+}
+
+// MARK: - AI Settings Section (Mode + Tier)
+
+/// The AI section in Settings. Adds Mode (3-way with Managed "Coming soon") and
+/// a tier picker with dynamic description. Vision, sound, and pause tiles remain
+/// in the existing Controls section — this only adds what's new per spec.
+private struct AISettingsSection: View {
+    @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Section header
+            HStack(spacing: 8) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(accent.opacity(0.13)))
+                Text("AI")
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+            }
+
+            // Mode picker — 3 options, Managed greyed out
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Mode")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 26)
+
+                SettingsModeRow(
+                    current: controller.state.monitoringConfiguration.inferenceBackend,
+                    onChange: { controller.updateMonitoringInferenceBackend($0) }
+                )
+            }
+
+            // BYOK key — only when online
+            if controller.usingOnlineMonitoring {
+                OpenRouterKeyField(compact: true)
+                    .environmentObject(controller)
+                    .padding(.leading, 26)
+            }
+
+            // Tier picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Tier")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 26)
+
+                WizardTierPicker(
+                    selectedTier: Binding(
+                        get: { controller.currentAITier },
+                        set: { controller.updateAITier($0) }
+                    ),
+                    mode: controller.usingOnlineMonitoring ? .byok : .offline
+                )
+                .onAppear {
+                    // Re-run RAM check (spec: "runs when this section opens")
+                    controller.refreshSystemState(persist: false)
+                }
+            }
+        }
+    }
+}
+
+/// Compact 3-button mode row for the Settings AI section.
+private struct SettingsModeRow: View {
+    let current: MonitoringInferenceBackend
+    let onChange: (MonitoringInferenceBackend) -> Void
+    @Environment(\.acAccent) private var accent
+
+    var body: some View {
+        HStack(spacing: 8) {
+            modeButton(.local,      label: "Local",   icon: "lock.fill",  subtext: "Private")
+            modeButton(.openRouter, label: "BYOK",    icon: "key.fill",   subtext: "OpenRouter")
+            managedButton
+        }
+    }
+
+    @ViewBuilder
+    private func modeButton(
+        _ backend: MonitoringInferenceBackend,
+        label: String,
+        icon: String,
+        subtext: String
+    ) -> some View {
+        let isSelected = current == backend
+        Button { onChange(backend) } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isSelected ? accent : Color.secondary.opacity(0.65))
+                Text(label)
+                    .font(.ac(11, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? accent : Color.acTextPrimary.opacity(0.75))
+                Text(subtext)
+                    .font(.ac(9))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.10) : Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(isSelected ? accent.opacity(0.45) : Color.acHairline,
+                                    lineWidth: isSelected ? 1.5 : 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .animation(.acSnap, value: isSelected)
+    }
+
+    private var managedButton: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.secondary.opacity(0.30))
+            Text("Managed")
+                .font(.ac(11, weight: .medium))
+                .foregroundStyle(Color.secondary.opacity(0.40))
+            Text("Coming soon")
+                .font(.ac(9))
+                .foregroundStyle(Color.secondary.opacity(0.35))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(Color.acHairline.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - About Section
+
+private struct AboutSection: View {
+    @Environment(\.acAccent) private var accent
+
+    private var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(v) (\(b))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(accent.opacity(0.13)))
+                Text("About")
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+                Spacer()
+                Text("v\(appVersion)")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 0) {
+                aboutLink(icon: "arrow.up.right.square", title: "GitHub — source code") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/strjonas/AC")!)
+                }
+                Divider().opacity(0.3).padding(.leading, 36)
+                aboutLink(icon: "hand.raised.fill", title: "Privacy policy") {
+                    NSWorkspace.shared.open(URL(string: "https://accountycat.com/privacy")!)
+                }
+                Divider().opacity(0.3).padding(.leading, 36)
+                aboutLink(icon: "sparkles", title: "Managed mode waitlist") {
+                    NSWorkspace.shared.open(URL(string: "https://accountycat.com/waitlist")!)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous))
+        }
+    }
+
+    private func aboutLink(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.ac(12))
+                    .foregroundStyle(Color.acTextPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

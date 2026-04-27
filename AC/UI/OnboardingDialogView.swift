@@ -10,6 +10,10 @@ struct OnboardingDialogView: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
 
+    /// When `false` the mode chooser cards are hidden — used after the wizard has
+    /// already captured the user's backend choice and only setup steps remain.
+    var showModeChooser: Bool = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -20,9 +24,9 @@ struct OnboardingDialogView: View {
                 downloadExpectationBanner
             }
 
-            // Mode chooser is always visible during onboarding so the user
-            // can switch direction without diving into Settings.
-            if controller.state.setupStatus != .ready {
+            // Mode chooser: hidden after wizard completion since the user's choice
+            // is already locked in and changeable via Settings → AI.
+            if showModeChooser && controller.state.setupStatus != .ready {
                 modeChooser
             }
 

@@ -47,6 +47,80 @@ enum ACCharacter: String, Codable, CaseIterable, Sendable {
     }
 }
 
+// MARK: - AI Tier
+
+/// User-facing intelligence tier. Stored in ACState and mapped to concrete model
+/// identifiers in AppController.updateAITier(_:). Economy/Default/Smartest are shown
+/// in onboarding and Settings → AI; the underlying model IDs are an implementation detail.
+enum AITier: String, Codable, CaseIterable, Sendable {
+    case economy
+    case balanced   // displayed as "Default"
+    case smartest
+
+    var displayName: String {
+        switch self {
+        case .economy:  return "Economy"
+        case .balanced: return "Default"
+        case .smartest: return "Smartest"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .economy:
+            return "Fast and lightweight. Less compute offline or API usage with BYOK. Best for minimal overhead or limited resources."
+        case .balanced:
+            return "Balanced. Recommended for most users. Strong enough to understand context well, efficient enough to run all day."
+        case .smartest:
+            return "Best reasoning. Understands nuance better, fewer false nudges, and more convincing when you explain yourself."
+        }
+    }
+
+    // MARK: BYOK (OpenRouter) model identifiers per tier
+
+    var byokModelIdentifier: String {
+        switch self {
+        case .economy:  return "meta-llama/llama-4-scout:free"
+        case .balanced: return "google/gemma-4-31b-it:free"
+        case .smartest: return "google/gemini-2.5-flash"
+        }
+    }
+
+    var byokCostEstimate: String {
+        switch self {
+        case .economy:  return "~$0/mo (free tier)"
+        case .balanced: return "~$0/mo (free tier)"
+        case .smartest: return "~$0.95–1.90/mo"
+        }
+    }
+
+    // MARK: Local (offline) model identifiers per tier
+
+    var localModelOverride: String {
+        switch self {
+        case .economy:  return "unsloth/gemma-4-E2B-it-GGUF:Q4_0"
+        case .balanced: return "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
+        case .smartest: return "unsloth/Phi-4-mini-instruct-GGUF:Q4_K_M"
+        }
+    }
+
+    var localModelDisplayName: String {
+        switch self {
+        case .economy:  return "Gemma 4 E2B"
+        case .balanced: return "Gemma 4 E4B"
+        case .smartest: return "Phi-4 Mini"
+        }
+    }
+
+    var localRAMEstimate: String {
+        switch self {
+        case .economy:  return "~1.3 GB RAM"
+        case .balanced: return "~3–4 GB RAM"
+        case .smartest: return "~4–5 GB RAM"
+        }
+    }
+}
+
 enum ACBuild {
     /// True for Debug configuration builds; false for Release.
     static let isDebug: Bool = {
@@ -366,6 +440,7 @@ struct ACState: Codable, Sendable {
     """
 
     var character: ACCharacter = .mochi
+    var aiTier: AITier = .balanced
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
     var isPaused = false
@@ -404,6 +479,7 @@ struct ACState: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case character
+        case aiTier
         case permissions
         case setupStatus
         case isPaused
@@ -449,6 +525,7 @@ struct ACState: Codable, Sendable {
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
         character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
+        aiTier = try container.decodeIfPresent(AITier.self, forKey: .aiTier) ?? .balanced
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
@@ -516,6 +593,7 @@ struct ACState: Codable, Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(character, forKey: .character)
+        try container.encode(aiTier, forKey: .aiTier)
         try container.encode(permissions, forKey: .permissions)
         try container.encode(setupStatus, forKey: .setupStatus)
         try container.encode(isPaused, forKey: .isPaused)
@@ -540,6 +618,7 @@ struct ACState: Codable, Sendable {
 
     mutating func resetAlgorithmProfile() {
         goalsText = Self.defaultGoalsText
+        aiTier = .balanced
         recentActions = []
         recentSwitches = []
         usageByDay = [:]
