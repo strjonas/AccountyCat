@@ -13,6 +13,7 @@ enum LLMPolicyStage: String, Codable, CaseIterable, Sendable {
     case nudgeCopy = "nudge_copy"
     case appealReview = "appeal_review"
     case policyMemory = "policy_memory"
+    case safelistAppeal = "safelist_appeal"
 }
 
 struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
@@ -213,6 +214,8 @@ enum LLMPolicyCatalog {
             return .appealReview
         case .policyMemory:
             return .policyMemory
+        case .safelistAppeal:
+            return .safelistAppeal
         case .legacyDecision, .legacyDecisionFallback:
             return nil
         }

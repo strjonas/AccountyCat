@@ -15,6 +15,7 @@ enum MonitoringPromptTuningStage: String, Codable, CaseIterable, Sendable {
     case nudgeCopy = "nudge_copy"
     case appealReview = "appeal_review"
     case policyMemory = "policy_memory"
+    case safelistAppeal = "safelist_appeal"
     case legacyDecision = "legacy_decision"
     case legacyDecisionFallback = "legacy_decision_fallback"
 }
@@ -274,6 +275,32 @@ enum MonitoringPromptTuning {
                 """
             ),
             MonitoringStagePromptDefinition(
+                stage: .safelistAppeal,
+                systemPrompt: """
+                You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks.
+                You will see the user's stated goals, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
+
+                Return exactly one JSON object:
+                {"approve": true|false, "scope_kind": "bundle" | "title_pattern", "title_pattern": "optional substring", "summary": "<=20 words", "reason": "short reason"}
+
+                Approval rules:
+                - Approve only if the app is plausibly always-productive given the user's goals AND the sample titles are consistent with that. When in doubt, deny.
+                - Browsers are special: never approve `scope_kind="bundle"` for a browser. If approving a browser context, you MUST set `scope_kind="title_pattern"` and pick a `title_pattern` (a stable site name like "Google Docs", "GitHub", "Notion") that appears in the sample titles.
+                - Media apps (YouTube, Spotify, Netflix, TikTok, Twitch, etc.) and social apps (Twitter/X, Reddit, Instagram, Facebook) are never always-productive — deny.
+                - Chat apps (Slack, Discord, WhatsApp, iMessage, Telegram) are never always-productive — deny.
+                - IDEs, editors, terminals, doc tools, design tools, and project trackers are typical approvals when the goals involve building, writing, designing, planning, or research.
+
+                Do not invent context. Use only what is in the payload.
+                Return the JSON only — no prose, no markdown.
+                """
+            ,
+                userTemplate: """
+                Decide whether to add this app to the auto-safelist.
+                {{PAYLOAD_JSON}}
+                Return exactly one JSON object.
+                """
+            ),
+            MonitoringStagePromptDefinition(
                 stage: .policyMemory,
                 systemPrompt: """
                 You update structured policy memory for a focus companion.
@@ -398,6 +425,11 @@ enum MonitoringPromptTuning {
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
                 """
+            ),
+            MonitoringStagePromptDefinition(
+                stage: .safelistAppeal,
+                systemPrompt: policyDefaultPromptSet.prompt(for: .safelistAppeal).systemPrompt,
+                userTemplate: policyDefaultPromptSet.prompt(for: .safelistAppeal).userTemplate
             ),
             MonitoringStagePromptDefinition(
                 stage: .policyMemory,
@@ -534,6 +566,7 @@ enum MonitoringPromptTuning {
                 MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -549,6 +582,7 @@ enum MonitoringPromptTuning {
                 MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
                 MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
                 MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 110, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 1536, batchSize: 512, ubatchSize: 256, timeoutSeconds: 20)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -564,6 +598,7 @@ enum MonitoringPromptTuning {
                 MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 130, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
     ]

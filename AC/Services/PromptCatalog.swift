@@ -519,6 +519,24 @@ enum PromptCatalog {
                 subdirectory: "Prompts/Policy",
                 fallbackContents: sharedPrompt.userTemplate
             )
+        case (.safelistAppeal, .system):
+            return PromptAsset(
+                id: "policy.safelist_appeal.system",
+                version: "llm_monitor_v1",
+                resourceName: "safelist_appeal_system",
+                fileExtension: "md",
+                subdirectory: "Prompts/Policy",
+                fallbackContents: sharedPrompt.systemPrompt
+            )
+        case (.safelistAppeal, .user):
+            return PromptAsset(
+                id: "policy.safelist_appeal.user",
+                version: "llm_monitor_v1",
+                resourceName: "safelist_appeal_user",
+                fileExtension: "md",
+                subdirectory: "Prompts/Policy",
+                fallbackContents: sharedPrompt.userTemplate
+            )
         }
     }
 
@@ -608,6 +626,8 @@ enum PromptCatalog {
             return .appealReview
         case .policyMemory:
             return .policyMemory
+        case .safelistAppeal:
+            return .safelistAppeal
         }
     }
 

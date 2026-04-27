@@ -203,6 +203,35 @@ struct LLMFocusAlgorithmState: Codable, Sendable, Equatable {
     var lastVisualCheckByContext: [String: Date] = [:]
 }
 
+enum AutoAllowOutcome: String, Codable, Sendable, Equatable {
+    case expiredClean = "expired_clean"
+    case revokedByDistracted = "revoked_by_distracted"
+}
+
+struct FocusedObservationStat: Codable, Sendable, Equatable {
+    var contextFingerprint: String
+    var appName: String
+    var bundleIdentifier: String?
+    var titleSignature: String?
+    var sampleWindowTitles: [String] = []
+    var focusedCount: Int = 0
+    var distractedCount: Int = 0
+    var firstSeenAt: Date
+    var lastSeenAt: Date
+    var distinctDayKeys: [String] = []
+    var promotionAttemptedAt: Date?
+    var lastAutoAllowRuleID: String?
+    var previousAutoAllowOutcome: AutoAllowOutcome?
+
+    var distinctDayCount: Int { distinctDayKeys.count }
+}
+
+struct CachedDecision: Codable, Sendable, Equatable {
+    var assessment: MonitoringVerdict
+    var decidedAt: Date
+    var contextKey: String
+}
+
 struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
     var distraction = DistractionMetadata()
     var currentContextKey: String?
@@ -212,6 +241,51 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
     var lastOverlayAt: Date?
     var recentNudgeMessages: [String] = []
     var activeAppeal: MonitoringAppealSession?
+    var focusedObservations: [String: FocusedObservationStat] = [:]
+    var decisionCacheByContext: [String: CachedDecision] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case distraction
+        case currentContextKey
+        case currentContextEnteredAt
+        case lastInterventionAt
+        case lastNudgeAt
+        case lastOverlayAt
+        case recentNudgeMessages
+        case activeAppeal
+        case focusedObservations
+        case decisionCacheByContext
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        distraction = try c.decodeIfPresent(DistractionMetadata.self, forKey: .distraction) ?? DistractionMetadata()
+        currentContextKey = try c.decodeIfPresent(String.self, forKey: .currentContextKey)
+        currentContextEnteredAt = try c.decodeIfPresent(Date.self, forKey: .currentContextEnteredAt)
+        lastInterventionAt = try c.decodeIfPresent(Date.self, forKey: .lastInterventionAt)
+        lastNudgeAt = try c.decodeIfPresent(Date.self, forKey: .lastNudgeAt)
+        lastOverlayAt = try c.decodeIfPresent(Date.self, forKey: .lastOverlayAt)
+        recentNudgeMessages = try c.decodeIfPresent([String].self, forKey: .recentNudgeMessages) ?? []
+        activeAppeal = try c.decodeIfPresent(MonitoringAppealSession.self, forKey: .activeAppeal)
+        focusedObservations = try c.decodeIfPresent([String: FocusedObservationStat].self, forKey: .focusedObservations) ?? [:]
+        decisionCacheByContext = try c.decodeIfPresent([String: CachedDecision].self, forKey: .decisionCacheByContext) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(distraction, forKey: .distraction)
+        try c.encodeIfPresent(currentContextKey, forKey: .currentContextKey)
+        try c.encodeIfPresent(currentContextEnteredAt, forKey: .currentContextEnteredAt)
+        try c.encodeIfPresent(lastInterventionAt, forKey: .lastInterventionAt)
+        try c.encodeIfPresent(lastNudgeAt, forKey: .lastNudgeAt)
+        try c.encodeIfPresent(lastOverlayAt, forKey: .lastOverlayAt)
+        try c.encode(recentNudgeMessages, forKey: .recentNudgeMessages)
+        try c.encodeIfPresent(activeAppeal, forKey: .activeAppeal)
+        try c.encode(focusedObservations, forKey: .focusedObservations)
+        try c.encode(decisionCacheByContext, forKey: .decisionCacheByContext)
+    }
 }
 
 struct AlgorithmStateEnvelope: Codable, Sendable, Equatable {

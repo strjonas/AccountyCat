@@ -68,6 +68,10 @@ struct MonitoringDecisionResult: Sendable {
     var decision: LLMDecision
     var policy: CompanionPolicyResult
     var updatedAlgorithmState: AlgorithmStateEnvelope
+    /// Optional patch the algorithm wants applied to PolicyMemory after this evaluation
+    /// (e.g. a system-issued auto-allow rule from the safelist promoter, or an expire-rule
+    /// to revoke an auto-allow because a `.distracted` outcome contradicted it).
+    var policyMemoryUpdate: PolicyMemoryUpdateResponse? = nil
 }
 
 struct MonitoringAppealReviewInput: Sendable {

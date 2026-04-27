@@ -17,19 +17,30 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private let runtime: LocalModelRuntime
     private let onlineModelService: any OnlineModelServing
     private let policyMemoryService: PolicyMemoryServicing
+    private let safelistAppealService: any SafelistAppealEvaluating
     private let stabilityWindow: TimeInterval = 6
     private let focusedFollowUp: TimeInterval = 10 * 60
     private let unclearFollowUp: TimeInterval = 2 * 60
     private let distractedFollowUp: TimeInterval = 45
+    /// Re-using a recently-confirmed focused decision is OK only inside this window.
+    /// Beyond it the user may have moved on within the same app, so re-evaluate.
+    private let decisionCacheTTL: TimeInterval = 60
+    /// Keep the per-context decision cache bounded so state.json stays small.
+    private let decisionCacheCapacity = 32
+    /// Keep observation history bounded — evict by least recently seen.
+    private let observationCapacity = 64
 
     init(
         runtime: LocalModelRuntime,
         onlineModelService: any OnlineModelServing,
-        policyMemoryService: PolicyMemoryServicing
+        policyMemoryService: PolicyMemoryServicing,
+        safelistAppealService: (any SafelistAppealEvaluating)? = nil
     ) {
         self.runtime = runtime
         self.onlineModelService = onlineModelService
         self.policyMemoryService = policyMemoryService
+        self.safelistAppealService = safelistAppealService
+            ?? SafelistAppealService(runtime: runtime, onlineModelService: onlineModelService)
     }
 
     func resetState(_ state: inout AlgorithmStateEnvelope) {
@@ -72,6 +83,13 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         now: Date
     ) -> MonitoringEvaluationPlan {
         let profile = LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
+        let canSkipScreenshot = MonitoringHeuristics.canRelyOnTitleAlone(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            windowTitle: context.windowTitle,
+            isBrowser: heuristics.browser
+        )
+        let requiresScreenshot = profile.descriptor.requiresScreenshot && !canSkipScreenshot
         let matchingRules = policyMemory.activeRules(at: now, matching: context)
         let hasExplicitAllowRule = matchingRules.contains { $0.kind == .allow }
         let hasRestrictiveRule = matchingRules.contains {
@@ -84,7 +102,26 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 shouldEvaluate: false,
                 reason: hasExplicitAllowRule ? "explicit_allow_rule" : "obviously_productive",
                 visualCheckReason: nil,
-                requiresScreenshot: profile.descriptor.requiresScreenshot,
+                requiresScreenshot: requiresScreenshot,
+                promptMode: profile.descriptor.id,
+                promptVersion: descriptor.version
+            )
+        }
+
+        // Per-context short-term cache: a recently-confirmed focused decision in the exact same
+        // context can be reused, sparing the LLM call on rapid A→B→A switching.
+        let contextKey = state.llmPolicy.currentContextKey
+        if !hasRestrictiveRule,
+           let key = contextKey,
+           let cached = state.llmPolicy.decisionCacheByContext[key],
+           cached.contextKey == key,
+           cached.assessment == .focused,
+           now.timeIntervalSince(cached.decidedAt) < decisionCacheTTL {
+            return MonitoringEvaluationPlan(
+                shouldEvaluate: false,
+                reason: "cached_focused",
+                visualCheckReason: nil,
+                requiresScreenshot: requiresScreenshot,
                 promptMode: profile.descriptor.id,
                 promptVersion: descriptor.version
             )
@@ -114,7 +151,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             shouldEvaluate: shouldEvaluate,
             reason: reason,
             visualCheckReason: nil,
-            requiresScreenshot: profile.descriptor.requiresScreenshot,
+            requiresScreenshot: requiresScreenshot,
             promptMode: profile.descriptor.id,
             promptVersion: descriptor.version
         )
@@ -484,6 +521,117 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         policyState.distraction = distraction
+
+        // Per-context decision cache (Optimization 2) — short-term reuse of focused outcomes.
+        if let contextKey = policyState.currentContextKey {
+            policyState.decisionCacheByContext[contextKey] = CachedDecision(
+                assessment: decision.assessment,
+                decidedAt: input.now,
+                contextKey: contextKey
+            )
+            evictOldestDecisionCacheEntries(from: &policyState.decisionCacheByContext)
+        }
+
+        // Observation tracking + safelist auto-promotion / revocation (Optimization 1).
+        let frontmost = FrontmostContext(
+            bundleIdentifier: input.snapshot.bundleIdentifier,
+            appName: input.snapshot.appName,
+            windowTitle: input.snapshot.windowTitle
+        )
+        let isBrowser = MonitoringHeuristics.isBrowser(bundleIdentifier: frontmost.bundleIdentifier)
+        let observationContext = SafelistPromotionPolicy.makeContext(
+            from: frontmost,
+            isBrowser: isBrowser,
+            now: input.now
+        )
+
+        var policyMemoryUpdate: PolicyMemoryUpdateResponse?
+
+        // Determine whether a user-issued (non-system) allow rule is currently active for this
+        // context. If yes, any "focused" observations we record would be tainted — the user
+        // explicitly granted a temporary window (e.g. "let me watch Instagram for 30 min") and
+        // we must not let that accumulate toward safelist promotion.
+        let activeRulesForObservation: [PolicyRule]
+        if let observationContext {
+            activeRulesForObservation = input.policyMemory.activeRules(
+                at: input.now,
+                matching: frontmost
+            )
+        } else {
+            activeRulesForObservation = []
+        }
+        let hasUserGrantedAllow = activeRulesForObservation.contains {
+            $0.kind == .allow && $0.source != .system
+        }
+
+        if let observationContext {
+            switch decision.assessment {
+            case .focused:
+                // Skip recording when the "focused" outcome is gated by a temporary user-issued
+                // allow (e.g. chat rule "let me watch Instagram for 30 min"). The rule will expire;
+                // we must not let observations taken under it count toward promotion.
+                guard !hasUserGrantedAllow else { break }
+
+                var stat = policyState.focusedObservations[observationContext.fingerprint]
+                    ?? FocusedObservationStat(
+                        contextFingerprint: observationContext.fingerprint,
+                        appName: observationContext.appName,
+                        bundleIdentifier: observationContext.bundleIdentifier,
+                        titleSignature: observationContext.titleSignature,
+                        firstSeenAt: input.now,
+                        lastSeenAt: input.now
+                    )
+                SafelistPromotionPolicy.recordFocused(
+                    stat: &stat,
+                    windowTitle: frontmost.windowTitle,
+                    now: input.now,
+                    dayKey: observationContext.dayKey
+                )
+                policyState.focusedObservations[observationContext.fingerprint] = stat
+                evictLeastRecentObservations(from: &policyState.focusedObservations)
+
+                if let update = await maybePromote(
+                    stat: stat,
+                    observation: observationContext,
+                    frontmost: frontmost,
+                    input: input,
+                    policyMemory: input.policyMemory,
+                    policyState: &policyState
+                ) {
+                    policyMemoryUpdate = update
+                }
+
+            case .distracted:
+                if var stat = policyState.focusedObservations[observationContext.fingerprint] {
+                    stat.distractedCount += 1
+                    stat.lastSeenAt = input.now
+                    if let ruleID = stat.lastAutoAllowRuleID,
+                       input.policyMemory.rules.contains(where: { $0.id == ruleID && $0.active }) {
+                        // Revoke the auto-allow rule we previously issued for this fingerprint —
+                        // the user being distracted contradicts the safelist promotion.
+                        policyMemoryUpdate = PolicyMemoryUpdateResponse(operations: [
+                            PolicyMemoryOperation(
+                                type: .expireRule,
+                                rule: nil,
+                                ruleID: ruleID,
+                                patch: nil,
+                                reason: "auto_allow_revoked_by_distracted"
+                            )
+                        ])
+                        stat.previousAutoAllowOutcome = .revokedByDistracted
+                        stat.lastAutoAllowRuleID = nil
+                    }
+                    policyState.focusedObservations[observationContext.fingerprint] = stat
+                }
+
+            case .unclear:
+                if var stat = policyState.focusedObservations[observationContext.fingerprint] {
+                    stat.lastSeenAt = input.now
+                    policyState.focusedObservations[observationContext.fingerprint] = stat
+                }
+            }
+        }
+
         updatedState.llmPolicy = policyState
 
         return makeResult(
@@ -493,8 +641,103 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             decision: decision,
             action: action,
             updatedState: updatedState,
-            blockReason: blockReason
+            blockReason: blockReason,
+            policyMemoryUpdate: policyMemoryUpdate
         )
+    }
+
+    private func maybePromote(
+        stat: FocusedObservationStat,
+        observation: SafelistObservationContext,
+        frontmost: FrontmostContext,
+        input: MonitoringDecisionInput,
+        policyMemory: PolicyMemory,
+        policyState: inout LLMPolicyAlgorithmState
+    ) async -> PolicyMemoryUpdateResponse? {
+        // Recover a stat that may have had a previously-issued auto-allow rule expire cleanly
+        // since we last looked. If the recorded ruleID is no longer in the active rules and
+        // wasn't revoked by a `.distracted`, treat it as expired clean.
+        var workingStat = stat
+        if let ruleID = workingStat.lastAutoAllowRuleID,
+           !policyMemory.rules.contains(where: { $0.id == ruleID && $0.active }),
+           workingStat.previousAutoAllowOutcome != .revokedByDistracted {
+            workingStat.previousAutoAllowOutcome = .expiredClean
+            workingStat.lastAutoAllowRuleID = nil
+            policyState.focusedObservations[observation.fingerprint] = workingStat
+        }
+
+        let eligibility = SafelistPromotionPolicy.eligibility(
+            for: workingStat,
+            policyMemory: policyMemory,
+            context: frontmost,
+            now: input.now
+        )
+        guard case .eligible(let tier) = eligibility else {
+            return nil
+        }
+
+        // Mark attempt time before the LLM call so a denial counts as a throttled attempt.
+        workingStat.promotionAttemptedAt = input.now
+        policyState.focusedObservations[observation.fingerprint] = workingStat
+
+        guard let envelope = await safelistAppealService.runAppeal(
+            observation: observation,
+            sampleWindowTitles: workingStat.sampleWindowTitles,
+            focusedCount: workingStat.focusedCount,
+            distinctDays: workingStat.distinctDayCount,
+            goals: input.goals,
+            configuration: input.configuration,
+            runtimeOverride: input.runtimeOverride
+        ) else {
+            return nil
+        }
+
+        guard let rule = SafelistPromotionPolicy.buildRule(
+            from: envelope,
+            observation: observation,
+            tier: tier,
+            now: input.now
+        ) else {
+            return nil
+        }
+
+        var stored = workingStat
+        stored.lastAutoAllowRuleID = rule.id
+        stored.previousAutoAllowOutcome = nil
+        policyState.focusedObservations[observation.fingerprint] = stored
+
+        await ActivityLogService.shared.append(
+            category: "safelist-promotion",
+            message: "auto-allowed \(observation.appName) (\(tier.rawValue), ttl=\(Int(tier.ttl))s)"
+        )
+
+        return PolicyMemoryUpdateResponse(operations: [
+            PolicyMemoryOperation(
+                type: .addRule,
+                rule: rule,
+                ruleID: nil,
+                patch: nil,
+                reason: "safelist_promotion_\(tier.rawValue)"
+            )
+        ])
+    }
+
+    private func evictOldestDecisionCacheEntries(from cache: inout [String: CachedDecision]) {
+        guard cache.count > decisionCacheCapacity else { return }
+        let sorted = cache.sorted { $0.value.decidedAt < $1.value.decidedAt }
+        let removeCount = cache.count - decisionCacheCapacity
+        for (key, _) in sorted.prefix(removeCount) {
+            cache.removeValue(forKey: key)
+        }
+    }
+
+    private func evictLeastRecentObservations(from observations: inout [String: FocusedObservationStat]) {
+        guard observations.count > observationCapacity else { return }
+        let sorted = observations.sorted { $0.value.lastSeenAt < $1.value.lastSeenAt }
+        let removeCount = observations.count - observationCapacity
+        for (key, _) in sorted.prefix(removeCount) {
+            observations.removeValue(forKey: key)
+        }
     }
 
     func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput? {
@@ -620,7 +863,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         decision: LLMDecision,
         action: CompanionAction,
         updatedState: AlgorithmStateEnvelope,
-        blockReason: String?
+        blockReason: String?,
+        policyMemoryUpdate: PolicyMemoryUpdateResponse? = nil
     ) -> MonitoringDecisionResult {
         let allowIntervention: Bool
         if case .none = action {
@@ -654,7 +898,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     distractionAfter: updatedState.llmPolicy.distraction.telemetryState
                 )
             ),
-            updatedAlgorithmState: updatedState
+            updatedAlgorithmState: updatedState,
+            policyMemoryUpdate: policyMemoryUpdate
         )
     }
 

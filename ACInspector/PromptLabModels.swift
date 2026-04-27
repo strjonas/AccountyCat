@@ -426,7 +426,7 @@ private extension PromptLabStage {
             self = .nudgeCopy
         case .appealReview:
             self = .appealReview
-        case .policyMemory:
+        case .policyMemory, .safelistAppeal:
             return nil
         }
     }
