@@ -23,6 +23,7 @@ Getting interrupted during legitimate work is treated as a bug, not an acceptabl
 - Local `llama.cpp` runtime (Gemma 4 E2B, ~4.4 GB RAM)
 - In-app runtime installer
 - `ACInspector` — a companion app for reviewing past sessions and telemetry locally
+- One active monitoring algorithm in the main app codebase; older alternatives are parked under [`_Legacy/`](_Legacy)
 
 ## Run locally
 

@@ -16,9 +16,6 @@ struct BrainServiceConfigurationTests {
     func configurationChangeResetsSelectedAlgorithmState() {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
-            monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
-            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
-            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
             onlineModelService: OnlineModelService(),
             policyMemoryService: PolicyMemoryService(
@@ -41,7 +38,7 @@ struct BrainServiceConfigurationTests {
         )
         var state = ACState()
         state.monitoringConfiguration.promptProfileID = "focus_default_v2"
-        state.algorithmState.llmFocus.distraction = DistractionMetadata(
+        state.algorithmState.llmPolicy.distraction = DistractionMetadata(
             contextKey: "com.google.Chrome|feed",
             stableSince: Date(timeIntervalSince1970: 1),
             lastAssessment: .distracted,
@@ -63,9 +60,6 @@ struct BrainServiceConfigurationTests {
     func registryRejectsUnknownAlgorithmIDs() {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
-            monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
-            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
-            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
             onlineModelService: OnlineModelService(),
             policyMemoryService: PolicyMemoryService(

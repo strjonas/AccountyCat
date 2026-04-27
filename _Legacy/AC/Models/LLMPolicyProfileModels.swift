@@ -28,7 +28,7 @@ struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
     var timeoutSeconds: UInt64
     var thinkingEnabled: Bool
 
-    nonisolated init(
+    init(
         modelIdentifier: String,
         maxTokens: Int,
         temperature: Double,
@@ -125,11 +125,25 @@ enum LLMPolicyCatalog {
     }
 
     nonisolated static func permissionRequirements(for configuration: MonitoringConfiguration) -> MonitoringPermissionRequirements {
-        let profile = pipelineProfile(id: configuration.pipelineProfileID)
-        return MonitoringPermissionRequirements(
-            requiresAccessibility: true,
-            requiresScreenRecording: profile.descriptor.requiresScreenshot
-        )
+        switch MonitoringConfiguration.normalizedAlgorithmID(configuration.algorithmID) {
+        case MonitoringConfiguration.banditAlgorithmID,
+             MonitoringConfiguration.legacyLLMFocusAlgorithmID:
+            return MonitoringPermissionRequirements(
+                requiresAccessibility: true,
+                requiresScreenRecording: true
+            )
+        case MonitoringConfiguration.currentLLMMonitorAlgorithmID:
+            let profile = pipelineProfile(id: configuration.pipelineProfileID)
+            return MonitoringPermissionRequirements(
+                requiresAccessibility: true,
+                requiresScreenRecording: profile.descriptor.requiresScreenshot
+            )
+        default:
+            return MonitoringPermissionRequirements(
+                requiresAccessibility: true,
+                requiresScreenRecording: true
+            )
+        }
     }
 
     nonisolated private static func makePipelineProfile(
@@ -202,6 +216,8 @@ enum LLMPolicyCatalog {
             return .policyMemory
         case .safelistAppeal:
             return .safelistAppeal
+        case .legacyDecision, .legacyDecisionFallback:
+            return nil
         }
     }
 }

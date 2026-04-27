@@ -12,7 +12,6 @@ enum MonitoringSelectionMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct MonitoringConfiguration: Codable, Hashable, Sendable {
-    // Historical ids retained only so old state files migrate onto the active algorithm.
     nonisolated static let deprecatedLegacyLLMAlgorithmID = "legacy_focus_v1"
     nonisolated static let deprecatedLLMFocusAlgorithmID = "llm_focus_v1"
     nonisolated static let deprecatedLLMMonitorAlgorithmID = "llm_policy_v1"
@@ -78,11 +77,9 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
 
     nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
         switch id {
-        case deprecatedLegacyLLMAlgorithmID,
-             deprecatedLLMFocusAlgorithmID,
-             deprecatedLLMMonitorAlgorithmID,
-             legacyLLMFocusAlgorithmID,
-             banditAlgorithmID:
+        case deprecatedLegacyLLMAlgorithmID, deprecatedLLMFocusAlgorithmID:
+            return legacyLLMFocusAlgorithmID
+        case deprecatedLLMMonitorAlgorithmID:
             return currentLLMMonitorAlgorithmID
         default:
             return id
@@ -90,7 +87,12 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     }
 
     nonisolated static func shouldAutoMigrateDeprecatedDefaultAlgorithm(_ id: String) -> Bool {
-        normalizedAlgorithmID(id) == currentLLMMonitorAlgorithmID && id != currentLLMMonitorAlgorithmID
+        switch id {
+        case deprecatedLegacyLLMAlgorithmID, deprecatedLLMFocusAlgorithmID:
+            return true
+        default:
+            return false
+        }
     }
 
     var experimentArm: String {
@@ -287,11 +289,12 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
 }
 
 struct AlgorithmStateEnvelope: Codable, Sendable, Equatable {
-    // The current build persists only the active LLM monitor state.
-    // Decoder shims below still read older legacy/bandit keys.
+    // Each algorithm owns its own state slice. Adding a new algorithm = add a new property here.
+    var llmFocus = LLMFocusAlgorithmState()
     var llmPolicy = LLMPolicyAlgorithmState()
+    var banditFocus = BanditFocusAlgorithmState()
 
-    // MARK: - Codable (with migration from older algorithm slices)
+    // MARK: - Codable (with migration from old "legacyFocus" key)
 
     enum CodingKeys: String, CodingKey {
         case llmFocus
@@ -304,22 +307,19 @@ struct AlgorithmStateEnvelope: Codable, Sendable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        llmPolicy = try c.decodeIfPresent(LLMPolicyAlgorithmState.self, forKey: .llmPolicy)
-               ?? LLMPolicyAlgorithmState()
-        let legacyFocus = try c.decodeIfPresent(LLMFocusAlgorithmState.self, forKey: .llmFocus)
+        llmFocus = try c.decodeIfPresent(LLMFocusAlgorithmState.self, forKey: .llmFocus)
                ?? c.decodeIfPresent(LLMFocusAlgorithmState.self, forKey: .legacyFocus)
                ?? LLMFocusAlgorithmState()
-        if llmPolicy.distraction == DistractionMetadata(),
-           legacyFocus.distraction != DistractionMetadata() {
-            llmPolicy.distraction = legacyFocus.distraction
-        }
-        _ = try? c.decodeIfPresent(EmptyCodableState.self, forKey: .banditFocus)
+        llmPolicy = try c.decodeIfPresent(LLMPolicyAlgorithmState.self, forKey: .llmPolicy)
+               ?? LLMPolicyAlgorithmState()
+        banditFocus = try c.decodeIfPresent(BanditFocusAlgorithmState.self, forKey: .banditFocus)
+               ?? BanditFocusAlgorithmState()
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(llmFocus, forKey: .llmFocus)
         try c.encode(llmPolicy, forKey: .llmPolicy)
+        try c.encode(banditFocus, forKey: .banditFocus)
     }
 }
-
-private struct EmptyCodableState: Codable {}

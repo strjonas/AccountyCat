@@ -18,3 +18,8 @@ unsloth/
 # Ad-hoc compile probes at repo root
 test_compile
 test_compile.swift
+# Build artifacts
+.derivedData*/
+**/.derivedData*/
+DerivedData/
+**/DerivedData/

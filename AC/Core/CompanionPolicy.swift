@@ -13,7 +13,7 @@ struct CompanionPolicyResult: Sendable {
 }
 
 enum CompanionPolicy {
-    private static let distractionConfidenceThreshold = 0.60
+    nonisolated private static let distractionConfidenceThreshold = 0.60
 
     static func decide(
         evaluationID: String,
@@ -100,7 +100,7 @@ enum CompanionPolicy {
         )
     }
 
-    static func telemetryState(from metadata: DistractionMetadata) -> TelemetryDistractionState {
+    nonisolated static func telemetryState(from metadata: DistractionMetadata) -> TelemetryDistractionState {
         TelemetryDistractionState(
             stableSince: metadata.stableSince,
             lastAssessment: metadata.lastAssessment,

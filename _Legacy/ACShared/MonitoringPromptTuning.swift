@@ -16,6 +16,8 @@ enum MonitoringPromptTuningStage: String, Codable, CaseIterable, Sendable {
     case appealReview = "appeal_review"
     case policyMemory = "policy_memory"
     case safelistAppeal = "safelist_appeal"
+    case legacyDecision = "legacy_decision"
+    case legacyDecisionFallback = "legacy_decision_fallback"
 }
 
 struct MonitoringStagePromptDefinition: Codable, Hashable, Identifiable, Sendable {
@@ -437,6 +439,56 @@ enum MonitoringPromptTuning {
         ]
     )
 
+    nonisolated static let legacyDecisionPrompt = MonitoringStagePromptDefinition(
+        stage: .legacyDecision,
+        systemPrompt: """
+        You are AC's legacy decision stage.
+        A separate perception step already summarized the current activity.
+        Use goals, memory, heuristics, distraction state, and recent interventions to choose the next action.
+        False positives are expensive.
+        Return exactly one JSON object:
+        {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional"}
+        Decision rules:
+        - If the activity summary likely supports the goals, return `focused` + `none`.
+        - If the activity summary is still genuinely unclear, return `unclear` + `abstain`.
+        - If the activity likely conflicts with the goals or an explicit memory rule, return `distracted` + `nudge`.
+        - Use `overlay` only for repeated distraction already reflected in the payload.
+        - `assessment` and `suggested_action` must agree:
+          focused -> none
+          unclear -> abstain
+          distracted -> nudge or overlay
+        - If the frontmost app is a development tool or editor and nothing in the payload points off-task, prefer `focused` + `none`.
+        - If you write `nudge`, keep it under 18 words and avoid repeating recent nudges.
+        """
+    ,
+        userTemplate: """
+        Decide AC's action from this text-only context.
+        Trust the perception summary more than raw usage when they conflict.
+        {{PAYLOAD_JSON}}
+        Return exactly one JSON object.
+        """
+    )
+
+    nonisolated static let legacyDecisionFallbackPrompt = MonitoringStagePromptDefinition(
+        stage: .legacyDecisionFallback,
+        systemPrompt: """
+        Return exactly one JSON object:
+        {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional"}
+        Rules:
+        - focused -> none
+        - unclear -> abstain
+        - distracted -> nudge or overlay
+        - use overlay only for repeated distraction already reflected in the payload
+        - if the activity could plausibly support the goals, prefer focused or unclear over distracted
+        """
+    ,
+        userTemplate: """
+        Use this context:
+        {{PAYLOAD_JSON}}
+        Return exactly one JSON object.
+        """
+    )
+
     nonisolated static let pipelineDefinitions: [MonitoringPipelineDefinition] = [
         MonitoringPipelineDefinition(
             id: "vision_split_default",
@@ -509,6 +561,8 @@ enum MonitoringPromptTuning {
                 MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
                 MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
                 MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
@@ -523,6 +577,8 @@ enum MonitoringPromptTuning {
                 MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
                 MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 150, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
                 MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
                 MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
                 MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
@@ -537,6 +593,8 @@ enum MonitoringPromptTuning {
                 MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
                 MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .legacyDecisionFallback, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),

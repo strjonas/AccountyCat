@@ -30,9 +30,9 @@ struct MonitoringConfigurationTests {
         #expect(state.monitoringConfiguration.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
         #expect(state.monitoringConfiguration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(state.monitoringConfiguration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
-        #expect(state.algorithmState.llmFocus.distraction.contextKey == "com.google.Chrome|youtube")
-        #expect(state.algorithmState.llmFocus.distraction.consecutiveDistractedCount == 2)
-        #expect(state.algorithmState.llmFocus.distraction.lastAssessment == .distracted)
+        #expect(state.algorithmState.llmPolicy.distraction.contextKey == "com.google.Chrome|youtube")
+        #expect(state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount == 2)
+        #expect(state.algorithmState.llmPolicy.distraction.lastAssessment == .distracted)
     }
 
     @Test
@@ -49,12 +49,12 @@ struct MonitoringConfigurationTests {
 
         let state = try JSONDecoder().decode(ACState.self, from: data)
 
-        #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.legacyLLMFocusAlgorithmID)
+        #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.currentLLMMonitorAlgorithmID)
         #expect(
             state.monitoringConfiguration.experimentArm
             == [
                 "fixed",
-                MonitoringConfiguration.legacyLLMFocusAlgorithmID,
+                MonitoringConfiguration.currentLLMMonitorAlgorithmID,
                 MonitoringInferenceBackend.local.rawValue,
                 MonitoringConfiguration.defaultPipelineProfileID,
                 MonitoringConfiguration.defaultRuntimeProfileID,

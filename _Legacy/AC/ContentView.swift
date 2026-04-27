@@ -317,7 +317,7 @@ struct ContentView: View {
                 }
             }
 
-            SettingsSection(title: "Reset monitoring profile",
+            SettingsSection(title: "Reset algorithm profile",
                             icon: "arrow.counterclockwise",
                             subtitle: "Clears learned memory, recent behavior context, chat history, and usage context.") {
                 Button("Reset") { pendingSettingsAction = .resetAlgorithm }
@@ -358,6 +358,15 @@ struct ContentView: View {
                 Button("Test Overlay") { controller.showTestOverlay() }
                     .buttonStyle(ACPrimaryButton())
             }
+
+            developerPicker(
+                title: "Monitoring algorithm",
+                selection: Binding(
+                    get: { controller.state.monitoringConfiguration.algorithmID },
+                    set: { controller.updateMonitoringAlgorithm($0) }
+                ),
+                options: controller.availableMonitoringAlgorithms.map { ($0.id, $0.displayName, $0.summary) }
+            )
 
             developerPicker(
                 title: "Monitoring prompt profile",

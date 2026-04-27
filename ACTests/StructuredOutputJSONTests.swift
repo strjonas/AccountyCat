@@ -48,7 +48,7 @@ struct StructuredOutputJSONTests {
         {"scene_summary":"Editing code and reading docs in Codex","focus_guess":"focused","reason_tags":["coding","docs"],"notes":"Working in a development environment."}
         """
 
-        let envelope = StructuredOutputJSON.decode(LegacyFocusPerceptionEnvelope.self, from: output)
+        let envelope = StructuredOutputJSON.decode(MonitoringPerceptionEnvelope.self, from: output)
 
         #expect(envelope?.activitySummary == "Editing code and reading docs in Codex")
         #expect(envelope?.focusGuess == .focused)

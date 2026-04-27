@@ -113,8 +113,8 @@ struct MonitoringLLMClientPromptTests {
     }
 
     @Test
-    func recentExplicitRestrictionBeatsOlderGenericMemory() {
-        let payload = MonitoringLLMClient.makeLegacyPerceptionPayload(
+    func payloadKeepsRecentExplicitRestrictionInMemory() {
+        let payload = MonitoringLLMClient.makeVisionPayload(
             snapshot: AppSnapshot(
                 bundleIdentifier: "com.google.Chrome",
                 appName: "Google Chrome",
@@ -128,7 +128,9 @@ struct MonitoringLLMClientPromptTests {
                 timestamp: Date(timeIntervalSince1970: 7_300)
             ),
             goals: "I want to spend most of my time studying, building, and gaining experience.",
+            recentActions: [],
             heuristics: makeHeuristics(),
+            distraction: DistractionMetadata(),
             memory: """
             Focus areas are: studying, building, and gaining experience.
             - Avoid excessive YouTube viewing to maintain focus.

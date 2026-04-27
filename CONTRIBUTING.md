@@ -30,7 +30,8 @@ xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=
 
 - Architecture overview: [`docs/system-overview.md`](docs/system-overview.md). Start there before touching anything non-trivial.
 - First-run / setup flow: `AC/Core/AppController.swift`, `AC/Services/RuntimeSetupService.swift`, `AC/Services/LocalModelRuntime.swift`, `AC/UI/OnboardingDialogView.swift`.
-- Monitoring algorithms: `AC/Core/BrainService.swift` and the three `*Algorithm.swift` files under `AC/Core/`.
+- Active monitoring path: `AC/Core/BrainService.swift`, `AC/Core/MonitoringAlgorithm.swift`, and `AC/Core/LLMMonitorAlgorithm.swift`.
+- Parked alternatives: repo-root [`_Legacy/`](_Legacy). Those files are intentionally out of the active build while work stays focused on the main monitor.
 
 ## Testing with a different model
 

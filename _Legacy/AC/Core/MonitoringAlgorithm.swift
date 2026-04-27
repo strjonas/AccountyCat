@@ -125,10 +125,13 @@ protocol MonitoringAlgorithm: Sendable {
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult
     func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput?
+    /// Called when the system receives a reward signal for a prior nudge.
+    /// Algorithms that do not learn (e.g. LegacyLLMFocusAlgorithm) inherit the default no-op.
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope)
 }
 
 extension MonitoringAlgorithm {
+    /// Default no-op: algorithms that do not learn from rewards implement nothing.
     func observeReward(_ signal: MonitoringRewardSignal, state: inout AlgorithmStateEnvelope) {}
 
     func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput? {
@@ -137,26 +140,43 @@ extension MonitoringAlgorithm {
 }
 
 final class MonitoringAlgorithmRegistry: @unchecked Sendable {
+    private let legacyLLMFocusAlgorithm: LegacyLLMFocusAlgorithm
     private let llmMonitorAlgorithm: LLMMonitorAlgorithm
+    private let banditFocusAlgorithm: BanditMonitoringAlgorithm
 
     init(
+        monitoringLLMClient: any MonitoringLLMEvaluating,
+        screenStateExtractor: some ScreenStateExtracting,
+        nudgeCopywriter: any NudgeCopywriting,
         runtime: LocalModelRuntime,
         onlineModelService: any OnlineModelServing,
         policyMemoryService: PolicyMemoryServicing
     ) {
+        self.legacyLLMFocusAlgorithm = LegacyLLMFocusAlgorithm(
+            monitoringLLMClient: monitoringLLMClient
+        )
         self.llmMonitorAlgorithm = LLMMonitorAlgorithm(
             runtime: runtime,
             onlineModelService: onlineModelService,
             policyMemoryService: policyMemoryService
         )
+        self.banditFocusAlgorithm = BanditMonitoringAlgorithm(
+            screenStateExtractor: screenStateExtractor,
+            nudgeCopywriter: nudgeCopywriter
+        )
     }
 
     var availableAlgorithms: [MonitoringAlgorithmDescriptor] {
-        [llmMonitorAlgorithm.descriptor]
+        [
+            llmMonitorAlgorithm.descriptor,
+            legacyLLMFocusAlgorithm.descriptor,
+            banditFocusAlgorithm.descriptor,
+        ]
     }
 
     func containsAlgorithm(id: String) -> Bool {
-        MonitoringConfiguration.normalizedAlgorithmID(id) == llmMonitorAlgorithm.descriptor.id
+        let normalizedID = MonitoringConfiguration.normalizedAlgorithmID(id)
+        return availableAlgorithms.contains { $0.id == normalizedID }
     }
 
     func descriptor(for id: String) throws -> MonitoringAlgorithmDescriptor {
@@ -234,9 +254,15 @@ final class MonitoringAlgorithmRegistry: @unchecked Sendable {
     }
 
     private func resolve(id: String) throws -> any MonitoringAlgorithm {
-        guard MonitoringConfiguration.normalizedAlgorithmID(id) == llmMonitorAlgorithm.descriptor.id else {
+        switch MonitoringConfiguration.normalizedAlgorithmID(id) {
+        case llmMonitorAlgorithm.descriptor.id:
+            return llmMonitorAlgorithm
+        case legacyLLMFocusAlgorithm.descriptor.id:
+            return legacyLLMFocusAlgorithm
+        case banditFocusAlgorithm.descriptor.id:
+            return banditFocusAlgorithm
+        default:
             throw MonitoringAlgorithmResolutionError.unknownAlgorithmID(id)
         }
-        return llmMonitorAlgorithm
     }
 }

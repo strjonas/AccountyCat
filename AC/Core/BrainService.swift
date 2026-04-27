@@ -43,7 +43,7 @@ final class BrainService: NSObject {
         var sourceContextKey: String
     }
 
-    /// Maps a user reaction kind to a bandit reward value.
+    /// Maps a user reaction kind to a normalized reward value.
     /// Returns nil for reactions unrelated to nudge quality (e.g. negativeChatFeedback).
     private static func rewardValue(for kind: UserReactionKind) -> Double? {
         switch kind {
@@ -203,7 +203,8 @@ final class BrainService: NSObject {
             }
         }
 
-        // Feed reward signal to the active algorithm (bandit learns; LLM algorithm is a no-op).
+        // Feed reward signal to the active algorithm. The current LLM monitor ignores it,
+        // but the seam remains in place if learning-based variants return later.
         if let reward = Self.rewardValue(for: reaction.kind),
            let captured = matchingPendingReaction(for: reaction),
            var state = stateProvider?() {

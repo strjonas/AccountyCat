@@ -86,7 +86,9 @@ enum DependencyInstallerService {
             currentDirectory: FileManager.default.homeDirectoryForCurrentUser
         )
 
-        await log("Opened Terminal to install Homebrew and missing dependencies: \(joinedPackages)")
+        await MainActor.run {
+            log("Opened Terminal to install Homebrew and missing dependencies: \(joinedPackages)")
+        }
     }
 
     private static func appleScriptStringLiteral(_ value: String) -> String {

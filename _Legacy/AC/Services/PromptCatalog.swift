@@ -14,6 +14,11 @@ enum MonitoringPromptVariant: String, Sendable {
     case fallbackUser = "fallback_user"
 }
 
+enum LegacyFocusPromptStage: String, Sendable {
+    case decision
+    case decisionFallback = "decision_fallback"
+}
+
 struct PromptAsset: Hashable, Sendable {
     var id: String
     var version: String
@@ -142,6 +147,65 @@ enum PromptCatalog {
         defaultMonitoringPromptProfile,
     ]
 
+    // MARK: - Extraction prompts (Brain 1 — screen state extraction for bandit algorithm)
+
+    nonisolated private static let extractionSystemPrompt = PromptAsset(
+        id: "extraction.screen_state_v1.system",
+        version: "screen_state_v1",
+        resourceName: "system",
+        fileExtension: "md",
+        subdirectory: "Prompts/Extraction/screen_state_v1",
+        fallbackContents: """
+        You are AccountyCat's perception layer. Your only job is to analyze the screenshot and structured context, then return a single JSON object describing what is on screen.
+
+        You are NOT deciding whether to nudge. You are reporting observations. Do not add commentary or explanation — output only the JSON object.
+
+        Output schema — return exactly this structure and nothing else:
+        {
+          "app_category": "<productivity|communication|browser|entertainment|social|development|reference|other>",
+          "productivity_score": <float 0.0–1.0, where 1.0 = clearly aligned with the user's stated goals>,
+          "on_task": <true|false>,
+          "content_summary": "<what is on screen in 12 words or fewer — no names, no URLs, no personal data>",
+          "confidence": <float 0.0–1.0, your confidence in this classification>,
+          "candidate_nudge": "<optional — a warm, witty nudge ≤18 words if the user appears off-task; omit or set to null if on_task is true>"
+        }
+
+        Rules:
+        - productivity_score reflects alignment with the user's stated goals, not generic productivity.
+        - on_task is true even for research, reading, or planning that plausibly serves the user's goals.
+        - Be conservative: when in doubt, set productivity_score higher and on_task to true. False positives are more costly than missed distractions.
+        - content_summary must be neutral, brief, and free of personal data, names, and URLs.
+        - candidate_nudge: write directly to the user. Warm, human, never preachy or threatening. Tone of a trusted friend, not a manager. A first-suspected-distraction nudge should be a gentle awareness check, not a lecture.
+        - If you cannot determine the content with reasonable confidence, set confidence ≤ 0.4 and use app_category "other".
+        - Output exactly one JSON object. No markdown fences, no prose, no commentary.
+        """
+    )
+
+    nonisolated private static let extractionUserTemplate = PromptAsset(
+        id: "extraction.screen_state_v1.user",
+        version: "screen_state_v1",
+        resourceName: "user_prompt",
+        fileExtension: "md",
+        subdirectory: "Prompts/Extraction/screen_state_v1",
+        fallbackContents: """
+        Analyze the screenshot. The user's context is below.
+
+        {{PAYLOAD_JSON}}
+
+        Return the JSON object.
+        """
+    )
+
+    /// Loads the Brain 1 extraction system prompt.
+    nonisolated static func loadExtractionSystemPrompt() -> String {
+        load(asset: extractionSystemPrompt)
+    }
+
+    /// Loads the Brain 1 extraction user prompt template and replaces `{{PAYLOAD_JSON}}`.
+    nonisolated static func loadExtractionUserPrompt(replacingPayloadWith payloadJSON: String) -> String {
+        load(asset: extractionUserTemplate).replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
+    }
+
     nonisolated private static let chatSystemPrompt = PromptAsset(
         id: "chat.companion_chat_v2.system",
         version: "companion_chat_v2",
@@ -262,6 +326,41 @@ enum PromptCatalog {
 
     nonisolated static func loadMemoryConsolidationSystemPrompt() -> String {
         load(asset: memoryConsolidationSystemPrompt)
+    }
+
+    // MARK: - Nudge copywriter prompts (per tone — live only on disk)
+
+    /// Asset for `<Nudge/<tone>_system.md>`. Loaded straight from the bundle. Tone is
+    /// encoded into the filename (e.g. "supportive_system.md", "challenging_system.md")
+    /// because the build system flattens bundled resources. No inline fallback — if
+    /// the .md file is missing the loaded string will be empty and the copywriter will
+    /// return nil, letting the bandit fall back to the VLM's `candidateNudge`.
+    nonisolated static func loadNudgeCopywriterSystemPrompt(tone: String) -> String {
+        let asset = PromptAsset(
+            id: "nudge.\(tone).system",
+            version: "nudge_copywriter_v1",
+            resourceName: "\(tone)_system",
+            fileExtension: "md",
+            subdirectory: "Prompts/Nudge",
+            fallbackContents: ""
+        )
+        return load(asset: asset)
+    }
+
+    /// User-turn template for the nudge copywriter — injects `{{PAYLOAD_JSON}}`.
+    nonisolated static func loadNudgeCopywriterUserPrompt(
+        tone: String,
+        replacingPayloadWith payloadJSON: String
+    ) -> String {
+        let asset = PromptAsset(
+            id: "nudge.\(tone).user",
+            version: "nudge_copywriter_v1",
+            resourceName: "\(tone)_user",
+            fileExtension: "md",
+            subdirectory: "Prompts/Nudge",
+            fallbackContents: ""
+        )
+        return load(asset: asset).replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
     }
 
     // MARK: - LLM Monitor prompts
@@ -444,6 +543,71 @@ enum PromptCatalog {
     nonisolated private enum PolicyPromptKind {
         case system
         case user
+    }
+
+    // MARK: - Legacy LLM focus prompts
+
+    nonisolated static func loadLegacyFocusSystemPrompt(stage: LegacyFocusPromptStage) -> String {
+        load(asset: legacyFocusPromptAsset(for: stage, kind: .system))
+    }
+
+    nonisolated static func renderLegacyFocusUserPrompt(
+        stage: LegacyFocusPromptStage,
+        payloadJSON: String
+    ) -> String {
+        load(asset: legacyFocusPromptAsset(for: stage, kind: .user))
+            .replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
+    }
+
+    nonisolated private static func legacyFocusPromptAsset(
+        for stage: LegacyFocusPromptStage,
+        kind: PolicyPromptKind
+    ) -> PromptAsset {
+        let sharedPrompt: MonitoringStagePromptDefinition = switch stage {
+        case .decision:
+            MonitoringPromptTuning.legacyDecisionPrompt
+        case .decisionFallback:
+            MonitoringPromptTuning.legacyDecisionFallbackPrompt
+        }
+
+        switch (stage, kind) {
+        case (.decision, .system):
+            return PromptAsset(
+                id: "legacy_focus.decision.system",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_system",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.systemPrompt
+            )
+        case (.decision, .user):
+            return PromptAsset(
+                id: "legacy_focus.decision.user",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_user",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.userTemplate
+            )
+        case (.decisionFallback, .system):
+            return PromptAsset(
+                id: "legacy_focus.decision_fallback.system",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_fallback_system",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.systemPrompt
+            )
+        case (.decisionFallback, .user):
+            return PromptAsset(
+                id: "legacy_focus.decision_fallback.user",
+                version: "focus_default_v2",
+                resourceName: "legacy_decision_fallback_user",
+                fileExtension: "md",
+                subdirectory: "Prompts/Monitoring/focus_default_v2",
+                fallbackContents: sharedPrompt.userTemplate
+            )
+        }
     }
 
     nonisolated private static func sharedPolicyStage(for stage: LLMPolicyStage) -> MonitoringPromptTuningStage {

@@ -303,7 +303,7 @@ struct FrontmostContext: Hashable, Sendable, Codable {
     var appName: String
     var windowTitle: String?
 
-    nonisolated var contextKey: String {
+    var contextKey: String {
         [bundleIdentifier ?? "unknown", windowTitle?.normalizedForContextKey ?? ""]
             .joined(separator: "|")
     }
@@ -428,13 +428,33 @@ struct ACState: Codable, Sendable {
     }
 
 
-    /// Telemetry-friendly accessor for the active monitor's distraction metadata.
+    /// Telemetry-friendly accessor for the active algorithm's distraction metadata.
+    /// Only the LLM algorithm maintains a DistractionLadder; the bandit returns an
+    /// empty record (its anti-spam is timestamp-based, not ladder-based).
     var distraction: DistractionMetadata {
         get {
-            algorithmState.llmPolicy.distraction
+            switch MonitoringConfiguration.normalizedAlgorithmID(monitoringConfiguration.algorithmID) {
+            case MonitoringConfiguration.legacyLLMFocusAlgorithmID:
+                return algorithmState.llmFocus.distraction
+            case MonitoringConfiguration.currentLLMMonitorAlgorithmID:
+                return algorithmState.llmPolicy.distraction
+            case MonitoringConfiguration.banditAlgorithmID:
+                return DistractionMetadata()
+            default:
+                return algorithmState.llmPolicy.distraction
+            }
         }
         set {
-            algorithmState.llmPolicy.distraction = newValue
+            switch MonitoringConfiguration.normalizedAlgorithmID(monitoringConfiguration.algorithmID) {
+            case MonitoringConfiguration.legacyLLMFocusAlgorithmID:
+                algorithmState.llmFocus.distraction = newValue
+            case MonitoringConfiguration.currentLLMMonitorAlgorithmID:
+                algorithmState.llmPolicy.distraction = newValue
+            case MonitoringConfiguration.banditAlgorithmID:
+                break
+            default:
+                algorithmState.llmPolicy.distraction = newValue
+            }
         }
     }
 
@@ -463,9 +483,9 @@ struct ACState: Codable, Sendable {
         recentSwitches = try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
         usageByDay = try container.decodeIfPresent([String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
         let legacyDistraction = try container.decodeIfPresent(DistractionMetadata.self, forKey: .distraction)
-        if algorithmState.llmPolicy.distraction == DistractionMetadata(),
+        if algorithmState.llmFocus.distraction == DistractionMetadata(),
            let legacyDistraction {
-            algorithmState.llmPolicy.distraction = legacyDistraction
+            algorithmState.llmFocus.distraction = legacyDistraction
         }
         if let decodedEntries = try container.decodeIfPresent([MemoryEntry].self, forKey: .memoryEntries) {
             memoryEntries = decodedEntries

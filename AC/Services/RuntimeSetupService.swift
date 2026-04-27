@@ -87,7 +87,9 @@ enum RuntimeSetupService {
                 log: log
             )
         } else {
-            await log("$ git clone skipped, repo already exists at \(repoURL.path)")
+            await MainActor.run {
+                log("$ git clone skipped, repo already exists at \(repoURL.path)")
+            }
         }
 
         try await runStreaming(
@@ -142,7 +144,9 @@ enum RuntimeSetupService {
         // so the retry doesn't trip over stale files. Safe best-effort; never throws.
         let removedPartials = cleanupInterruptedDownloads(in: huggingFaceCacheURL)
         if removedPartials > 0 {
-            await log("Cleaned up \(removedPartials) partial download file(s) from a previous run.")
+            await MainActor.run {
+                log("Cleaned up \(removedPartials) partial download file(s) from a previous run.")
+            }
         }
 
         try await runStreaming(

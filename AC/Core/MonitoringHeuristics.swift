@@ -12,7 +12,7 @@ import Foundation
 /// identifier (which would whitelist every URL in Chrome).
 enum BrowserTitleSignature {
     /// Trailing-segment patterns we trust to identify a productive context.
-    private static let knownTrailingSites: [String] = [
+    nonisolated private static let knownTrailingSites: [String] = [
         "Google Docs", "Google Sheets", "Google Slides", "Google Drive",
         "Google Calendar", "Google Meet", "Google Keep",
         "GitHub", "GitLab", "Bitbucket",
@@ -27,7 +27,7 @@ enum BrowserTitleSignature {
     /// doesn't end with a recognized productive-site suffix. Conservative on purpose — never
     /// auto-safelist arbitrary trailing segments (e.g. "YouTube", "Netflix") that aren't
     /// pre-vetted as productive.
-    static func derive(from title: String?) -> String? {
+    nonisolated static func derive(from title: String?) -> String? {
         guard let title = title?.cleanedSingleLine, !title.isEmpty else { return nil }
 
         for site in knownTrailingSites {
@@ -40,9 +40,9 @@ enum BrowserTitleSignature {
 }
 
 enum MonitoringHeuristics {
-    static let periodicVisualCheckInterval: TimeInterval = 120
+    nonisolated static let periodicVisualCheckInterval: TimeInterval = 120
 
-    private static let clearlyProductiveBundleIdentifiers: Set<String> = [
+    nonisolated private static let clearlyProductiveBundleIdentifiers: Set<String> = [
         "com.apple.dt.Xcode",
         "com.microsoft.VSCode",
         "com.jetbrains.intellij",
@@ -52,7 +52,7 @@ enum MonitoringHeuristics {
         "com.jetbrains.rubymine"
     ]
 
-    private static let browserBundleIdentifiers: Set<String> = [
+    nonisolated private static let browserBundleIdentifiers: Set<String> = [
         "com.apple.Safari",
         "com.google.Chrome",
         "org.chromium.Chromium",
@@ -66,7 +66,7 @@ enum MonitoringHeuristics {
     /// Window titles for these apps may name a specific item but cannot be trusted to imply intent
     /// (a productive lecture and a cat compilation can show similarly innocuous-looking titles in
     /// the native YouTube app, etc.). For all of these we always keep the screenshot.
-    static let ambiguousContentBundleIdentifiers: Set<String> = [
+    nonisolated static let ambiguousContentBundleIdentifiers: Set<String> = [
         // Video / media
         "com.google.ios.youtube",
         "com.google.android.youtube",
@@ -93,7 +93,7 @@ enum MonitoringHeuristics {
         "com.apple.MobileSMS"
     ]
 
-    static func isClearlyProductive(bundleIdentifier: String?, appName: String) -> Bool {
+    nonisolated static func isClearlyProductive(bundleIdentifier: String?, appName: String) -> Bool {
         if let bundleIdentifier, clearlyProductiveBundleIdentifiers.contains(bundleIdentifier) {
             return true
         }
@@ -104,14 +104,14 @@ enum MonitoringHeuristics {
             lowercasedName == "code"
     }
 
-    static func isBrowser(bundleIdentifier: String?) -> Bool {
+    nonisolated static func isBrowser(bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else {
             return false
         }
         return browserBundleIdentifiers.contains(bundleIdentifier)
     }
 
-    static func isUnhelpfulWindowTitle(_ title: String, appName: String) -> Bool {
+    nonisolated static func isUnhelpfulWindowTitle(_ title: String, appName: String) -> Bool {
         let normalizedTitle = title.cleanedSingleLine.lowercased()
         let normalizedAppName = appName.cleanedSingleLine.lowercased()
         guard !normalizedTitle.isEmpty, !normalizedAppName.isEmpty else {
@@ -135,7 +135,7 @@ enum MonitoringHeuristics {
         return parts.allSatisfy { $0 == normalizedAppName }
     }
 
-    static func isAmbiguousContent(bundleIdentifier: String?) -> Bool {
+    nonisolated static func isAmbiguousContent(bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
         return ambiguousContentBundleIdentifiers.contains(bundleIdentifier)
     }
@@ -143,7 +143,7 @@ enum MonitoringHeuristics {
     /// True when the title structurally proves it carries the actual content signal —
     /// looks like an editor / document / issue-tracker title, not a media or generic app title.
     /// Conservative on purpose: we'd rather pay for an unnecessary screenshot than miss intent.
-    static func titleHasStructuralContentMarker(_ title: String) -> Bool {
+    nonisolated static func titleHasStructuralContentMarker(_ title: String) -> Bool {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 12 else { return false }
 
@@ -175,7 +175,7 @@ enum MonitoringHeuristics {
     /// The screenshot can be skipped only when the title is strong enough on its own AND the app
     /// is not in a category where content (not title) is the real signal. Default bias: keep the
     /// screenshot.
-    static func canRelyOnTitleAlone(
+    nonisolated static func canRelyOnTitleAlone(
         bundleIdentifier: String?,
         appName: String,
         windowTitle: String?,
@@ -195,7 +195,7 @@ enum MonitoringHeuristics {
         return titleHasStructuralContentMarker(title)
     }
 
-    static func visualCheckReason(for context: FrontmostContext) -> String? {
+    nonisolated static func visualCheckReason(for context: FrontmostContext) -> String? {
         if isClearlyProductive(bundleIdentifier: context.bundleIdentifier, appName: context.appName) {
             return nil
         }

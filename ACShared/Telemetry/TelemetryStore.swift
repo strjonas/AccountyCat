@@ -12,7 +12,9 @@ import ImageIO
 import os.log
 import UniformTypeIdentifiers
 
-private let telemetryLog = Logger(subsystem: "dev.accountycat", category: "telemetry")
+private enum TelemetryLogging {
+    nonisolated static let logger = Logger(subsystem: "dev.accountycat", category: "telemetry")
+}
 
 struct StoredImageArtifacts: Sendable {
     var original: ArtifactRef
@@ -157,7 +159,7 @@ actor TelemetryStore {
             currentSession.endedAt = endedAt
             try await saveSessionDescriptor(currentSession)
         } catch {
-            telemetryLog.error("failed to close telemetry session: \(error.localizedDescription, privacy: .public)")
+            TelemetryLogging.logger.error("failed to close telemetry session: \(error.localizedDescription, privacy: .public)")
         }
 
         self.currentSession = nil

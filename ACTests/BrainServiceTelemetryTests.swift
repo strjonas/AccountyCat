@@ -70,9 +70,6 @@ struct BrainServiceTelemetryTests {
     private func makeBrainService(store: TelemetryStore) -> BrainService {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
-            monitoringLLMClient: MonitoringLLMClient(runtime: runtime),
-            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
-            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
             onlineModelService: OnlineModelService(),
             policyMemoryService: PolicyMemoryService(

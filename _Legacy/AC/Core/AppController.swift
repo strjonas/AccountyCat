@@ -52,6 +52,7 @@ final class AppController: ObservableObject {
     let telemetryStore = TelemetryStore.shared
     let localModelRuntime: LocalModelRuntime
     let onlineModelService: OnlineModelService
+    let monitoringLLMClient: MonitoringLLMClient
     let companionChatService: CompanionChatService
     let memoryConsolidationService: MemoryConsolidationService
     let policyMemoryService: PolicyMemoryService
@@ -67,6 +68,7 @@ final class AppController: ObservableObject {
     private init() {
         let runtime = LocalModelRuntime()
         let onlineModelService = OnlineModelService()
+        let monitoringLLMClient = MonitoringLLMClient(runtime: runtime)
         let companionChatService = CompanionChatService(
             runtime: runtime,
             onlineModelService: onlineModelService
@@ -81,10 +83,14 @@ final class AppController: ObservableObject {
         )
         self.localModelRuntime = runtime
         self.onlineModelService = onlineModelService
+        self.monitoringLLMClient = monitoringLLMClient
         self.companionChatService = companionChatService
         self.memoryConsolidationService = memoryConsolidationService
         self.policyMemoryService = policyMemoryService
         self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
+            monitoringLLMClient: monitoringLLMClient,
+            screenStateExtractor: ScreenStateExtractorService(runtime: runtime),
+            nudgeCopywriter: NudgeCopywriterService(runtime: runtime),
             runtime: runtime,
             onlineModelService: onlineModelService,
             policyMemoryService: policyMemoryService
@@ -189,6 +195,19 @@ final class AppController: ObservableObject {
     func updateRuntimeOverride(_ path: String) {
         state.runtimePathOverride = path.isEmpty ? nil : path
         refreshSystemState()
+    }
+
+    func updateMonitoringAlgorithm(_ algorithmID: String) {
+        guard let descriptor = try? monitoringAlgorithmRegistry.descriptor(for: algorithmID) else {
+            setupErrorMessage = "Unknown monitoring algorithm: \(algorithmID)"
+            logActivity("monitoring", "Rejected unknown algorithm: \(algorithmID)")
+            return
+        }
+        guard state.monitoringConfiguration.algorithmID != descriptor.id else { return }
+        state.monitoringConfiguration.algorithmID = descriptor.id
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Selected algorithm: \(descriptor.id)")
     }
 
     func updateMonitoringPromptProfile(_ promptProfileID: String) {
@@ -772,6 +791,10 @@ final class AppController: ObservableObject {
             nudgeCount: todayActions.filter { $0.kind == .nudge }.count,
             backToWorkCount: todayActions.filter { $0.kind == .backToWork }.count
         )
+    }
+
+    var availableMonitoringAlgorithms: [MonitoringAlgorithmDescriptor] {
+        monitoringAlgorithmRegistry.availableAlgorithms
     }
 
     var availableMonitoringPromptProfiles: [MonitoringPromptProfileDescriptor] {

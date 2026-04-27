@@ -50,7 +50,7 @@ enum PermissionService {
     static func requestCalendarAccess() async -> Bool {
         let granted = await CalendarService.shared.requestAccess()
         if !granted, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
-            await MainActor.run { NSWorkspace.shared.open(url) }
+            _ = await MainActor.run { NSWorkspace.shared.open(url) }
         }
         return granted
     }
