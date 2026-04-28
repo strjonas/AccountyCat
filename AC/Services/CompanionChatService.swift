@@ -13,6 +13,7 @@ struct CompanionChatResult: Sendable {
     var reply: String
     /// When non-nil, a single bullet to append to persistent memory (AC's choice).
     var memoryUpdate: String?
+    var usedModelIdentifier: String? = nil
 }
 
 actor CompanionChatService {
@@ -37,6 +38,7 @@ actor CompanionChatService {
         context: ChatContext,
         history: [ChatMessage] = [],
         memory: String = "",
+        policyRules: String = "",
         character: ACCharacter = .mochi,
         runtimeOverride: String?,
         inferenceBackend: MonitoringInferenceBackend = .local,
@@ -49,7 +51,8 @@ actor CompanionChatService {
             recentActions: recentActions,
             context: context,
             history: history,
-            memory: memory
+            memory: memory,
+            policyRules: policyRules
         )
 
         let output: RuntimeProcessOutput
@@ -92,11 +95,23 @@ actor CompanionChatService {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         if let parsed = LLMOutputParsing.extractChatResult(from: combined) {
-            return parsed
+            return CompanionChatResult(
+                reply: parsed.reply,
+                memoryUpdate: parsed.memoryUpdate,
+                usedModelIdentifier: output.usedModelIdentifier
+                    ?? resolvedModelIdentifier(for: inferenceBackend, onlineModelIdentifier: onlineModelIdentifier)
+            )
         }
         // Legacy/fallback: pull a plain reply, no memory update.
         let reply = LLMOutputParsing.cleanChatOutput(combined)
-        return reply.isEmpty ? nil : CompanionChatResult(reply: reply, memoryUpdate: nil)
+        return reply.isEmpty
+            ? nil
+            : CompanionChatResult(
+                reply: reply,
+                memoryUpdate: nil,
+                usedModelIdentifier: output.usedModelIdentifier
+                    ?? resolvedModelIdentifier(for: inferenceBackend, onlineModelIdentifier: onlineModelIdentifier)
+            )
     }
 
     nonisolated private static func onlineChatOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
@@ -119,7 +134,8 @@ actor CompanionChatService {
         recentActions: [ActionRecord],
         context: ChatContext,
         history: [ChatMessage],
-        memory: String
+        memory: String,
+        policyRules: String
     ) -> String {
         let historySection: String
         if history.isEmpty {
@@ -132,6 +148,7 @@ actor CompanionChatService {
         }
 
         let memorySection = memory.isEmpty ? "(none)" : memory
+        let policyRulesSection = policyRules.isEmpty ? "(none)" : policyRules
 
         return """
         [Context — use only if directly helpful, never be invasive]
@@ -147,6 +164,9 @@ actor CompanionChatService {
 
         [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
         \(memorySection)
+
+        [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
+        \(policyRulesSection)
 
         [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
         \(historySection)
@@ -176,5 +196,17 @@ actor CompanionChatService {
         or {"reply":"your response","memory":"single concise bullet under 20 words"}
         No markdown outside the JSON value. No other keys.
         """
+    }
+
+    private func resolvedModelIdentifier(
+        for inferenceBackend: MonitoringInferenceBackend,
+        onlineModelIdentifier: String
+    ) -> String {
+        switch inferenceBackend {
+        case .openRouter:
+            return onlineModelIdentifier
+        case .local:
+            return modelIdentifier
+        }
     }
 }

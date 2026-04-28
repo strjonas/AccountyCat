@@ -80,16 +80,16 @@ enum AITier: String, Codable, CaseIterable, Sendable {
 
     var byokModelIdentifier: String {
         switch self {
-        case .economy:  return "meta-llama/llama-4-scout:free"
-        case .balanced: return "google/gemma-4-31b-it:free"
+        case .economy:  return "meta-llama/llama-4-scout"
+        case .balanced: return "google/gemma-4-31b-it"
         case .smartest: return "google/gemini-2.5-flash"
         }
     }
 
     var byokCostEstimate: String {
         switch self {
-        case .economy:  return "~$0/mo (free tier)"
-        case .balanced: return "~$0/mo (free tier)"
+        case .economy:  return "~$0.10-0.40/mo"
+        case .balanced: return "~$0.20-0.80/mo"
         case .smartest: return "~$0.95–1.90/mo"
         }
     }
@@ -321,22 +321,47 @@ enum ChatRole: String, Codable, Sendable {
     case assistant
 }
 
+enum ChatMessageStyle: String, Codable, Sendable {
+    case standard
+    case nudge
+}
+
 struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
     let id: UUID
     var role: ChatRole
     var text: String
     var timestamp: Date
+    var style: ChatMessageStyle
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case role
+        case text
+        case timestamp
+        case style
+    }
 
     nonisolated init(
         id: UUID = UUID(),
         role: ChatRole,
         text: String,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        style: ChatMessageStyle = .standard
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.timestamp = timestamp
+        self.style = style
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(ChatRole.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+        style = try container.decodeIfPresent(ChatMessageStyle.self, forKey: .style) ?? .standard
     }
 
     nonisolated var promptTimestampLabel: String {
@@ -658,6 +683,19 @@ struct ACState: Codable, Sendable {
     /// Full, human-readable memory for the UI. Newest first.
     func memoryForDisplay(now: Date = Date()) -> String {
         MemoryRendering.renderForDisplay(entries: memoryEntries, now: now)
+    }
+
+    func policyRulesForChatPrompt(
+        now: Date = Date(),
+        maxLines: Int = 8,
+        maxCharacters: Int = 700
+    ) -> String {
+        policyMemory
+            .chatSummary(now: now, limit: maxLines)
+            .truncatedMultilineForPrompt(
+                maxLength: maxCharacters,
+                maxLines: maxLines
+            )
     }
 
     /// True when the stored memory has grown past the soft cap and consolidation should run.

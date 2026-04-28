@@ -75,6 +75,41 @@ struct MonitoringConfigurationTests {
     }
 
     @Test
+    func normalizesFreeSuffixOutOfOnlineModelIdentifier() {
+        let configuration = MonitoringConfiguration(
+            inferenceBackend: .openRouter,
+            onlineModelIdentifier: "google/gemma-4-31b-it:free"
+        )
+
+        #expect(configuration.onlineModelIdentifier == "google/gemma-4-31b-it")
+        #expect(
+            MonitoringConfiguration.normalizedOnlineModelIdentifier(
+                "https://openrouter.ai/google/gemma-4-31b-it:free"
+            ) == "google/gemma-4-31b-it"
+        )
+    }
+
+    @Test
+    func rendersPolicyRulesForChatPrompt() {
+        var state = ACState()
+        state.policyMemory.rules = [
+            PolicyRule(
+                kind: .discourage,
+                summary: "Do not let me drift into YouTube during work blocks.",
+                source: .explicitFeedback,
+                scope: PolicyRuleScope(appName: "Google Chrome"),
+                isLocked: true
+            )
+        ]
+
+        let rendered = state.policyRulesForChatPrompt(now: Date(timeIntervalSince1970: 10_000))
+
+        #expect(rendered.contains("Do not let me drift into YouTube during work blocks."))
+        #expect(rendered.contains("fixed"))
+        #expect(rendered.contains("app Google Chrome"))
+    }
+
+    @Test
     func runtimeInspectionUsesTheSelectedModelCache() throws {
       let fileManager = FileManager.default
       let rootURL = fileManager.temporaryDirectory

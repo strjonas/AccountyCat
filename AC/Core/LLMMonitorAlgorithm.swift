@@ -407,7 +407,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimeLocation,
-            modelIdentifier: effectiveModelIdentifier,
+            modelIdentifier: Self.resolvedModelIdentifier(from: attempts, fallback: effectiveModelIdentifier),
             promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
             attempts: attempts,
@@ -806,7 +806,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
         let evaluation = LLMEvaluationResult(
             runtimePath: runtimeLocation,
-            modelIdentifier: effectiveModelIdentifier,
+            modelIdentifier: Self.resolvedModelIdentifier(from: attempts, fallback: effectiveModelIdentifier),
             promptProfileID: descriptor.id,
             promptProfileVersion: descriptor.version,
             attempts: attempts,
@@ -1196,6 +1196,18 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
         result.thinkingEnabled = configuration.thinkingEnabled
         return result
+    }
+
+    private static func resolvedModelIdentifier(
+        from attempts: [LLMEvaluationAttempt],
+        fallback: String
+    ) -> String {
+        attempts
+            .reversed()
+            .compactMap { attempt in
+                attempt.runtimeOutput?.usedModelIdentifier ?? attempt.runtimeOptions?.modelIdentifier
+            }
+            .first ?? fallback
     }
 
     private static func sha256Hex(_ input: String) -> String {

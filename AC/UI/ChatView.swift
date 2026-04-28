@@ -406,13 +406,21 @@ private struct CompactBubble: View {
             HStack {
                 if message.role == .user { Spacer(minLength: 40) }
 
-                Text(message.text)
-                    .font(.ac(13))
-                    .foregroundStyle(message.role == .user ? Color.white : Color.acTextPrimary)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 9)
-                    .background(bubbleBackground)
+                VStack(alignment: .leading, spacing: 5) {
+                    if message.style == .nudge {
+                        Label("Nudge", systemImage: "pawprint.fill")
+                            .font(.ac(10, weight: .semibold))
+                            .foregroundStyle(accent.opacity(0.85))
+                    }
+
+                    Text(message.text)
+                        .font(.ac(13))
+                        .foregroundStyle(message.role == .user ? Color.white : Color.acTextPrimary)
+                        .textSelection(.enabled)
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 9)
+                .background(bubbleBackground)
 
                 if message.role == .assistant { Spacer(minLength: 40) }
             }
@@ -436,10 +444,13 @@ private struct CompactBubble: View {
                 )
         } else {
             RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(message.style == .nudge ? accent.opacity(0.10) : Color(nsColor: .controlBackgroundColor))
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                        .stroke(Color.acHairline, lineWidth: 1)
+                        .stroke(
+                            message.style == .nudge ? accent.opacity(0.28) : Color.acHairline,
+                            lineWidth: 1
+                        )
                 )
         }
     }

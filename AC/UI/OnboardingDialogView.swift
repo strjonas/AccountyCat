@@ -173,7 +173,7 @@ struct OnboardingDialogView: View {
                     bullets: [
                         "Runs on your Mac — nothing leaves it",
                         "~4.5 GB one-time download",
-                        "Free forever, slower & smaller model"
+                        "No API costs, slower & smaller model"
                     ],
                     isSelected: !controller.usingOnlineMonitoring,
                     accent: accent,
@@ -183,7 +183,7 @@ struct OnboardingDialogView: View {
                     title: "Online",
                     tagline: "Smarter, lighter",
                     bullets: [
-                        "Free models like Gemma available",
+                        "Low-cost models like Gemma available",
                         "No download — just an API key",
                         "Open source: only sends what AI tools usually see"
                     ],
@@ -326,7 +326,7 @@ struct OnboardingDialogView: View {
             return "Running locally — fully private."
         }
         if controller.usingOnlineMonitoring {
-            return "Add your OpenRouter key below — free models work great."
+            return "Add your OpenRouter key below to enable online monitoring."
         }
         return "Local setup downloads a small model. Everything stays on your Mac."
     }

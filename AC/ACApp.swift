@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowCoordinator: WindowCoordinator?
     private var popover: NSPopover?
     private var cancellables = Set<AnyCancellable>()
+    private var terminationRequested = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -74,17 +75,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        controller.shutdown()
-        // Block until llama-server is actually killed. Without this the process
-        // exits before the async Task inside shutdown() can run, orphaning the server.
-        // Calling shutdown() a second time is a no-op if the server is already gone.
-        let sema = DispatchSemaphore(value: 0)
-        Task.detached {
-            await AppController.shared.localModelRuntime.shutdown()
-            sema.signal()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationRequested else {
+            return .terminateNow
         }
-        _ = sema.wait(timeout: .now() + 5)
+
+        terminationRequested = true
+        Task { @MainActor [weak self] in
+            await self?.controller.shutdown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // MARK: - Status item

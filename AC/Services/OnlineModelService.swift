@@ -245,7 +245,8 @@ actor OnlineModelService: OnlineModelServing {
 
         return RuntimeProcessOutput(
             stdout: content,
-            stderr: Self.usageSummary(from: json)
+            stderr: Self.usageSummary(from: json),
+            usedModelIdentifier: modelIdentifier
         )
     }
 

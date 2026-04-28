@@ -32,7 +32,7 @@ struct OpenRouterKeyField: View {
                     NSWorkspace.shared.open(URL(string: "https://openrouter.ai/keys")!)
                 } label: {
                     HStack(spacing: 3) {
-                        Text("Get a free key")
+                        Text("Get a key")
                         Image(systemName: "arrow.up.right.square")
                     }
                     .font(.ac(10, weight: .medium))
@@ -69,9 +69,9 @@ struct OpenRouterKeyField: View {
                         .font(.ac(10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 3) {
-                        guidanceStep("1", "Go to openrouter.ai and sign up (free)")
+                        guidanceStep("1", "Go to openrouter.ai and sign up")
                         guidanceStep("2", "Open Settings → Keys → Create Key")
-                        guidanceStep("3", "Paste the key above — no credits needed for free models")
+                        guidanceStep("3", "Paste the key above and pick your model tier in AC")
                     }
                     Button("openrouter.ai/keys →") {
                         NSWorkspace.shared.open(URL(string: "https://openrouter.ai/keys")!)

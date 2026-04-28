@@ -184,18 +184,6 @@ struct ContentView: View {
 
     private var settingsTab: some View {
         VStack(alignment: .leading, spacing: 24) {
-
-            // ── Character ──
-            CharacterPickerSection(
-                selected: controller.state.character,
-                onSelect: { controller.updateCharacter($0) }
-            )
-
-            AISettingsSection()
-                .environmentObject(controller)
-
-            Divider().opacity(0.3)
-
             SettingsSection(title: "Controls", icon: "switch.2") {
                 HStack(spacing: 10) {
                     ToggleTile(
@@ -232,6 +220,17 @@ struct ContentView: View {
                 }
             }
 
+            // ── Character ──
+            CharacterPickerSection(
+                selected: controller.state.character,
+                onSelect: { controller.updateCharacter($0) }
+            )
+
+            AISettingsSection()
+                .environmentObject(controller)
+
+            Divider().opacity(0.3)
+
             CalendarIntelligenceSection()
                 .environmentObject(controller)
 
@@ -267,23 +266,6 @@ struct ContentView: View {
                                 .stroke(Color.acHairline, lineWidth: 1)
                         )
                 )
-            }
-
-            Divider().opacity(0.3)
-
-            SettingsSection(title: "Memory", icon: "brain.head.profile",
-                            subtitle: "Runs AC's memory cleanup immediately. Useful when rules feel stale, contradictory, or too noisy.") {
-                HStack(spacing: 10) {
-                    Button(controller.consolidatingMemory ? "Consolidating…" : "Consolidate memory") {
-                        controller.consolidateMemoryNow()
-                    }
-                    .buttonStyle(ACSecondaryButton())
-                    .disabled(!controller.canConsolidateMemory)
-
-                    Text("\(controller.state.memoryEntries.count) saved entries")
-                        .font(.ac(11))
-                        .foregroundStyle(.secondary)
-                }
             }
 
             SettingsSection(title: "Reset monitoring profile",
@@ -400,7 +382,7 @@ struct ContentView: View {
                 )
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
-                Text("Model ID (e.g. google/gemma-4-31b-it:free) or full openrouter.ai URL.")
+                Text("Model ID (e.g. google/gemma-4-31b-it) or full openrouter.ai URL.")
                     .font(.ac(10))
                     .foregroundStyle(.secondary)
             }
@@ -1187,9 +1169,7 @@ private struct Triangle: Shape {
 
 // MARK: - AI Settings Section (Mode + Tier)
 
-/// The AI section in Settings. Adds Mode (3-way with Managed "Coming soon") and
-/// a tier picker with dynamic description. Vision, sound, and pause tiles remain
-/// in the existing Controls section — this only adds what's new per spec.
+/// The AI section in Settings. Adds backend mode, API-key setup, and tier selection.
 private struct AISettingsSection: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent

@@ -210,7 +210,7 @@ final class WindowCoordinator {
     func showNudge(message: String) {
         adjustCompanionForVisibleNudgeIfNeeded()
         expandPanelForNudge()
-        controller.latestNudge = message
+        controller.recordDisplayedNudge(message)
         showNudgeBorder()
         triggerHaptic()
 

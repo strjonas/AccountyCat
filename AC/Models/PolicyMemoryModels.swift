@@ -323,6 +323,37 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
         return lines.joined(separator: "\n")
     }
 
+    func chatSummary(
+        now: Date,
+        limit: Int = 8
+    ) -> String {
+        let activeRules = activeRules(at: now).prefix(limit)
+        var lines: [String] = []
+
+        if let tonePreference {
+            lines.append("Preferred tone: \(tonePreference.rawValue)")
+        }
+
+        for rule in activeRules {
+            var segments = ["\(rule.kind.rawValue): \(rule.summary)"]
+            if let appName = rule.scope.appName, !appName.isEmpty {
+                segments.append("app \(appName)")
+            }
+            if !rule.scope.titleContains.isEmpty {
+                segments.append("title contains \(rule.scope.titleContains.joined(separator: ", "))")
+            }
+            if let expiresAt = rule.schedule.expiresAt {
+                segments.append("until \(PromptTimestampFormatting.absoluteLabel(for: expiresAt))")
+            }
+            if rule.isLocked {
+                segments.append("fixed")
+            }
+            lines.append("• " + segments.joined(separator: " — "))
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     private mutating func sortRules() {
         rules.sort(by: Self.ruleSort)
     }

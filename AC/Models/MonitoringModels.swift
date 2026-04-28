@@ -25,7 +25,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let defaultOnlineTextPipelineProfileID = "online_single_round_text"
     nonisolated static let defaultRuntimeProfileID = "gemma_balanced_v1"
     nonisolated static let defaultInferenceBackend: MonitoringInferenceBackend = .local
-    nonisolated static let defaultOnlineModelIdentifier = "google/gemma-4-31b-it:free"
+    nonisolated static let defaultOnlineModelIdentifier = "google/gemma-4-31b-it"
     nonisolated static let banditAlgorithmID = "bandit_focus_v1"
 
     var algorithmID: String
@@ -119,8 +119,12 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
            host.contains("openrouter.ai") {
             let parts = url.pathComponents.filter { $0 != "/" }
             if parts.count >= 2, parts[0] != "api", parts[0] != "docs" {
-                return "\(parts[0])/\(parts[1])"
+                return normalizedOnlineModelIdentifier("\(parts[0])/\(parts[1])")
             }
+        }
+
+        if trimmed.hasSuffix(":free") {
+            return String(trimmed.dropLast(5))
         }
 
         return trimmed

@@ -27,6 +27,15 @@ struct LLMEvaluationResult: Sendable {
     var attempts: [LLMEvaluationAttempt]
     var finalDecision: LLMDecision?
     var failureMessage: String?
+
+    var lastUsedModelIdentifier: String {
+        attempts
+            .reversed()
+            .compactMap { attempt in
+                attempt.runtimeOutput?.usedModelIdentifier ?? attempt.runtimeOptions?.modelIdentifier
+            }
+            .first ?? modelIdentifier
+    }
 }
 
 nonisolated struct VisionInterventionHistoryItem: Codable, Hashable, Sendable {

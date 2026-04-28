@@ -11,6 +11,13 @@ import Foundation
 struct RuntimeProcessOutput: Sendable {
     var stdout: String
     var stderr: String
+    var usedModelIdentifier: String?
+
+    nonisolated init(stdout: String, stderr: String, usedModelIdentifier: String? = nil) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.usedModelIdentifier = usedModelIdentifier
+    }
 }
 
 nonisolated private struct CachedModelArtifacts: Sendable, Equatable {

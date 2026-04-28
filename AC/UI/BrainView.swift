@@ -26,6 +26,7 @@ struct BrainView: View {
         VStack(alignment: .leading, spacing: 24) {
             focusSection
             rulesSection
+            memoryConsolidationSection
         }
         .padding(20)
         .padding(.bottom, 8)
@@ -282,6 +283,40 @@ struct BrainView: View {
                 .font(.ac(11))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 26)
+        }
+    }
+
+    private var memoryConsolidationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            brainSectionHeader(
+                icon: "brain.head.profile",
+                title: "Memory Consolidation",
+                subtitle: "Runs AC's cleanup pass across saved memory and learned rules when things feel stale or noisy."
+            )
+
+            HStack(spacing: 10) {
+                Button(controller.consolidatingMemory ? "Consolidating…" : "Consolidate memory") {
+                    controller.consolidateMemoryNow()
+                }
+                .buttonStyle(ACSecondaryButton())
+                .disabled(!controller.canConsolidateMemory)
+
+                Text("\(controller.state.memoryEntries.count) saved entries")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
         }
     }
 }

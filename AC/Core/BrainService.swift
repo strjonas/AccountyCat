@@ -14,6 +14,7 @@ final class BrainService: NSObject {
     var stateSink: ((ACState) -> Void)?
     var moodSink: ((CompanionMood) -> Void)?
     var statusSink: ((String) -> Void)?
+    var modelUsageSink: ((String) -> Void)?
 
     private let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
     private let executiveArm: ExecutiveArm
@@ -668,6 +669,7 @@ final class BrainService: NSObject {
 
         switch decisionResult.policy.action {
         case let .showNudge(message):
+            modelUsageSink?(decisionResult.evaluation.lastUsedModelIdentifier)
             state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: now), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             stateSink?(state)
@@ -683,6 +685,7 @@ final class BrainService: NSObject {
             )
 
         case let .showOverlay(presentation):
+            modelUsageSink?(decisionResult.evaluation.lastUsedModelIdentifier)
             state.recentActions.insert(ActionRecord(kind: .overlay, message: nil, timestamp: now), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             stateSink?(state)

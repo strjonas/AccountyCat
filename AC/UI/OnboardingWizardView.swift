@@ -142,7 +142,7 @@ struct OnboardingWizardView: View {
                 WizardModeCard(
                     icon: "key.fill",
                     title: "Bring Your Own Key",
-                    description: "Connect your OpenRouter account. You pay only for what you use — typically under $1/month. Zero Data Retention enforced on all requests.",
+                    description: "Connect your OpenRouter account. You pay only for what you use — typically under $1/month. Zero Data Retention is enforced on all requests.",
                     isSelected: selectedMode == .byok,
                     isDisabled: false,
                     onSelect: { selectedMode = .byok }
@@ -315,7 +315,7 @@ struct OnboardingWizardView: View {
                 .foregroundStyle(Color.acTextPrimary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("OpenRouter provides access to free AI models (Gemma, Llama 4, and more). Creating an account and getting a key takes about 2 minutes.")
+                Text("OpenRouter provides access to models like Gemma, Llama, Gemini, and more. Creating an account and getting a key takes about 2 minutes.")
                     .font(.ac(12))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.75))
                     .fixedSize(horizontal: false, vertical: true)

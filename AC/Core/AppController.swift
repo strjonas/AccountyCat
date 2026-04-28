@@ -35,6 +35,7 @@ final class AppController: ObservableObject {
     @Published var chatMessages: [ChatMessage]
     @Published var sendingChatMessage = false
     @Published var consolidatingMemory = false
+    @Published var lastUsedModelIdentifier: String?
     @Published var onboardingDismissed = false
     @Published var telemetrySessionID: String?
     @Published var onlineAPIKeyDraft: String
@@ -125,12 +126,10 @@ final class AppController: ObservableObject {
         configureBrainIfNeeded()
     }
 
-    func shutdown() {
+    func shutdown() async {
         persistState()
-        Task { @MainActor [weak self] in
-            await self?.localModelRuntime.shutdown()
-            await self?.telemetryStore.endCurrentSession(reason: "app_termination")
-        }
+        await localModelRuntime.shutdown()
+        await telemetryStore.endCurrentSession(reason: "app_termination")
     }
 
     func attachExecutiveArm(_ executiveArm: ExecutiveArm) {
@@ -285,24 +284,23 @@ final class AppController: ObservableObject {
     /// Short human-readable name for the model currently configured, suitable for
     /// compact display in the header or settings footnote.
     var activeModelShortName: String {
-        let id = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        let id = lastUsedModelIdentifier ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         return Self.shortModelName(for: id)
     }
 
     /// Converts a full OpenRouter/local model identifier to a compact display name.
     static func shortModelName(for identifier: String) -> String {
         let raw = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isFree = raw.hasSuffix(":free")
-        let base = isFree ? String(raw.dropLast(5)) : raw
+        let base = raw.hasSuffix(":free") ? String(raw.dropLast(5)) : raw
 
         // Known models → friendly names
         switch base {
-        case "google/gemma-4-31b-it":              return isFree ? "Gemma 4 · free" : "Gemma 4"
-        case "google/gemma-3-27b-it":              return isFree ? "Gemma 3 · free" : "Gemma 3"
+        case "google/gemma-4-31b-it":              return "Gemma 4"
+        case "google/gemma-3-27b-it":              return "Gemma 3"
         case "mistralai/mistral-small-3.1-24b-instruct": return "Mistral Small 3.1"
         case "mistralai/mistral-small-24b-instruct-2501": return "Mistral Small"
-        case "meta-llama/llama-4-scout":           return isFree ? "Llama 4 Scout · free" : "Llama 4 Scout"
-        case "meta-llama/llama-4-maverick":        return isFree ? "Llama 4 Maverick · free" : "Llama 4 Maverick"
+        case "meta-llama/llama-4-scout":           return "Llama 4 Scout"
+        case "meta-llama/llama-4-maverick":        return "Llama 4 Maverick"
         case "anthropic/claude-3.5-haiku":         return "Claude 3.5 Haiku"
         case "anthropic/claude-3.5-sonnet":        return "Claude 3.5 Sonnet"
         case "anthropic/claude-3-haiku":           return "Claude 3 Haiku"
@@ -310,7 +308,7 @@ final class AppController: ObservableObject {
         case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
         case "google/gemini-2.5-flash":            return "Gemini 2.5 Flash"
         case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
-        case "qwen/qwen2.5-vl-72b-instruct":       return isFree ? "Qwen 2.5 VL · free" : "Qwen 2.5 VL"
+        case "qwen/qwen2.5-vl-72b-instruct":       return "Qwen 2.5 VL"
         default: break
         }
 
@@ -319,8 +317,7 @@ final class AppController: ObservableObject {
         let cleaned = modelPart
             .replacingOccurrences(of: "-instruct", with: "")
             .replacingOccurrences(of: "-it", with: "")
-        let suffix = isFree ? " · free" : ""
-        return cleaned + suffix
+        return cleaned
     }
 
     func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
@@ -439,7 +436,6 @@ final class AppController: ObservableObject {
         let message = "Debug nudge: time to check that the panel is visible."
         state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: Date()), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
-        latestNudge = message
         companionMood = .nudging
         logActivity("debug", "Triggered test nudge")
         executiveArm?.perform(.showNudge(message))
@@ -839,6 +835,7 @@ final class AppController: ObservableObject {
                     return
                 }
 
+                self.noteUsedModel(output.evaluation.lastUsedModelIdentifier)
                 self.state.policyMemory = output.updatedPolicyMemory
                 self.state.algorithmState = output.updatedAlgorithmState
                 self.activeOverlay = OverlayPresentation(
@@ -974,6 +971,7 @@ final class AppController: ObservableObject {
             .dropLast()  // exclude the message we just appended (it's the userMessage arg)
             .map { $0 }
         let renderedMemory = state.memoryForPrompt(now: Date())
+        let renderedPolicyRules = state.policyRulesForChatPrompt(now: Date())
 
         let backend = state.monitoringConfiguration.inferenceBackend
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
@@ -997,6 +995,7 @@ final class AppController: ObservableObject {
                 context: makeChatContext(),
                 history: Array(historyWindow),
                 memory: renderedMemory,
+                policyRules: renderedPolicyRules,
                 character: state.character,
                 runtimeOverride: state.runtimePathOverride,
                 inferenceBackend: backend,
@@ -1014,6 +1013,7 @@ final class AppController: ObservableObject {
 
             await MainActor.run {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
+                self.noteUsedModel(result.usedModelIdentifier)
                 if let update = result.memoryUpdate?.cleanedSingleLine, !update.isEmpty {
                     self.state.memoryEntries.append(MemoryEntry(text: update))
                     self.logActivity("memory", "Remembered: \(update)")
@@ -1246,6 +1246,9 @@ final class AppController: ObservableObject {
             brainService.statusSink = { [weak self] status in
                 self?.activityStatusText = status
             }
+            brainService.modelUsageSink = { [weak self] identifier in
+                self?.noteUsedModel(identifier)
+            }
 
             self.brainService = brainService
             brainService.start()
@@ -1265,6 +1268,33 @@ final class AppController: ObservableObject {
         }
 
         return LLMPolicyCatalog.runtimeProfile(id: configuration.runtimeProfileID).descriptor.modelIdentifier
+    }
+
+    func noteUsedModel(_ identifier: String?) {
+        guard let normalized = identifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !normalized.isEmpty else {
+            return
+        }
+        lastUsedModelIdentifier = normalized
+    }
+
+    func recordDisplayedNudge(_ message: String, timestamp: Date = Date()) {
+        latestNudge = message
+
+        let shouldAppend = chatMessages.last.map {
+            !($0.role == .assistant && $0.style == .nudge && $0.text == message)
+        } ?? true
+        guard shouldAppend else { return }
+
+        chatMessages.append(
+            ChatMessage(
+                role: .assistant,
+                text: message,
+                timestamp: timestamp,
+                style: .nudge
+            )
+        )
+        persistState()
     }
 
     private func repairInvalidMonitoringConfigurationIfNeeded() {
