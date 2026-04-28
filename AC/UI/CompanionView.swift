@@ -12,6 +12,7 @@ import SwiftUI
 
 struct CompanionView: View {
     @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
 
     /// Called on a clean tap — opens the popover from the orb.
     var onTap: (() -> Void)?
@@ -71,6 +72,10 @@ struct CompanionView: View {
                     .padding(10)
             }
             .frame(width: orbDiameter, height: orbDiameter)
+            .overlay(alignment: .bottomTrailing) {
+                visionBadge
+                    .animation(.acFade, value: controller.visionEnabled)
+            }
             .scaleEffect(breathScale * nudgeScale)
             .opacity(controller.companionMood == .paused ? 0.42 : 1.0)
             .animation(.easeInOut(duration: 0.5), value: controller.companionMood == .paused)
@@ -148,6 +153,21 @@ struct CompanionView: View {
             : controller.state.character.ringColor
     }
 
+    @ViewBuilder
+    private var visionBadge: some View {
+        if !controller.visionEnabled {
+            ZStack {
+                Circle()
+                    .fill(Color.acSurface)
+                    .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+                    .frame(width: 19, height: 19)
+                Image(systemName: "eye.slash.fill")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(accent.opacity(0.55))
+            }
+            .shadow(color: .black.opacity(0.10), radius: 3, y: 1)
+        }
+    }
 
     // MARK: - Animations
 

@@ -100,7 +100,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         switch self {
         case .economy:  return "unsloth/gemma-4-E2B-it-GGUF:Q4_0"
         case .balanced: return "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
-        case .smartest: return "unsloth/Phi-4-mini-instruct-GGUF:Q4_K_M"
+        case .smartest: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
         }
     }
 
@@ -108,7 +108,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         switch self {
         case .economy:  return "Gemma 4 E2B"
         case .balanced: return "Gemma 4 E4B"
-        case .smartest: return "Phi-4 Mini"
+        case .smartest: return "Qwen 3.5 9B"
         }
     }
 
@@ -116,7 +116,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         switch self {
         case .economy:  return "~1.3 GB RAM"
         case .balanced: return "~3–4 GB RAM"
-        case .smartest: return "~4–5 GB RAM"
+        case .smartest: return "~6–7 GB RAM"
         }
     }
 }

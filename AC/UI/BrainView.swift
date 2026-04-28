@@ -18,6 +18,8 @@ struct BrainView: View {
     @State private var newRuleSummary = ""
     @State private var newRuleKind: PolicyRuleKind = .allow
     @FocusState private var summaryFieldFocused: Bool
+    @FocusState private var goalsEditorFocused: Bool
+    @State private var localGoalsText: String = ""
 
     private var rules: [PolicyRule] { controller.state.policyMemory.rules }
     private var lockedCount: Int { rules.filter(\.isLocked).count }
@@ -42,22 +44,37 @@ struct BrainView: View {
                 subtitle: "AC uses this as background context for every decision."
             )
 
-            TextEditor(text: Binding(
-                get: { controller.state.goalsText },
-                set: { controller.updateGoals($0) }
-            ))
-            .font(.ac(13))
-            .frame(minHeight: 88, maxHeight: 130)
-            .padding(10)
-            .scrollContentBackground(.hidden)
-            .background(
-                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(Color.acHairline, lineWidth: 1)
-                    )
-            )
+            TextEditor(text: $localGoalsText)
+                .font(.ac(13))
+                .frame(minHeight: 88, maxHeight: 130)
+                .padding(10)
+                .scrollContentBackground(.hidden)
+                .focused($goalsEditorFocused)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .fill(Color(nsColor: .textBackgroundColor))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                                .stroke(Color.acHairline, lineWidth: 1)
+                        )
+                )
+
+            if localGoalsText != controller.state.goalsText {
+                HStack {
+                    Spacer()
+                    Button("Save") {
+                        controller.updateGoals(localGoalsText)
+                        goalsEditorFocused = false
+                    }
+                    .buttonStyle(ACPrimaryButton())
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+            }
+        }
+        .animation(.acSnap, value: localGoalsText != controller.state.goalsText)
+        .onAppear { localGoalsText = controller.state.goalsText }
+        .onChange(of: controller.state.goalsText) { oldValue, newValue in
+            if localGoalsText == oldValue { localGoalsText = newValue }
         }
     }
 
@@ -290,7 +307,7 @@ struct BrainView: View {
         VStack(alignment: .leading, spacing: 10) {
             brainSectionHeader(
                 icon: "brain.head.profile",
-                title: "Memory Consolidation",
+                title: "Memory",
                 subtitle: "Runs AC's cleanup pass across saved memory and learned rules when things feel stale or noisy."
             )
 
@@ -301,22 +318,31 @@ struct BrainView: View {
                 .buttonStyle(ACSecondaryButton())
                 .disabled(!controller.canConsolidateMemory)
 
-                Text("\(controller.state.memoryEntries.count) saved entries")
+                let count = controller.state.memoryEntries.count
+                Text(count == 0 ? "No saved entries" : "\(count) saved entr\(count == 1 ? "y" : "ies")")
                     .font(.ac(11))
                     .foregroundStyle(.secondary)
 
                 Spacer(minLength: 0)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                    .fill(Color.acSurface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(Color.acHairline, lineWidth: 1)
-                    )
-            )
+
+            if controller.state.memoryEntries.isEmpty {
+                Text("No memory saved yet.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 2)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(controller.state.memoryEntries.sorted { $0.createdAt > $1.createdAt }) { entry in
+                        MemoryEntryRowView(
+                            entry: entry,
+                            onDelete: { controller.deleteMemoryEntry(id: entry.id) }
+                        )
+                    }
+                }
+                .animation(.acSnap, value: controller.state.memoryEntries.map(\.id))
+            }
         }
     }
 }
@@ -442,6 +468,58 @@ private struct RuleRowView: View {
         case .limit:           return .orange
         case .tonePreference:  return accent
         }
+    }
+}
+
+// MARK: - Memory Entry Row
+
+private struct MemoryEntryRowView: View {
+    let entry: MemoryEntry
+    let onDelete: () -> Void
+    @State private var hoveringDelete = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.text)
+                    .font(.ac(12, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(6)
+                Text(entry.createdAt.brainRelativeLabel)
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(hoveringDelete ? Color.red.opacity(0.78) : Color.secondary.opacity(0.40))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle()
+                            .fill(hoveringDelete ? Color.red.opacity(0.08) : Color.acSurface)
+                            .overlay(Circle().stroke(
+                                hoveringDelete ? Color.red.opacity(0.22) : Color.acHairline, lineWidth: 1
+                            ))
+                    )
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringDelete = $0 }
+            .help("Delete this memory entry")
+            .animation(.acFade, value: hoveringDelete)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
+                )
+        )
     }
 }
 

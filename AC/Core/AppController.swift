@@ -50,7 +50,7 @@ final class AppController: ObservableObject {
     @Published var availableCalendars: [ACCalendarInfo] = []
 
     /// How many recent messages (non-system) are sent to the LLM for context.
-    static let chatContextWindow = 6
+    static let chatContextWindow = 8
 
     let storageService = StorageService()
     let telemetryStore = TelemetryStore.shared
@@ -477,13 +477,23 @@ final class AppController: ObservableObject {
         logActivity("chat", "Chat history cleared")
     }
 
-    func deleteChatMessage(id: UUID) {
+    @discardableResult
+    func deleteChatMessage(id: UUID) -> (message: ChatMessage, index: Int)? {
         guard let index = chatMessages.firstIndex(where: { $0.id == id && $0.role != .system }) else {
-            return
+            return nil
         }
         let removed = chatMessages.remove(at: index)
         persistState()
         logActivity("chat", "Deleted chat message (\(removed.role.rawValue))")
+        return (removed, index)
+    }
+
+    func restoreChatMessage(_ message: ChatMessage, at index: Int) {
+        guard message.role != .system else { return }
+        let clampedIndex = min(max(1, index), chatMessages.count)
+        chatMessages.insert(message, at: clampedIndex)
+        persistState()
+        logActivity("chat", "Restored chat message (\(message.role.rawValue))")
     }
 
     func clearMemory() {
@@ -492,6 +502,11 @@ final class AppController: ObservableObject {
         state.policyMemory = PolicyMemory()
         persistState()
         logActivity("memory", "Memory cleared")
+    }
+
+    func deleteMemoryEntry(id: UUID) {
+        state.memoryEntries.removeAll { $0.id == id }
+        persistState()
     }
 
     var canConsolidateMemory: Bool {
@@ -974,12 +989,28 @@ final class AppController: ObservableObject {
             )
         }
 
+        let cappedDraft = AppControllerChatSupport.cappedChatText(
+            trimmedDraft,
+            limit: AppControllerChatSupport.maxChatMessageLength
+        )
+
         // Rolling context window: last N non-system messages
         let historyWindow = chatMessages
             .filter { $0.role != .system }
             .suffix(Self.chatContextWindow)
             .dropLast()  // exclude the message we just appended (it's the userMessage arg)
             .map { $0 }
+        let cappedHistory = historyWindow.map {
+            AppControllerChatSupport.cappedMessageForContext(
+                $0,
+                limit: AppControllerChatSupport.maxChatMessageLength
+            )
+        }
+        let historyBudget = max(0, AppControllerChatSupport.maxChatContextCharacters - cappedDraft.count)
+        let boundedHistory = AppControllerChatSupport.limitMessagesByCharacterBudget(
+            cappedHistory,
+            budget: historyBudget
+        )
         let renderedMemory = state.memoryForPrompt(now: Date())
         let renderedPolicyRules = state.policyRulesForChatPrompt(now: Date())
 
@@ -999,11 +1030,11 @@ final class AppController: ObservableObject {
                     memoryUpdate: nil
                 )
             } else if let response = await companionChatService.chat(
-                userMessage: trimmedDraft,
+                userMessage: cappedDraft,
                 goals: state.goalsText,
                 recentActions: state.recentActions,
                 context: makeChatContext(),
-                history: Array(historyWindow),
+                history: boundedHistory,
                 memory: renderedMemory,
                 policyRules: renderedPolicyRules,
                 character: state.character,
@@ -1463,6 +1494,32 @@ private enum AppControllerSetupSupport {
 
 private enum AppControllerChatSupport {
     private static let systemMessage = "Ask me what I am watching, why I nudged, or what to improve."
+    static let maxChatMessageLength = 1000
+    static let maxChatContextCharacters = 4000
+
+    static func cappedChatText(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        return String(text.prefix(limit))
+    }
+
+    static func cappedMessageForContext(_ message: ChatMessage, limit: Int) -> ChatMessage {
+        var trimmed = message
+        trimmed.text = cappedChatText(message.text, limit: limit)
+        return trimmed
+    }
+
+    static func limitMessagesByCharacterBudget(_ messages: [ChatMessage], budget: Int) -> [ChatMessage] {
+        guard budget > 0 else { return [] }
+        var total = 0
+        var kept: [ChatMessage] = []
+        for message in messages.reversed() {
+            let length = message.text.count
+            guard total + length <= budget else { continue }
+            kept.append(message)
+            total += length
+        }
+        return kept.reversed()
+    }
 
     static func makeChatMessages(from persistedHistory: [ChatMessage]) -> [ChatMessage] {
         [ChatMessage(role: .system, text: systemMessage)]

@@ -31,21 +31,28 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var pendingClearAction: ChatClearAction?
     @State private var successMessage: String?
+    @State private var pendingUndoToast: DeletedChatToast?
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
+        ZStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                header
 
-            if !controller.shouldPresentChatAsAvailable {
-                Text("Finish setup to start chatting.")
-                    .font(.ac(12))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.68))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 24)
-            } else {
-                messageList
-                inputRow
+                if !controller.shouldPresentChatAsAvailable {
+                    Text("Finish setup to start chatting.")
+                        .font(.ac(12))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.68))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 24)
+                } else {
+                    messageList
+                    inputRow
+                }
+            }
+
+            if let toast = pendingUndoToast {
+                undoToast(toast)
             }
         }
         .alert("Are you sure?", isPresented: Binding(
@@ -140,12 +147,14 @@ struct ChatView: View {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if hasConversationMessages {
                         ForEach(conversationMessages) { message in
-                            CompactBubble(message: message, accent: accent)
+                            CompactBubble(message: message, accent: accent) {
+                                handleDelete(message)
+                            }
                                 .id(message.id)
                                 .contextMenu {
                                     Button(message.style == .nudge ? "Delete nudge" : "Delete message",
                                            role: .destructive) {
-                                        controller.deleteChatMessage(id: message.id)
+                                        handleDelete(message)
                                     }
                                 }
                         }
@@ -259,6 +268,59 @@ struct ChatView: View {
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private func handleDelete(_ message: ChatMessage) {
+        guard let removed = controller.deleteChatMessage(id: message.id) else { return }
+        showUndoToast(message: removed.message, index: removed.index)
+    }
+
+    private func showUndoToast(message: ChatMessage, index: Int) {
+        let toast = DeletedChatToast(message: message, index: index)
+        pendingUndoToast = toast
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            if pendingUndoToast?.id == toast.id {
+                pendingUndoToast = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func undoToast(_ toast: DeletedChatToast) -> some View {
+        HStack(spacing: 10) {
+            Text("Message deleted")
+                .font(.ac(12, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+
+            Button("Undo") {
+                controller.restoreChatMessage(toast.message, at: toast.index)
+                pendingUndoToast = nil
+            }
+            .buttonStyle(.plain)
+            .font(.ac(12, weight: .semibold))
+            .foregroundStyle(accent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.12), radius: 8, y: 4)
+        )
+        .padding(.bottom, 6)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .animation(.acSnap, value: pendingUndoToast?.id)
+    }
+
+
+private struct DeletedChatToast: Identifiable, Equatable {
+    let id = UUID()
+    let message: ChatMessage
+    let index: Int
+}
     private func sendDraft() {
         guard canSend else { return }
         let text = draft
@@ -397,9 +459,9 @@ private struct FlowLayout: Layout {
 // MARK: - Compact Bubble
 
 private struct CompactBubble: View {
-    @EnvironmentObject private var controller: AppController
     let message: ChatMessage
     let accent: Color
+    let onDelete: () -> Void
     @State private var isHovering = false
 
     var body: some View {
@@ -432,7 +494,7 @@ private struct CompactBubble: View {
                     .background(bubbleBackground)
 
                     Button {
-                        controller.deleteChatMessage(id: message.id)
+                        onDelete()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .bold))
