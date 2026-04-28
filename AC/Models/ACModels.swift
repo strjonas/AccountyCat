@@ -80,9 +80,9 @@ enum AITier: String, Codable, CaseIterable, Sendable {
 
     var byokModelIdentifier: String {
         switch self {
-        case .economy:  return "meta-llama/llama-4-scout"
+        case .economy:  return "google/gemma-4-26b-a4b-it"
         case .balanced: return "google/gemma-4-31b-it"
-        case .smartest: return "google/gemini-2.5-flash"
+        case .smartest: return "google/gemini-3-flash-preview"
         }
     }
 

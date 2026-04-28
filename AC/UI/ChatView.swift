@@ -142,6 +142,12 @@ struct ChatView: View {
                         ForEach(conversationMessages) { message in
                             CompactBubble(message: message, accent: accent)
                                 .id(message.id)
+                                .contextMenu {
+                                    Button(message.style == .nudge ? "Delete nudge" : "Delete message",
+                                           role: .destructive) {
+                                        controller.deleteChatMessage(id: message.id)
+                                    }
+                                }
                         }
                     } else if !controller.sendingChatMessage {
                         EmptyChatState(suggestions: chatSuggestions) { suggestion in
@@ -391,8 +397,10 @@ private struct FlowLayout: Layout {
 // MARK: - Compact Bubble
 
 private struct CompactBubble: View {
+    @EnvironmentObject private var controller: AppController
     let message: ChatMessage
     let accent: Color
+    @State private var isHovering = false
 
     var body: some View {
         if message.role == .system {
@@ -406,21 +414,46 @@ private struct CompactBubble: View {
             HStack {
                 if message.role == .user { Spacer(minLength: 40) }
 
-                VStack(alignment: .leading, spacing: 5) {
-                    if message.style == .nudge {
-                        Label("Nudge", systemImage: "pawprint.fill")
-                            .font(.ac(10, weight: .semibold))
-                            .foregroundStyle(accent.opacity(0.85))
-                    }
+                ZStack(alignment: .topTrailing) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        if message.style == .nudge {
+                            Label("Nudge", systemImage: "pawprint.fill")
+                                .font(.ac(10, weight: .semibold))
+                                .foregroundStyle(accent.opacity(0.85))
+                        }
 
-                    Text(message.text)
-                        .font(.ac(13))
-                        .foregroundStyle(message.role == .user ? Color.white : Color.acTextPrimary)
-                        .textSelection(.enabled)
+                        Text(message.text)
+                            .font(.ac(13))
+                            .foregroundStyle(message.role == .user ? Color.white : Color.acTextPrimary)
+                            .textSelection(.enabled)
+                    }
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .background(bubbleBackground)
+
+                    Button {
+                        controller.deleteChatMessage(id: message.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(message.role == .user ? Color.white : Color.acTextPrimary)
+                            .frame(width: 18, height: 18)
+                            .background(
+                                Circle()
+                                    .fill(message.role == .user
+                                          ? Color.white.opacity(0.22)
+                                          : Color.acSurface)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(6)
+                    .opacity(isHovering ? 1 : 0)
+                    .animation(.acSnap, value: isHovering)
+                    .accessibilityLabel(message.style == .nudge ? "Delete nudge" : "Delete message")
                 }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 9)
-                .background(bubbleBackground)
+                .onHover { hovering in
+                    isHovering = hovering
+                }
 
                 if message.role == .assistant { Spacer(minLength: 40) }
             }

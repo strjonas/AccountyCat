@@ -296,7 +296,7 @@ final class AppController: ObservableObject {
         // Known models → friendly names
         switch base {
         case "google/gemma-4-31b-it":              return "Gemma 4"
-        case "google/gemma-3-27b-it":              return "Gemma 3"
+        case "google/gemma-4-26b-a4b-it":              return "Gemma 4"
         case "mistralai/mistral-small-3.1-24b-instruct": return "Mistral Small 3.1"
         case "mistralai/mistral-small-24b-instruct-2501": return "Mistral Small"
         case "meta-llama/llama-4-scout":           return "Llama 4 Scout"
@@ -308,6 +308,7 @@ final class AppController: ObservableObject {
         case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
         case "google/gemini-2.5-flash":            return "Gemini 2.5 Flash"
         case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
+        case "google/gemini-3-flash-preview":            return "Gemini 3.1 Flash"
         case "qwen/qwen2.5-vl-72b-instruct":       return "Qwen 2.5 VL"
         default: break
         }
@@ -474,6 +475,15 @@ final class AppController: ObservableObject {
         chatMessages = Self.makeChatMessages(from: [])
         persistState()
         logActivity("chat", "Chat history cleared")
+    }
+
+    func deleteChatMessage(id: UUID) {
+        guard let index = chatMessages.firstIndex(where: { $0.id == id && $0.role != .system }) else {
+            return
+        }
+        let removed = chatMessages.remove(at: index)
+        persistState()
+        logActivity("chat", "Deleted chat message (\(removed.role.rawValue))")
     }
 
     func clearMemory() {
