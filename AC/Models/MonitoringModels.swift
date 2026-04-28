@@ -11,6 +11,79 @@ enum MonitoringSelectionMode: String, Codable, CaseIterable, Sendable {
     case fixed
 }
 
+enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
+    case sharp
+    case balanced
+    case gentle
+
+    var displayName: String {
+        switch self {
+        case .sharp: return "Sharp"
+        case .balanced: return "Balanced"
+        case .gentle: return "Gentle"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .sharp:
+            return "Checks sooner after context changes. Best when fast drift prevention matters."
+        case .balanced:
+            return "Default timing with conservative call gates. Good all-day companion behavior."
+        case .gentle:
+            return "Checks less often and gives you more room before AC steps in."
+        }
+    }
+
+    var byokCostHint: String {
+        switch self {
+        case .sharp: return "Higher usage"
+        case .balanced: return "Moderate usage"
+        case .gentle: return "Lower usage"
+        }
+    }
+
+    var stableContextDelay: TimeInterval {
+        switch self {
+        case .sharp: return 6
+        case .balanced: return 30
+        case .gentle: return 60
+        }
+    }
+
+    var focusedFollowUp: TimeInterval {
+        switch self {
+        case .sharp: return 5 * 60
+        case .balanced: return 10 * 60
+        case .gentle: return 15 * 60
+        }
+    }
+
+    var unclearFollowUp: TimeInterval {
+        switch self {
+        case .sharp: return 90
+        case .balanced: return 2 * 60
+        case .gentle: return 4 * 60
+        }
+    }
+
+    var distractedFollowUp: TimeInterval {
+        switch self {
+        case .sharp: return 30
+        case .balanced: return 45
+        case .gentle: return 90
+        }
+    }
+
+    var focusedDecisionCacheTTL: TimeInterval {
+        switch self {
+        case .sharp: return 45
+        case .balanced: return 90
+        case .gentle: return 3 * 60
+        }
+    }
+}
+
 struct MonitoringConfiguration: Codable, Hashable, Sendable {
     // Historical ids retained only so old state files migrate onto the active algorithm.
     nonisolated static let deprecatedLegacyLLMAlgorithmID = "legacy_focus_v1"
@@ -34,6 +107,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     var runtimeProfileID: String
     var inferenceBackend: MonitoringInferenceBackend
     var selectionMode: MonitoringSelectionMode
+    var cadenceMode: MonitoringCadenceMode
     var experimentArmOverride: String?
     var modelOverride: String?
     var onlineModelIdentifier: String
@@ -46,6 +120,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         case runtimeProfileID
         case inferenceBackend
         case selectionMode
+        case cadenceMode
         case experimentArmOverride
         case modelOverride
         case onlineModelIdentifier
@@ -59,6 +134,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         runtimeProfileID: String = Self.defaultRuntimeProfileID,
         inferenceBackend: MonitoringInferenceBackend = Self.defaultInferenceBackend,
         selectionMode: MonitoringSelectionMode = .fixed,
+        cadenceMode: MonitoringCadenceMode = .balanced,
         experimentArmOverride: String? = nil,
         modelOverride: String? = nil,
         onlineModelIdentifier: String = Self.defaultOnlineModelIdentifier,
@@ -70,6 +146,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         self.runtimeProfileID = runtimeProfileID
         self.inferenceBackend = inferenceBackend
         self.selectionMode = selectionMode
+        self.cadenceMode = cadenceMode
         self.experimentArmOverride = experimentArmOverride
         self.modelOverride = modelOverride
         self.onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(onlineModelIdentifier)
@@ -98,6 +175,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
             selectionMode.rawValue,
             Self.normalizedAlgorithmID(algorithmID),
             inferenceBackend.rawValue,
+            cadenceMode.rawValue,
             pipelineProfileID,
             runtimeProfileID,
             promptProfileID,
@@ -140,6 +218,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         runtimeProfileID = try c.decodeIfPresent(String.self, forKey: .runtimeProfileID) ?? Self.defaultRuntimeProfileID
         inferenceBackend = try c.decodeIfPresent(MonitoringInferenceBackend.self, forKey: .inferenceBackend) ?? Self.defaultInferenceBackend
         selectionMode = try c.decodeIfPresent(MonitoringSelectionMode.self, forKey: .selectionMode) ?? .fixed
+        cadenceMode = try c.decodeIfPresent(MonitoringCadenceMode.self, forKey: .cadenceMode) ?? .balanced
         experimentArmOverride = try c.decodeIfPresent(String.self, forKey: .experimentArmOverride)
         modelOverride = try c.decodeIfPresent(String.self, forKey: .modelOverride)
         onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(
@@ -156,6 +235,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         try c.encode(runtimeProfileID, forKey: .runtimeProfileID)
         try c.encode(inferenceBackend, forKey: .inferenceBackend)
         try c.encode(selectionMode, forKey: .selectionMode)
+        try c.encode(cadenceMode, forKey: .cadenceMode)
         try c.encodeIfPresent(experimentArmOverride, forKey: .experimentArmOverride)
         try c.encodeIfPresent(modelOverride, forKey: .modelOverride)
         try c.encode(onlineModelIdentifier, forKey: .onlineModelIdentifier)
@@ -234,6 +314,51 @@ struct CachedDecision: Codable, Sendable, Equatable {
     var contextKey: String
 }
 
+struct FocusSignalState: Codable, Sendable, Equatable {
+    var driftEMA: Double = 0
+    var lastUpdatedAt: Date?
+    var lastFocusedBlockStartedAt: Date?
+    var lastCelebrationAt: Date?
+
+    var clampedDrift: Double {
+        min(max(driftEMA, 0), 1)
+    }
+
+    mutating func record(
+        assessment: ModelAssessment,
+        confidence: Double?,
+        at now: Date
+    ) {
+        let clampedConfidence = min(max(confidence ?? 0.5, 0), 1)
+        let evidence: Double
+        switch assessment {
+        case .focused:
+            evidence = 1 - clampedConfidence
+            if lastFocusedBlockStartedAt == nil {
+                lastFocusedBlockStartedAt = now
+            }
+        case .unclear:
+            evidence = 0.45
+        case .distracted:
+            evidence = clampedConfidence
+            lastFocusedBlockStartedAt = nil
+        }
+
+        let alpha = 0.35
+        driftEMA = lastUpdatedAt == nil
+            ? evidence
+            : ((alpha * evidence) + ((1 - alpha) * driftEMA))
+        driftEMA = min(max(driftEMA, 0), 1)
+        lastUpdatedAt = now
+    }
+
+    mutating func resetFlow(at now: Date? = nil) {
+        driftEMA = 0
+        lastUpdatedAt = now
+        lastFocusedBlockStartedAt = now
+    }
+}
+
 struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
     var distraction = DistractionMetadata()
     var currentContextKey: String?
@@ -245,6 +370,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
     var activeAppeal: MonitoringAppealSession?
     var focusedObservations: [String: FocusedObservationStat] = [:]
     var decisionCacheByContext: [String: CachedDecision] = [:]
+    var focusSignal = FocusSignalState()
 
     enum CodingKeys: String, CodingKey {
         case distraction
@@ -257,6 +383,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         case activeAppeal
         case focusedObservations
         case decisionCacheByContext
+        case focusSignal
     }
 
     init() {}
@@ -273,6 +400,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         activeAppeal = try c.decodeIfPresent(MonitoringAppealSession.self, forKey: .activeAppeal)
         focusedObservations = try c.decodeIfPresent([String: FocusedObservationStat].self, forKey: .focusedObservations) ?? [:]
         decisionCacheByContext = try c.decodeIfPresent([String: CachedDecision].self, forKey: .decisionCacheByContext) ?? [:]
+        focusSignal = try c.decodeIfPresent(FocusSignalState.self, forKey: .focusSignal) ?? FocusSignalState()
     }
 
     func encode(to encoder: Encoder) throws {
@@ -287,6 +415,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         try c.encodeIfPresent(activeAppeal, forKey: .activeAppeal)
         try c.encode(focusedObservations, forKey: .focusedObservations)
         try c.encode(decisionCacheByContext, forKey: .decisionCacheByContext)
+        try c.encode(focusSignal, forKey: .focusSignal)
     }
 }
 

@@ -115,6 +115,14 @@ struct OverlayView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 64)
                         .animation(.acSnap, value: appealFocused)
+
+                        OverlayReasonChips { reason in
+                            controller.overlayAppealDraft = reason
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                controller.submitOverlayAppeal()
+                            }
+                        }
+                        .disabled(controller.sendingOverlayAppeal)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .onAppear { 
@@ -166,6 +174,48 @@ struct OverlayView: View {
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .acAccent(for: character)
+    }
+}
+
+private struct OverlayReasonChips: View {
+    let onSelect: (String) -> Void
+
+    private let reasons: [(String, String)] = [
+        ("magnifyingglass", "Research"),
+        ("cup.and.saucer.fill", "Break"),
+        ("questionmark.bubble.fill", "Got stuck"),
+        ("paperclip", "Related to my task"),
+    ]
+
+    var body: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 116), spacing: 7)],
+            alignment: .leading,
+            spacing: 7
+        ) {
+            ForEach(reasons, id: \.1) { icon, label in
+                Button {
+                    onSelect(label)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: icon)
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(label)
+                            .font(.ac(11, weight: .medium))
+                    }
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -670,8 +670,19 @@ final class BrainService: NSObject {
         switch decisionResult.policy.action {
         case let .showNudge(message):
             modelUsageSink?(decisionResult.evaluation.lastUsedModelIdentifier)
-            state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: now), at: 0)
+            let actionID = UUID().uuidString
+            state.recentActions.insert(ActionRecord(
+                id: actionID,
+                kind: .nudge,
+                message: message,
+                timestamp: now,
+                evaluationID: evaluationID,
+                contextKey: context.contextKey,
+                appName: context.appName,
+                windowTitle: context.windowTitle
+            ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
+            attachIntervention(actionID, toLatestSegmentIn: &state)
             stateSink?(state)
             moodSink?(.nudging)
             statusSink?("Nudged while you were in \(context.appName).")
@@ -686,8 +697,19 @@ final class BrainService: NSObject {
 
         case let .showOverlay(presentation):
             modelUsageSink?(decisionResult.evaluation.lastUsedModelIdentifier)
-            state.recentActions.insert(ActionRecord(kind: .overlay, message: nil, timestamp: now), at: 0)
+            let actionID = UUID().uuidString
+            state.recentActions.insert(ActionRecord(
+                id: actionID,
+                kind: .overlay,
+                message: [presentation.headline, presentation.body].joined(separator: " — "),
+                timestamp: now,
+                evaluationID: evaluationID,
+                contextKey: context.contextKey,
+                appName: context.appName,
+                windowTitle: context.windowTitle
+            ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
+            attachIntervention(actionID, toLatestSegmentIn: &state)
             stateSink?(state)
             moodSink?(.escalated)
             statusSink?("Escalated after repeated distraction signals.")
@@ -791,6 +813,80 @@ final class BrainService: NSObject {
         var usageForDay = state.usageByDay[now.acDayKey] ?? [:]
         usageForDay[previousContext.appName, default: 0] += delta
         state.usageByDay[now.acDayKey] = usageForDay
+
+        appendFocusSegment(
+            state: &state,
+            context: previousContext,
+            start: lastObservedAt,
+            end: now
+        )
+    }
+
+    private func appendFocusSegment(
+        state: inout ACState,
+        context: FrontmostContext,
+        start: Date,
+        end: Date
+    ) {
+        guard end.timeIntervalSince(start) >= 1 else { return }
+
+        let assessment = focusAssessment(for: context, state: state)
+        let driftScore = state.algorithmState.llmPolicy.focusSignal.clampedDrift
+
+        if var last = state.focusSegments.last,
+           last.assessment == assessment,
+           last.appName == context.appName,
+           last.bundleIdentifier == context.bundleIdentifier,
+           last.windowTitle == context.windowTitle,
+           start.timeIntervalSince(last.endAt) <= 5 {
+            last.endAt = end
+            last.driftScore = driftScore
+            state.focusSegments[state.focusSegments.count - 1] = last
+        } else {
+            state.focusSegments.append(FocusTimelineSegment(
+                startAt: start,
+                endAt: end,
+                appName: context.appName,
+                bundleIdentifier: context.bundleIdentifier,
+                windowTitle: context.windowTitle,
+                assessment: assessment,
+                driftScore: driftScore
+            ))
+        }
+
+        pruneFocusSegments(state: &state, now: end)
+    }
+
+    private func focusAssessment(
+        for context: FrontmostContext,
+        state: ACState
+    ) -> FocusSegmentAssessment {
+        let distraction = currentDistractionMetadata(from: state)
+        if let lastAssessment = distraction.lastAssessment {
+            return FocusSegmentAssessment(distractionAssessment: lastAssessment)
+        }
+
+        if MonitoringHeuristics.isClearlyProductive(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName
+        ) {
+            return .focused
+        }
+
+        return .unclear
+    }
+
+    private func attachIntervention(_ actionID: String, toLatestSegmentIn state: inout ACState) {
+        guard !state.focusSegments.isEmpty else { return }
+        state.focusSegments[state.focusSegments.count - 1].interventionID = actionID
+    }
+
+    private func pruneFocusSegments(state: inout ACState, now: Date) {
+        let retentionStart = now.addingTimeInterval(-(14 * 24 * 60 * 60))
+        state.focusSegments.removeAll { $0.endAt < retentionStart }
+        if state.focusSegments.count > 700 {
+            state.focusSegments = Array(state.focusSegments.suffix(700))
+        }
     }
 
     private func maybePersist(state: ACState, at now: Date, force: Bool = false) {

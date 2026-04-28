@@ -56,6 +56,7 @@ struct MonitoringConfigurationTests {
                 "fixed",
                 MonitoringConfiguration.currentLLMMonitorAlgorithmID,
                 MonitoringInferenceBackend.local.rawValue,
+                MonitoringCadenceMode.balanced.rawValue,
                 MonitoringConfiguration.defaultPipelineProfileID,
                 MonitoringConfiguration.defaultRuntimeProfileID,
                 MonitoringConfiguration.defaultPromptProfileID,
@@ -69,6 +70,7 @@ struct MonitoringConfigurationTests {
 
         #expect(configuration.algorithmID == MonitoringConfiguration.currentLLMMonitorAlgorithmID)
         #expect(configuration.inferenceBackend == .local)
+        #expect(configuration.cadenceMode == .balanced)
         #expect(configuration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(configuration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
         #expect(configuration.onlineModelIdentifier == MonitoringConfiguration.defaultOnlineModelIdentifier)

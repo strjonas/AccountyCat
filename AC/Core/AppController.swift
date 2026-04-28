@@ -267,6 +267,14 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Selected runtime profile: \(descriptor.id)")
     }
 
+    func updateMonitoringCadenceMode(_ cadenceMode: MonitoringCadenceMode) {
+        guard state.monitoringConfiguration.cadenceMode != cadenceMode else { return }
+        state.monitoringConfiguration.cadenceMode = cadenceMode
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Monitoring cadence: \(cadenceMode.rawValue)")
+    }
+
     var visionEnabled: Bool {
         LLMPolicyCatalog.pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
             .descriptor
@@ -350,6 +358,7 @@ final class AppController: ObservableObject {
                 : "title_only_default")
         // Re-apply the current tier's model for the new backend
         applyTierToActiveBackend()
+        updateDisplayedModelIdentifier()
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState(persist: false)
         persistState()
@@ -395,6 +404,9 @@ final class AppController: ObservableObject {
         let normalized = MonitoringConfiguration.normalizedOnlineModelIdentifier(identifier)
         guard state.monitoringConfiguration.onlineModelIdentifier != normalized else { return }
         state.monitoringConfiguration.onlineModelIdentifier = normalized
+        if state.monitoringConfiguration.usesOnlineInference {
+            lastUsedModelIdentifier = normalized
+        }
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState(persist: false)
         persistState()
@@ -423,6 +435,7 @@ final class AppController: ObservableObject {
         guard state.aiTier != tier else { return }
         state.aiTier = tier
         applyTierToActiveBackend()
+        updateDisplayedModelIdentifier()
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState()
         persistState()
@@ -444,6 +457,10 @@ final class AppController: ObservableObject {
                 applyLocalModelOverride(targetModelIdentifier)
             }
         }
+    }
+
+    private func updateDisplayedModelIdentifier() {
+        lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
     }
 
     private func runtimeProfileModelIdentifier() -> String {
@@ -562,7 +579,16 @@ final class AppController: ObservableObject {
 
     func sendTestNudge() {
         let message = "Debug nudge: time to check that the panel is visible."
-        state.recentActions.insert(ActionRecord(kind: .nudge, message: message, timestamp: Date()), at: 0)
+        let context = SnapshotService.frontmostContext()
+        state.recentActions.insert(ActionRecord(
+            id: UUID().uuidString,
+            kind: .nudge,
+            message: message,
+            timestamp: Date(),
+            contextKey: context?.contextKey,
+            appName: context?.appName,
+            windowTitle: context?.windowTitle
+        ), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
         companionMood = .nudging
         logActivity("debug", "Triggered test nudge")
@@ -670,12 +696,21 @@ final class AppController: ObservableObject {
     }
 
     func showTestOverlay() {
-        state.recentActions.insert(ActionRecord(kind: .overlay, message: "debug", timestamp: Date()), at: 0)
+        let context = SnapshotService.frontmostContext()
+        state.recentActions.insert(ActionRecord(
+            id: UUID().uuidString,
+            kind: .overlay,
+            message: "debug",
+            timestamp: Date(),
+            contextKey: context?.contextKey,
+            appName: context?.appName,
+            windowTitle: context?.windowTitle
+        ), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
         activeOverlay = OverlayPresentation(
             headline: "Pause for a second.",
             body: "Debug overlay for \(state.rescueApp.displayName).",
-            prompt: "Why should I let you continue here?",
+            prompt: "This looks a bit off-track — what's going on?",
             appName: "Debug",
             evaluationID: nil,
             submitButtonTitle: "Submit",
@@ -909,7 +944,16 @@ final class AppController: ObservableObject {
             endEpisodeReason: .rescueReturn
         )
         openRescueApp()
-        state.recentActions.insert(ActionRecord(kind: .backToWork, message: state.rescueApp.displayName, timestamp: Date()), at: 0)
+        let context = SnapshotService.frontmostContext()
+        state.recentActions.insert(ActionRecord(
+            id: UUID().uuidString,
+            kind: .backToWork,
+            message: state.rescueApp.displayName,
+            timestamp: Date(),
+            contextKey: context?.contextKey,
+            appName: context?.appName,
+            windowTitle: context?.windowTitle
+        ), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
         logActivity("action", "Back to Work selected")
         persistState()
@@ -929,7 +973,16 @@ final class AppController: ObservableObject {
                 details: nil
             )
         )
-        state.recentActions.insert(ActionRecord(kind: .dismissOverlay, message: nil, timestamp: Date()), at: 0)
+        let context = SnapshotService.frontmostContext()
+        state.recentActions.insert(ActionRecord(
+            id: UUID().uuidString,
+            kind: .dismissOverlay,
+            message: nil,
+            timestamp: Date(),
+            contextKey: context?.contextKey,
+            appName: context?.appName,
+            windowTitle: context?.windowTitle
+        ), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
         logActivity("action", "Overlay dismissed")
         persistState()
@@ -1012,26 +1065,109 @@ final class AppController: ObservableObject {
 
     struct TodayStats {
         let totalTrackedSeconds: TimeInterval
+        let focusedSeconds: TimeInterval
+        let longestFocusedBlockSeconds: TimeInterval
+        let streakDays: Int
         let topAppName: String?
         let topAppSeconds: TimeInterval
         let nudgeCount: Int
-        let backToWorkCount: Int
+        let rescueCount: Int
+        let timelineSegments: [FocusTimelineSegment]
     }
 
     var todayStats: TodayStats {
         let now = Date()
         let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
         let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
         let total = dayUsage.values.reduce(0, +)
         let top = dayUsage.max(by: { $0.value < $1.value })
         let todayActions = state.recentActions.filter { cal.isDate($0.timestamp, inSameDayAs: now) }
+        let todaySegments = state.focusSegments.filter { segment in
+            segment.endAt >= startOfToday && segment.startAt <= now
+        }
+        let focusedSeconds = todaySegments
+            .filter { $0.assessment == .focused }
+            .reduce(0) { $0 + clampedDuration($1, start: startOfToday, end: now) }
         return TodayStats(
             totalTrackedSeconds: total,
+            focusedSeconds: focusedSeconds,
+            longestFocusedBlockSeconds: longestFocusedBlock(in: todaySegments, dayStart: startOfToday, dayEnd: now),
+            streakDays: focusStreakDays(now: now),
             topAppName: top?.key,
             topAppSeconds: top?.value ?? 0,
             nudgeCount: todayActions.filter { $0.kind == .nudge }.count,
-            backToWorkCount: todayActions.filter { $0.kind == .backToWork }.count
+            rescueCount: todayActions.filter { $0.kind == .backToWork }.count,
+            timelineSegments: todaySegments
         )
+    }
+
+    private func clampedDuration(
+        _ segment: FocusTimelineSegment,
+        start: Date,
+        end: Date
+    ) -> TimeInterval {
+        max(0, min(segment.endAt, end).timeIntervalSince(max(segment.startAt, start)))
+    }
+
+    private func longestFocusedBlock(
+        in segments: [FocusTimelineSegment],
+        dayStart: Date,
+        dayEnd: Date
+    ) -> TimeInterval {
+        var longest: TimeInterval = 0
+        var currentStart: Date?
+        var currentEnd: Date?
+
+        for segment in segments.sorted(by: { $0.startAt < $1.startAt }) {
+            guard segment.assessment == .focused else {
+                if let start = currentStart, let end = currentEnd {
+                    longest = max(longest, end.timeIntervalSince(start))
+                }
+                currentStart = nil
+                currentEnd = nil
+                continue
+            }
+
+            let start = max(segment.startAt, dayStart)
+            let end = min(segment.endAt, dayEnd)
+            if let existingEnd = currentEnd,
+               start.timeIntervalSince(existingEnd) <= 120 {
+                currentEnd = max(existingEnd, end)
+            } else {
+                if let currentStart, let currentEnd {
+                    longest = max(longest, currentEnd.timeIntervalSince(currentStart))
+                }
+                currentStart = start
+                currentEnd = end
+            }
+        }
+
+        if let currentStart, let currentEnd {
+            longest = max(longest, currentEnd.timeIntervalSince(currentStart))
+        }
+        return longest
+    }
+
+    private func focusStreakDays(now: Date) -> Int {
+        let cal = Calendar.current
+        var streak = 0
+        var cursor = cal.startOfDay(for: now)
+
+        while true {
+            let nextDay = cal.date(byAdding: .day, value: 1, to: cursor) ?? cursor.addingTimeInterval(24 * 60 * 60)
+            let focusedSeconds = state.focusSegments
+                .filter { $0.assessment == .focused && $0.endAt > cursor && $0.startAt < nextDay }
+                .reduce(0) { $0 + clampedDuration($1, start: cursor, end: nextDay) }
+            guard focusedSeconds >= 20 * 60 else {
+                return streak
+            }
+            streak += 1
+            guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else {
+                return streak
+            }
+            cursor = previous
+        }
     }
 
     var availableMonitoringPromptProfiles: [MonitoringPromptProfileDescriptor] {
@@ -1115,6 +1251,9 @@ final class AppController: ObservableObject {
                     details: trimmedDraft.cleanedSingleLine
                 )
             )
+        }
+        if AppControllerChatSupport.looksLikeDistractionCorrection(trimmedDraft) {
+            recordDistractionCorrection(trimmedDraft)
         }
 
         let cappedDraft = AppControllerChatSupport.cappedChatText(
@@ -1291,6 +1430,40 @@ final class AppController: ObservableObject {
         maybeConsolidateMemory()
     }
 
+    private func recordDistractionCorrection(_ text: String) {
+        let now = Date()
+        guard let action = state.recentActions.first(where: {
+            ($0.kind == .nudge || $0.kind == .overlay) && now.timeIntervalSince($0.timestamp) <= 30 * 60
+        }) else {
+            return
+        }
+
+        let appName = action.appName ?? SnapshotService.frontmostContext()?.appName ?? "the recent activity"
+        let title = action.windowTitle?.cleanedSingleLine
+        let scope = title.map { "\(appName) (\($0))" } ?? appName
+        appendMemoryLine("• Correction: \(scope) was not a distraction. User said: \(text.cleanedSingleLine)")
+
+        if let actionID = action.id,
+           let index = state.focusSegments.lastIndex(where: { $0.interventionID == actionID }) {
+            state.focusSegments[index].assessment = .focused
+            state.focusSegments[index].driftScore = 0
+        } else if let index = state.focusSegments.lastIndex(where: {
+            abs($0.endAt.timeIntervalSince(action.timestamp)) <= 10 * 60
+        }) {
+            state.focusSegments[index].assessment = .focused
+            state.focusSegments[index].driftScore = 0
+        }
+
+        state.algorithmState.llmPolicy.distraction.lastAssessment = .focused
+        state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount = 0
+        state.algorithmState.llmPolicy.focusSignal.resetFlow(at: now)
+        schedulePolicyMemoryUpdate(
+            eventSummary: "User corrected a recent intervention: \(text.cleanedSingleLine)",
+            context: SnapshotService.frontmostContext()
+        )
+        persistState()
+    }
+
     private func schedulePolicyMemoryUpdate(
         eventSummary: String,
         context: FrontmostContext?
@@ -1464,6 +1637,46 @@ final class AppController: ObservableObject {
             )
         )
         persistState()
+    }
+
+    func maybeCelebrateFocusProgress(now: Date = Date()) {
+        guard state.setupStatus == .ready,
+              state.isPaused == false,
+              state.algorithmState.llmPolicy.distraction.lastAssessment != .distracted else {
+            return
+        }
+
+        let stats = todayStats
+        guard stats.focusedSeconds >= 45 * 60 else { return }
+        if let lastCelebrationAt = state.algorithmState.llmPolicy.focusSignal.lastCelebrationAt,
+           now.timeIntervalSince(lastCelebrationAt) < 2 * 60 * 60 {
+            return
+        }
+
+        let message: String
+        let focused = formatCompactDuration(stats.focusedSeconds)
+        let best = formatCompactDuration(stats.longestFocusedBlockSeconds)
+        switch state.character {
+        case .mochi:
+            message = "You’ve already protected \(focused) of focus today. Best block: \(best). I’m proud of that."
+        case .nova:
+            message = "\(focused) focused today. Best block: \(best). Strong signal; keep the line."
+        case .sage:
+            message = "\(focused) of focused work today. Your best block is \(best). Notice the steadiness."
+        }
+
+        chatMessages.append(ChatMessage(role: .assistant, text: message, timestamp: now, style: .celebration))
+        state.algorithmState.llmPolicy.focusSignal.lastCelebrationAt = now
+        persistState()
+    }
+
+    private func formatCompactDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0, m > 0 { return "\(h)h \(m)m" }
+        if h > 0 { return "\(h)h" }
+        return "\(m)m"
     }
 
 
@@ -1708,6 +1921,22 @@ private enum AppControllerChatSupport {
             "leave me alone",
             "not helpful",
             "wrong",
+        ]
+        return markers.contains { lowered.contains($0) }
+    }
+
+    static func looksLikeDistractionCorrection(_ text: String) -> Bool {
+        let lowered = text.cleanedSingleLine.lowercased()
+        let markers = [
+            "wasn't a distraction",
+            "was not a distraction",
+            "wasnt a distraction",
+            "not a distraction",
+            "wrong nudge",
+            "false positive",
+            "that was work",
+            "that was focused",
+            "actually productive",
         ]
         return markers.contains { lowered.contains($0) }
     }

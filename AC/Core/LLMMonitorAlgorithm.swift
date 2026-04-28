@@ -18,13 +18,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private let onlineModelService: any OnlineModelServing
     private let policyMemoryService: PolicyMemoryServicing
     private let safelistAppealService: any SafelistAppealEvaluating
-    private let stabilityWindow: TimeInterval = 6
-    private let focusedFollowUp: TimeInterval = 10 * 60
-    private let unclearFollowUp: TimeInterval = 2 * 60
-    private let distractedFollowUp: TimeInterval = 45
+    private let minimumDistractedConfidence = 0.60
     /// Re-using a recently-confirmed focused decision is OK only inside this window.
     /// Beyond it the user may have moved on within the same app, so re-evaluate.
-    private let decisionCacheTTL: TimeInterval = 60
     /// Keep the per-context decision cache bounded so state.json stays small.
     private let decisionCacheCapacity = 32
     /// Keep observation history bounded — evict by least recently seen.
@@ -50,6 +46,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     func resetTransientState(_ state: inout AlgorithmStateEnvelope) {
         state.llmPolicy.distraction = DistractionMetadata()
         state.llmPolicy.activeAppeal = nil
+        state.llmPolicy.focusSignal = FocusSignalState()
     }
 
     func noteContext(
@@ -116,7 +113,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
            let cached = state.llmPolicy.decisionCacheByContext[key],
            cached.contextKey == key,
            cached.assessment == .focused,
-           now.timeIntervalSince(cached.decidedAt) < decisionCacheTTL {
+           now.timeIntervalSince(cached.decidedAt) < configuration.cadenceMode.focusedDecisionCacheTTL {
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
                 reason: "cached_focused",
@@ -137,7 +134,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             reason = "scheduled_recheck"
         } else if distraction.lastAssessment == nil,
                   let stableSince = state.llmPolicy.currentContextEnteredAt {
-            shouldEvaluate = now.timeIntervalSince(stableSince) >= stabilityWindow
+            shouldEvaluate = now.timeIntervalSince(stableSince) >= configuration.cadenceMode.stableContextDelay
             reason = "stable_context"
         } else if distraction.lastAssessment != nil {
             shouldEvaluate = true
@@ -162,6 +159,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     }
 
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
+        let cadence = input.configuration.cadenceMode
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
         let pipelineProfile = LLMPolicyCatalog.pipelineProfile(id: input.configuration.pipelineProfileID)
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
@@ -242,7 +240,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             updatedState.llmPolicy.distraction.contextKey = updatedState.llmPolicy.currentContextKey
             updatedState.llmPolicy.distraction.lastAssessment = .focused
             updatedState.llmPolicy.distraction.consecutiveDistractedCount = 0
-            updatedState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(focusedFollowUp)
+            updatedState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.focusedFollowUp)
+            updatedState.llmPolicy.focusSignal.record(
+                assessment: .focused,
+                confidence: 1.0,
+                at: input.now
+            )
 
             let decision = LLMDecision(
                 assessment: .focused,
@@ -291,7 +294,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 attempts: &attempts
             )
             effectiveDecisionEnvelope = onlineDecisionEnvelope ?? attempts.last?.parsedDecision.map(Self.makeDecisionEnvelope)
-            decision = effectiveDecisionEnvelope?.asLLMDecision ?? .unclear
+            decision = confidenceAdjustedDecision(effectiveDecisionEnvelope?.asLLMDecision ?? .unclear)
         } else {
             if pipelineProfile.usesTitlePerception {
                 titlePerception = await runTextStage(
@@ -359,7 +362,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
 
             effectiveDecisionEnvelope = decisionEnvelope ?? attempts.last?.parsedDecision.map(Self.makeDecisionEnvelope)
-            decision = effectiveDecisionEnvelope?.asLLMDecision ?? .unclear
+            decision = confidenceAdjustedDecision(effectiveDecisionEnvelope?.asLLMDecision ?? .unclear)
             if pipelineProfile.splitCopyGeneration,
                decision.suggestedAction == ModelSuggestedAction.nudge {
                 if let nudge = await generateNudgeCopy(
@@ -427,7 +430,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         case .focused:
             distraction.lastAssessment = .focused
             distraction.consecutiveDistractedCount = 0
-            distraction.nextEvaluationAt = input.now.addingTimeInterval(focusedFollowUp)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.focusedFollowUp)
             policyState.activeAppeal = nil
             action = .none
             blockReason = nil
@@ -435,7 +438,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         case .unclear:
             distraction.lastAssessment = .unclear
             distraction.consecutiveDistractedCount = 0
-            distraction.nextEvaluationAt = input.now.addingTimeInterval(unclearFollowUp)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.unclearFollowUp)
             policyState.activeAppeal = nil
             action = .none
             blockReason = "unclear_assessment"
@@ -443,7 +446,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         case .distracted:
             distraction.lastAssessment = .distracted
             distraction.consecutiveDistractedCount += 1
-            distraction.nextEvaluationAt = input.now.addingTimeInterval(distractedFollowUp)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.distractedFollowUp)
 
             switch decision.suggestedAction {
             case .overlay:
@@ -453,10 +456,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 ) ?? OverlayPresentation(
                     headline: "Pause for a second.",
                     body: "This still looks off-track in \(input.snapshot.appName).",
-                    prompt: "Why should I let you continue on this?",
+                    prompt: "This looks a bit off-track — what's going on?",
                     appName: input.snapshot.appName,
                     evaluationID: input.evaluationID,
-                    submitButtonTitle: "Submit",
+                    submitButtonTitle: "Explain",
                     secondaryButtonTitle: "Back to work"
                 )
                 policyState.lastOverlayAt = input.now
@@ -465,7 +468,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     evaluationID: input.evaluationID,
                     contextKey: distraction.contextKey ?? "unknown",
                     appName: input.snapshot.appName,
-                    prompt: presentation.prompt ?? "Why should I let you continue on this?",
+                    prompt: presentation.prompt ?? "This looks a bit off-track — what's going on?",
                     createdAt: input.now,
                     lastSubmittedAt: nil,
                     lastResult: nil
@@ -490,7 +493,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                         evaluationID: input.evaluationID,
                         contextKey: distraction.contextKey ?? "unknown",
                         appName: input.snapshot.appName,
-                        prompt: presentation.prompt ?? "Why should I let you continue on this?",
+                        prompt: presentation.prompt ?? "This looks a bit off-track — what's going on?",
                         createdAt: input.now,
                         lastSubmittedAt: nil,
                         lastResult: nil
@@ -521,6 +524,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         policyState.distraction = distraction
+        policyState.focusSignal.record(
+            assessment: decision.assessment,
+            confidence: decision.confidence,
+            at: input.now
+        )
 
         // Per-context decision cache (Optimization 2) — short-term reuse of focused outcomes.
         if let contextKey = policyState.currentContextKey {
@@ -740,6 +748,30 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
     }
 
+    private func confidenceAdjustedDecision(_ decision: LLMDecision) -> LLMDecision {
+        guard decision.assessment == .distracted else {
+            return decision
+        }
+
+        let effectiveConfidence = decision.confidence ?? 0.75
+        guard effectiveConfidence < minimumDistractedConfidence else {
+            return decision
+        }
+
+        var tags = decision.reasonTags
+        if !tags.contains("low_confidence_distracted") {
+            tags.append("low_confidence_distracted")
+        }
+        return LLMDecision(
+            assessment: .unclear,
+            suggestedAction: .abstain,
+            confidence: decision.confidence,
+            reasonTags: tags,
+            nudge: nil,
+            abstainReason: "insufficient_distracted_confidence"
+        )
+    }
+
     func reviewAppeal(input: MonitoringAppealReviewInput) async -> MonitoringAppealReviewOutput? {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
         let usesOnlineInference = input.configuration.usesOnlineInference
@@ -845,7 +877,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         if result.decision == AppealReviewDecision.allow {
             updatedAlgorithmState.llmPolicy.activeAppeal = nil
             updatedAlgorithmState.llmPolicy.distraction.lastAssessment = .unclear
-            updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(distractedFollowUp)
+            updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(input.configuration.cadenceMode.distractedFollowUp)
         }
 
         return MonitoringAppealReviewOutput(
@@ -1810,12 +1842,12 @@ private extension MonitoringDecisionEnvelope {
                 : "This still looks off-track in \(appName).",
             prompt: overlayPrompt?.cleanedSingleLine.isEmpty == false
                 ? overlayPrompt!.cleanedSingleLine
-                : "Why should I let you continue on this?",
+                : "This looks a bit off-track — what's going on?",
             appName: appName,
             evaluationID: evaluationID,
             submitButtonTitle: submitButtonTitle?.cleanedSingleLine.isEmpty == false
                 ? submitButtonTitle!.cleanedSingleLine
-                : "Submit",
+                : "Explain",
             secondaryButtonTitle: secondaryButtonTitle?.cleanedSingleLine.isEmpty == false
                 ? secondaryButtonTitle!.cleanedSingleLine
                 : "Back to work"
@@ -1831,10 +1863,10 @@ private extension OverlayPresentation {
         OverlayPresentation(
             headline: "Pause for a second.",
             body: "This still looks off-track in \(appName), even after a few nudges.",
-            prompt: "Why should I let you continue on this?",
+            prompt: "This looks a bit off-track — what's going on?",
             appName: appName,
             evaluationID: evaluationID,
-            submitButtonTitle: "Submit",
+            submitButtonTitle: "Explain",
             secondaryButtonTitle: "Back to work"
         )
     }

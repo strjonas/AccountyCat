@@ -478,8 +478,11 @@ private struct CompactBubble: View {
 
                 ZStack(alignment: .topTrailing) {
                     VStack(alignment: .leading, spacing: 5) {
-                        if message.style == .nudge {
-                            Label("Nudge", systemImage: "pawprint.fill")
+                        if message.style == .nudge || message.style == .celebration {
+                            Label(
+                                message.style == .celebration ? "Win" : "Nudge",
+                                systemImage: message.style == .celebration ? "sparkles" : "pawprint.fill"
+                            )
                                 .font(.ac(10, weight: .semibold))
                                 .foregroundStyle(accent.opacity(0.85))
                         }
@@ -539,11 +542,17 @@ private struct CompactBubble: View {
                 )
         } else {
             RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                .fill(message.style == .nudge ? accent.opacity(0.10) : Color(nsColor: .controlBackgroundColor))
+                .fill(
+                    message.style == .nudge || message.style == .celebration
+                        ? accent.opacity(message.style == .celebration ? 0.15 : 0.10)
+                        : Color(nsColor: .controlBackgroundColor)
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                         .stroke(
-                            message.style == .nudge ? accent.opacity(0.28) : Color.acHairline,
+                            message.style == .nudge || message.style == .celebration
+                                ? accent.opacity(0.28)
+                                : Color.acHairline,
                             lineWidth: 1
                         )
                 )

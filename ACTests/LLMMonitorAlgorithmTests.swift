@@ -89,8 +89,8 @@ struct LLMMonitorAlgorithmTests {
         if case let .showOverlay(presentation) = result.policy.action {
             #expect(presentation.headline == "Pause for a second.")
             #expect(presentation.body == "This still looks off-track in Google Chrome.")
-            #expect(presentation.prompt == "Why should I let you continue on this?")
-            #expect(presentation.submitButtonTitle == "Submit")
+            #expect(presentation.prompt == "This looks a bit off-track — what's going on?")
+            #expect(presentation.submitButtonTitle == "Explain")
             #expect(presentation.secondaryButtonTitle == "Back to work")
         } else {
             Issue.record("Expected fallback overlay presentation but got \(result.policy.action)")
@@ -121,6 +121,75 @@ struct LLMMonitorAlgorithmTests {
         #expect(result.policy.action == .none)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(10 * 60))
+        #expect(result.updatedAlgorithmState.llmPolicy.focusSignal.driftEMA < 0.2)
+    }
+
+    @Test
+    func lowConfidenceDistractedDecisionIsSuppressedAsUnclear() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"distracted","suggested_action":"nudge","confidence":0.42,"reason_tags":["maybe_social"],"nudge":"Back to it."}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_600)
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-low-confidence",
+                runtimeOverride: runtimeFixture.runtimePath
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.decision.assessment == .unclear)
+        #expect(result.decision.suggestedAction == .abstain)
+        #expect(result.decision.reasonTags.contains("low_confidence_distracted"))
+        #expect(result.policy.record.blockReason == "unclear_assessment")
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 0)
+    }
+
+    @Test
+    func cadenceModeControlsInitialStableContextDelay() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Docs"
+        )
+        let start = Date(timeIntervalSince1970: 7_700)
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+
+        var gentle = MonitoringConfiguration()
+        gentle.cadenceMode = .gentle
+        gentle.pipelineProfileID = "title_only_default"
+        let gentlePlan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: gentle,
+            now: start.addingTimeInterval(30)
+        )
+
+        var sharp = MonitoringConfiguration()
+        sharp.cadenceMode = .sharp
+        sharp.pipelineProfileID = "title_only_default"
+        var sharpState = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &sharpState)
+        let sharpPlan = algorithm.evaluationPlan(
+            state: &sharpState,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: sharp,
+            now: start.addingTimeInterval(30)
+        )
+
+        #expect(gentlePlan.shouldEvaluate == false)
+        #expect(sharpPlan.shouldEvaluate == true)
     }
 
     @Test

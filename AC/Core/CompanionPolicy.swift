@@ -72,10 +72,10 @@ enum CompanionPolicy {
                     OverlayPresentation(
                         headline: "Pause for a second.",
                         body: "This still looks off-track. Want to explain why it helps?",
-                        prompt: "Why should I let you continue on this?",
+                        prompt: "This looks a bit off-track — what's going on?",
                         appName: "Current app",
                         evaluationID: evaluationID,
-                        submitButtonTitle: "Submit",
+                        submitButtonTitle: "Explain",
                         secondaryButtonTitle: "Back to work"
                     )
                 )

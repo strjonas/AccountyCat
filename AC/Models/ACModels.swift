@@ -80,7 +80,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
 
     var byokModelIdentifier: String {
         switch self {
-        case .economy:  return "google/gemma-4-26b-a4b-it"
+        case .economy:  return "qwen/qwen3.5-9b"
         case .balanced: return "google/gemma-4-31b-it"
         case .smartest: return "google/gemini-3-flash-preview"
         }
@@ -279,9 +279,86 @@ enum ActionKind: String, Codable, Sendable {
 }
 
 struct ActionRecord: Codable, Hashable, Sendable {
+    var id: String?
     var kind: ActionKind
     var message: String?
     var timestamp: Date
+    var evaluationID: String?
+    var contextKey: String?
+    var appName: String?
+    var windowTitle: String?
+
+    init(
+        id: String? = nil,
+        kind: ActionKind,
+        message: String?,
+        timestamp: Date,
+        evaluationID: String? = nil,
+        contextKey: String? = nil,
+        appName: String? = nil,
+        windowTitle: String? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.message = message
+        self.timestamp = timestamp
+        self.evaluationID = evaluationID
+        self.contextKey = contextKey
+        self.appName = appName
+        self.windowTitle = windowTitle
+    }
+}
+
+enum FocusSegmentAssessment: String, Codable, Sendable {
+    case focused
+    case distracted
+    case unclear
+    case idle
+
+    init(distractionAssessment: ModelAssessment?) {
+        switch distractionAssessment {
+        case .focused:
+            self = .focused
+        case .distracted:
+            self = .distracted
+        case .unclear, .none:
+            self = .unclear
+        }
+    }
+}
+
+struct FocusTimelineSegment: Codable, Hashable, Identifiable, Sendable {
+    var id: UUID
+    var startAt: Date
+    var endAt: Date
+    var appName: String
+    var bundleIdentifier: String?
+    var windowTitle: String?
+    var assessment: FocusSegmentAssessment
+    var driftScore: Double?
+    var interventionID: String?
+
+    init(
+        id: UUID = UUID(),
+        startAt: Date,
+        endAt: Date,
+        appName: String,
+        bundleIdentifier: String?,
+        windowTitle: String?,
+        assessment: FocusSegmentAssessment,
+        driftScore: Double? = nil,
+        interventionID: String? = nil
+    ) {
+        self.id = id
+        self.startAt = startAt
+        self.endAt = endAt
+        self.appName = appName
+        self.bundleIdentifier = bundleIdentifier
+        self.windowTitle = windowTitle
+        self.assessment = assessment
+        self.driftScore = driftScore
+        self.interventionID = interventionID
+    }
 }
 
 struct OverlayPresentation: Codable, Hashable, Equatable, Sendable {
@@ -324,6 +401,7 @@ enum ChatRole: String, Codable, Sendable {
 enum ChatMessageStyle: String, Codable, Sendable {
     case standard
     case nudge
+    case celebration
 }
 
 struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
@@ -479,6 +557,7 @@ struct ACState: Codable, Sendable {
     var recentActions: [ActionRecord] = []
     var recentSwitches: [AppSwitchRecord] = []
     var usageByDay: [String: [String: TimeInterval]] = [:]
+    var focusSegments: [FocusTimelineSegment] = []
     /// Timestamped persistent memory of user preferences, rules, and important context.
     /// The LLM decides what goes in here (via chat-reply memory_update) and consolidates
     /// when the list grows or entries go stale. Code does not filter, score, or rewrite.
@@ -518,6 +597,7 @@ struct ACState: Codable, Sendable {
         case recentActions
         case recentSwitches
         case usageByDay
+        case focusSegments
         case distraction
         case memory
         case memoryEntries
@@ -564,6 +644,7 @@ struct ACState: Codable, Sendable {
         recentActions = try container.decodeIfPresent([ActionRecord].self, forKey: .recentActions) ?? []
         recentSwitches = try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
         usageByDay = try container.decodeIfPresent([String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
+        focusSegments = try container.decodeIfPresent([FocusTimelineSegment].self, forKey: .focusSegments) ?? []
         let legacyDistraction = try container.decodeIfPresent(DistractionMetadata.self, forKey: .distraction)
         if algorithmState.llmPolicy.distraction == DistractionMetadata(),
            let legacyDistraction {
@@ -632,6 +713,7 @@ struct ACState: Codable, Sendable {
         try container.encode(recentActions, forKey: .recentActions)
         try container.encode(recentSwitches, forKey: .recentSwitches)
         try container.encode(usageByDay, forKey: .usageByDay)
+        try container.encode(focusSegments, forKey: .focusSegments)
         try container.encode(distraction, forKey: .distraction)
         try container.encode(memoryEntries, forKey: .memoryEntries)
         try container.encodeIfPresent(lastMemoryConsolidationAt, forKey: .lastMemoryConsolidationAt)
@@ -647,10 +729,12 @@ struct ACState: Codable, Sendable {
         recentActions = []
         recentSwitches = []
         usageByDay = [:]
+        focusSegments = []
         monitoringConfiguration.algorithmID = MonitoringConfiguration.defaultAlgorithmID
         monitoringConfiguration.promptProfileID = MonitoringConfiguration.defaultPromptProfileID
         monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
         monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
+        monitoringConfiguration.cadenceMode = .balanced
         algorithmState = AlgorithmStateEnvelope()
         hasMigratedPolicyAlgorithmDefault = true
         memoryEntries = []

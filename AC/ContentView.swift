@@ -188,6 +188,9 @@ struct ContentView: View {
         }
         .padding(18)
         .padding(.bottom, 8)
+        .onAppear {
+            controller.maybeCelebrateFocusProgress()
+        }
     }
 
     // MARK: - Settings Tab
@@ -731,18 +734,23 @@ private struct StatsSection: View {
                 .textCase(.uppercase)
                 .tracking(0.6)
 
+            TimelineStrip(
+                segments: stats.timelineSegments,
+                accent: accent
+            )
+
             HStack(spacing: 8) {
                 StatCard(icon: "clock.fill",
-                         value: formatDuration(stats.totalTrackedSeconds),
-                         label: "Tracked",
+                         value: formatDuration(stats.focusedSeconds),
+                         label: "Focused",
                          accent: accent)
-                StatCard(icon: "bubble.left.fill",
-                         value: "\(stats.nudgeCount)",
-                         label: "Nudges",
+                StatCard(icon: "bolt.fill",
+                         value: formatDuration(stats.longestFocusedBlockSeconds),
+                         label: "Best block",
                          accent: accent)
-                StatCard(icon: "arrow.uturn.backward.circle.fill",
-                         value: "\(stats.backToWorkCount)",
-                         label: "Rescues",
+                StatCard(icon: "flame.fill",
+                         value: "\(stats.streakDays)d",
+                         label: "Streak",
                          accent: accent)
             }
         }
@@ -755,6 +763,91 @@ private struct StatsSection: View {
         if h > 0 { return "\(h)h \(m)m" }
         if m > 0 { return "\(m)m" }
         return "0m"
+    }
+}
+
+private struct TimelineStrip: View {
+    let segments: [FocusTimelineSegment]
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(accent.opacity(0.12)))
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.acSurface)
+                    ForEach(renderedSegments, id: \.id) { segment in
+                        Capsule(style: .continuous)
+                            .fill(color(for: segment.assessment))
+                            .frame(
+                                width: max(2, proxy.size.width * segment.widthFraction),
+                                height: proxy.size.height
+                            )
+                            .offset(x: proxy.size.width * segment.startFraction)
+                    }
+                }
+            }
+            .frame(height: 9)
+
+            Text("Timeline")
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
+                )
+        )
+    }
+
+    private struct RenderedSegment: Identifiable {
+        let id: UUID
+        let assessment: FocusSegmentAssessment
+        let startFraction: Double
+        let widthFraction: Double
+    }
+
+    private var renderedSegments: [RenderedSegment] {
+        let cal = Calendar.current
+        let now = Date()
+        let startOfDay = cal.startOfDay(for: now)
+        let endOfDay = cal.date(byAdding: .day, value: 1, to: startOfDay) ?? now
+        let total = endOfDay.timeIntervalSince(startOfDay)
+        guard total > 0 else { return [] }
+
+        return segments.compactMap { segment in
+            let start = max(segment.startAt, startOfDay)
+            let end = min(segment.endAt, now)
+            let duration = end.timeIntervalSince(start)
+            guard duration > 0 else { return nil }
+            return RenderedSegment(
+                id: segment.id,
+                assessment: segment.assessment,
+                startFraction: start.timeIntervalSince(startOfDay) / total,
+                widthFraction: duration / total
+            )
+        }
+    }
+
+    private func color(for assessment: FocusSegmentAssessment) -> Color {
+        switch assessment {
+        case .focused: return accent.opacity(0.78)
+        case .distracted: return Color.orange.opacity(0.78)
+        case .unclear: return Color.gray.opacity(0.42)
+        case .idle: return Color.acHairline
+        }
     }
 }
 
@@ -1267,6 +1360,20 @@ private struct AISettingsSection: View {
                         .padding(.leading, 26)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Check timing")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 26)
+
+                CadencePicker(
+                    selected: controller.state.monitoringConfiguration.cadenceMode,
+                    usingOnline: controller.usingOnlineMonitoring,
+                    onSelect: { controller.updateMonitoringCadenceMode($0) }
+                )
+                .padding(.leading, 26)
+            }
         }
     }
 
@@ -1305,6 +1412,60 @@ private struct AISettingsSection: View {
             .foregroundStyle(Color.acTextPrimary.opacity(0.72))
         }
         .padding(.top, 2)
+    }
+}
+
+private struct CadencePicker: View {
+    let selected: MonitoringCadenceMode
+    let usingOnline: Bool
+    let onSelect: (MonitoringCadenceMode) -> Void
+    @Environment(\.acAccent) private var accent
+
+    var body: some View {
+        VStack(spacing: 7) {
+            ForEach(MonitoringCadenceMode.allCases, id: \.self) { mode in
+                Button {
+                    onSelect(mode)
+                } label: {
+                    HStack(alignment: .top, spacing: 9) {
+                        Image(systemName: selected == mode ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(selected == mode ? accent : Color.secondary.opacity(0.45))
+                            .padding(.top, 1)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(mode.displayName)
+                                    .font(.ac(12, weight: .semibold))
+                                    .foregroundStyle(Color.acTextPrimary)
+                                if usingOnline {
+                                    Text(mode.byokCostHint)
+                                        .font(.ac(10, weight: .medium))
+                                        .foregroundStyle(accent.opacity(0.82))
+                                }
+                            }
+                            Text(mode.description)
+                                .font(.ac(10))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .fill(selected == mode ? accent.opacity(0.10) : Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                    .stroke(selected == mode ? accent.opacity(0.35) : Color.acHairline, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 
