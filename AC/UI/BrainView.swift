@@ -307,12 +307,12 @@ struct BrainView: View {
         VStack(alignment: .leading, spacing: 10) {
             brainSectionHeader(
                 icon: "brain.head.profile",
-                title: "Memory",
-                subtitle: "Runs AC's cleanup pass across saved memory and learned rules when things feel stale or noisy."
+                title: "Context",
+                subtitle: "Facts AC has picked up about you and your work."
             )
 
             HStack(spacing: 10) {
-                Button(controller.consolidatingMemory ? "Consolidating…" : "Consolidate memory") {
+                Button(controller.consolidatingMemory ? "Consolidating…" : "Clean up context") {
                     controller.consolidateMemoryNow()
                 }
                 .buttonStyle(ACSecondaryButton())
