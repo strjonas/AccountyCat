@@ -79,6 +79,16 @@ struct ContentView: View {
         } message: {
             Text(settingsSuccessMessage ?? "")
         }
+        .alert(item: $controller.modelDownloadNotice) { notice in
+            Alert(
+                title: Text("Download needed"),
+                message: Text("\(notice.modelDisplayName) isn't downloaded yet. AC will keep using \(notice.fallbackDisplayName) until the download finishes, then switch automatically."),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+        .sheet(item: $controller.modelDownloadSuccess) { notice in
+            ModelDownloadSuccessSheet(modelName: notice.modelDisplayName)
+        }
     }
 
     // MARK: - Header
@@ -598,6 +608,31 @@ private struct StatusDot: View {
         case .checking:    return "Checking"
         default:           return "Setup needed"
         }
+    }
+}
+
+private struct ModelDownloadSuccessSheet: View {
+    let modelName: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 36, weight: .semibold))
+                .foregroundStyle(.green)
+            Text("Download complete")
+                .font(.ac(16, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+            Text("Downloaded \(modelName) successfully. Now using \(modelName).")
+                .font(.ac(12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("OK") { dismiss() }
+                .buttonStyle(ACPrimaryButton())
+                .padding(.top, 4)
+        }
+        .padding(22)
+        .frame(minWidth: 280)
     }
 }
 
@@ -1226,8 +1261,50 @@ private struct AISettingsSection: View {
                     // Re-run RAM check (spec: "runs when this section opens")
                     controller.refreshSystemState(persist: false)
                 }
+
+                if showLocalModelProgress {
+                    localModelProgress
+                        .padding(.leading, 26)
+                }
             }
         }
+    }
+
+    private var showLocalModelProgress: Bool {
+        !controller.usingOnlineMonitoring && (controller.installingRuntime || controller.pendingLocalModelChange != nil)
+    }
+
+    @ViewBuilder
+    private var localModelProgress: some View {
+        let pendingName = controller.pendingLocalModelChange
+            .map { AppController.shortModelName(for: $0.modelIdentifier) }
+        let fallbackMessage = pendingName.map { "Downloading \($0)…" } ?? "Downloading model…"
+        let percentText = controller.setupProgressValue.map { progress -> String in
+            let clamped = max(0, min(100, Int((progress * 100).rounded())))
+            return "\(clamped)%"
+        }
+
+        VStack(alignment: .leading, spacing: 6) {
+            if let progress = controller.setupProgressValue {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            } else {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(controller.setupProgressMessage ?? fallbackMessage)
+                    .lineLimit(2)
+                Spacer(minLength: 6)
+                if let percentText {
+                    Text(percentText)
+                }
+            }
+            .font(.ac(10))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+        }
+        .padding(.top, 2)
     }
 }
 

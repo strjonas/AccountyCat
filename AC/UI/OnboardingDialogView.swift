@@ -91,10 +91,15 @@ struct OnboardingDialogView: View {
                     ProgressView(value: progress)
                         .progressViewStyle(.linear)
 
-                    Text(controller.setupProgressMessage ?? "Downloading model…")
-                        .font(.ac(10))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                        .lineLimit(2)
+                    let percent = max(0, min(100, Int((progress * 100).rounded())))
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(controller.setupProgressMessage ?? "Downloading model…")
+                            .lineLimit(2)
+                        Spacer(minLength: 6)
+                        Text("\(percent)%")
+                    }
+                    .font(.ac(10))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                 }
                 .padding(.top, 2)
             } else if controller.installingRuntime {

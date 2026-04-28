@@ -29,6 +29,9 @@ final class AppController: ObservableObject {
     @Published var setupProgressValue: Double?
     @Published var setupProgressMessage: String?
     @Published var setupErrorMessage: String?
+    @Published var pendingLocalModelChange: PendingLocalModelChange?
+    @Published var modelDownloadNotice: ModelDownloadNotice?
+    @Published var modelDownloadSuccess: ModelDownloadSuccess?
     @Published var dependencyInstallPromptVisible = false
     @Published var showingOnboardingCompletion = false
     @Published var activityStatusText = "Checking permissions and local runtime."
@@ -150,7 +153,13 @@ final class AppController: ObservableObject {
         let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
 
         if installingRuntime || installingDependencies {
-            state.setupStatus = .installing
+            if installingRuntime,
+               pendingLocalModelChange != nil,
+               setupDiagnostics.isReady {
+                state.setupStatus = .ready
+            } else {
+                state.setupStatus = .installing
+            }
         } else if !state.permissions.satisfies(permissionRequirements) {
             state.setupStatus = .needsPermissions
         } else if usesOnlineInference {
@@ -166,6 +175,9 @@ final class AppController: ObservableObject {
         updateActivityStatusLine()
         handleSetupStatusTransition(from: previousStatus, to: state.setupStatus)
         maybePromptForMissingDependencies()
+        if !installingRuntime {
+            _ = applyPendingLocalModelIfReady()
+        }
 
         if persist {
             persistState()
@@ -310,6 +322,11 @@ final class AppController: ObservableObject {
         case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
         case "google/gemini-3-flash-preview":            return "Gemini 3.1 Flash"
         case "qwen/qwen2.5-vl-72b-instruct":       return "Qwen 2.5 VL"
+        case "qwen/qwen3.5-9b":                 return "Qwen 3.5"
+        case "unsloth/gemma-4-E2B-it-GGUF:Q4_0": return "Gemma 4 E2B"
+        case "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M": return "Gemma 4 E4B"
+        case "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL": return "Qwen 3.5 9B"
+        
         default: break
         }
 
@@ -343,12 +360,31 @@ final class AppController: ObservableObject {
         let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         let newValue: String? = trimmed.isEmpty ? nil : trimmed
         guard state.monitoringConfiguration.modelOverride != newValue else { return }
-        state.monitoringConfiguration.modelOverride = newValue
-        // Auto-disable vision for text-only models so the screenshot call is skipped entirely
-        let effectiveModel = newValue ?? DevelopmentModelConfiguration.fallbackModelIdentifier
-        if !DevelopmentModelConfiguration.supportsVision(for: effectiveModel) && visionEnabled {
-            state.monitoringConfiguration.pipelineProfileID = "title_only_default"
+        if state.monitoringConfiguration.usesOnlineInference {
+            state.monitoringConfiguration.modelOverride = newValue
+            brainService?.handleMonitoringConfigurationChange()
+            refreshSystemState()
+            persistState()
+            logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
+            return
         }
+
+        let fallbackIdentifier = activeLocalModelIdentifier()
+        let runtimeProfileModel = runtimeProfileModelIdentifier()
+        let targetModelIdentifier = newValue ?? runtimeProfileModel
+        if queueLocalModelDownloadIfNeeded(
+            targetModelIdentifier: targetModelIdentifier,
+            desiredOverride: newValue,
+            fallbackIdentifier: fallbackIdentifier
+        ) {
+            brainService?.handleMonitoringConfigurationChange()
+            refreshSystemState()
+            persistState()
+            logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
+            return
+        }
+
+        applyLocalModelOverride(newValue)
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState()
         persistState()
@@ -398,8 +434,99 @@ final class AppController: ObservableObject {
         case .openRouter:
             state.monitoringConfiguration.onlineModelIdentifier = state.aiTier.byokModelIdentifier
         case .local:
-            state.monitoringConfiguration.modelOverride = state.aiTier.localModelOverride
+            let fallbackIdentifier = activeLocalModelIdentifier()
+            let targetModelIdentifier = state.aiTier.localModelOverride
+            if !queueLocalModelDownloadIfNeeded(
+                targetModelIdentifier: targetModelIdentifier,
+                desiredOverride: targetModelIdentifier,
+                fallbackIdentifier: fallbackIdentifier
+            ) {
+                applyLocalModelOverride(targetModelIdentifier)
+            }
         }
+    }
+
+    private func runtimeProfileModelIdentifier() -> String {
+        LLMPolicyCatalog.runtimeProfile(id: state.monitoringConfiguration.runtimeProfileID)
+            .descriptor
+            .modelIdentifier
+    }
+
+    private func activeLocalModelIdentifier() -> String {
+        let override = state.monitoringConfiguration.modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let override, !override.isEmpty {
+            return override
+        }
+        return runtimeProfileModelIdentifier()
+    }
+
+    private func applyLocalModelOverride(_ override: String?) {
+        state.monitoringConfiguration.modelOverride = override
+        let effectiveModel = override ?? runtimeProfileModelIdentifier()
+        if !DevelopmentModelConfiguration.supportsVision(for: effectiveModel) && visionEnabled {
+            state.monitoringConfiguration.pipelineProfileID = "title_only_default"
+        }
+    }
+
+    private func applyLocalModelFallback(_ fallbackIdentifier: String) {
+        let runtimeModel = runtimeProfileModelIdentifier()
+        let override = fallbackIdentifier == runtimeModel ? nil : fallbackIdentifier
+        applyLocalModelOverride(override)
+    }
+
+    @discardableResult
+    private func queueLocalModelDownloadIfNeeded(
+        targetModelIdentifier: String,
+        desiredOverride: String?,
+        fallbackIdentifier: String
+    ) -> Bool {
+        let diagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: targetModelIdentifier
+        )
+        guard !diagnostics.modelArtifactsPresent else { return false }
+
+        let targetName = Self.shortModelName(for: targetModelIdentifier)
+        let fallbackName = Self.shortModelName(for: fallbackIdentifier)
+        pendingLocalModelChange = PendingLocalModelChange(
+            modelIdentifier: targetModelIdentifier,
+            desiredOverride: desiredOverride
+        )
+        modelDownloadNotice = ModelDownloadNotice(
+            modelIdentifier: targetModelIdentifier,
+            modelDisplayName: targetName,
+            fallbackDisplayName: fallbackName
+        )
+        applyLocalModelFallback(fallbackIdentifier)
+
+        if !installingRuntime {
+            installRuntime(modelIdentifier: targetModelIdentifier)
+        }
+        return true
+    }
+
+    @discardableResult
+    private func applyPendingLocalModelIfReady() -> Bool {
+        guard let pending = pendingLocalModelChange else { return false }
+        guard state.monitoringConfiguration.inferenceBackend == .local else {
+            pendingLocalModelChange = nil
+            return true
+        }
+        let diagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: pending.modelIdentifier
+        )
+        guard diagnostics.modelArtifactsPresent else { return false }
+
+        applyLocalModelOverride(pending.desiredOverride)
+        pendingLocalModelChange = nil
+        modelDownloadSuccess = ModelDownloadSuccess(
+            modelIdentifier: pending.modelIdentifier,
+            modelDisplayName: Self.shortModelName(for: pending.modelIdentifier)
+        )
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        return true
     }
 
     func updateThinkingEnabled(_ enabled: Bool) {
@@ -681,7 +808,7 @@ final class AppController: ObservableObject {
         }
     }
 
-    func installRuntime() {
+    func installRuntime(modelIdentifier: String? = nil) {
         guard !installingRuntime else { return }
 
         refreshSystemState()
@@ -701,7 +828,7 @@ final class AppController: ObservableObject {
 
         Task {
             do {
-                let setupModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+                let setupModelIdentifier = modelIdentifier ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
                 let diagnosticsBeforeInstall = RuntimeSetupService.inspect(
                     runtimeOverride: state.runtimePathOverride,
                     modelIdentifier: setupModelIdentifier
@@ -738,6 +865,7 @@ final class AppController: ObservableObject {
             setupProgressValue = nil
             setupProgressMessage = nil
             refreshSystemState()
+            _ = applyPendingLocalModelIfReady()
         }
     }
 
@@ -1338,6 +1466,24 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+
+struct PendingLocalModelChange: Equatable, Sendable {
+    let modelIdentifier: String
+    let desiredOverride: String?
+}
+
+struct ModelDownloadNotice: Identifiable, Sendable {
+    let id = UUID()
+    let modelIdentifier: String
+    let modelDisplayName: String
+    let fallbackDisplayName: String
+}
+
+struct ModelDownloadSuccess: Identifiable, Sendable {
+    let id = UUID()
+    let modelIdentifier: String
+    let modelDisplayName: String
+}
     private func repairInvalidMonitoringConfigurationIfNeeded() {
         let algorithmID = state.monitoringConfiguration.algorithmID
         if !state.hasMigratedPolicyAlgorithmDefault,

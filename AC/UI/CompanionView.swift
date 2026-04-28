@@ -155,18 +155,19 @@ struct CompanionView: View {
 
     @ViewBuilder
     private var visionBadge: some View {
-        if !controller.visionEnabled {
-            ZStack {
-                Circle()
-                    .fill(Color.acSurface)
-                    .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
-                    .frame(width: 19, height: 19)
-                Image(systemName: "eye.slash.fill")
-                    .font(.system(size: 7, weight: .semibold))
-                    .foregroundStyle(accent.opacity(0.55))
-            }
-            .shadow(color: .black.opacity(0.10), radius: 3, y: 1)
-        }
+        // disable for now, doesn't loook great. need different concept. 
+        // if !controller.visionEnabled {
+        //     ZStack {
+        //         Circle()
+        //             .fill(Color.acSurface)
+        //             .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+        //             .frame(width: 19, height: 19)
+        //         Image(systemName: "eye.slash.fill")
+        //             .font(.system(size: 7, weight: .semibold))
+        //             .foregroundStyle(accent.opacity(0.55))
+        //     }
+        //     .shadow(color: .black.opacity(0.10), radius: 3, y: 1)
+        // }
     }
 
     // MARK: - Animations
