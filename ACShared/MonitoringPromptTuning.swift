@@ -276,16 +276,18 @@ enum MonitoringPromptTuning {
                 stage: .safelistAppeal,
                 systemPrompt: """
                 You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks. This is important to make the app efficient and avoid unnecessary checks.
-                You will see the user's stated goals, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
+                You will see the user's stated goals, memory/rules, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
 
                 Return exactly one JSON object:
                 {"approve": true|false, "scope_kind": "bundle" | "title_pattern", "title_pattern": "optional substring", "summary": "<=20 words", "reason": "short reason"}
 
                 Approval rules:
-                - Approve only if the exact app/title combination is very unlikely to become distracting until the title changes. If it could plausibly host distracting content, deny.
+                - Approve when the exact app/title combination, and screenshot if present, strongly anchors the activity to the user's goals and is unlikely to drift without the title changing. Do not deny merely because the broad app category can be misused.
+                - Deny when the exact title is generic, entertainment/social-coded, or could plausibly drift into unrelated distracting content without the title changing.
                 - `requiresTitleScope=true` means the app is ambiguous at the app level. In that case you MUST deny any bundle-level safelist and, if approving, you MUST set `scope_kind="title_pattern"` using the exact current title or another equally narrow title substring from the samples.
                 - `isBrowser=true` always implies `requiresTitleScope=true`. Browsers are never safe at the whole-app level.
                 - If `screenshotIncluded=true`, use the screenshot as additional evidence. If the screenshot weakens confidence that this exact title is consistently on-task, deny.
+                - If `freeFormMemory` says the user removed or distrusts a safelist for this app/title, deny unless the current title is clearly different and safe.
                 - Stable tools like IDEs, editors, terminals, doc tools, design tools, and project trackers can be approved at app level only when `requiresTitleScope=false` and the app itself is plausibly always-productive for the user's goals.
                 - Media, social, chat, email, and browser surfaces should usually require exact-title scoping, and should be denied whenever the exact title could still hide distracting content.
 

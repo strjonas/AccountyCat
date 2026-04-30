@@ -13,6 +13,27 @@ nonisolated enum PolicyRuleKind: String, Codable, CaseIterable, Sendable {
     case tonePreference = "tone_preference"
 }
 
+nonisolated extension PolicyRule {
+    var isAutoSafelistRule: Bool {
+        kind == .allow && source == .system
+    }
+
+    var safelistMemoryScopeDescription: String {
+        var parts: [String] = []
+        if let bundleIdentifier = scope.bundleIdentifier, !bundleIdentifier.isEmpty {
+            parts.append(bundleIdentifier)
+        } else if let appName = scope.appName, !appName.isEmpty {
+            parts.append(appName)
+        } else {
+            parts.append(summary)
+        }
+        if !scope.titleContains.isEmpty {
+            parts.append("title contains \(scope.titleContains.joined(separator: ", "))")
+        }
+        return parts.joined(separator: " / ")
+    }
+}
+
 nonisolated enum PolicyRuleSource: String, Codable, CaseIterable, Sendable {
     case userChat = "user_chat"
     case explicitFeedback = "explicit_feedback"

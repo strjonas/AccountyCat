@@ -146,6 +146,7 @@ nonisolated struct MonitoringSafelistAppealPromptPayload: Encodable, Sendable {
     var bundleIdentifier: String?
     var sampleWindowTitles: [String]
     var goals: String
+    var freeFormMemory: String
     var focusedCount: Int
     var distinctDays: Int
     var isBrowser: Bool

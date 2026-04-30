@@ -212,6 +212,20 @@ final class AppController: ObservableObject {
     }
 
     func deleteRule(id: String) {
+        let removedRule = state.policyMemory.rules.first { $0.id == id }
+        if let removedRule, removedRule.isAutoSafelistRule {
+            let now = Date()
+            let scope = removedRule.safelistMemoryScopeDescription
+            appendMemoryLine("• Safelist correction: Do not auto-safelist \(scope). User manually removed this safelist rule.")
+            for key in Array(state.algorithmState.llmPolicy.focusedObservations.keys) {
+                guard state.algorithmState.llmPolicy.focusedObservations[key]?.lastAutoAllowRuleID == id else { continue }
+                state.algorithmState.llmPolicy.focusedObservations[key]?.previousAutoAllowOutcome = .revokedByUser
+                state.algorithmState.llmPolicy.focusedObservations[key]?.lastAutoAllowRuleID = nil
+                state.algorithmState.llmPolicy.focusedObservations[key]?.lastPromotionOutcome = .denied
+                state.algorithmState.llmPolicy.focusedObservations[key]?.lastPromotionReason = "User manually removed this safelist rule."
+                state.algorithmState.llmPolicy.focusedObservations[key]?.lastPromotionCheckedAt = now
+            }
+        }
         state.policyMemory.rules.removeAll { $0.id == id }
         state.policyMemory.lastUpdatedAt = Date()
         persistState()

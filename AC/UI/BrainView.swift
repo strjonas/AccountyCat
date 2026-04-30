@@ -21,7 +21,18 @@ struct BrainView: View {
     @FocusState private var goalsEditorFocused: Bool
     @State private var localGoalsText: String = ""
 
-    private var rules: [PolicyRule] { controller.state.policyMemory.rules }
+    private var rules: [PolicyRule] {
+        controller.state.policyMemory.rules.filter { !$0.isAutoSafelistRule }
+    }
+    private var safelistRules: [PolicyRule] {
+        controller.state.policyMemory.rules
+            .filter(\.isAutoSafelistRule)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+    private var safelistObservations: [FocusedObservationStat] {
+        controller.state.algorithmState.llmPolicy.focusedObservations.values
+            .sorted { $0.lastSeenAt > $1.lastSeenAt }
+    }
     private var lockedCount: Int { rules.filter(\.isLocked).count }
 
     var body: some View {
@@ -29,6 +40,7 @@ struct BrainView: View {
             focusSection
             rulesSection
             memoryConsolidationSection
+            safelistSection
         }
         .padding(20)
         .padding(.bottom, 8)
@@ -121,6 +133,56 @@ struct BrainView: View {
         .animation(.acSnap, value: showingAddRule)
         .animation(.acSnap, value: lockedCount >= 5)
         .animation(.acSnap, value: rules.map(\.id))
+    }
+
+    // MARK: - Safelist
+
+    private var safelistSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            brainSectionHeader(
+                icon: "checkmark.shield",
+                title: "Safelist",
+                subtitle: safelistRules.isEmpty
+                    ? "Auto-approved contexts will appear here."
+                    : "\(safelistRules.count) auto-approved context\(safelistRules.count == 1 ? "" : "s")"
+            )
+
+            if safelistRules.isEmpty {
+                Text("Nothing has been auto-safelisted yet.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 2)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(safelistRules) { rule in
+                        RuleRowView(
+                            rule: rule,
+                            onToggleLocked: { controller.toggleRuleLocked(id: rule.id) },
+                            onDelete: { controller.deleteRule(id: rule.id) }
+                        )
+                    }
+                }
+            }
+
+            if ACBuild.isDebug {
+                let candidates = safelistObservations
+                    .filter { $0.lastPromotionOutcome != .approved || $0.lastAutoAllowRuleID == nil }
+                    .prefix(10)
+                if !candidates.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Not safelisted")
+                            .font(.ac(11, weight: .semibold))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.70))
+                            .padding(.top, 4)
+                        ForEach(Array(candidates), id: \.contextFingerprint) { observation in
+                            SafelistObservationRowView(observation: observation)
+                        }
+                    }
+                }
+            }
+        }
+        .animation(.acSnap, value: safelistRules.map(\.id))
     }
 
     // MARK: - Locked threshold banner
@@ -471,6 +533,51 @@ private struct RuleRowView: View {
     }
 }
 
+// MARK: - Safelist Observation Row
+
+private struct SafelistObservationRowView: View {
+    let observation: FocusedObservationStat
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(observation.promotionStatusLabel)
+                .font(.ac(9, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Capsule(style: .continuous).fill(observation.promotionStatusColor.opacity(0.82)))
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(observation.titleSignature ?? observation.appName)
+                    .font(.ac(12, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(4)
+
+                Text(observation.debugSummary)
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(3)
+            }
+
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(Color.acHairline, lineWidth: 1)
+                )
+        )
+    }
+}
+
 // MARK: - Memory Entry Row
 
 private struct MemoryEntryRowView: View {
@@ -544,6 +651,43 @@ private extension PolicyRule {
         case .appeal:           return "Appeal"
         case .system:           return "System"
         }
+    }
+}
+
+private extension FocusedObservationStat {
+    var promotionStatusLabel: String {
+        switch lastPromotionOutcome {
+        case .approved: return "Approved"
+        case .denied: return "Denied"
+        case .invalid: return "Invalid"
+        case .error: return "Error"
+        case .ineligible: return "Waiting"
+        case .none: return "Seen"
+        }
+    }
+
+    var promotionStatusColor: Color {
+        switch lastPromotionOutcome {
+        case .approved: return .green
+        case .denied, .invalid: return .red
+        case .error: return .orange
+        case .ineligible, .none: return .secondary
+        }
+    }
+
+    var debugSummary: String {
+        var parts = [
+            appName,
+            "\(focusedCount) focused",
+            "\(distinctDayCount)d",
+            "last \(lastSeenAt.brainRelativeLabel)"
+        ]
+        if let reason = lastPromotionReason, !reason.isEmpty {
+            parts.append(reason)
+        } else if let lastPromotionOutcome {
+            parts.append(lastPromotionOutcome.rawValue)
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

@@ -113,6 +113,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
            let cached = state.llmPolicy.decisionCacheByContext[key],
            cached.contextKey == key,
            cached.assessment == .focused,
+           state.llmPolicy.distraction.lastAssessment == nil,
            now.timeIntervalSince(cached.decidedAt) < configuration.cadenceMode.focusedDecisionCacheTTL {
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
@@ -681,6 +682,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             now: input.now
         )
         guard case .eligible(let tier) = eligibility else {
+            if case .ineligible(let reason) = eligibility {
+                workingStat.lastPromotionOutcome = .ineligible
+                workingStat.lastPromotionReason = reason
+                workingStat.lastPromotionCheckedAt = input.now
+                policyState.focusedObservations[observation.fingerprint] = workingStat
+            }
             return nil
         }
 
@@ -694,10 +701,37 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             focusedCount: workingStat.focusedCount,
             distinctDays: workingStat.distinctDayCount,
             goals: input.goals,
+            freeFormMemory: input.memory.truncatedMultilineForPrompt(
+                maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+                maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+            ),
             configuration: input.configuration,
             runtimeOverride: input.runtimeOverride,
             screenshotPath: visionEnabled(for: input.configuration) ? input.snapshot.screenshotPath : nil
         ) else {
+            workingStat.lastPromotionOutcome = .error
+            workingStat.lastPromotionReason = "Safelist appeal failed or returned invalid JSON."
+            workingStat.lastPromotionCheckedAt = input.now
+            policyState.focusedObservations[observation.fingerprint] = workingStat
+            await ActivityLogService.shared.append(
+                category: "safelist-promotion-denied",
+                message: "\(observation.appName): appeal failed for \(observation.titleSignature ?? observation.fingerprint)"
+            )
+            return nil
+        }
+
+        guard envelope.approve else {
+            workingStat.lastPromotionOutcome = .denied
+            workingStat.lastPromotionReason = Self.cleanedPromotionReason(
+                envelope.reason,
+                fallback: "LLM denied safelist promotion."
+            )
+            workingStat.lastPromotionCheckedAt = input.now
+            policyState.focusedObservations[observation.fingerprint] = workingStat
+            await ActivityLogService.shared.append(
+                category: "safelist-promotion-denied",
+                message: "\(observation.appName): \(workingStat.lastPromotionReason ?? "denied")"
+            )
             return nil
         }
 
@@ -707,12 +741,29 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             tier: tier,
             now: input.now
         ) else {
+            workingStat.lastPromotionOutcome = .invalid
+            workingStat.lastPromotionReason = Self.cleanedPromotionReason(
+                envelope.reason,
+                fallback: "LLM approved promotion, but returned an unsafe or invalid safelist scope."
+            )
+            workingStat.lastPromotionCheckedAt = input.now
+            policyState.focusedObservations[observation.fingerprint] = workingStat
+            await ActivityLogService.shared.append(
+                category: "safelist-promotion-denied",
+                message: "\(observation.appName): invalid scope for \(observation.titleSignature ?? observation.fingerprint)"
+            )
             return nil
         }
 
         var stored = workingStat
         stored.lastAutoAllowRuleID = rule.id
         stored.previousAutoAllowOutcome = nil
+        stored.lastPromotionOutcome = .approved
+        stored.lastPromotionReason = Self.cleanedPromotionReason(
+            envelope.reason,
+            fallback: "Approved by safelist appeal."
+        )
+        stored.lastPromotionCheckedAt = input.now
         policyState.focusedObservations[observation.fingerprint] = stored
 
         await ActivityLogService.shared.append(
@@ -729,6 +780,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 reason: "safelist_promotion_\(tier.rawValue)"
             )
         ])
+    }
+
+    private static func cleanedPromotionReason(_ reason: String?, fallback: String) -> String {
+        let trimmed = reason?.cleanedSingleLine ?? ""
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     private func evictOldestDecisionCacheEntries(from cache: inout [String: CachedDecision]) {

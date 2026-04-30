@@ -370,7 +370,7 @@ struct SafelistPromotionTests {
         let envelope = MonitoringSafelistAppealEnvelope(
             approve: true,
             scopeKind: .titlePattern,
-            titlePattern: "AC idea log - Google Docs",
+            titlePattern: "Google Docs",
             summary: "user uses docs for project notes",
             reason: "matches goals"
         )

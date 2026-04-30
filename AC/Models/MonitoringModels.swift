@@ -53,9 +53,9 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
 
     var focusedFollowUp: TimeInterval {
         switch self {
-        case .sharp: return 5 * 60
-        case .balanced: return 10 * 60
-        case .gentle: return 15 * 60
+        case .sharp: return 2 * 60
+        case .balanced: return 5 * 60
+        case .gentle: return 10 * 60
         }
     }
 
@@ -76,11 +76,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     }
 
     var focusedDecisionCacheTTL: TimeInterval {
-        switch self {
-        case .sharp: return 45
-        case .balanced: return 90
-        case .gentle: return 3 * 60
-        }
+        focusedFollowUp * 3
     }
 }
 
@@ -288,6 +284,15 @@ struct LLMFocusAlgorithmState: Codable, Sendable, Equatable {
 enum AutoAllowOutcome: String, Codable, Sendable, Equatable {
     case expiredClean = "expired_clean"
     case revokedByDistracted = "revoked_by_distracted"
+    case revokedByUser = "revoked_by_user"
+}
+
+enum SafelistPromotionAttemptOutcome: String, Codable, Sendable, Equatable {
+    case approved
+    case denied
+    case invalid
+    case error
+    case ineligible
 }
 
 struct FocusedObservationStat: Codable, Sendable, Equatable {
@@ -304,8 +309,47 @@ struct FocusedObservationStat: Codable, Sendable, Equatable {
     var promotionAttemptedAt: Date?
     var lastAutoAllowRuleID: String?
     var previousAutoAllowOutcome: AutoAllowOutcome?
+    var lastPromotionOutcome: SafelistPromotionAttemptOutcome?
+    var lastPromotionReason: String?
+    var lastPromotionCheckedAt: Date?
 
     var distinctDayCount: Int { distinctDayKeys.count }
+
+    init(
+        contextFingerprint: String,
+        appName: String,
+        bundleIdentifier: String? = nil,
+        titleSignature: String? = nil,
+        sampleWindowTitles: [String] = [],
+        focusedCount: Int = 0,
+        distractedCount: Int = 0,
+        firstSeenAt: Date,
+        lastSeenAt: Date,
+        distinctDayKeys: [String] = [],
+        promotionAttemptedAt: Date? = nil,
+        lastAutoAllowRuleID: String? = nil,
+        previousAutoAllowOutcome: AutoAllowOutcome? = nil,
+        lastPromotionOutcome: SafelistPromotionAttemptOutcome? = nil,
+        lastPromotionReason: String? = nil,
+        lastPromotionCheckedAt: Date? = nil
+    ) {
+        self.contextFingerprint = contextFingerprint
+        self.appName = appName
+        self.bundleIdentifier = bundleIdentifier
+        self.titleSignature = titleSignature
+        self.sampleWindowTitles = sampleWindowTitles
+        self.focusedCount = focusedCount
+        self.distractedCount = distractedCount
+        self.firstSeenAt = firstSeenAt
+        self.lastSeenAt = lastSeenAt
+        self.distinctDayKeys = distinctDayKeys
+        self.promotionAttemptedAt = promotionAttemptedAt
+        self.lastAutoAllowRuleID = lastAutoAllowRuleID
+        self.previousAutoAllowOutcome = previousAutoAllowOutcome
+        self.lastPromotionOutcome = lastPromotionOutcome
+        self.lastPromotionReason = lastPromotionReason
+        self.lastPromotionCheckedAt = lastPromotionCheckedAt
+    }
 }
 
 struct CachedDecision: Codable, Sendable, Equatable {

@@ -120,7 +120,7 @@ struct LLMMonitorAlgorithmTests {
 
         #expect(result.policy.action == .none)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
-        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(10 * 60))
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(5 * 60))
         #expect(result.updatedAlgorithmState.llmPolicy.focusSignal.driftEMA < 0.2)
     }
 
@@ -223,7 +223,7 @@ struct LLMMonitorAlgorithmTests {
         #expect(result.policy.record.blockReason == "recent_allow_override")
         #expect(result.evaluation.attempts.isEmpty)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
-        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(10 * 60))
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(5 * 60))
     }
 
     @Test
@@ -346,7 +346,7 @@ struct LLMMonitorAlgorithmTests {
             stableSince: start,
             lastAssessment: .focused,
             consecutiveDistractedCount: 0,
-            nextEvaluationAt: start.addingTimeInterval(10 * 60)
+            nextEvaluationAt: start.addingTimeInterval(5 * 60)
         )
 
         let beforeDue = algorithm.evaluationPlan(
@@ -363,13 +363,59 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
-            now: start.addingTimeInterval((10 * 60) + 1)
+            now: start.addingTimeInterval((5 * 60) + 1)
         )
 
         #expect(beforeDue.shouldEvaluate == false)
         #expect(beforeDue.reason == "scheduled_recheck")
         #expect(afterDue.shouldEvaluate == true)
         #expect(afterDue.reason == "scheduled_recheck")
+    }
+
+    @Test
+    func cachedFocusedDecisionSuppressesExactTitleRevisitButNotSameContextFollowUp() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Wie funktioniert lernen? - Google Slides"
+        )
+        let start = Date(timeIntervalSince1970: 7_850)
+        var configuration = MonitoringConfiguration()
+        configuration.pipelineProfileID = "title_only_default"
+        var revisitState = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &revisitState)
+        revisitState.llmPolicy.decisionCacheByContext[context.contextKey] = CachedDecision(
+            assessment: .focused,
+            decidedAt: start,
+            contextKey: context.contextKey
+        )
+
+        let revisitPlan = algorithm.evaluationPlan(
+            state: &revisitState,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: configuration,
+            now: start.addingTimeInterval(10 * 60)
+        )
+
+        var sameContextState = revisitState
+        sameContextState.llmPolicy.distraction.lastAssessment = .focused
+        sameContextState.llmPolicy.distraction.nextEvaluationAt = start.addingTimeInterval(5 * 60)
+        let sameContextPlan = algorithm.evaluationPlan(
+            state: &sameContextState,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: configuration,
+            now: start.addingTimeInterval(10 * 60)
+        )
+
+        #expect(revisitPlan.shouldEvaluate == false)
+        #expect(revisitPlan.reason == "cached_focused")
+        #expect(sameContextPlan.shouldEvaluate == true)
+        #expect(sameContextPlan.reason == "scheduled_recheck")
     }
 
     @Test

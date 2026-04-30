@@ -121,7 +121,7 @@ enum SafelistPromotionPolicy {
             }
         }
         if let title = windowTitle?.cleanedSingleLine, !title.isEmpty {
-            let truncated = String(title.prefix(80))
+            let truncated = String(title.prefix(120))
             stat.sampleWindowTitles.removeAll { $0 == truncated }
             stat.sampleWindowTitles.insert(truncated, at: 0)
             if stat.sampleWindowTitles.count > 3 {
@@ -189,7 +189,12 @@ enum SafelistPromotionPolicy {
             scope.bundleIdentifier = observation.bundleIdentifier
             scope.appName = observation.bundleIdentifier == nil ? observation.appName : nil
         case .titlePattern:
-            if let pattern = envelope.titlePattern?.cleanedSingleLine, !pattern.isEmpty {
+            if observation.requiresTitleScope, let signature = observation.titleSignature, !signature.isEmpty {
+                scope.titleContains = [signature]
+                if let bundleIdentifier = observation.bundleIdentifier {
+                    scope.bundleIdentifier = bundleIdentifier
+                }
+            } else if let pattern = envelope.titlePattern?.cleanedSingleLine, !pattern.isEmpty {
                 scope.titleContains = [pattern]
                 if let bundleIdentifier = observation.bundleIdentifier {
                     scope.bundleIdentifier = bundleIdentifier
@@ -234,6 +239,7 @@ protocol SafelistAppealEvaluating: Sendable {
         focusedCount: Int,
         distinctDays: Int,
         goals: String,
+        freeFormMemory: String,
         configuration: MonitoringConfiguration,
         runtimeOverride: String?,
         screenshotPath: String?
@@ -255,6 +261,7 @@ actor SafelistAppealService: SafelistAppealEvaluating {
         focusedCount: Int,
         distinctDays: Int,
         goals: String,
+        freeFormMemory: String,
         configuration: MonitoringConfiguration,
         runtimeOverride: String?,
         screenshotPath: String?
@@ -264,6 +271,7 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             bundleIdentifier: observation.bundleIdentifier,
             sampleWindowTitles: sampleWindowTitles,
             goals: goals,
+            freeFormMemory: freeFormMemory,
             focusedCount: focusedCount,
             distinctDays: distinctDays,
             isBrowser: observation.isBrowser,
