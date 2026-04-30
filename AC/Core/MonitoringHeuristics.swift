@@ -7,35 +7,15 @@
 
 import Foundation
 
-/// Derives a stable "site-ish" signature from a browser window title so that the auto-safelist can
-/// scope by `titleContains` (e.g. matching every Google Doc) rather than by the bare browser bundle
-/// identifier (which would whitelist every URL in Chrome).
+/// Derives the exact browser-tab title signature used for title-scoped safelist rules.
+/// Browsers are always ambiguous at the app level, so promotion must stay tied to the current title.
 enum BrowserTitleSignature {
-    /// Trailing-segment patterns we trust to identify a productive context.
-    nonisolated private static let knownTrailingSites: [String] = [
-        "Google Docs", "Google Sheets", "Google Slides", "Google Drive",
-        "Google Calendar", "Google Meet", "Google Keep",
-        "GitHub", "GitLab", "Bitbucket",
-        "Notion", "Linear", "Jira", "Confluence", "Asana", "Trello",
-        "Figma", "FigJam", "Miro",
-        "Stack Overflow", "MDN Web Docs",
-        "Overleaf", "ReadCube Papers", "Zotero",
-        "Loom", "ChatGPT", "Claude", "Perplexity", "Cursor"
-    ]
-
-    /// Returns a signature suitable for `PolicyRuleScope.titleContains`, or nil if the title
-    /// doesn't end with a recognized productive-site suffix. Conservative on purpose — never
-    /// auto-safelist arbitrary trailing segments (e.g. "YouTube", "Netflix") that aren't
-    /// pre-vetted as productive.
+    /// Returns the current exact tab title for `PolicyRuleScope.titleContains`, or nil when the
+    /// title is missing / useless. Exact-title scope is intentional: the safelist should expire
+    /// as soon as the tab title changes.
     nonisolated static func derive(from title: String?) -> String? {
         guard let title = title?.cleanedSingleLine, !title.isEmpty else { return nil }
-
-        for site in knownTrailingSites {
-            if title.range(of: site, options: [.caseInsensitive, .backwards]) != nil {
-                return site
-            }
-        }
-        return nil
+        return String(title.prefix(120))
     }
 }
 
@@ -92,6 +72,15 @@ enum MonitoringHeuristics {
         "net.whatsapp.WhatsApp",
         "com.apple.MobileSMS"
     ]
+
+    /// Native apps that can be productive or distracting depending on the specific thread /
+    /// message / document. These must never be safelisted by bare bundle; title scope only.
+    nonisolated static let titleScopedBundleIdentifiers: Set<String> = ambiguousContentBundleIdentifiers.union([
+        "com.apple.mail",
+        "com.microsoft.Outlook",
+        "com.readdle.smartemail-Mac",
+        "com.superhuman.electron"
+    ])
 
     nonisolated static func isClearlyProductive(bundleIdentifier: String?, appName: String) -> Bool {
         if let bundleIdentifier, clearlyProductiveBundleIdentifiers.contains(bundleIdentifier) {

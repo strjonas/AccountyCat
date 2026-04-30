@@ -149,6 +149,8 @@ nonisolated struct MonitoringSafelistAppealPromptPayload: Encodable, Sendable {
     var focusedCount: Int
     var distinctDays: Int
     var isBrowser: Bool
+    var requiresTitleScope: Bool
+    var screenshotIncluded: Bool
 }
 
 nonisolated enum MonitoringSafelistScopeKind: String, Codable, Sendable {

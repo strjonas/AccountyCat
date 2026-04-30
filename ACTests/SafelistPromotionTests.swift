@@ -60,7 +60,7 @@ struct SafelistPromotionTests {
 
     @Test
     func belowThresholdIsIneligible() {
-        var stat = makeStat(focused: 3)
+        var stat = makeStat(focused: 1)
         stat.distractedCount = 0
         let result = SafelistPromotionPolicy.eligibility(
             for: stat,
@@ -72,8 +72,8 @@ struct SafelistPromotionTests {
     }
 
     @Test
-    func fourFocusedZeroDistractedIsProbationary() {
-        let stat = makeStat(focused: 4)
+    func twoFocusedZeroDistractedIsProbationary() {
+        let stat = makeStat(focused: 2)
         let result = SafelistPromotionPolicy.eligibility(
             for: stat,
             policyMemory: PolicyMemory(),
@@ -182,16 +182,20 @@ struct SafelistPromotionTests {
         )
         #expect(observation?.fingerprint == "com.activitymonitor")
         #expect(observation?.titleSignature == nil)
+        #expect(observation?.requiresTitleScope == false)
     }
 
     @Test
-    func browserContextRequiresKnownTitleSignature() {
+    func browserContextUsesExactTitleSignature() {
         let unknown = FrontmostContext(
             bundleIdentifier: "com.google.Chrome",
             appName: "Google Chrome",
             windowTitle: "Random page that we have no signal for"
         )
-        #expect(SafelistPromotionPolicy.makeContext(from: unknown, isBrowser: true, now: Date()) == nil)
+        let unknownObservation = SafelistPromotionPolicy.makeContext(from: unknown, isBrowser: true, now: Date())
+        #expect(unknownObservation?.fingerprint == "com.google.Chrome::Random page that we have no signal for")
+        #expect(unknownObservation?.titleSignature == "Random page that we have no signal for")
+        #expect(unknownObservation?.requiresTitleScope == true)
 
         let known = FrontmostContext(
             bundleIdentifier: "com.google.Chrome",
@@ -199,18 +203,39 @@ struct SafelistPromotionTests {
             windowTitle: "AC idea log - Google Docs"
         )
         let observation = SafelistPromotionPolicy.makeContext(from: known, isBrowser: true, now: Date())
-        #expect(observation?.fingerprint == "com.google.Chrome::Google Docs")
-        #expect(observation?.titleSignature == "Google Docs")
+        #expect(observation?.fingerprint == "com.google.Chrome::AC idea log - Google Docs")
+        #expect(observation?.titleSignature == "AC idea log - Google Docs")
+
+    }
+
+    @Test
+    func ambiguousNativeAppsRequireTitleScope() {
+        let context = FrontmostContext(
+            bundleIdentifier: "com.apple.mail",
+            appName: "Mail",
+            windowTitle: "Max Weigand - draft reply"
+        )
+        let observation = SafelistPromotionPolicy.makeContext(
+            from: context,
+            isBrowser: false,
+            now: Date()
+        )
+        #expect(observation?.fingerprint == "com.apple.mail::Max Weigand - draft reply")
+        #expect(observation?.titleSignature == "Max Weigand - draft reply")
+        #expect(observation?.requiresTitleScope == true)
     }
 
     // MARK: - Title signature derivation
 
     @Test
     func browserTitleSignatureMatchesKnownSites() {
-        #expect(BrowserTitleSignature.derive(from: "Inbox - GitHub") == "GitHub")
-        #expect(BrowserTitleSignature.derive(from: "AC plan - Notion") == "Notion")
-        #expect(BrowserTitleSignature.derive(from: "Google Calendar - Today") == "Google Calendar")
-        #expect(BrowserTitleSignature.derive(from: "Random Twitter ramble") == nil)
+        #expect(BrowserTitleSignature.derive(from: "Inbox - GitHub") == "Inbox - GitHub")
+        #expect(BrowserTitleSignature.derive(from: "AC plan - Notion") == "AC plan - Notion")
+        #expect(BrowserTitleSignature.derive(from: "Google Calendar - Today") == "Google Calendar - Today")
+        #expect(BrowserTitleSignature.derive(from: "Crafting a Post-Scarcity Future - Google Gemini") == "Crafting a Post-Scarcity Future - Google Gemini")
+        #expect(BrowserTitleSignature.derive(from: "Drafting outreach email - internal hiring loop") == "Drafting outreach email - internal hiring loop")
+        #expect(BrowserTitleSignature.derive(from: "Random Twitter ramble") == "Random Twitter ramble")
+        #expect(BrowserTitleSignature.derive(from: "Funny clip - YouTube") == "Funny clip - YouTube")
         #expect(BrowserTitleSignature.derive(from: nil) == nil)
         #expect(BrowserTitleSignature.derive(from: "") == nil)
     }
@@ -281,6 +306,7 @@ struct SafelistPromotionTests {
             bundleIdentifier: "com.activitymonitor",
             titleSignature: nil,
             isBrowser: false,
+            requiresTitleScope: false,
             dayKey: Date().acDayKey
         )
         let envelope = MonitoringSafelistAppealEnvelope(
@@ -311,6 +337,7 @@ struct SafelistPromotionTests {
             bundleIdentifier: "com.google.Chrome",
             titleSignature: "Google Docs",
             isBrowser: true,
+            requiresTitleScope: true,
             dayKey: Date().acDayKey
         )
         let envelope = MonitoringSafelistAppealEnvelope(
@@ -332,17 +359,18 @@ struct SafelistPromotionTests {
     @Test
     func buildRuleScopesBrowserByTitlePattern() {
         let observation = SafelistObservationContext(
-            fingerprint: "com.google.Chrome::Google Docs",
+            fingerprint: "com.google.Chrome::AC idea log - Google Docs",
             appName: "Google Chrome",
             bundleIdentifier: "com.google.Chrome",
-            titleSignature: "Google Docs",
+            titleSignature: "AC idea log - Google Docs",
             isBrowser: true,
+            requiresTitleScope: true,
             dayKey: Date().acDayKey
         )
         let envelope = MonitoringSafelistAppealEnvelope(
             approve: true,
             scopeKind: .titlePattern,
-            titlePattern: "Google Docs",
+            titlePattern: "AC idea log - Google Docs",
             summary: "user uses docs for project notes",
             reason: "matches goals"
         )
@@ -354,8 +382,36 @@ struct SafelistPromotionTests {
             now: now
         )
         #expect(rule?.scope.bundleIdentifier == "com.google.Chrome")
-        #expect(rule?.scope.titleContains == ["Google Docs"])
+        #expect(rule?.scope.titleContains == ["AC idea log - Google Docs"])
         #expect(rule?.schedule.expiresAt == now.addingTimeInterval(SafelistPromotionTier.trusted.ttl))
+    }
+
+    @Test
+    func buildRuleScopesTitlePatternToNativeBundleToo() {
+        let observation = SafelistObservationContext(
+            fingerprint: "com.apple.mail::Max Weigand - draft reply",
+            appName: "Mail",
+            bundleIdentifier: "com.apple.mail",
+            titleSignature: "Max Weigand - draft reply",
+            isBrowser: false,
+            requiresTitleScope: true,
+            dayKey: Date().acDayKey
+        )
+        let envelope = MonitoringSafelistAppealEnvelope(
+            approve: true,
+            scopeKind: .titlePattern,
+            titlePattern: "Max Weigand - draft reply",
+            summary: "drafting outreach mail",
+            reason: "goal aligned"
+        )
+        let rule = SafelistPromotionPolicy.buildRule(
+            from: envelope,
+            observation: observation,
+            tier: .probationary,
+            now: Date()
+        )
+        #expect(rule?.scope.bundleIdentifier == "com.apple.mail")
+        #expect(rule?.scope.titleContains == ["Max Weigand - draft reply"])
     }
 
     // MARK: - Helpers

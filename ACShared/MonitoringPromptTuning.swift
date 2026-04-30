@@ -275,18 +275,20 @@ enum MonitoringPromptTuning {
             MonitoringStagePromptDefinition(
                 stage: .safelistAppeal,
                 systemPrompt: """
-                You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks.
+                You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks. This is important to make the app efficient and avoid unnecessary checks.
                 You will see the user's stated goals, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
 
                 Return exactly one JSON object:
                 {"approve": true|false, "scope_kind": "bundle" | "title_pattern", "title_pattern": "optional substring", "summary": "<=20 words", "reason": "short reason"}
 
                 Approval rules:
-                - Approve only if the app is plausibly always-productive given the user's goals AND the sample titles are consistent with that. When in doubt, deny.
-                - Browsers are special: never approve `scope_kind="bundle"` for a browser. If approving a browser context, you MUST set `scope_kind="title_pattern"` and pick a `title_pattern` (a stable site name like "Google Docs", "GitHub", "Notion") that appears in the sample titles.
-                - Media apps (YouTube, Spotify, Netflix, TikTok, Twitch, etc.) and social apps (Twitter/X, Reddit, Instagram, Facebook) are never always-productive — deny.
-                - Chat apps (Slack, Discord, WhatsApp, iMessage, Telegram) are never always-productive — deny.
-                - IDEs, editors, terminals, doc tools, design tools, and project trackers are typical approvals when the goals involve building, writing, designing, planning, or research.
+                - Approve only if the exact app/title combination is very unlikely to become distracting until the title changes. If it could plausibly host distracting content, deny.
+                - `requiresTitleScope=true` means the app is ambiguous at the app level. In that case you MUST deny any bundle-level safelist and, if approving, you MUST set `scope_kind="title_pattern"` using the exact current title or another equally narrow title substring from the samples.
+                - `isBrowser=true` always implies `requiresTitleScope=true`. Browsers are never safe at the whole-app level.
+                - If `screenshotIncluded=true`, use the screenshot as additional evidence. If the screenshot weakens confidence that this exact title is consistently on-task, deny.
+                - Stable tools like IDEs, editors, terminals, doc tools, design tools, and project trackers can be approved at app level only when `requiresTitleScope=false` and the app itself is plausibly always-productive for the user's goals.
+                - Media, social, chat, email, and browser surfaces should usually require exact-title scoping, and should be denied whenever the exact title could still hide distracting content.
+
 
                 Do not invent context. Use only what is in the payload.
                 Return the JSON only — no prose, no markdown.

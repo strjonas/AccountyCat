@@ -695,7 +695,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             distinctDays: workingStat.distinctDayCount,
             goals: input.goals,
             configuration: input.configuration,
-            runtimeOverride: input.runtimeOverride
+            runtimeOverride: input.runtimeOverride,
+            screenshotPath: visionEnabled(for: input.configuration) ? input.snapshot.screenshotPath : nil
         ) else {
             return nil
         }

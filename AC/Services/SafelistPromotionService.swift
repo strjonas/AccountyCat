@@ -39,6 +39,7 @@ struct SafelistObservationContext: Sendable {
     var bundleIdentifier: String?
     var titleSignature: String?
     var isBrowser: Bool
+    var requiresTitleScope: Bool
     var dayKey: String
 }
 
@@ -47,21 +48,13 @@ enum SafelistPromotionPolicy {
     static let promotionAttemptCooldown: TimeInterval = 6 * 60 * 60
 
     /// Build the fingerprint that keys both `focusedObservations` and the auto-allow rule.
-    /// Native apps key off bundleID; browsers require a recognized title-signature so we
-    /// never auto-allow an entire browser bundle.
+    /// Browsers and title-scoped native apps always key off the exact current title so a future
+    /// title change invalidates the allow automatically.
     static func makeContext(
         from frontmost: FrontmostContext,
         isBrowser: Bool,
         now: Date
     ) -> SafelistObservationContext? {
-        // Apps whose on-screen content is the only reliable productivity signal (media, social,
-        // chat) must never be auto-safelisted — content inside them varies wildly between
-        // productive and distracting sessions, so the LLM always needs to evaluate each tick.
-        if let bundleID = frontmost.bundleIdentifier,
-           MonitoringHeuristics.ambiguousContentBundleIdentifiers.contains(bundleID) {
-            return nil
-        }
-
         if isBrowser {
             guard
                 let bundleID = frontmost.bundleIdentifier,
@@ -75,9 +68,29 @@ enum SafelistPromotionPolicy {
                 bundleIdentifier: bundleID,
                 titleSignature: signature,
                 isBrowser: true,
+                requiresTitleScope: true,
                 dayKey: now.acDayKey
             )
         } else {
+            if let bundleID = frontmost.bundleIdentifier,
+               MonitoringHeuristics.titleScopedBundleIdentifiers.contains(bundleID) {
+                guard let title = frontmost.windowTitle?.cleanedSingleLine,
+                      !title.isEmpty,
+                      !MonitoringHeuristics.isUnhelpfulWindowTitle(title, appName: frontmost.appName) else {
+                    return nil
+                }
+                let signature = String(title.prefix(120))
+                return SafelistObservationContext(
+                    fingerprint: "\(bundleID)::\(signature)",
+                    appName: frontmost.appName,
+                    bundleIdentifier: bundleID,
+                    titleSignature: signature,
+                    isBrowser: false,
+                    requiresTitleScope: true,
+                    dayKey: now.acDayKey
+                )
+            }
+
             let id = frontmost.bundleIdentifier ?? frontmost.appName
             guard !id.isEmpty else { return nil }
             return SafelistObservationContext(
@@ -86,6 +99,7 @@ enum SafelistPromotionPolicy {
                 bundleIdentifier: frontmost.bundleIdentifier,
                 titleSignature: nil,
                 isBrowser: false,
+                requiresTitleScope: false,
                 dayKey: now.acDayKey
             )
         }
@@ -151,15 +165,15 @@ enum SafelistPromotionPolicy {
             return .ineligible(reason: "needs_more_observations_after_clean_expiry")
         }
 
-        if prior == nil, stat.focusedCount >= 4 {
+        if prior == nil, stat.focusedCount >= 2 {
             return .eligible(tier: .probationary)
         }
 
         return .ineligible(reason: "below_threshold")
     }
 
-    /// Build the rule the safelist appeal will emit on approval. Browsers MUST scope by
-    /// titleContains — never bare bundle.
+    /// Build the rule the safelist appeal will emit on approval. Browsers and title-scoped apps
+    /// MUST scope by `titleContains`; they are never safe at the whole-app level.
     static func buildRule(
         from envelope: MonitoringSafelistAppealEnvelope,
         observation: SafelistObservationContext,
@@ -171,19 +185,21 @@ enum SafelistPromotionPolicy {
         var scope = PolicyRuleScope()
         switch envelope.scopeKind {
         case .bundle:
-            if observation.isBrowser { return nil }
+            if observation.isBrowser || observation.requiresTitleScope { return nil }
             scope.bundleIdentifier = observation.bundleIdentifier
             scope.appName = observation.bundleIdentifier == nil ? observation.appName : nil
         case .titlePattern:
             if let pattern = envelope.titlePattern?.cleanedSingleLine, !pattern.isEmpty {
                 scope.titleContains = [pattern]
-                if observation.isBrowser {
+                if let bundleIdentifier = observation.bundleIdentifier {
+                    scope.bundleIdentifier = bundleIdentifier
+                } else if observation.isBrowser {
                     scope.bundleIdentifier = observation.bundleIdentifier
                 }
             } else if let signature = observation.titleSignature, !signature.isEmpty {
                 scope.titleContains = [signature]
-                if observation.isBrowser {
-                    scope.bundleIdentifier = observation.bundleIdentifier
+                if let bundleIdentifier = observation.bundleIdentifier {
+                    scope.bundleIdentifier = bundleIdentifier
                 }
             } else {
                 return nil
@@ -219,7 +235,8 @@ protocol SafelistAppealEvaluating: Sendable {
         distinctDays: Int,
         goals: String,
         configuration: MonitoringConfiguration,
-        runtimeOverride: String?
+        runtimeOverride: String?,
+        screenshotPath: String?
     ) async -> MonitoringSafelistAppealEnvelope?
 }
 
@@ -239,7 +256,8 @@ actor SafelistAppealService: SafelistAppealEvaluating {
         distinctDays: Int,
         goals: String,
         configuration: MonitoringConfiguration,
-        runtimeOverride: String?
+        runtimeOverride: String?,
+        screenshotPath: String?
     ) async -> MonitoringSafelistAppealEnvelope? {
         let payload = MonitoringSafelistAppealPromptPayload(
             appName: observation.appName,
@@ -248,7 +266,9 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             goals: goals,
             focusedCount: focusedCount,
             distinctDays: distinctDays,
-            isBrowser: observation.isBrowser
+            isBrowser: observation.isBrowser,
+            requiresTitleScope: observation.requiresTitleScope,
+            screenshotIncluded: screenshotPath != nil
         )
         let payloadJSON = MonitoringLLMClient.encodePayload(payload)
         let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .safelistAppeal)
@@ -267,9 +287,19 @@ actor SafelistAppealService: SafelistAppealEvaluating {
                         modelIdentifier: configuration.onlineModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
-                        imagePath: nil,
+                        imagePath: screenshotPath,
                         options: options
                     )
+                )
+            } else if let screenshotPath {
+                let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
+                guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                output = try await runtime.runVisionInference(
+                    runtimePath: runtimePath,
+                    snapshotPath: screenshotPath,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    options: options
                 )
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
