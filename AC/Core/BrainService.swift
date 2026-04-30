@@ -27,6 +27,8 @@ final class BrainService: NSObject {
     private var contextProbeTimer: Timer?
     private var isTickScheduled = false
     private var isEvaluating = false
+    private var evaluationStartedAt: Date?
+    private var watchdogTimer: Timer?
     private var activeEvaluationTask: Task<MonitoringDecisionResult, Error>?
     private var isSessionAvailable = true
     private var lastObservedContext: FrontmostContext?
@@ -131,8 +133,12 @@ final class BrainService: NSObject {
                 self?.probeForContextChange()
             }
         }
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.checkEvaluationHealth() }
+        }
         RunLoop.main.add(timer!, forMode: .common)
         RunLoop.main.add(contextProbeTimer!, forMode: .common)
+        RunLoop.main.add(watchdogTimer!, forMode: .common)
     }
 
     func stop() {
@@ -141,6 +147,8 @@ final class BrainService: NSObject {
         timer = nil
         contextProbeTimer?.invalidate()
         contextProbeTimer = nil
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
         isTickScheduled = false
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
@@ -473,7 +481,11 @@ final class BrainService: NSObject {
         }
 
         isEvaluating = true
-        defer { isEvaluating = false }
+        evaluationStartedAt = Date()
+        defer {
+            isEvaluating = false
+            evaluationStartedAt = nil
+        }
 
         if let visualCheckReason = evaluationPlan.visualCheckReason {
             statusSink?("Running periodic visual check for \(context.appName).")
@@ -1490,6 +1502,12 @@ final class BrainService: NSObject {
         activeEpisode = nil
         lastObservedContext = nil
         lastObservedAt = Date()
+    }
+
+    private func checkEvaluationHealth() {
+        guard isEvaluating, let startedAt = evaluationStartedAt else { return }
+        guard Date().timeIntervalSince(startedAt) > 35 else { return }
+        cancelActiveEvaluationIfNeeded(reason: "watchdog_stale_evaluation")
     }
 
     private func cancelActiveEvaluationIfNeeded(reason: String) {

@@ -108,8 +108,8 @@ actor OnlineModelService: OnlineModelServing {
             self.session = session
         } else {
             let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 120
-            configuration.timeoutIntervalForResource = 120
+            configuration.timeoutIntervalForRequest = 25
+            configuration.timeoutIntervalForResource = 45
             self.session = URLSession(configuration: configuration)
         }
     }
