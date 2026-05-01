@@ -74,6 +74,10 @@ struct MonitoringConfigurationTests {
         #expect(configuration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(configuration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
         #expect(configuration.onlineModelIdentifier == MonitoringConfiguration.defaultOnlineModelIdentifier)
+        #expect(configuration.onlineModelIdentifierText == MonitoringConfiguration.defaultOnlineModelIdentifier)
+        #expect(configuration.onlineModelIdentifierImage == MonitoringConfiguration.defaultOnlineModelIdentifier)
+        #expect(configuration.localModelIdentifierText == AITier.balanced.localModelIdentifierText)
+        #expect(configuration.localModelIdentifierImage == AITier.balanced.localModelIdentifierImage)
     }
 
     @Test
@@ -89,18 +93,51 @@ struct MonitoringConfigurationTests {
                 "https://openrouter.ai/google/gemma-4-31b-it:free"
             ) == "google/gemma-4-31b-it"
         )
+        #expect(configuration.onlineModelIdentifierText == "google/gemma-4-31b-it")
+        #expect(configuration.onlineModelIdentifierImage == "google/gemma-4-31b-it")
+    }
+
+    @Test
+    func migratesLegacyModelOverrideIntoExplicitLocalModelSelections() throws {
+        let data = Data("""
+        {
+          "monitoringConfiguration": {
+            "modelOverride": "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+          }
+        }
+        """.utf8)
+
+        let state = try JSONDecoder().decode(ACState.self, from: data)
+
+        #expect(state.monitoringConfiguration.localModelIdentifierText == "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL")
+        #expect(state.monitoringConfiguration.localModelIdentifierImage == "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL")
     }
 
     @Test
     func rendersPolicyRulesForChatPrompt() {
         var state = ACState()
+        let writingProfile = FocusProfile(
+            id: "writing",
+            name: "Writing",
+            description: "Drafting docs"
+        )
+        state.profiles.append(writingProfile)
+        state.activeProfileID = writingProfile.id
         state.policyMemory.rules = [
+            PolicyRule(
+                kind: .allow,
+                summary: "Default-profile Xcode rule should not leak into writing.",
+                source: .explicitFeedback,
+                scope: PolicyRuleScope(appName: "Xcode"),
+                profileID: PolicyRule.defaultProfileID
+            ),
             PolicyRule(
                 kind: .discourage,
                 summary: "Do not let me drift into YouTube during work blocks.",
                 source: .explicitFeedback,
                 scope: PolicyRuleScope(appName: "Google Chrome"),
-                isLocked: true
+                isLocked: true,
+                profileID: writingProfile.id
             )
         ]
 
@@ -109,6 +146,7 @@ struct MonitoringConfigurationTests {
         #expect(rendered.contains("Do not let me drift into YouTube during work blocks."))
         #expect(rendered.contains("fixed"))
         #expect(rendered.contains("app Google Chrome"))
+        #expect(!rendered.contains("Default-profile Xcode rule"))
     }
 
     @Test

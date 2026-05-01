@@ -12,11 +12,56 @@ struct RuntimeProcessOutput: Sendable {
     var stdout: String
     var stderr: String
     var usedModelIdentifier: String?
+    var tokenUsage: TokenUsage?
 
-    nonisolated init(stdout: String, stderr: String, usedModelIdentifier: String? = nil) {
+    nonisolated init(
+        stdout: String,
+        stderr: String,
+        usedModelIdentifier: String? = nil,
+        tokenUsage: TokenUsage? = nil
+    ) {
         self.stdout = stdout
         self.stderr = stderr
         self.usedModelIdentifier = usedModelIdentifier
+        self.tokenUsage = tokenUsage
+    }
+}
+
+struct TokenUsage: Sendable, Codable, Hashable {
+    var promptTokens: Int
+    var completionTokens: Int
+    var totalTokens: Int
+    var cacheReadTokens: Int?
+    var imageTokens: Int?
+    var costUSD: Double?
+    var estimated: Bool
+
+    nonisolated init(
+        promptTokens: Int,
+        completionTokens: Int,
+        totalTokens: Int? = nil,
+        cacheReadTokens: Int? = nil,
+        imageTokens: Int? = nil,
+        costUSD: Double? = nil,
+        estimated: Bool = false
+    ) {
+        self.promptTokens = promptTokens
+        self.completionTokens = completionTokens
+        self.totalTokens = totalTokens ?? (promptTokens + completionTokens)
+        self.cacheReadTokens = cacheReadTokens
+        self.imageTokens = imageTokens
+        self.costUSD = costUSD
+        self.estimated = estimated
+    }
+
+    nonisolated static func estimate(promptText: String, completionText: String) -> TokenUsage {
+        let prompt = max(1, promptText.count / 4)
+        let completion = max(0, completionText.count / 4)
+        return TokenUsage(
+            promptTokens: prompt,
+            completionTokens: completion,
+            estimated: true
+        )
     }
 }
 
@@ -172,9 +217,6 @@ nonisolated private final class LocalModelServerHandle: @unchecked Sendable {
 }
 
 actor LocalModelRuntime {
-    nonisolated static var defaultModelIdentifier: String {
-        DevelopmentModelConfiguration.defaultModelIdentifier
-    }
 
     private let urlSession: URLSession
     private var sharedServer: LocalModelServerHandle?
@@ -196,15 +238,17 @@ actor LocalModelRuntime {
     ) async throws -> RuntimeProcessOutput {
         try await runVisionInference(
             runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
             snapshotPath: snapshotPath,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
-            options: Self.defaultVisionOptions(modelIdentifier: modelIdentifier)
+            options: Self.defaultVisionOptions()
         )
     }
 
     func runVisionInference(
         runtimePath: String,
+        modelIdentifier: String,
         snapshotPath: String,
         systemPrompt: String,
         userPrompt: String,
@@ -212,6 +256,7 @@ actor LocalModelRuntime {
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
             input: .vision(snapshotPath: snapshotPath, userPrompt: userPrompt),
             systemPrompt: systemPrompt,
             options: options
@@ -226,20 +271,23 @@ actor LocalModelRuntime {
     ) async throws -> RuntimeProcessOutput {
         try await runTextInference(
             runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
-            options: Self.defaultTextOptions(modelIdentifier: modelIdentifier)
+            options: Self.defaultTextOptions()
         )
     }
 
     func runTextInference(
         runtimePath: String,
+        modelIdentifier: String,
         systemPrompt: String,
         userPrompt: String,
         options: RuntimeInferenceOptions
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
             input: .text(userPrompt: userPrompt),
             systemPrompt: systemPrompt,
             options: options
@@ -259,6 +307,7 @@ actor LocalModelRuntime {
 
     private func runInference(
         runtimePath: String,
+        modelIdentifier: String,
         input: RuntimeInferenceInput,
         systemPrompt: String,
         options: RuntimeInferenceOptions
@@ -270,7 +319,7 @@ actor LocalModelRuntime {
 
             let modelSource = resolveModelSource(
                 runtimePath: runtimePath,
-                modelIdentifier: options.modelIdentifier
+                modelIdentifier: modelIdentifier
             )
 
             if case let .local(artifacts) = modelSource,
@@ -280,6 +329,7 @@ actor LocalModelRuntime {
                 do {
                     return try await runServerInference(
                         runtimePath: runtimePath,
+                        modelIdentifier: modelIdentifier,
                         serverExecutablePath: serverExecutablePath,
                         artifacts: artifacts,
                         input: input,
@@ -324,6 +374,7 @@ actor LocalModelRuntime {
 
     private func runServerInference(
         runtimePath: String,
+        modelIdentifier: String,
         serverExecutablePath: String,
         artifacts: CachedModelArtifacts,
         input: RuntimeInferenceInput,
@@ -335,7 +386,7 @@ actor LocalModelRuntime {
             config: RuntimeServerConfig(
                 executablePath: serverExecutablePath,
                 runtimePath: runtimePath,
-                modelIdentifier: options.modelIdentifier,
+                modelIdentifier: modelIdentifier,
                 modelPath: artifacts.modelPath,
                 multimodalProjectorPath: artifacts.multimodalProjectorPath,
                 ctxSize: options.ctxSize,
@@ -345,7 +396,7 @@ actor LocalModelRuntime {
         )
 
         let requestBody = try makeServerRequestBody(
-            modelIdentifier: options.modelIdentifier,
+            modelIdentifier: modelIdentifier,
             input: input,
             systemPrompt: systemPrompt,
             options: options
@@ -378,7 +429,9 @@ actor LocalModelRuntime {
             }
 
             let assistantMessage = try extractAssistantMessage(from: data)
-            return RuntimeProcessOutput(stdout: assistantMessage, stderr: "")
+            let usage = Self.parseLocalServerUsage(from: data)
+                ?? TokenUsage.estimate(promptText: systemPrompt, completionText: assistantMessage)
+            return RuntimeProcessOutput(stdout: assistantMessage, stderr: "", tokenUsage: usage)
         } catch is CancellationError {
             requestTask.cancel()
             throw CancellationError()
@@ -495,7 +548,60 @@ actor LocalModelRuntime {
             throw LLMError.commandFailed(status, combined)
         }
 
-        return output
+        let usage = Self.parseLlamaCLIUsage(from: output.stderr)
+            ?? TokenUsage.estimate(promptText: systemPrompt, completionText: output.stdout)
+        return RuntimeProcessOutput(
+            stdout: output.stdout,
+            stderr: output.stderr,
+            usedModelIdentifier: output.usedModelIdentifier,
+            tokenUsage: usage
+        )
+    }
+
+    nonisolated private static func parseLocalServerUsage(from data: Data) -> TokenUsage? {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+            let usage = json["usage"] as? [String: Any]
+        else {
+            return nil
+        }
+        let prompt = usage["prompt_tokens"] as? Int ?? 0
+        let completion = usage["completion_tokens"] as? Int ?? 0
+        guard prompt > 0 || completion > 0 else { return nil }
+        return TokenUsage(
+            promptTokens: prompt,
+            completionTokens: completion,
+            totalTokens: usage["total_tokens"] as? Int,
+            estimated: false
+        )
+    }
+
+    nonisolated private static func parseLlamaCLIUsage(from stderr: String) -> TokenUsage? {
+        // llama.cpp prints lines like:
+        //   "prompt eval time = ... ms / NN tokens"
+        //   "       eval time = ... ms / MM tokens"
+        var prompt = 0
+        var completion = 0
+        for line in stderr.split(separator: "\n") {
+            let lower = line.lowercased()
+            guard lower.contains("eval time"),
+                  let slashIdx = line.firstIndex(of: "/") else { continue }
+            let after = line[line.index(after: slashIdx)...]
+            let digits = after.drop(while: { $0 == " " })
+                .prefix(while: { $0.isNumber })
+            guard let count = Int(digits), count > 0 else { continue }
+            if lower.contains("prompt eval") {
+                prompt = count
+            } else {
+                completion = count
+            }
+        }
+        guard prompt > 0 || completion > 0 else { return nil }
+        return TokenUsage(
+            promptTokens: prompt,
+            completionTokens: completion,
+            estimated: false
+        )
     }
 
     private func ensureSharedServer(
@@ -1132,9 +1238,8 @@ actor LocalModelRuntime {
         }
     }
 
-    nonisolated static func defaultVisionOptions(modelIdentifier: String = defaultModelIdentifier) -> RuntimeInferenceOptions {
+    nonisolated static func defaultVisionOptions() -> RuntimeInferenceOptions {
         RuntimeInferenceOptions(
-            modelIdentifier: modelIdentifier,
             maxTokens: 120,
             temperature: 0.15,
             topP: 0.95,
@@ -1146,9 +1251,8 @@ actor LocalModelRuntime {
         )
     }
 
-    nonisolated static func defaultTextOptions(modelIdentifier: String = defaultModelIdentifier) -> RuntimeInferenceOptions {
+    nonisolated static func defaultTextOptions() -> RuntimeInferenceOptions {
         RuntimeInferenceOptions(
-            modelIdentifier: modelIdentifier,
             maxTokens: 240,
             temperature: 0.4,
             topP: 0.95,

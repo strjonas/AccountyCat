@@ -408,6 +408,14 @@ actor TelemetryIndexStore {
             return event.annotation?.labels.map(\.rawValue).joined(separator: ", ") ?? "Annotation saved"
         case .sessionEnded:
             return "Session ended"
+        case .monitoringMetric:
+            if let metric = event.metric {
+                let parts = [metric.kind.rawValue, metric.reason]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                return parts.isEmpty ? "Monitoring metric" : parts.joined(separator: " ")
+            }
+            return "Monitoring metric"
         case .failure:
             return event.failure?.message ?? "Failure"
         }

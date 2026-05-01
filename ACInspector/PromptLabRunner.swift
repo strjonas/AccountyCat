@@ -32,6 +32,22 @@ actor PromptLabRunner {
         return preferred
     }
 
+    nonisolated static var defaultGoldenScenariosURL: URL {
+        if let bundled = Bundle.main.url(forResource: "v1_baseline", withExtension: "json") {
+            return bundled
+        }
+
+        let sourceURL = URL(fileURLWithPath: #filePath)
+        let repositoryURL = sourceURL.deletingLastPathComponent().deletingLastPathComponent()
+        let sourceRelativeURL = repositoryURL.appendingPathComponent("ACTests/Goldens/v1_baseline.json")
+        if FileManager.default.fileExists(atPath: sourceRelativeURL.path) {
+            return sourceRelativeURL
+        }
+
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("ACTests/Goldens/v1_baseline.json")
+    }
+
     func runMatrix(
         scenario: PromptLabScenario,
         promptSet: PromptLabPromptSet,
@@ -53,6 +69,47 @@ actor PromptLabRunner {
             }
         }
         return results
+    }
+
+    func runGolden(
+        scenariosURL: URL = PromptLabRunner.defaultGoldenScenariosURL,
+        promptSet: PromptLabPromptSet = PromptLabPromptSet.defaults[0],
+        pipeline: PromptLabPipelineProfile = PromptLabPipelineProfile.defaults[0],
+        runtimeProfile: PromptLabRuntimeProfile = PromptLabRuntimeProfile.defaults[0],
+        runtimePath: String = PromptLabRunner.defaultRuntimePath
+    ) async -> PromptLabGoldenSummary {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: scenariosURL),
+              let scenarios = try? decoder.decode([PromptLabScenario].self, from: data) else {
+            return PromptLabGoldenSummary(
+                name: scenariosURL.lastPathComponent,
+                total: 0,
+                matched: 0,
+                differingScenarioNames: ["failed_to_load"]
+            )
+        }
+
+        var differing: [String] = []
+        for scenario in scenarios {
+            let result = await runSingle(
+                scenario: scenario,
+                promptSet: promptSet,
+                pipeline: pipeline,
+                runtimeProfile: runtimeProfile,
+                runtimePath: runtimePath
+            )
+            if result.pass != true {
+                differing.append(scenario.name)
+            }
+        }
+
+        return PromptLabGoldenSummary(
+            name: scenariosURL.deletingPathExtension().lastPathComponent,
+            total: scenarios.count,
+            matched: scenarios.count - differing.count,
+            differingScenarioNames: differing
+        )
     }
 
     private func runSingle(

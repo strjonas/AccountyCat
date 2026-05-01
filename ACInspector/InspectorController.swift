@@ -270,6 +270,31 @@ final class InspectorController: ObservableObject {
         }
     }
 
+    func runPromptLabGolden() {
+        let promptSet = selectedPromptSet ?? PromptLabPromptSet.defaults[0]
+        let pipeline = PromptLabPipelineProfile.defaults
+            .first { selectedPipelineIDs.contains($0.id) }
+            ?? PromptLabPipelineProfile.defaults[0]
+        let runtimeProfile = PromptLabRuntimeProfile.defaults
+            .first { selectedRuntimeProfileIDs.contains($0.id) }
+            ?? PromptLabRuntimeProfile.defaults[0]
+
+        promptLabIsRunning = true
+        promptLabStatusText = "Running golden set with \(pipeline.displayName) / \(runtimeProfile.displayName)."
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let summary = await self.promptLabRunner.runGolden(
+                promptSet: promptSet,
+                pipeline: pipeline,
+                runtimeProfile: runtimeProfile,
+                runtimePath: self.promptLabRuntimePath
+            )
+            self.promptLabIsRunning = false
+            self.promptLabStatusText = summary.oneLineSummary
+        }
+    }
+
     func updatePromptLabResultAnnotation(resultID: UUID, labels: Set<EpisodeAnnotationLabel>, note: String) {
         guard let index = promptLabResults.firstIndex(where: { $0.id == resultID }) else { return }
         promptLabResults[index].annotationLabels = labels

@@ -60,6 +60,13 @@ struct MonitoringDecisionInput: Sendable {
     /// into both the decision and the nudge-copy prompts as a soft hint.
     /// See `MonitoringDecisionPromptPayload.calendarContext` for ranking notes.
     var calendarContext: String? = nil
+    /// Active focus profile id (e.g. "general", "coding-2026-04-30"). Drives profile-aware
+    /// safelist promotion thresholds and prompt context.
+    var activeProfileID: String = PolicyRule.defaultProfileID
+    /// Display name + description of the active profile, for prompt context.
+    var activeProfileName: String = FocusProfile.defaultDisplayName
+    var activeProfileDescription: String? = nil
+    var activeProfileExpiresAt: Date? = nil
 }
 
 struct MonitoringDecisionResult: Sendable {

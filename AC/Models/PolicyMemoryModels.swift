@@ -63,6 +63,10 @@ nonisolated struct PolicyRuleSchedule: Codable, Hashable, Sendable {
 }
 
 nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
+    /// Sentinel id of the always-present default profile. Rules with this `profileID`
+    /// (or a missing/legacy nil value) belong to the user's everyday "general" mode.
+    nonisolated static let defaultProfileID: String = "general"
+
     var id: String
     var kind: PolicyRuleKind
     var summary: String
@@ -79,11 +83,14 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
     var active: Bool
     /// When true, AC will not autonomously modify or delete this rule.
     var isLocked: Bool
+    /// Profile this rule belongs to. Defaults to `defaultProfileID` ("general").
+    /// Backward-compatible: pre-profile state files decode as the default.
+    var profileID: String
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, summary, source, createdAt, updatedAt, priority
         case scope, schedule, allowedTopics, disallowedTopics
-        case maxMinutesPerDay, tonePreference, active, isLocked
+        case maxMinutesPerDay, tonePreference, active, isLocked, profileID
     }
 
     init(
@@ -101,7 +108,8 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         maxMinutesPerDay: Int? = nil,
         tonePreference: PolicyTonePreference? = nil,
         active: Bool = true,
-        isLocked: Bool = false
+        isLocked: Bool = false,
+        profileID: String = PolicyRule.defaultProfileID
     ) {
         self.id = id
         self.kind = kind
@@ -118,6 +126,7 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         self.tonePreference = tonePreference
         self.active = active
         self.isLocked = isLocked
+        self.profileID = profileID
     }
 
     init(from decoder: Decoder) throws {
@@ -137,6 +146,7 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         tonePreference = try c.decodeIfPresent(PolicyTonePreference.self, forKey: .tonePreference)
         active = try c.decode(Bool.self, forKey: .active)
         isLocked = (try? c.decode(Bool.self, forKey: .isLocked)) ?? false
+        profileID = (try? c.decode(String.self, forKey: .profileID)) ?? PolicyRule.defaultProfileID
     }
 
     func isActive(at now: Date, calendar: Calendar = .current) -> Bool {
@@ -195,6 +205,14 @@ nonisolated enum PolicyMemoryOperationType: String, Codable, CaseIterable, Senda
     case updateRule = "update_rule"
     case removeRule = "remove_rule"
     case expireRule = "expire_rule"
+    /// Switch to an existing focus profile by id. Optional `profileDurationMinutes` overrides
+    /// the default 90 minutes. Routed through `AppController` rather than mutating `rules`.
+    case activateProfile = "activate_profile"
+    /// Create a new named focus profile and activate it. Requires `profileName`. Optional
+    /// `profileDescription` and `profileDurationMinutes`. Subject to the LRU cap.
+    case createAndActivateProfile = "create_and_activate_profile"
+    /// End the active named profile and switch back to the default. No fields required.
+    case endActiveProfile = "end_active_profile"
 }
 
 nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
@@ -203,6 +221,51 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
     var ruleID: String?
     var patch: PolicyRulePatch?
     var reason: String?
+    /// Profile-op fields (only used by `activateProfile` / `createAndActivateProfile`).
+    var profileID: String?
+    var profileName: String?
+    var profileDescription: String?
+    var profileDurationMinutes: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, rule, ruleID, patch, reason
+        case profileID, profileName, profileDescription, profileDurationMinutes
+    }
+
+    init(
+        type: PolicyMemoryOperationType,
+        rule: PolicyRule? = nil,
+        ruleID: String? = nil,
+        patch: PolicyRulePatch? = nil,
+        reason: String? = nil,
+        profileID: String? = nil,
+        profileName: String? = nil,
+        profileDescription: String? = nil,
+        profileDurationMinutes: Int? = nil
+    ) {
+        self.type = type
+        self.rule = rule
+        self.ruleID = ruleID
+        self.patch = patch
+        self.reason = reason
+        self.profileID = profileID
+        self.profileName = profileName
+        self.profileDescription = profileDescription
+        self.profileDurationMinutes = profileDurationMinutes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(PolicyMemoryOperationType.self, forKey: .type)
+        rule = try c.decodeIfPresent(PolicyRule.self, forKey: .rule)
+        ruleID = try c.decodeIfPresent(String.self, forKey: .ruleID)
+        patch = try c.decodeIfPresent(PolicyRulePatch.self, forKey: .patch)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        profileID = try c.decodeIfPresent(String.self, forKey: .profileID)
+        profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
+        profileDescription = try c.decodeIfPresent(String.self, forKey: .profileDescription)
+        profileDurationMinutes = try c.decodeIfPresent(Int.self, forKey: .profileDurationMinutes)
+    }
 }
 
 nonisolated struct PolicyMemoryUpdateResponse: Codable, Hashable, Sendable {
@@ -290,6 +353,10 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
                 guard !rules[index].isLocked else { continue }
                 rules[index].active = false
                 rules[index].updatedAt = now
+
+            case .activateProfile, .createAndActivateProfile, .endActiveProfile:
+                // Handled at the controller layer (AppController.applyProfileOperations).
+                continue
             }
         }
 
@@ -299,11 +366,13 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
 
     func activeRules(
         at now: Date,
-        matching context: FrontmostContext? = nil
+        matching context: FrontmostContext? = nil,
+        profileID: String? = nil
     ) -> [PolicyRule] {
         rules
             .filter { rule in
                 guard rule.isActive(at: now) else { return false }
+                if let profileID, rule.profileID != profileID { return false }
                 if let context { return rule.matches(context: context) }
                 return true
             }
@@ -314,9 +383,10 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
         for context: FrontmostContext,
         usageByDay: [String: [String: TimeInterval]],
         now: Date,
-        limit: Int = 6
+        limit: Int = 6,
+        profileID: String? = nil
     ) -> String {
-        let rules = activeRules(at: now, matching: context).prefix(limit)
+        let rules = activeRules(at: now, matching: context, profileID: profileID).prefix(limit)
         var lines: [String] = []
 
         if let tonePreference {
@@ -346,9 +416,10 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
 
     func chatSummary(
         now: Date,
-        limit: Int = 8
+        limit: Int = 8,
+        profileID: String? = nil
     ) -> String {
-        let activeRules = activeRules(at: now).prefix(limit)
+        let activeRules = activeRules(at: now, profileID: profileID).prefix(limit)
         var lines: [String] = []
 
         if let tonePreference {

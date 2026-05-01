@@ -377,6 +377,31 @@ final class BrainService: NSObject {
         }
 
         let now = Date()
+
+        // Profile expiry check (clock-driven, no separate scheduler). If the active named
+        // profile expired, swap to default before this tick runs so the rule scope is correct.
+        let activeProfile = state.activeProfile
+        if !activeProfile.isDefault, activeProfile.isExpired(at: now) {
+            if let i = state.profiles.firstIndex(where: { $0.id == activeProfile.id }) {
+                state.profiles[i].activatedAt = nil
+                state.profiles[i].expiresAt = nil
+            }
+            state.activeProfileID = PolicyRule.defaultProfileID
+            state.chatHistory.append(ChatMessage(
+                role: .assistant,
+                text: "\(activeProfile.name) ended. Switched back to General.",
+                timestamp: now,
+                interruptionPolicy: .deferred
+            ))
+            stateSink?(state)
+            await appendMonitoringMetric(
+                kind: .profileChanged,
+                reason: "profile_expired",
+                state: state,
+                detail: activeProfile.id
+            )
+        }
+
         let idleSeconds = SnapshotService.idleSeconds()
         if idleSeconds >= 60 {
             cancelActiveEvaluationIfNeeded(reason: "idle_reset")
@@ -396,6 +421,12 @@ final class BrainService: NSObject {
                 handleMonitoringConfigurationError(error)
                 return
             }
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "idle",
+                state: state,
+                detail: "\(Int(idleSeconds))s"
+            )
             stateSink?(state)
             moodSink?(.idle)
             statusSink?("You look idle, so AC backed off.")
@@ -458,13 +489,20 @@ final class BrainService: NSObject {
             return
         }
 
+        // Profile-scope the policy memory the algorithm sees: only rules belonging to the
+        // currently active profile apply. Default profile is the everyday baseline; a named
+        // profile (e.g. "Coding") makes its safelist the only one in effect.
+        let activeProfileID = state.activeProfileID
+        var scopedPolicyMemory = state.policyMemory
+        scopedPolicyMemory.rules = scopedPolicyMemory.rules.filter { $0.profileID == activeProfileID }
+
         let evaluationPlan: MonitoringEvaluationPlan
         do {
             evaluationPlan = try monitoringAlgorithmRegistry.evaluationPlan(
                 configuration: state.monitoringConfiguration,
                 context: context,
                 heuristics: heuristics,
-                policyMemory: state.policyMemory,
+                policyMemory: scopedPolicyMemory,
                 now: now,
                 state: &state.algorithmState
             )
@@ -474,6 +512,12 @@ final class BrainService: NSObject {
         }
 
         guard evaluationPlan.shouldEvaluate else {
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: evaluationPlan.reason ?? "not_due",
+                state: state,
+                detail: context.appName
+            )
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")
             stateSink?(state)
@@ -546,7 +590,8 @@ final class BrainService: NSObject {
             reason: evaluationPlan.reason ?? "stable_context",
             promptMode: evaluationPlan.promptMode,
             promptVersion: evaluationPlan.promptVersion,
-            execution: executionMetadata
+            execution: executionMetadata,
+            activeProfile: state.activeProfile
         )
 
         let snapshot: AppSnapshot
@@ -593,7 +638,9 @@ final class BrainService: NSObject {
             calendarContext = nil
         }
 
-        let evaluationTask = Task { [monitoringAlgorithmRegistry] in
+        // Re-read activeProfile here in case the expiry check earlier in this tick swapped it.
+        let currentProfile = state.activeProfile
+        let evaluationTask = Task { [monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile] in
             try await monitoringAlgorithmRegistry.evaluate(
                 input: MonitoringDecisionInput(
                     now: now,
@@ -607,12 +654,16 @@ final class BrainService: NSObject {
                     chatHistory: state.chatHistory,
                     limit: MonitoringPromptContextBudget.recentUserChatCount
                 ),
-                policyMemory: state.policyMemory,
+                policyMemory: scopedPolicyMemory,
                 runtimeOverride: state.runtimePathOverride,
                 configuration: state.monitoringConfiguration,
                 algorithmState: state.algorithmState,
                 characterPersonalityPrefix: state.character.personalityPrefix,
-                calendarContext: calendarContext
+                calendarContext: calendarContext,
+                activeProfileID: currentProfile.id,
+                activeProfileName: currentProfile.name,
+                activeProfileDescription: currentProfile.description,
+                activeProfileExpiresAt: currentProfile.expiresAt
                 )
             )
         }
@@ -621,7 +672,7 @@ final class BrainService: NSObject {
             activeEvaluationTask = nil
         }
 
-        let decisionResult: MonitoringDecisionResult
+        var decisionResult: MonitoringDecisionResult
         do {
             decisionResult = try await evaluationTask.value
         } catch is CancellationError {
@@ -632,6 +683,79 @@ final class BrainService: NSObject {
         } catch {
             handleMonitoringConfigurationError(error)
             return
+        }
+
+        // One-shot vision escalation: if text-only returned `unclear` and the pipeline supports
+        // a screenshot, capture one and retry. Bound to a single retry per tick.
+        let pipelineSupportsScreenshot = LLMPolicyCatalog
+            .pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
+            .descriptor
+            .requiresScreenshot
+        if decisionResult.decision.assessment == .unclear,
+           snapshot.screenshotPath == nil,
+           pipelineSupportsScreenshot {
+            do {
+                let escalatedSnapshot = try await buildSnapshot(
+                    from: context,
+                    state: state,
+                    idle: false,
+                    now: now,
+                    sessionID: session?.id,
+                    evaluationID: evaluationID,
+                    requiresScreenshot: true
+                )
+                defer {
+                    cleanupEphemeralScreenshotIfNeeded(escalatedSnapshot, sessionID: session?.id)
+                }
+                if escalatedSnapshot.screenshotPath != nil {
+                    let retryInput = MonitoringDecisionInput(
+                        now: Date(),
+                        evaluationID: evaluationID,
+                        snapshot: escalatedSnapshot,
+                        goals: state.goalsText,
+                        recentActions: state.recentActions,
+                        heuristics: heuristics,
+                        memory: state.memoryForPrompt(now: now),
+                        recentUserMessages: Self.recentUserMessages(
+                            chatHistory: state.chatHistory,
+                            limit: MonitoringPromptContextBudget.recentUserChatCount
+                        ),
+                        policyMemory: scopedPolicyMemory,
+                        runtimeOverride: state.runtimePathOverride,
+                        configuration: state.monitoringConfiguration,
+                        algorithmState: state.algorithmState,
+                        characterPersonalityPrefix: state.character.personalityPrefix,
+                        calendarContext: calendarContext,
+                        activeProfileID: currentProfile.id,
+                        activeProfileName: currentProfile.name,
+                        activeProfileDescription: currentProfile.description,
+                        activeProfileExpiresAt: currentProfile.expiresAt
+                    )
+                    let retried = try await monitoringAlgorithmRegistry.evaluate(input: retryInput)
+                    decisionResult = retried
+                    await ActivityLogService.shared.append(
+                        category: "vision-retry",
+                        message: "Text-only returned unclear; retried with screenshot. New verdict: \(retried.decision.assessment.rawValue)"
+                    )
+                    await appendMonitoringMetric(
+                        kind: .visionRetried,
+                        reason: retried.decision.assessment.rawValue,
+                        state: state,
+                        detail: context.appName
+                    )
+                }
+            } catch is CancellationError {
+                moodSink?(.watching)
+                statusSink?("Context changed during retry — cancelled.")
+                stateSink?(state)
+                return
+            } catch {
+                // Retry failure: keep the original unclear verdict, log, and continue.
+                await ActivityLogService.shared.append(
+                    category: "vision-retry-error",
+                    message: error.localizedDescription
+                )
+            }
         }
 
         await appendEvaluationArtifacts(
@@ -649,7 +773,19 @@ final class BrainService: NSObject {
 
         if let policyMemoryUpdate = decisionResult.policyMemoryUpdate,
            !policyMemoryUpdate.operations.isEmpty {
-            state.policyMemory.apply(policyMemoryUpdate, now: now)
+            // Stamp newly-added rules with the currently active profile id so promotion
+            // (e.g. safelist_appeal) and chat-driven additions land in the right scope.
+            var stamped = policyMemoryUpdate
+            stamped.operations = stamped.operations.map { op in
+                guard op.type == .addRule, var rule = op.rule else { return op }
+                if rule.profileID.isEmpty || rule.profileID == PolicyRule.defaultProfileID {
+                    rule.profileID = activeProfileID
+                }
+                var copy = op
+                copy.rule = rule
+                return copy
+            }
+            state.policyMemory.apply(stamped, now: now)
         }
 
         await appendPolicyDecisionEvent(
@@ -1114,7 +1250,8 @@ final class BrainService: NSObject {
         reason: String,
         promptMode: String,
         promptVersion: String,
-        execution: MonitoringExecutionMetadata
+        execution: MonitoringExecutionMetadata,
+        activeProfile: FocusProfile
     ) async {
         guard shouldPersistVerboseTelemetry() else { return }
         guard let sessionID else { return }
@@ -1133,7 +1270,9 @@ final class BrainService: NSObject {
                     reason: reason,
                     promptMode: promptMode,
                     promptVersion: promptVersion,
-                    strategy: execution.telemetryRecord
+                    strategy: execution.telemetryRecord,
+                    activeProfileID: activeProfile.id,
+                    activeProfileName: activeProfile.name
                 ),
                 modelInput: nil,
                 modelOutput: nil,
@@ -1263,7 +1402,19 @@ final class BrainService: NSObject {
                             stdoutArtifact: stdoutArtifact,
                             stderrArtifact: stderrArtifact,
                             stdoutPreview: output.stdout.cleanedSingleLine.prefix(220).description,
-                            stderrPreview: output.stderr.cleanedSingleLine.prefix(220).description
+                            stderrPreview: output.stderr.cleanedSingleLine.prefix(220).description,
+                            tokenUsage: output.tokenUsage.map { usage in
+                                TokenUsageRecord(
+                                    promptTokens: usage.promptTokens,
+                                    completionTokens: usage.completionTokens,
+                                    totalTokens: usage.totalTokens,
+                                    cacheReadTokens: usage.cacheReadTokens,
+                                    imageTokens: usage.imageTokens,
+                                    costUSD: usage.costUSD,
+                                    estimated: usage.estimated,
+                                    includesScreenshot: snapshot.screenshotArtifact != nil
+                                )
+                            }
                         ),
                         parsedOutput: nil,
                         policy: nil,
@@ -1469,6 +1620,50 @@ final class BrainService: NSObject {
                 reaction: nil,
                 annotation: nil,
                 failure: FailureRecord(domain: domain, message: message, evaluationID: evaluationID)
+            ),
+            sessionID: sessionID
+        )
+    }
+
+    private func appendMonitoringMetric(
+        kind: MonitoringMetricKind,
+        reason: String,
+        state: ACState,
+        detail: String? = nil
+    ) async {
+        guard shouldPersistVerboseTelemetry(state: state) else {
+            return
+        }
+        guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
+            return
+        }
+        let active = state.activeProfile
+        try? await telemetryStore.appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .monitoringMetric,
+                timestamp: Date(),
+                sessionID: sessionID,
+                episodeID: activeEpisode?.id,
+                episode: activeEpisode,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                metric: MonitoringMetricRecord(
+                    kind: kind,
+                    reason: reason,
+                    activeProfileID: active.id,
+                    activeProfileName: active.name,
+                    detail: detail
+                ),
+                reaction: nil,
+                annotation: nil,
+                failure: nil
             ),
             sessionID: sessionID
         )

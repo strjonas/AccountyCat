@@ -59,20 +59,15 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
+    /// Probe sooner than `focusedFollowUp` after an `unclear` verdict to catch ambiguous activity.
     var unclearFollowUp: TimeInterval {
-        switch self {
-        case .sharp: return 90
-        case .balanced: return 2 * 60
-        case .gentle: return 4 * 60
-        }
+        max(60, focusedFollowUp / 2)
     }
 
+    /// React faster than `focusedFollowUp` after a `distracted` verdict to support recovery.
+    /// Floor of 60s prevents a churn loop on weak local models.
     var distractedFollowUp: TimeInterval {
-        switch self {
-        case .sharp: return 30
-        case .balanced: return 45
-        case .gentle: return 90
-        }
+        max(60, focusedFollowUp / 3)
     }
 
     var focusedDecisionCacheTTL: TimeInterval {
@@ -95,6 +90,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let defaultRuntimeProfileID = "gemma_balanced_v1"
     nonisolated static let defaultInferenceBackend: MonitoringInferenceBackend = .local
     nonisolated static let defaultOnlineModelIdentifier = "google/gemma-4-31b-it"
+    nonisolated static let defaultOnlineModelIdentifierText = "nvidia/nemotron-3-nano-30b-a3b"
+    nonisolated static let defaultOnlineModelIdentifierImage = "qwen/qwen3.5-9b"
     nonisolated static let banditAlgorithmID = "bandit_focus_v1"
 
     var algorithmID: String
@@ -105,9 +102,19 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     var selectionMode: MonitoringSelectionMode
     var cadenceMode: MonitoringCadenceMode
     var experimentArmOverride: String?
-    var modelOverride: String?
     var onlineModelIdentifier: String
+    /// Separate model identifier for text-only prompts (online)
+    var onlineModelIdentifierText: String?
+    /// Separate model identifier for image/vision prompts (online)
+    var onlineModelIdentifierImage: String?
+    /// Separate model identifier for text-only prompts (local)
+    var localModelIdentifierText: String?
+    /// Separate model identifier for image/vision prompts (local)
+    var localModelIdentifierImage: String?
     var thinkingEnabled: Bool
+    /// Window-title length at which deterministic text context is considered enough to skip
+    /// a screenshot for non-ambiguous apps. Kept configurable so unclear/retry rates can tune it.
+    var titleLengthForTextOnly: Int
 
     enum CodingKeys: String, CodingKey {
         case algorithmID
@@ -120,7 +127,12 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         case experimentArmOverride
         case modelOverride
         case onlineModelIdentifier
+        case onlineModelIdentifierText
+        case onlineModelIdentifierImage
+        case localModelIdentifierText
+        case localModelIdentifierImage
         case thinkingEnabled
+        case titleLengthForTextOnly
     }
 
     init(
@@ -132,9 +144,13 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         selectionMode: MonitoringSelectionMode = .fixed,
         cadenceMode: MonitoringCadenceMode = .balanced,
         experimentArmOverride: String? = nil,
-        modelOverride: String? = nil,
         onlineModelIdentifier: String = Self.defaultOnlineModelIdentifier,
-        thinkingEnabled: Bool = false
+        onlineModelIdentifierText: String? = nil,
+        onlineModelIdentifierImage: String? = nil,
+        localModelIdentifierText: String? = nil,
+        localModelIdentifierImage: String? = nil,
+        thinkingEnabled: Bool = false,
+        titleLengthForTextOnly: Int = MonitoringHeuristics.defaultTitleLengthForTextOnly
     ) {
         self.algorithmID = Self.normalizedAlgorithmID(algorithmID)
         self.promptProfileID = promptProfileID
@@ -144,9 +160,21 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         self.selectionMode = selectionMode
         self.cadenceMode = cadenceMode
         self.experimentArmOverride = experimentArmOverride
-        self.modelOverride = modelOverride
-        self.onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(onlineModelIdentifier)
+        let normalizedOnlineModel = Self.normalizedOnlineModelIdentifier(onlineModelIdentifier)
+        self.onlineModelIdentifier = normalizedOnlineModel
+        self.onlineModelIdentifierText = Self.normalizedOptionalOnlineModelIdentifier(
+            onlineModelIdentifierText
+        ) ?? normalizedOnlineModel
+        self.onlineModelIdentifierImage = Self.normalizedOptionalOnlineModelIdentifier(
+            onlineModelIdentifierImage
+        ) ?? normalizedOnlineModel
+        let resolvedLocalTextModel = Self.normalizedOptionalLocalModelIdentifier(localModelIdentifierText)
+            ?? AITier.balanced.localModelIdentifierText
+        self.localModelIdentifierText = resolvedLocalTextModel
+        self.localModelIdentifierImage = Self.normalizedOptionalLocalModelIdentifier(localModelIdentifierImage)
+            ?? resolvedLocalTextModel
         self.thinkingEnabled = thinkingEnabled
+        self.titleLengthForTextOnly = max(12, titleLengthForTextOnly)
     }
 
     nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
@@ -204,6 +232,20 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         return trimmed
     }
 
+    nonisolated static func normalizedOptionalOnlineModelIdentifier(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return normalizedOnlineModelIdentifier(trimmed)
+    }
+
+    nonisolated static func normalizedOptionalLocalModelIdentifier(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         algorithmID = Self.normalizedAlgorithmID(
@@ -216,11 +258,30 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         selectionMode = try c.decodeIfPresent(MonitoringSelectionMode.self, forKey: .selectionMode) ?? .fixed
         cadenceMode = try c.decodeIfPresent(MonitoringCadenceMode.self, forKey: .cadenceMode) ?? .balanced
         experimentArmOverride = try c.decodeIfPresent(String.self, forKey: .experimentArmOverride)
-        modelOverride = try c.decodeIfPresent(String.self, forKey: .modelOverride)
+        let legacyModelOverride = Self.normalizedOptionalLocalModelIdentifier(
+            try c.decodeIfPresent(String.self, forKey: .modelOverride)
+        )
         onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifier) ?? Self.defaultOnlineModelIdentifier
         )
+        onlineModelIdentifierText = Self.normalizedOptionalOnlineModelIdentifier(
+            try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifierText)
+        ) ?? onlineModelIdentifier
+        onlineModelIdentifierImage = Self.normalizedOptionalOnlineModelIdentifier(
+            try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifierImage)
+        ) ?? onlineModelIdentifier
+        localModelIdentifierText = Self.normalizedOptionalLocalModelIdentifier(
+            try c.decodeIfPresent(String.self, forKey: .localModelIdentifierText)
+        ) ?? legacyModelOverride ?? AITier.balanced.localModelIdentifierText
+        localModelIdentifierImage = Self.normalizedOptionalLocalModelIdentifier(
+            try c.decodeIfPresent(String.self, forKey: .localModelIdentifierImage)
+        ) ?? legacyModelOverride ?? localModelIdentifierText
         thinkingEnabled = try c.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? false
+        titleLengthForTextOnly = max(
+            12,
+            try c.decodeIfPresent(Int.self, forKey: .titleLengthForTextOnly)
+                ?? MonitoringHeuristics.defaultTitleLengthForTextOnly
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -233,9 +294,13 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         try c.encode(selectionMode, forKey: .selectionMode)
         try c.encode(cadenceMode, forKey: .cadenceMode)
         try c.encodeIfPresent(experimentArmOverride, forKey: .experimentArmOverride)
-        try c.encodeIfPresent(modelOverride, forKey: .modelOverride)
         try c.encode(onlineModelIdentifier, forKey: .onlineModelIdentifier)
+        try c.encodeIfPresent(onlineModelIdentifierText, forKey: .onlineModelIdentifierText)
+        try c.encodeIfPresent(onlineModelIdentifierImage, forKey: .onlineModelIdentifierImage)
+        try c.encodeIfPresent(localModelIdentifierText, forKey: .localModelIdentifierText)
+        try c.encodeIfPresent(localModelIdentifierImage, forKey: .localModelIdentifierImage)
         try c.encode(thinkingEnabled, forKey: .thinkingEnabled)
+        try c.encode(titleLengthForTextOnly, forKey: .titleLengthForTextOnly)
     }
 }
 
@@ -264,7 +329,6 @@ struct MonitoringRuntimeProfileDescriptor: Hashable, Sendable {
     var id: String
     var displayName: String
     var summary: String
-    var modelIdentifier: String
 }
 
 struct MonitoringExecutionMetadata: Hashable, Sendable {

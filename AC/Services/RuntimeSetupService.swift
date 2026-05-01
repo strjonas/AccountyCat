@@ -38,7 +38,7 @@ enum RuntimeSetupService {
         runtimeRepositoryURL(in: resolvedBaseDirectory()).path
     }
 
-    nonisolated static func inspect(runtimeOverride: String?, modelIdentifier: String = DevelopmentModelConfiguration.defaultModelIdentifier) -> RuntimeDiagnostics {
+    nonisolated static func inspect(runtimeOverride: String?, modelIdentifier: String) -> RuntimeDiagnostics {
         let runtimePath = normalizedRuntimePath(from: runtimeOverride)
         let runtimeDirectory = runtimeDirectoryPath(for: runtimePath)
         let modelCacheRoots = modelCacheRoots(
@@ -128,7 +128,7 @@ enum RuntimeSetupService {
 
     static func warmUpRuntime(
         runtimePath: String,
-        modelIdentifier: String = DevelopmentModelConfiguration.defaultModelIdentifier,
+        modelIdentifier: String,
         log: @escaping @MainActor (String) -> Void
     ) async throws {
         let runtimeURL = URL(fileURLWithPath: runtimePath)

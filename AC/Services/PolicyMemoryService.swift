@@ -16,6 +16,42 @@ struct PolicyMemoryUpdateRequest: Sendable {
     var runtimeProfileID: String
     var inferenceBackend: MonitoringInferenceBackend
     var onlineModelIdentifier: String
+    var onlineTextModelIdentifier: String?
+    var localModelIdentifier: String?
+    /// Active focus profile (for the model to know what's currently in scope).
+    var activeProfile: ProfilePromptSummary
+    /// Other available profiles for matching against an `activate_profile` op.
+    var availableProfiles: [ProfilePromptSummary]
+}
+
+/// Compact, prompt-safe summary of a focus profile for the policy_memory pipeline.
+struct ProfilePromptSummary: Sendable, Codable, Hashable {
+    var id: String
+    var name: String
+    var isDefault: Bool
+    var description: String?
+    /// One-line summary of the rules currently scoped to this profile (allow/disallow names).
+    var rulesSummary: String?
+    var lastUsedAt: Date?
+    var expiresAt: Date?
+
+    nonisolated init(
+        id: String,
+        name: String,
+        isDefault: Bool,
+        description: String? = nil,
+        rulesSummary: String? = nil,
+        lastUsedAt: Date? = nil,
+        expiresAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.isDefault = isDefault
+        self.description = description
+        self.rulesSummary = rulesSummary
+        self.lastUsedAt = lastUsedAt
+        self.expiresAt = expiresAt
+    }
 }
 
 protocol PolicyMemoryServicing: Sendable {
@@ -53,7 +89,8 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             if request.inferenceBackend == .openRouter {
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
-                        modelIdentifier: request.onlineModelIdentifier,
+                        source: .policyMemory,
+                        modelIdentifier: request.onlineTextModelIdentifier ?? request.onlineModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: nil,
@@ -63,8 +100,13 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
                 guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                guard let localModelIdentifier = request.localModelIdentifier, !localModelIdentifier.isEmpty else {
+                    await ActivityLogService.shared.append(category: "policy-memory-error", message: "No local text model configured.")
+                    return nil
+                }
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
+                    modelIdentifier: localModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
                     options: options
@@ -94,6 +136,8 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             var eventSummary: String
             var recentActions: [ActionRecord]
             var context: FrontmostContext?
+            var activeProfile: ProfilePromptSummary
+            var availableProfiles: [ProfilePromptSummary]
         }
 
         let payload = Payload(
@@ -103,7 +147,9 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             policyMemory: request.policyMemory,
             eventSummary: request.eventSummary.cleanedSingleLine,
             recentActions: Array(request.recentActions.prefix(4)),
-            context: request.context
+            context: request.context,
+            activeProfile: request.activeProfile,
+            availableProfiles: request.availableProfiles
         )
 
         guard let data = try? encoder.encode(payload),

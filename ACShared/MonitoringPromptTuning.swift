@@ -53,7 +53,6 @@ struct MonitoringPipelineDefinition: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct MonitoringRuntimeOptionsDefinition: Codable, Hashable, Sendable {
-    var modelIdentifier: String
     var maxTokens: Int
     var temperature: Double
     var topP: Double
@@ -83,12 +82,12 @@ struct MonitoringRuntimeDefinition: Codable, Hashable, Identifiable, Sendable {
 }
 
 enum MonitoringPromptTuning {
-    nonisolated private static var developmentDefaultModelIdentifier: String {
-        DevelopmentModelConfiguration.defaultModelIdentifier
-    }
-
     private static let decisionSchema = """
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional","overlay_headline":"optional","overlay_body":"optional","overlay_prompt":"optional","submit_button_title":"optional","secondary_button_title":"optional"}
+    """
+
+    private static let onlineDecisionSchema = """
+    {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","reason_tags":["tag"]}
     """
 
     nonisolated static let policyDefaultPromptSet = MonitoringPromptSetDefinition(
@@ -148,40 +147,46 @@ enum MonitoringPromptTuning {
             MonitoringStagePromptDefinition(
                 stage: .onlineDecision,
                 systemPrompt: """
-                You are AC's online single-round monitoring stage.
-                Use goals, the user's recent chat, free-form memory, policy memory, recent interventions, distraction state, heuristics, and the live screenshot when one is attached.
-                False positives are expensive, but explicit rules and limits must still be honored.
-                `characterPersonalityPrefix` is the active AC voice. If you write a nudge, let that voice shape the wording naturally without changing the meaning.
-                Return exactly one JSON object:
-                \(decisionSchema)
+                You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
+                `characterPersonalityPrefix` is AC's voice — fold it into any nudge wording, never change the meaning.
+                Return exactly one JSON object. Keep it minimal and omit every unused key.
+                Base shape:
+                \(onlineDecisionSchema)
 
-                Memory priority:
-                - `recentUserMessages` is the freshest ground truth. Read oldest to newest; newest relevant user instruction wins.
-                - `freeFormMemory` is next. Newer memory overrides older memory when they conflict.
-                - `policySummary` is structured support, but never overrides a newer explicit user statement.
-                - `calendarContext` is a soft hint only. Never let it override chat or memory.
+                Priority of truth (highest first; newer always wins on conflict; the newest relevant user statement wins):
+                1. `recentUserMessages` — read oldest→newest; the newest relevant statement is authoritative.
+                2. `freeFormMemory` — newer entries override older ones.
+                3. `policySummary` — structured support; never overrides a newer chat/memory statement.
+                4. `calendarContext` — soft hint only.
+                Allowances ("X is okay", "let me", "don't disturb me on X") are as binding as restrictions.
+
+                Trust the user's stated goals. If the goals describe activity that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to the goals — not to generic notions of productivity.
+                Profile context:
+                - If `activeProfile.isDefault=true`, this is general/everyday mode: be conservative; everyday utilities (Finder, Mail, calendar, setup/admin) are usually fine.
+                - If a named profile is active, judge against that profile's name/description and the user's goals. Productive work outside that scope can still be a distraction (e.g. coding during "Presentation prep").
 
                 Decision rules:
-                - If the screenshot or context clearly supports the goals, or the current activity is explicitly allowed, return `focused` + `none`.
-                - If the screenshot is missing (`screenshotIncluded=false`), be even more conservative and prefer `focused` or `unclear` unless the text context is clearly distracting.
-                - If the activity is genuinely unclear, return `unclear` + `abstain`.
-                - If the activity conflicts with the goals or an active restriction, return `distracted`.
-                - For a first clear distraction, use `suggested_action="nudge"`.
-                - Use `suggested_action="overlay"` only when repeated distraction is already reflected in the payload, unless there is a newer explicit allowance.
-                - `assessment` and `suggested_action` must agree:
-                  focused -> none
-                  unclear -> abstain
-                  distracted -> nudge or overlay
+                - Activity supports the goals or matches an allowance → `focused` + `none`.
+                - Genuinely unclear → `unclear` + `abstain`.
+                - Conflicts with goals or an active restriction → `distracted`.
+                - First clear distraction → `nudge`. Repeated distraction already in the payload → `overlay`.
+                - When the screenshot is missing (`screenshotIncluded=false`), prefer `focused` or `unclear` unless the text context is clearly distracting.
                 - Prefer silence over a false positive.
-                - If `suggested_action` is `nudge`, the `nudge` field is REQUIRED — write a single sentence under 18 words, specific to the current activity and different from recent nudges. Never return `suggested_action="nudge"` with an empty or missing `nudge`.
-                - If `suggested_action` is `overlay`, fill `overlay_headline`, `overlay_body`, and `overlay_prompt`.
-                - Never mention hidden fields, counters, or that you are using memory/history.
+
+                Output rules:
+                - `assessment` and `suggested_action` must agree: focused→none, unclear→abstain, distracted→nudge|overlay.
+                - Always include `reason_tags`.
+                - Include `confidence` only when uncertainty matters. Otherwise omit it.
+                - If `nudge`: include only `nudge` in addition to the base keys; keep it to one sentence under 18 words, specific to this activity, distinct from recent nudges.
+                - If `abstain`: `abstain_reason` is optional; include it only when it adds useful specificity.
+                - If `overlay`: include `overlay_headline`, `overlay_body`, `overlay_prompt`.
+                - Do not emit `submit_button_title` or `secondary_button_title` unless you must override AC's defaults.
+                - Never emit keys with `null`, empty strings, or placeholder values.
+                - Never mention hidden fields, counters, or that you are reading memory/history.
                 """
             ,
                 userTemplate: """
-                Decide AC's next action in one round from this live context.
-                If a screenshot is attached, use it together with the payload. If not, rely on the payload only and stay conservative.
-                Before deciding, resolve rules in this order: newest `recentUserMessages`, then newer `freeFormMemory`, then `policySummary`.
+                Decide AC's next action from this live context.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
                 """
@@ -189,48 +194,52 @@ enum MonitoringPromptTuning {
             MonitoringStagePromptDefinition(
                 stage: .decision,
                 systemPrompt: """
-                You are AC's decision stage.
-                Use goals, free-form memory, recent user chat messages, policy memory, distraction state, recent interventions, and perception summaries to choose the next action.
-                False positives are expensive, but explicit rules and limits must still be honored.
+                You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
+                Inputs: goals, `freeFormMemory`, `recentUserMessages`, `policySummary`, `distraction`, `recentInterventions`, perception summaries, optional `calendarContext`.
                 Return exactly one JSON object:
                 \(decisionSchema)
 
-                Memory priority (READ CAREFULLY — this is the #1 cause of bad decisions):
-                - `freeFormMemory` lines and `recentUserMessages` entries are stamped with local wall-clock time in `YYYY-MM-DD HH:MM`.
-                - Resolve conflicts before deciding:
-                  1. Read `recentUserMessages` from oldest to newest; the newest relevant user statement wins.
-                  2. Then read `freeFormMemory`; newer memory overrides older memory when they conflict.
-                  3. Use `policySummary` as supporting structured context, but never let it override a newer explicit user statement from chat or free-form memory.
-                  4. Use `calendarContext` (if present) as a SOFT hint about current intent — ranked BELOW memory and chat. Plans change; the calendar may be stale or wrong. Never override an explicit user statement or memory rule with the calendar.
-                - `recentUserMessages` is the most recent ground truth even if not yet consolidated into memory. If the user just said "WhatsApp is okay" or "let me watch YouTube for a bit", honour that over category heuristics.
-                - An allowance ("X is okay", "I'm taking a break", "let me") is as authoritative as a restriction ("don't let me use X"). Do not override either with vibes about productivity.
-                - "Do not disturb me on X", "never flag X as a distraction", and similar no-intervention phrasing are allowances for X. Treat them as `focused` / `none` for that app or activity.
-                - Use `now` plus the timestamps to resolve temporary rules. If a temporary allowance or restriction has an explicit expiry, respect it until that time.
-                - `calendarContext` shows the user's current calendar event. When it names a task, treat the apps and sites that clearly serve that task as focused — even if they'd normally look distracting. Example: if `calendarContext` says "Summarise the r/foo subreddit", opening reddit.com/r/foo is focused, not distracted. If the event is vague ("Work", "Meeting"), do not derive strong inferences from it.
+                Priority of truth (highest first; newer always wins on conflict; the newest relevant user statement wins):
+                1. `recentUserMessages` — read oldest→newest; the newest relevant statement is authoritative.
+                2. `freeFormMemory` — newer entries override older ones.
+                3. `policySummary` — structured support; never overrides a newer chat/memory statement.
+                4. `calendarContext` — SOFT hint about current intent. When it names a task, apps that clearly serve that task are `focused` (e.g. event "Summarise r/foo" + reddit.com/r/foo → focused). Vague events like "Work" or "Meeting" give no strong signal.
+                `freeFormMemory` and `recentUserMessages` carry `YYYY-MM-DD HH:MM` timestamps; use `now` plus the timestamps to resolve any temporary rule's expiry.
+
+                Allowances are as binding as restrictions:
+                - "X is okay", "let me", "I'm taking a break", "do not disturb me on X", "never flag X" → treat as allowed, return `focused`/`none` for that app/activity.
+
+                Trust the user's stated goals. If the goals describe activity that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to the goals — not to generic notions of productivity.
+                Profile context:
+                - If `activeProfile.isDefault=true`, this is general/everyday mode: be conservative; everyday utilities (Finder, Mail, calendar, setup/admin) are usually fine.
+                - If a named profile is active, judge against that profile's name/description and the user's goals. Productive work outside that scope can still be a distraction (e.g. coding during "Presentation prep").
 
                 Decision rules:
-                - If the likely activity supports the goals or is covered by an allowance in memory / recent chat, return `assessment="focused"` and `suggested_action="none"`.
-                - If `recentUserMessages` contains a newer explicit allowance for the current app/activity than any competing restriction, return `assessment="focused"` and `suggested_action="none"`.
-                - If the activity is still genuinely unclear after using the whole payload, return `assessment="unclear"` and `suggested_action="abstain"`.
-                - If the activity conflicts with the goals or an active restriction in memory / recent chat, return `assessment="distracted"`.
-                - For a first clear distraction, use `suggested_action="nudge"`.
-                - Use `suggested_action="overlay"` when repeated distraction is already reflected in `distraction.distractedStreak >= 2` or multiple recent nudges for the same current activity, unless there is a newer explicit allowance.
-                - `assessment` and `suggested_action` must agree:
-                  focused -> none
-                  unclear -> abstain
-                  distracted -> nudge or overlay
+                - Activity supports the goals OR is covered by an allowance in memory/chat → `focused` + `none`.
+                - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
+                - Genuinely unclear after using the full payload → `unclear` + `abstain`.
+                - Activity conflicts with goals or an active restriction → `distracted`.
+                - First clear distraction → `nudge`.
+                - Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity, and no newer allowance) → `overlay`.
+                - Development tools, editors, terminals, docs, research, reading, planning, and drafting default to `focused` unless the payload clearly says otherwise.
                 - Prefer silence over a false positive.
-                - For development tools, editors, terminals, docs, research, reading, planning, and drafting, prefer `focused` unless the payload clearly says otherwise.
-                - If you write `nudge`, keep it under 18 words, specific to the current activity, and different from recent nudges.
-                - Never mention counters, hidden fields, or that you are using memory or history.
+
+                Output rules:
+                - `assessment` and `suggested_action` must agree: focused→none, unclear→abstain, distracted→nudge|overlay.
+                - If `nudge`: under 18 words, specific to this activity, distinct from recent nudges.
+                - Never mention counters, hidden fields, or that you are reading memory/history.
+
+                Worked example — ambiguous case:
+                - Goals: "make a YouTube video about productivity tools".
+                - App: "Google Chrome", title: "AI productivity tools - YouTube".
+                - Memory: empty. Calendar: empty.
+                - Verdict: `focused`/`none`. The goals describe content research; the title supports it. Do not flag because YouTube is "usually" leisure.
                 """
             ,
                 userTemplate: """
                 Decide AC's next action from this context.
                 Trust the perception summaries more than raw usage when they conflict.
-                Before deciding, resolve rules in this order: newest `recentUserMessages`, then newer `freeFormMemory`, then `policySummary`.
-                Check for anything the user has told you about THIS specific activity or app — those explicit statements override category defaults.
-                Use `recentInterventions` to detect repeated nudges for the same activity, avoid repeating wording, and avoid escalating too fast.
+                Use `recentInterventions` to avoid repeating recent nudges and to escalate only if already warranted.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
                 """
@@ -305,32 +314,44 @@ enum MonitoringPromptTuning {
             MonitoringStagePromptDefinition(
                 stage: .policyMemory,
                 systemPrompt: """
-                You update structured policy memory for a focus companion.
-                Only return JSON matching this schema:
+                You update structured policy memory AND focus profiles for a focus companion.
+                Return JSON only:
                 {
                   "operations":[
                     {
-                      "type":"add_rule|update_rule|remove_rule|expire_rule",
+                      "type":"add_rule|update_rule|remove_rule|expire_rule|activate_profile|create_and_activate_profile|end_active_profile",
                       "rule":{...optional full rule...},
                       "ruleID":"optional existing id",
                       "patch":{...optional partial patch...},
+                      "profileID":"optional — for activate_profile",
+                      "profileName":"optional — for create_and_activate_profile",
+                      "profileDescription":"optional — for create_and_activate_profile",
+                      "profileDurationMinutes":"optional integer — overrides 90-min default",
                       "reason":"short reason"
                     }
                   ]
                 }
 
-                Create rules when the event implies a rule that will affect future nudges. Examples:
+                Rules (add_rule / update_rule / remove_rule / expire_rule):
                 - User says "don't let me use Instagram today" → add_rule {kind:"disallow", scope:"app", target:"Instagram", expiresAt: end of local day}
                 - User says "WhatsApp is okay for the next hour" → add_rule {kind:"allow", scope:"app", target:"WhatsApp", expiresAt: now+1h}
-                - User says "I'm taking a break" → add_rule {kind:"allow", scope:"any", expiresAt: now+30m} (pick a reasonable default if unspecified)
-                - User says "you can let me watch YouTube" → add_rule {kind:"allow", scope:"app", target:"YouTube"} (no expiry if none implied)
+                - User says "I'm taking a break" → add_rule {kind:"allow", scope:"any", expiresAt: now+30m}
+                - User says "you can let me watch YouTube" → add_rule {kind:"allow", scope:"app", target:"YouTube"}
+                Convert relative scopes ("today", "this evening", "for the next hour") into explicit `expiresAt` values relative to `now`.
+                Prefer updating existing rules over duplicating them. The user's most recent statement is authoritative — expire or update the old rule when it contradicts.
+                Do not copy assistant phrasing back into policy memory; use the user's intent.
 
-                The user's most recent statement is authoritative. If it contradicts an existing rule, either expire_rule or update_rule the old one — do NOT leave contradictory rules coexisting.
-                Convert relative scopes like "today", "this evening", or "for the next hour" into explicit `expiresAt` values relative to `now`.
-                Prefer the user's exact app/site names over generic categories.
-                Do not copy assistant phrasing back into policy memory — use the user's intent.
+                Profiles (use the `availableProfiles` and `activeProfile` payload fields):
+                - User says "help me focus on coding for an hour":
+                  • If `availableProfiles` already has a "Coding"-like profile, emit `activate_profile {profileID:<that id>, profileDurationMinutes:60}`.
+                  • Otherwise emit `create_and_activate_profile {profileName:"Coding", profileDescription:"Deep coding work", profileDurationMinutes:60}`.
+                - User says "I'll work on the presentation until 5pm" → `create_and_activate_profile` with a duration matching now→17:00 (or activate an existing match).
+                - User says "I'm done coding for today" while a coding profile is active → `end_active_profile`.
+                - If no duration is specified, omit `profileDurationMinutes` and let the controller pick its 90-min default.
+                - Match generously: "deep work", "writing", "research" etc. should reuse a similar existing profile rather than creating a new one each session.
+                - Never emit a profile op when the user's message is an everyday remark (vent, status, nudge feedback). Only when the user is explicitly choosing a focus mode.
 
-                Prefer updating existing rules over duplicating them. Only emit operations that actually change state.
+                Prefer minimal updates. Only emit operations that actually change state.
                 """
             ,
                 userTemplate: """
@@ -510,13 +531,14 @@ enum MonitoringPromptTuning {
             displayName: "Gemma Balanced",
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -524,13 +546,14 @@ enum MonitoringPromptTuning {
             displayName: "Gemma Low RAM",
             summary: "Lower context and token limits for lighter local tests.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: developmentDefaultModelIdentifier, maxTokens: 110, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 1536, batchSize: 512, ubatchSize: 256, timeoutSeconds: 20)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 96, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(maxTokens: 110, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 1536, batchSize: 512, ubatchSize: 256, timeoutSeconds: 20)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -538,13 +561,14 @@ enum MonitoringPromptTuning {
             displayName: "Llama Experiment",
             summary: "Llama-family preset for side-by-side comparisons.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: "bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M", maxTokens: 130, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(maxTokens: 130, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
     ]

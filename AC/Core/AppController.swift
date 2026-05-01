@@ -37,6 +37,10 @@ final class AppController: ObservableObject {
     @Published var activityStatusText = "Checking permissions and local runtime."
     @Published var chatMessages: [ChatMessage]
     @Published var sendingChatMessage = false
+    /// True when any assistant chat message is still flagged as unread (typically deferred
+    /// suggestions like profile-switch announcements or calendar-suggested switches).
+    /// Drives the menu bar dot badge.
+    @Published var hasUnreadChatMessages: Bool = false
     @Published var consolidatingMemory = false
     @Published var lastUsedModelIdentifier: String?
     @Published var onboardingDismissed = false
@@ -51,6 +55,10 @@ final class AppController: ObservableObject {
     /// enabled and permission is granted. Empty while the feature is off so the
     /// Settings UI has nothing to render before the user opts in.
     @Published var availableCalendars: [ACCalendarInfo] = []
+
+    /// Closure set by AppDelegate to allow UI components (like ContentView's X button)
+    /// to close the main NSPopover.
+    var dismissPopover: (() -> Void)?
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 8
@@ -70,7 +78,8 @@ final class AppController: ObservableObject {
     private var hasPerformedInitialRefresh = false
     private var onboardingCompletionTask: DispatchWorkItem?
     private var lastPromptedDependencySignature: String?
-
+    private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
+    
     private init() {
         let runtime = LocalModelRuntime()
         let onlineModelService = OnlineModelService()
@@ -127,6 +136,7 @@ final class AppController: ObservableObject {
         }
         refreshSystemState(persist: false)
         configureBrainIfNeeded()
+        recomputeTodayStats()
     }
 
     func shutdown() async {
@@ -145,9 +155,12 @@ final class AppController: ObservableObject {
 
         let previousStatus = state.setupStatus
         state.permissions = PermissionService.currentSnapshot()
+
+        let modelIdentifier = pendingLocalModelChange?.modelIdentifier
+            ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         setupDiagnostics = RuntimeSetupService.inspect(
             runtimeOverride: state.runtimePathOverride,
-            modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+            modelIdentifier: modelIdentifier
         )
         let permissionRequirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
         let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
@@ -196,14 +209,26 @@ final class AppController: ObservableObject {
 
     // MARK: - Brain — rule management
 
-    func addUserRule(_ summary: String, kind: PolicyRuleKind, appName: String? = nil) {
+    func addUserRule(
+        _ summary: String,
+        kind: PolicyRuleKind,
+        appName: String? = nil,
+        profileID: String? = nil
+    ) {
         let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         var scope = PolicyRuleScope()
         if let name = appName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
             scope.appName = name
         }
-        let rule = PolicyRule(kind: kind, summary: trimmed, source: .explicitFeedback, priority: 75, scope: scope)
+        let rule = PolicyRule(
+            kind: kind,
+            summary: trimmed,
+            source: .explicitFeedback,
+            priority: 75,
+            scope: scope,
+            profileID: profileID ?? state.activeProfileID
+        )
         state.policyMemory.apply(PolicyMemoryUpdateResponse(operations: [
             PolicyMemoryOperation(type: .addRule, rule: rule)
         ]))
@@ -238,6 +263,214 @@ final class AppController: ObservableObject {
         state.policyMemory.rules[i].updatedAt = Date()
         persistState()
         logActivity("brain", "Rule \(state.policyMemory.rules[i].isLocked ? "locked" : "unlocked"): \(id)")
+    }
+
+    // MARK: - Focus profiles
+
+    /// Activate an existing profile by id with an optional explicit expiry.
+    /// When `expiresAt` is nil, AC picks a 90-minute default for named profiles.
+    /// No-op for unknown ids; default profile activations always succeed.
+    @discardableResult
+    func activateProfile(
+        id: String,
+        expiresAt: Date? = nil,
+        reason: String? = nil,
+        announce: Bool = false
+    ) -> Bool {
+        let now = Date()
+        state.ensureDefaultProfileExists()
+        guard let index = state.profiles.firstIndex(where: { $0.id == id }) else {
+            logActivity("profile", "Activate failed — unknown profile id: \(id)")
+            return false
+        }
+        var profile = state.profiles[index]
+        profile.activatedAt = now
+        profile.lastUsedAt = now
+        if profile.isDefault {
+            profile.expiresAt = nil
+        } else {
+            profile.expiresAt = expiresAt ?? now.addingTimeInterval(90 * 60)
+        }
+        if let reason, !reason.isEmpty {
+            profile.createdReason = reason
+        }
+        state.profiles[index] = profile
+        state.activeProfileID = profile.id
+        persistState()
+        logActivity("profile", "Activated profile '\(profile.name)' until \(profile.expiresAt.map { ISO8601DateFormatter().string(from: $0) } ?? "default-no-expiry")")
+        appendMonitoringMetric(kind: .profileChanged, reason: "activated", profile: profile, detail: reason)
+        if announce {
+            announceProfileSwitch(reason: reason)
+        }
+        return true
+    }
+
+    /// Create and activate a new named profile. Enforces the LRU cap.
+    @discardableResult
+    func createAndActivateProfile(
+        name: String,
+        description: String? = nil,
+        duration: TimeInterval? = nil,
+        reason: String? = nil
+    ) -> FocusProfile? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return nil }
+        let now = Date()
+        state.ensureDefaultProfileExists()
+        let durationToUse = duration ?? 90 * 60
+        let profile = FocusProfile(
+            name: trimmedName,
+            description: description,
+            createdAt: now,
+            lastUsedAt: now,
+            activatedAt: now,
+            expiresAt: now.addingTimeInterval(durationToUse),
+            createdReason: reason
+        )
+        state.profiles.append(profile)
+        evictLRUIfNeeded()
+        state.activeProfileID = profile.id
+        persistState()
+        logActivity("profile", "Created+activated profile '\(profile.name)' for \(Int(durationToUse / 60))m")
+        appendMonitoringMetric(kind: .profileChanged, reason: "created", profile: profile, detail: reason)
+        return profile
+    }
+
+    /// End the active profile and switch back to default. No-op when default is already active.
+    func endActiveProfile(announce: Bool = false) {
+        guard state.activeProfileID != PolicyRule.defaultProfileID else { return }
+        state.ensureDefaultProfileExists()
+        if let i = state.profiles.firstIndex(where: { $0.id == state.activeProfileID }) {
+            state.profiles[i].activatedAt = nil
+            state.profiles[i].expiresAt = nil
+        }
+        state.activeProfileID = PolicyRule.defaultProfileID
+        persistState()
+        logActivity("profile", "Ended active profile, back to default")
+        appendMonitoringMetric(kind: .profileChanged, reason: "ended", profile: state.activeProfile, detail: nil)
+        if announce {
+            announceProfileSwitch(reason: "ended")
+        }
+    }
+
+    /// Called by BrainService at the top of every monitoring tick. If the active profile has
+    /// expired, swap to default and persist. Returns true when a swap happened (so the caller
+    /// can post a deferred chat note).
+    @discardableResult
+    func pruneExpiredProfileIfActive(now: Date = Date()) -> FocusProfile? {
+        let active = state.activeProfile
+        guard !active.isDefault, active.isExpired(at: now) else { return nil }
+        let expired = active
+        endActiveProfile()
+        return expired
+    }
+
+    /// Rename a profile. Cannot rename the default profile's id, but its display name is editable.
+    func renameProfile(id: String, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = state.profiles.firstIndex(where: { $0.id == id }) else { return }
+        state.profiles[index].name = trimmed
+        persistState()
+    }
+
+    /// Update editable profile metadata from the Brain tab.
+    func updateProfile(id: String, name: String, description: String?) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              let index = state.profiles.firstIndex(where: { $0.id == id }) else { return }
+        let trimmedDescription = description?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        state.profiles[index].name = trimmedName
+        state.profiles[index].description = (trimmedDescription?.isEmpty == false)
+            ? trimmedDescription
+            : nil
+        persistState()
+        logActivity("profile", "Updated profile metadata: \(id)")
+    }
+
+    func lockedRuleCount(forProfileID id: String) -> Int {
+        state.policyMemory.rules.filter { $0.profileID == id && $0.isLocked }.count
+    }
+
+    func canDeleteProfile(id: String) -> Bool {
+        id != PolicyRule.defaultProfileID && lockedRuleCount(forProfileID: id) == 0
+    }
+
+    /// Delete a non-default profile. Also deletes any rules scoped to it.
+    func deleteProfile(id: String) {
+        guard id != PolicyRule.defaultProfileID else { return }
+        guard canDeleteProfile(id: id) else {
+            logActivity("profile", "Delete blocked — profile \(id) still has locked scoped rules")
+            return
+        }
+        state.profiles.removeAll { $0.id == id }
+        state.policyMemory.rules.removeAll { $0.profileID == id && !$0.isLocked }
+        if state.activeProfileID == id {
+            state.activeProfileID = PolicyRule.defaultProfileID
+        }
+        persistState()
+        logActivity("profile", "Deleted profile: \(id)")
+    }
+
+    /// LRU eviction: if profile count > cap, remove the oldest unused non-default profile.
+    private func evictLRUIfNeeded() {
+        let cap = FocusProfile.maximumProfileCount
+        while state.profiles.count > cap {
+            let evictable = state.profiles
+                .enumerated()
+                .filter { !$0.element.isDefault && $0.element.id != state.activeProfileID }
+                .min(by: { $0.element.lastUsedAt < $1.element.lastUsedAt })
+            guard let (index, profile) = evictable else { break }
+            state.profiles.remove(at: index)
+            state.policyMemory.rules.removeAll { $0.profileID == profile.id && !$0.isLocked }
+            logActivity("profile", "LRU-evicted profile '\(profile.name)' (last used \(profile.lastUsedAt))")
+        }
+    }
+
+    private func appendMonitoringMetric(
+        kind: MonitoringMetricKind,
+        reason: String,
+        profile: FocusProfile,
+        detail: String?
+    ) {
+        guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: state.debugMode) else {
+            return
+        }
+        Task { [telemetryStore] in
+            guard let sessionID = try? await telemetryStore.ensureCurrentSession(reason: "runtime").id else {
+                return
+            }
+            try? await telemetryStore.appendEvent(
+                TelemetryEvent(
+                    id: UUID().uuidString,
+                    kind: .monitoringMetric,
+                    timestamp: Date(),
+                    sessionID: sessionID,
+                    episodeID: nil,
+                    episode: nil,
+                    session: nil,
+                    observation: nil,
+                    evaluation: nil,
+                    modelInput: nil,
+                    modelOutput: nil,
+                    parsedOutput: nil,
+                    policy: nil,
+                    action: nil,
+                    metric: MonitoringMetricRecord(
+                        kind: kind,
+                        reason: reason,
+                        activeProfileID: profile.id,
+                        activeProfileName: profile.name,
+                        detail: detail
+                    ),
+                    reaction: nil,
+                    annotation: nil,
+                    failure: nil
+                ),
+                sessionID: sessionID
+            )
+        }
     }
 
     func updateCharacter(_ character: ACCharacter) {
@@ -315,10 +548,41 @@ final class AppController: ObservableObject {
         state.monitoringConfiguration.usesOnlineInference
     }
 
+    func cachedStatsSnapshot(for window: StatsWindow) -> MonitoringStatsSnapshot? {
+        statsSnapshotCache[window]
+    }
+
+    func storeStatsSnapshot(_ snapshot: MonitoringStatsSnapshot, for window: StatsWindow) {
+        statsSnapshotCache[window] = snapshot
+    }
+
+    func invalidateStatsSnapshots() {
+        statsSnapshotCache.removeAll()
+    }
+
     /// Short human-readable name for the model currently configured, suitable for
     /// compact display in the header or settings footnote.
     var activeModelShortName: String {
-        let id = lastUsedModelIdentifier ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        let config = state.monitoringConfiguration
+        
+        let textModel: String?
+        let imageModel: String?
+        
+        if config.usesOnlineInference {
+            textModel = config.onlineModelIdentifierText
+            imageModel = config.onlineModelIdentifierImage
+        } else {
+            textModel = config.localModelIdentifierText
+            imageModel = config.localModelIdentifierImage
+        }
+        
+        if let text = textModel, !text.isEmpty,
+           let image = imageModel, !image.isEmpty,
+           text != image {
+            return "\(Self.veryShortModelName(for: text)) / \(Self.veryShortModelName(for: image))"
+        }
+        
+        let id = lastUsedModelIdentifier ?? Self.effectiveSetupModelIdentifier(for: config)
         return Self.shortModelName(for: id)
     }
 
@@ -329,8 +593,8 @@ final class AppController: ObservableObject {
 
         // Known models → friendly names
         switch base {
-        case "google/gemma-4-31b-it":              return "Gemma 4"
-        case "google/gemma-4-26b-a4b-it":              return "Gemma 4"
+        case "google/gemma-4-31b-it":              return "Gemma 4 31B"
+        case "google/gemma-4-26b-a4b-it":          return "Gemma 4 26B"
         case "mistralai/mistral-small-3.1-24b-instruct": return "Mistral Small 3.1"
         case "mistralai/mistral-small-24b-instruct-2501": return "Mistral Small"
         case "meta-llama/llama-4-scout":           return "Llama 4 Scout"
@@ -342,13 +606,17 @@ final class AppController: ObservableObject {
         case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
         case "google/gemini-2.5-flash":            return "Gemini 2.5 Flash"
         case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
-        case "google/gemini-3-flash-preview":            return "Gemini 3.1 Flash"
+        case "google/gemini-3-flash-preview":      return "Gemini 3 Flash"
         case "qwen/qwen2.5-vl-72b-instruct":       return "Qwen 2.5 VL"
-        case "qwen/qwen3.5-9b":                 return "Qwen 3.5"
-        case "unsloth/gemma-4-E2B-it-GGUF:Q4_0": return "Gemma 4 E2B"
-        case "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M": return "Gemma 4 E4B"
+        case "qwen/qwen3.5-9b":                    return "Qwen 3.5 9B"
+        case "nvidia/nemotron-3-super-120b-a12b":  return "Nemotron 3"
+        case "deepseek/deepseek-v4-flash":         return "DeepSeek V4"
+        case "unsloth/gemma-4-E2B-it-GGUF:Q4_0":   return "Gemma 4 2B"
+        case "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M": return "Gemma 4 4B"
+        case "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL": return "Qwen 3.5 4B"
         case "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL": return "Qwen 3.5 9B"
-        
+        case "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL": return "Qwen 3.6 27B"
+
         default: break
         }
 
@@ -358,6 +626,37 @@ final class AppController: ObservableObject {
             .replacingOccurrences(of: "-instruct", with: "")
             .replacingOccurrences(of: "-it", with: "")
         return cleaned
+    }
+
+    /// Even more compact version for dual-model display (e.g. "DS V4 / Gema 31B").
+    static func veryShortModelName(for identifier: String) -> String {
+        let raw = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = raw.hasSuffix(":free") ? String(raw.dropLast(5)) : raw
+
+        // Specific overrides for split view — prioritized over generic replacements
+        switch base {
+        case "deepseek/deepseek-v4-flash":         return "DS V4"
+        case "google/gemma-4-31b-it":              return "Gema 31B"
+        case "google/gemma-4-26b-a4b-it":          return "Gema 26B"
+        case "google/gemini-3-flash-preview":      return "Gem 3"
+        case "google/gemini-2.0-flash-001":        return "Gem 2"
+        case "nvidia/nemotron-3-super-120b-a12b":  return "Nemot 3"
+        case "qwen/qwen3.5-9b":                    return "Qwen 9B"
+        case "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL": return "Qwen 4B"
+        case "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL": return "Qwen 9B"
+        default: break
+        }
+
+        let short = shortModelName(for: identifier)
+        // If it's already reasonably short, keep it as is
+        if short.count <= 8 { return short }
+        
+        // Otherwise apply common abbreviations
+        return short
+            .replacingOccurrences(of: "DeepSeek", with: "DS")
+            .replacingOccurrences(of: "Gemini", with: "Gem")
+            .replacingOccurrences(of: "Gemma", with: "Gema")
+            .replacingOccurrences(of: "Mistral", with: "Mist")
     }
 
     func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
@@ -379,41 +678,6 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Inference backend: \(backend.rawValue)")
     }
 
-    func updateModelOverride(_ identifier: String) {
-        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newValue: String? = trimmed.isEmpty ? nil : trimmed
-        guard state.monitoringConfiguration.modelOverride != newValue else { return }
-        if state.monitoringConfiguration.usesOnlineInference {
-            state.monitoringConfiguration.modelOverride = newValue
-            brainService?.handleMonitoringConfigurationChange()
-            refreshSystemState()
-            persistState()
-            logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
-            return
-        }
-
-        let fallbackIdentifier = activeLocalModelIdentifier()
-        let runtimeProfileModel = runtimeProfileModelIdentifier()
-        let targetModelIdentifier = newValue ?? runtimeProfileModel
-        if queueLocalModelDownloadIfNeeded(
-            targetModelIdentifier: targetModelIdentifier,
-            desiredOverride: newValue,
-            fallbackIdentifier: fallbackIdentifier
-        ) {
-            brainService?.handleMonitoringConfigurationChange()
-            refreshSystemState()
-            persistState()
-            logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
-            return
-        }
-
-        applyLocalModelOverride(newValue)
-        brainService?.handleMonitoringConfigurationChange()
-        refreshSystemState()
-        persistState()
-        logActivity("monitoring", "Model override: \(newValue ?? "cleared")")
-    }
-
     func updateOnlineModelIdentifier(_ identifier: String) {
         let normalized = MonitoringConfiguration.normalizedOnlineModelIdentifier(identifier)
         guard state.monitoringConfiguration.onlineModelIdentifier != normalized else { return }
@@ -425,6 +689,42 @@ final class AppController: ObservableObject {
         refreshSystemState(persist: false)
         persistState()
         logActivity("monitoring", "Online model: \(normalized)")
+    }
+
+    func updateOnlineModelIdentifierText(_ identifier: String?) {
+        guard state.monitoringConfiguration.onlineModelIdentifierText != identifier else { return }
+        state.monitoringConfiguration.onlineModelIdentifierText = identifier
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Online text model: \(identifier ?? "cleared")")
+    }
+
+    func updateOnlineModelIdentifierImage(_ identifier: String?) {
+        guard state.monitoringConfiguration.onlineModelIdentifierImage != identifier else { return }
+        state.monitoringConfiguration.onlineModelIdentifierImage = identifier
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Online image model: \(identifier ?? "cleared")")
+    }
+
+    func updateLocalModelIdentifierText(_ identifier: String?) {
+        guard state.monitoringConfiguration.localModelIdentifierText != identifier else { return }
+        state.monitoringConfiguration.localModelIdentifierText = identifier
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Local text model: \(identifier ?? "cleared")")
+    }
+
+    func updateLocalModelIdentifierImage(_ identifier: String?) {
+        guard state.monitoringConfiguration.localModelIdentifierImage != identifier else { return }
+        state.monitoringConfiguration.localModelIdentifierImage = identifier
+        brainService?.handleMonitoringConfigurationChange()
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Local image model: \(identifier ?? "cleared")")
     }
 
     func updateOnlineAPIKey(_ value: String) {
@@ -459,16 +759,20 @@ final class AppController: ObservableObject {
     private func applyTierToActiveBackend() {
         switch state.monitoringConfiguration.inferenceBackend {
         case .openRouter:
-            state.monitoringConfiguration.onlineModelIdentifier = state.aiTier.byokModelIdentifier
+            state.monitoringConfiguration.onlineModelIdentifier = state.aiTier.byokModelIdentifierImage
+            state.monitoringConfiguration.onlineModelIdentifierText = state.aiTier.byokModelIdentifierText
+            state.monitoringConfiguration.onlineModelIdentifierImage = state.aiTier.byokModelIdentifierImage
         case .local:
-            let fallbackIdentifier = activeLocalModelIdentifier()
-            let targetModelIdentifier = state.aiTier.localModelOverride
+            state.monitoringConfiguration.localModelIdentifierText = state.aiTier.localModelIdentifierText
+            state.monitoringConfiguration.localModelIdentifierImage = state.aiTier.localModelIdentifierImage
             if !queueLocalModelDownloadIfNeeded(
-                targetModelIdentifier: targetModelIdentifier,
-                desiredOverride: targetModelIdentifier,
-                fallbackIdentifier: fallbackIdentifier
+                targetModelIdentifier: state.aiTier.localModelIdentifierText,
+                fallbackIdentifier: activeLocalModelIdentifier()
             ) {
-                applyLocalModelOverride(targetModelIdentifier)
+                applyLocalModelSelection(
+                    textModel: state.aiTier.localModelIdentifierText,
+                    imageModel: state.aiTier.localModelIdentifierImage
+                )
             }
         }
     }
@@ -478,37 +782,35 @@ final class AppController: ObservableObject {
     }
 
     private func runtimeProfileModelIdentifier() -> String {
-        LLMPolicyCatalog.runtimeProfile(id: state.monitoringConfiguration.runtimeProfileID)
-            .descriptor
-            .modelIdentifier
+        state.monitoringConfiguration.localModelIdentifierText ?? state.aiTier.localModelIdentifierText
     }
 
     private func activeLocalModelIdentifier() -> String {
-        let override = state.monitoringConfiguration.modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let override, !override.isEmpty {
-            return override
+        if let imageModel = state.monitoringConfiguration.localModelIdentifierImage, !imageModel.isEmpty {
+            return imageModel
+        }
+        if let textModel = state.monitoringConfiguration.localModelIdentifierText, !textModel.isEmpty {
+            return textModel
         }
         return runtimeProfileModelIdentifier()
     }
 
-    private func applyLocalModelOverride(_ override: String?) {
-        state.monitoringConfiguration.modelOverride = override
-        let effectiveModel = override ?? runtimeProfileModelIdentifier()
+    private func applyLocalModelSelection(textModel: String?, imageModel: String?) {
+        state.monitoringConfiguration.localModelIdentifierText = textModel
+        state.monitoringConfiguration.localModelIdentifierImage = imageModel ?? textModel
+        let effectiveModel = activeLocalModelIdentifier()
         if !DevelopmentModelConfiguration.supportsVision(for: effectiveModel) && visionEnabled {
             state.monitoringConfiguration.pipelineProfileID = "title_only_default"
         }
     }
 
     private func applyLocalModelFallback(_ fallbackIdentifier: String) {
-        let runtimeModel = runtimeProfileModelIdentifier()
-        let override = fallbackIdentifier == runtimeModel ? nil : fallbackIdentifier
-        applyLocalModelOverride(override)
+        applyLocalModelSelection(textModel: fallbackIdentifier, imageModel: fallbackIdentifier)
     }
 
     @discardableResult
     private func queueLocalModelDownloadIfNeeded(
         targetModelIdentifier: String,
-        desiredOverride: String?,
         fallbackIdentifier: String
     ) -> Bool {
         let diagnostics = RuntimeSetupService.inspect(
@@ -520,8 +822,7 @@ final class AppController: ObservableObject {
         let targetName = Self.shortModelName(for: targetModelIdentifier)
         let fallbackName = Self.shortModelName(for: fallbackIdentifier)
         pendingLocalModelChange = PendingLocalModelChange(
-            modelIdentifier: targetModelIdentifier,
-            desiredOverride: desiredOverride
+            modelIdentifier: targetModelIdentifier
         )
         modelDownloadNotice = ModelDownloadNotice(
             modelIdentifier: targetModelIdentifier,
@@ -549,7 +850,10 @@ final class AppController: ObservableObject {
         )
         guard diagnostics.modelArtifactsPresent else { return false }
 
-        applyLocalModelOverride(pending.desiredOverride)
+        applyLocalModelSelection(
+            textModel: pending.modelIdentifier,
+            imageModel: pending.modelIdentifier
+        )
         pendingLocalModelChange = nil
         modelDownloadSuccess = ModelDownloadSuccess(
             modelIdentifier: pending.modelIdentifier,
@@ -903,18 +1207,22 @@ final class AppController: ObservableObject {
 
                 // Warm-up can complete slightly before cache metadata settles; poll
                 // briefly so setup/chat unlocks without requiring an app restart.
-                await waitForRuntimeReadinessAfterWarmUp(timeoutSeconds: 12)
+                await waitForRuntimeReadinessAfterWarmUp(
+                    modelIdentifier: setupModelIdentifier,
+                    timeoutSeconds: 12
+                )
                 logActivity("setup", "Runtime setup warm-up finished")
             } catch {
                 setupErrorMessage = error.localizedDescription
                 logActivity("setup", "Runtime setup failed: \(error.localizedDescription)")
+                pendingLocalModelChange = nil
             }
 
             installingRuntime = false
             setupProgressValue = nil
             setupProgressMessage = nil
-            refreshSystemState()
             _ = applyPendingLocalModelIfReady()
+            refreshSystemState()
         }
     }
 
@@ -1089,8 +1397,19 @@ final class AppController: ObservableObject {
         let timelineSegments: [FocusTimelineSegment]
     }
 
-    var todayStats: TodayStats {
-        let now = Date()
+    @Published private(set) var todayStats: TodayStats = TodayStats(
+        totalTrackedSeconds: 0,
+        focusedSeconds: 0,
+        longestFocusedBlockSeconds: 0,
+        streakDays: 0,
+        topAppName: nil,
+        topAppSeconds: 0,
+        nudgeCount: 0,
+        rescueCount: 0,
+        timelineSegments: []
+    )
+
+    func recomputeTodayStats(now: Date = Date()) {
         let cal = Calendar.current
         let startOfToday = cal.startOfDay(for: now)
         let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
@@ -1103,7 +1422,7 @@ final class AppController: ObservableObject {
         let focusedSeconds = todaySegments
             .filter { $0.assessment == .focused }
             .reduce(0) { $0 + clampedDuration($1, start: startOfToday, end: now) }
-        return TodayStats(
+        todayStats = TodayStats(
             totalTrackedSeconds: total,
             focusedSeconds: focusedSeconds,
             longestFocusedBlockSeconds: longestFocusedBlock(in: todaySegments, dayStart: startOfToday, dayEnd: now),
@@ -1247,6 +1566,15 @@ final class AppController: ObservableObject {
         }
     }
 
+    func openOpenRouterHealthStats() {
+        Task {
+            let url = await OpenRouterHealthStatsService.shared.snapshotFileURL()
+            _ = await MainActor.run {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
     func sendChatMessage(_ draft: String) {
         let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedDraft.isEmpty, !sendingChatMessage else { return }
@@ -1297,6 +1625,8 @@ final class AppController: ObservableObject {
 
         let backend = state.monitoringConfiguration.inferenceBackend
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
+        let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
+        let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
         let usingOnline = state.monitoringConfiguration.usesOnlineInference
         let chatReady = state.setupStatus == .ready &&
             (usingOnline || setupDiagnostics.runtimePresent)
@@ -1321,7 +1651,9 @@ final class AppController: ObservableObject {
                 character: state.character,
                 runtimeOverride: state.runtimePathOverride,
                 inferenceBackend: backend,
-                onlineModelIdentifier: onlineModelIdentifier
+                onlineModelIdentifier: onlineModelIdentifier,
+                onlineTextModelIdentifier: onlineTextModelIdentifier,
+                localTextModelIdentifier: localTextModelIdentifier
             ) {
                 result = response
             } else {
@@ -1337,7 +1669,12 @@ final class AppController: ObservableObject {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
                 self.noteUsedModel(result.usedModelIdentifier)
                 if let update = result.memoryUpdate?.cleanedSingleLine, !update.isEmpty {
-                    self.state.memoryEntries.append(MemoryEntry(text: update))
+                    let activeProfile = self.state.activeProfile
+                    self.state.memoryEntries.append(MemoryEntry(
+                        text: update,
+                        profileID: activeProfile.id,
+                        profileName: activeProfile.name
+                    ))
                     self.logActivity("memory", "Remembered: \(update)")
                 }
                 self.persistState()
@@ -1407,11 +1744,14 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func waitForRuntimeReadinessAfterWarmUp(timeoutSeconds: TimeInterval) async {
+    private func waitForRuntimeReadinessAfterWarmUp(modelIdentifier: String, timeoutSeconds: TimeInterval) async {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
-            refreshSystemState(persist: false)
-            if setupDiagnostics.isReady {
+            let diagnostics = RuntimeSetupService.inspect(
+                runtimeOverride: state.runtimePathOverride,
+                modelIdentifier: modelIdentifier
+            )
+            if diagnostics.isReady {
                 return
             }
             try? await Task.sleep(nanoseconds: 400_000_000)
@@ -1439,7 +1779,12 @@ final class AppController: ObservableObject {
         if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(trimmed) == .orderedSame }) {
             return
         }
-        state.memoryEntries.append(MemoryEntry(text: trimmed))
+        let activeProfile = state.activeProfile
+        state.memoryEntries.append(MemoryEntry(
+            text: trimmed,
+            profileID: activeProfile.id,
+            profileName: activeProfile.name
+        ))
         persistState()
         maybeConsolidateMemory()
     }
@@ -1493,7 +1838,13 @@ final class AppController: ObservableObject {
             context: context,
             runtimeProfileID: state.monitoringConfiguration.runtimeProfileID,
             inferenceBackend: state.monitoringConfiguration.inferenceBackend,
-            onlineModelIdentifier: state.monitoringConfiguration.onlineModelIdentifier
+            onlineModelIdentifier: state.monitoringConfiguration.onlineModelIdentifier,
+            onlineTextModelIdentifier: state.monitoringConfiguration.onlineModelIdentifierText,
+            localModelIdentifier: state.monitoringConfiguration.localModelIdentifierText,
+            activeProfile: makeProfilePromptSummary(state.activeProfile),
+            availableProfiles: state.profiles
+                .filter { $0.id != state.activeProfileID }
+                .map { makeProfilePromptSummary($0) }
         )
 
         Task {
@@ -1503,10 +1854,160 @@ final class AppController: ObservableObject {
             ) else { return }
 
             await MainActor.run {
-                self.state.policyMemory.apply(response, now: request.now)
+                // Stamp non-profile rule ops with the active profile id so newly added rules
+                // land in the right scope.
+                let activeID = self.state.activeProfileID
+                var stamped = response
+                stamped.operations = stamped.operations.map { op in
+                    guard op.type == .addRule, var rule = op.rule else { return op }
+                    if rule.profileID.isEmpty || rule.profileID == PolicyRule.defaultProfileID {
+                        rule.profileID = activeID
+                    }
+                    var copy = op
+                    copy.rule = rule
+                    return copy
+                }
+                self.state.policyMemory.apply(stamped, now: request.now)
+                self.applyProfileOperations(stamped.operations)
                 self.persistState()
             }
         }
+    }
+
+    /// Mark every chat message read. Called when the popover opens (the user is looking)
+    /// and when a deferred suggestion is resolved.
+    func markAllChatMessagesRead() {
+        guard hasUnreadChatMessages || chatMessages.contains(where: { $0.isUnread })
+            || state.chatHistory.contains(where: { $0.isUnread }) else { return }
+        for index in chatMessages.indices where chatMessages[index].isUnread {
+            chatMessages[index].isUnread = false
+        }
+        for index in state.chatHistory.indices where state.chatHistory[index].isUnread {
+            state.chatHistory[index].isUnread = false
+        }
+        hasUnreadChatMessages = false
+        persistState()
+    }
+
+    /// Recompute `hasUnreadChatMessages` after any chat-history mutation.
+    private func recomputeUnreadChatBadge() {
+        hasUnreadChatMessages = chatMessages.contains(where: { $0.isUnread })
+            || state.chatHistory.contains(where: { $0.isUnread })
+    }
+
+    private func syncChatMessagesFromState() {
+        let rendered = Self.makeChatMessages(from: state.chatHistory)
+        if rendered.map(\.id) != chatMessages.map(\.id) {
+            chatMessages = rendered
+        }
+        recomputeUnreadChatBadge()
+    }
+
+    /// Build a compact, prompt-safe summary of a profile (name, description, top rules).
+    private func makeProfilePromptSummary(_ profile: FocusProfile) -> ProfilePromptSummary {
+        let rules = state.policyMemory.rules
+            .filter { $0.profileID == profile.id && $0.active }
+            .prefix(6)
+            .map { rule in
+                let kindShort: String
+                switch rule.kind {
+                case .allow: kindShort = "allow"
+                case .disallow: kindShort = "disallow"
+                case .discourage: kindShort = "discourage"
+                case .limit: kindShort = "limit"
+                case .tonePreference: kindShort = "tone"
+                }
+                let target = rule.scope.appName
+                    ?? rule.scope.bundleIdentifier
+                    ?? (rule.scope.titleContains.first.map { "title:\($0)" })
+                    ?? rule.summary
+                return "\(kindShort):\(target)"
+            }
+        let rulesSummary = rules.isEmpty ? nil : rules.joined(separator: ", ")
+        return ProfilePromptSummary(
+            id: profile.id,
+            name: profile.name,
+            isDefault: profile.isDefault,
+            description: profile.description,
+            rulesSummary: rulesSummary,
+            lastUsedAt: profile.lastUsedAt,
+            expiresAt: profile.expiresAt
+        )
+    }
+
+    /// Route profile lifecycle ops emitted by the policy_memory pipeline through the
+    /// AppController helpers so persistence, eviction, and announcement happen consistently.
+    private func applyProfileOperations(_ operations: [PolicyMemoryOperation]) {
+        for op in operations {
+            switch op.type {
+            case .activateProfile:
+                guard let profileID = op.profileID else { continue }
+                let expiresAt: Date?
+                if let mins = op.profileDurationMinutes, mins > 0 {
+                    expiresAt = Date().addingTimeInterval(TimeInterval(mins) * 60)
+                } else {
+                    expiresAt = nil
+                }
+                _ = activateProfile(id: profileID, expiresAt: expiresAt, reason: op.reason)
+                announceProfileSwitch(reason: op.reason)
+
+            case .createAndActivateProfile:
+                guard let name = op.profileName?.cleanedSingleLine, !name.isEmpty else { continue }
+                let duration: TimeInterval? = (op.profileDurationMinutes ?? 0) > 0
+                    ? TimeInterval(op.profileDurationMinutes!) * 60
+                    : nil
+                _ = createAndActivateProfile(
+                    name: name,
+                    description: op.profileDescription,
+                    duration: duration,
+                    reason: op.reason
+                )
+                announceProfileSwitch(reason: op.reason)
+
+            case .endActiveProfile:
+                guard state.activeProfileID != PolicyRule.defaultProfileID else { continue }
+                endActiveProfile()
+                announceProfileSwitch(reason: op.reason ?? "ended")
+
+            default:
+                continue
+            }
+        }
+    }
+
+    /// Post a deferred chat note announcing a profile change. Non-interrupting: relies on the
+    /// existing chat history (the orb is reserved for nudges, not profile announcements).
+    private func announceProfileSwitch(reason: String?) {
+        let active = state.activeProfile
+        let trimmedReason = reason?.cleanedSingleLine ?? ""
+        let message: String
+        if active.isDefault {
+            message = trimmedReason.isEmpty
+                ? "Switched back to your General profile."
+                : "Switched back to General — \(trimmedReason)"
+        } else {
+            let untilText: String
+            if let exp = active.expiresAt {
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                formatter.dateFormat = "HH:mm"
+                untilText = " until \(formatter.string(from: exp))"
+            } else {
+                untilText = ""
+            }
+            let suffix = trimmedReason.isEmpty ? "" : " — \(trimmedReason)"
+            message = "Switching to your \(active.name) profile\(untilText).\(suffix)"
+        }
+        let chatMessage = ChatMessage(
+            role: .assistant,
+            text: message,
+            timestamp: Date(),
+            interruptionPolicy: .deferred
+        )
+        state.chatHistory.append(chatMessage)
+        chatMessages.append(chatMessage)
+        recomputeUnreadChatBadge()
+        logActivity("profile", "Announced profile switch: \(message)")
     }
 
     /// Trigger the consolidation pass if the memory exceeds the soft cap, or if a full
@@ -1544,6 +2045,8 @@ final class AppController: ObservableObject {
         let runtimeOverride = state.runtimePathOverride
         let backend = state.monitoringConfiguration.inferenceBackend
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
+        let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
+        let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
 
         Task { [weak self, memoryConsolidationService] in
             let consolidated = await memoryConsolidationService.consolidate(
@@ -1553,7 +2056,9 @@ final class AppController: ObservableObject {
                 now: now,
                 runtimeOverride: runtimeOverride,
                 inferenceBackend: backend,
-                onlineModelIdentifier: onlineModelIdentifier
+                onlineModelIdentifier: onlineModelIdentifier,
+                onlineTextModelIdentifier: onlineTextModelIdentifier,
+                localTextModelIdentifier: localTextModelIdentifier
             )
             await MainActor.run {
                 guard let self else { return }
@@ -1595,11 +2100,15 @@ final class AppController: ObservableObject {
             }
             brainService.stateSink = { [weak self] updatedState in
                 self?.state = updatedState
+                self?.syncChatMessagesFromState()
+                self?.recomputeTodayStats()
             }
             brainService.moodSink = { [weak self] mood in
+                guard self?.companionMood != mood else { return }
                 self?.companionMood = mood
             }
             brainService.statusSink = { [weak self] status in
+                guard self?.activityStatusText != status else { return }
                 self?.activityStatusText = status
             }
             brainService.modelUsageSink = { [weak self] identifier in
@@ -1615,15 +2124,13 @@ final class AppController: ObservableObject {
 
     private static func effectiveSetupModelIdentifier(for configuration: MonitoringConfiguration) -> String {
         if configuration.usesOnlineInference {
-            return configuration.onlineModelIdentifier
+            return configuration.onlineModelIdentifierImage
+                ?? configuration.onlineModelIdentifierText
+                ?? configuration.onlineModelIdentifier
         }
-
-        let override = configuration.modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let override, !override.isEmpty {
-            return override
-        }
-
-        return LLMPolicyCatalog.runtimeProfile(id: configuration.runtimeProfileID).descriptor.modelIdentifier
+        return configuration.localModelIdentifierImage
+            ?? configuration.localModelIdentifierText
+            ?? AITier.balanced.localModelIdentifierText
     }
 
     func noteUsedModel(_ identifier: String?) {
@@ -1696,7 +2203,6 @@ final class AppController: ObservableObject {
 
 struct PendingLocalModelChange: Equatable, Sendable {
     let modelIdentifier: String
-    let desiredOverride: String?
 }
 
 struct ModelDownloadNotice: Identifiable, Sendable {

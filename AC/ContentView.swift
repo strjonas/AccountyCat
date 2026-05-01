@@ -17,7 +17,10 @@ enum ACPopoverTab: String {
     case home     = "house.fill"
     case brain    = "brain.head.profile"
     case settings = "gearshape.fill"
+    #if DEBUG
+    case stats    = "chart.bar.xaxis"
     case logs     = "scroll.fill"
+    #endif
 }
 
 private enum SettingsAlertAction: String, Identifiable {
@@ -39,7 +42,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             popoverHeader
-            Divider().opacity(0.5)
+
             tabContent
         }
         .frame(width: ACD.popoverWidth)
@@ -91,40 +94,94 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Header
+    @ViewBuilder
+    private var tabContent: some View {
+        ScrollView {
+            switch selectedTab {
+            case .home:     homeTab
+            case .brain:    BrainView().environmentObject(controller)
+            case .settings: settingsTab
+            #if DEBUG
+            case .stats:    StatsView()
+            case .logs:     logsTab
+            #else
+            default: EmptyView()
+            #endif
+            }
+        }
+        .animation(.acFade, value: selectedTab)
+    }
+
 
     private var popoverHeader: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 9) {
+        VStack(spacing: 0) {
+            // Top Bar
+            HStack(alignment: .center, spacing: 8) {
                 HeaderMark(character: controller.state.character)
+                    .frame(width: 32, height: 32)
+                
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("AccountyCat")
-                        .font(.ac(15, weight: .semibold))
+                    Text(controller.state.character.displayName)
+                        .font(.ac(14, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
+                    
                     HStack(spacing: 5) {
                         StatusDot(status: controller.state.setupStatus,
                                   isPaused: controller.state.isPaused)
-                        Text(controller.activeModelShortName)
-                            .font(.ac(10))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+
+                        if controller.state.setupStatus == .ready && !controller.state.isPaused {
+                            Text("·")
+                                .font(.ac(10))
+                                .foregroundStyle(.secondary.opacity(0.45))
+                            Text(controller.activeModelShortName)
+                                .font(.ac(10))
+                                .foregroundStyle(.secondary.opacity(0.80))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
                 }
+                
+                Spacer(minLength: 4)
+                
+                ProfileControlBar()
+                    .environmentObject(controller)
+                
+                Button {
+                    controller.dismissPopover?()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.secondary.opacity(0.8))
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 2)
             }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
-            Spacer(minLength: 8)
+            Divider()
+                .opacity(0.5)
 
-            HStack(spacing: 4) {
+            // Sleeker Tab Bar
+            HStack(spacing: 16) {
                 tabButton(.home)
                 tabButton(.brain)
                 tabButton(.settings)
                 if ACBuild.isDebug {
+                    tabButton(.stats)
                     tabButton(.logs)
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            
+            Divider()
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
         .background(headerBackground)
     }
 
@@ -137,31 +194,16 @@ struct ContentView: View {
                               weight: selectedTab == tab ? .semibold : .regular))
                 .foregroundStyle(selectedTab == tab
                                  ? controller.state.character.accentColor
-                                 : Color.secondary.opacity(0.65))
+                                 : Color.primary.opacity(0.45))
                 .frame(width: 32, height: 26)
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .fill(selectedTab == tab
-                              ? controller.state.character.accentSoft.opacity(0.55)
+                              ? controller.state.character.accentSoft.opacity(0.68)
                               : Color.clear)
                 )
         }
         .buttonStyle(.plain)
-    }
-
-    // MARK: - Tab content
-
-    @ViewBuilder
-    private var tabContent: some View {
-        ScrollView {
-            switch selectedTab {
-            case .home:     homeTab
-            case .brain:    BrainView().environmentObject(controller)
-            case .settings: settingsTab
-            case .logs:     logsTab
-            }
-        }
-        .animation(.acFade, value: selectedTab)
     }
 
     // MARK: - Home Tab
@@ -366,40 +408,6 @@ struct ContentView: View {
                 .font(.system(size: 11, design: .monospaced))
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Local model override")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                TextField(
-                    DevelopmentModelConfiguration.fallbackModelIdentifier,
-                    text: Binding(
-                        get: { controller.state.monitoringConfiguration.modelOverride ?? "" },
-                        set: { controller.updateModelOverride($0) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11, design: .monospaced))
-                modelQuickPickButtons
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("OpenRouter model")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                TextField(
-                    MonitoringConfiguration.defaultOnlineModelIdentifier,
-                    text: Binding(
-                        get: { controller.state.monitoringConfiguration.onlineModelIdentifier },
-                        set: { controller.updateOnlineModelIdentifier($0) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11, design: .monospaced))
-                Text("Model ID (e.g. google/gemma-4-31b-it) or full openrouter.ai URL.")
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
-            }
-
             Toggle(isOn: Binding(
                 get: { controller.state.monitoringConfiguration.thinkingEnabled },
                 set: { controller.updateThinkingEnabled($0) }
@@ -412,37 +420,6 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var modelQuickPickButtons: some View {
-        let activeModel = controller.state.monitoringConfiguration.modelOverride ?? ""
-        let knownModels: [(String, String)] = [
-            ("Gemma", "unsloth/gemma-4-E2B-it-GGUF:Q4_0"),
-            ("Qwen3", "unsloth/Qwen3-4B-GGUF:Q4_0"),
-            ("Phi-4", "unsloth/Phi-4-mini-instruct-GGUF:Q4_K_M"),
-            ("Gemma 4", "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"),
-        ]
-        HStack(spacing: 6) {
-            ForEach(knownModels, id: \.0) { name, id in
-                modelPickerButton(label: name, modelID: id, activeModel: activeModel)
-            }
-            modelPickerButton(label: "Clear", modelID: "", activeModel: activeModel)
-        }
-    }
-
-    @ViewBuilder
-    private func modelPickerButton(label: String, modelID: String, activeModel: String) -> some View {
-        let isActive = activeModel == modelID
-        if isActive {
-            Button(label) { controller.updateModelOverride(modelID) }
-                .buttonStyle(ACPrimaryButton())
-                .font(.ac(10))
-        } else {
-            Button(label) { controller.updateModelOverride(modelID) }
-                .buttonStyle(ACSecondaryButton())
-                .font(.ac(10))
         }
     }
 
@@ -478,6 +455,8 @@ struct ContentView: View {
                 Button("Telemetry root") { controller.openTelemetryRoot() }
                     .buttonStyle(ACPrimaryButton())
                 Button("Current session") { controller.openCurrentTelemetrySession() }
+                    .buttonStyle(ACSecondaryButton())
+                Button("Reliability") { controller.openOpenRouterHealthStats() }
                     .buttonStyle(ACSecondaryButton())
                 Button("Text log") { controller.openActivityLog() }
                     .buttonStyle(ACSecondaryButton())
@@ -606,7 +585,7 @@ private struct StatusDot: View {
 
     private var label: String {
         switch status {
-        case .ready:       return isPaused ? "Paused" : "Watching"
+        case .ready:       return isPaused ? "Paused" : "With you"
         case .installing:  return "Installing"
         case .checking:    return "Checking"
         default:           return "Setup needed"

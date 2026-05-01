@@ -161,6 +161,11 @@ enum MonitoringHeuristics {
         return false
     }
 
+    /// Default threshold for the title-length vision gate. A title of this length or more, with
+    /// at least one alpha + whitespace character mix, is considered informative enough to skip
+    /// the screenshot. Tunable from `MonitoringConfiguration.titleLengthForTextOnly`.
+    nonisolated static let defaultTitleLengthForTextOnly: Int = 30
+
     /// The screenshot can be skipped only when the title is strong enough on its own AND the app
     /// is not in a category where content (not title) is the real signal. Default bias: keep the
     /// screenshot.
@@ -168,7 +173,8 @@ enum MonitoringHeuristics {
         bundleIdentifier: String?,
         appName: String,
         windowTitle: String?,
-        isBrowser: Bool
+        isBrowser: Bool,
+        titleLengthThreshold: Int = defaultTitleLengthForTextOnly
     ) -> Bool {
         if isBrowser { return false }
         if isAmbiguousContent(bundleIdentifier: bundleIdentifier) { return false }
@@ -179,6 +185,17 @@ enum MonitoringHeuristics {
         // For known IDEs the title is reliably a filename — relax the structural-marker rule.
         if isClearlyProductive(bundleIdentifier: bundleIdentifier, appName: appName) {
             return title.count >= 4
+        }
+
+        // Long descriptive title is enough on its own ("Refactor LLMMonitorAlgorithm.swift —
+        // AC.xcodeproj", "Phase 4 vision gate — Notion"). Reject all-caps app banners and
+        // pure-symbol strings; require at least one letter and one space-or-hyphen separator.
+        if title.count >= titleLengthThreshold {
+            let hasLowercase = title.contains(where: { $0.isLowercase })
+            let hasSeparator = title.contains(where: { $0.isWhitespace || $0 == "-" || $0 == "—" })
+            if hasLowercase && hasSeparator {
+                return true
+            }
         }
 
         return titleHasStructuralContentMarker(title)

@@ -20,13 +20,34 @@ struct BrainView: View {
     @FocusState private var summaryFieldFocused: Bool
     @FocusState private var goalsEditorFocused: Bool
     @State private var localGoalsText: String = ""
+    /// Profile being inspected. Defaults to the active profile; user can switch via picker
+    /// to view/edit rules of any other stored profile without activating it.
+    @State private var selectedProfileID: String? = nil
+    @State private var showingProfileOverview = false
+    @State private var profileNameDraft = ""
+    @State private var profileDescriptionDraft = ""
 
+    private var resolvedSelectedProfileID: String {
+        let candidate = selectedProfileID ?? controller.state.activeProfileID
+        if controller.state.profiles.contains(where: { $0.id == candidate }) {
+            return candidate
+        }
+        return PolicyRule.defaultProfileID
+    }
+    private var selectedProfile: FocusProfile {
+        controller.state.profile(withID: resolvedSelectedProfileID)
+            ?? FocusProfile.makeDefault()
+    }
+    private var namedProfileCount: Int {
+        controller.state.profiles.filter { !$0.isDefault }.count
+    }
     private var rules: [PolicyRule] {
-        controller.state.policyMemory.rules.filter { !$0.isAutoSafelistRule }
+        controller.state.policyMemory.rules
+            .filter { !$0.isAutoSafelistRule && $0.profileID == resolvedSelectedProfileID }
     }
     private var safelistRules: [PolicyRule] {
         controller.state.policyMemory.rules
-            .filter(\.isAutoSafelistRule)
+            .filter { $0.isAutoSafelistRule && $0.profileID == resolvedSelectedProfileID }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
     private var safelistObservations: [FocusedObservationStat] {
@@ -37,6 +58,7 @@ struct BrainView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
+            profileSection
             focusSection
             rulesSection
             memoryConsolidationSection
@@ -44,6 +66,229 @@ struct BrainView: View {
         }
         .padding(20)
         .padding(.bottom, 8)
+        .onAppear {
+            syncProfileDrafts()
+        }
+        .onChange(of: resolvedSelectedProfileID) { _, _ in
+            syncProfileDrafts()
+        }
+        .onChange(of: controller.state.profiles) { _, _ in
+            syncProfileDrafts()
+        }
+    }
+
+    // MARK: - Profile
+
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            brainSectionHeader(
+                icon: "person.crop.rectangle.stack",
+                title: "Focus profile",
+                subtitle: profileSubtitle
+            )
+
+            HStack(spacing: 8) {
+                Picker("", selection: Binding<String>(
+                    get: { resolvedSelectedProfileID },
+                    set: { selectedProfileID = $0 }
+                )) {
+                    ForEach(controller.state.profiles, id: \.id) { profile in
+                        Text(profileMenuLabel(for: profile)).tag(profile.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 260)
+
+                Spacer()
+
+                if !selectedProfile.isDefault {
+                    if controller.state.activeProfileID == selectedProfile.id {
+                        Button("End now") {
+                            controller.endActiveProfile(announce: true)
+                        }
+                        .buttonStyle(ACSecondaryButton())
+                    } else {
+                        Button("Activate") {
+                            _ = controller.activateProfile(
+                                id: selectedProfile.id,
+                                reason: "user_switched",
+                                announce: true
+                            )
+                        }
+                        .buttonStyle(ACSecondaryButton())
+                        Button(role: .destructive) {
+                            controller.deleteProfile(id: selectedProfile.id)
+                            selectedProfileID = nil
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(!controller.canDeleteProfile(id: selectedProfile.id))
+                    }
+                }
+            }
+
+            profileMetadataEditor
+            profileOverviewSection
+        }
+    }
+
+    private var profileMetadataEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Profile name", text: $profileNameDraft)
+                .textFieldStyle(.roundedBorder)
+                .font(.ac(12))
+
+            TextField("What belongs in this profile?", text: $profileDescriptionDraft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .font(.ac(12))
+                .lineLimit(1...3)
+
+            if profileDraftsChanged {
+                HStack {
+                    Spacer()
+                    Button("Save profile") {
+                        controller.updateProfile(
+                            id: selectedProfile.id,
+                            name: profileNameDraft,
+                            description: profileDescriptionDraft
+                        )
+                    }
+                    .buttonStyle(ACPrimaryButton())
+                    .disabled(profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+            }
+
+            if !selectedProfile.isDefault && !controller.canDeleteProfile(id: selectedProfile.id) {
+                Text("This profile still has locked scoped rules. Unlock or remove them before deleting the profile.")
+                    .font(.ac(10))
+                    .foregroundStyle(Color.orange.opacity(0.85))
+            }
+        }
+        .animation(.acSnap, value: profileDraftsChanged)
+    }
+
+    private var profileDraftsChanged: Bool {
+        profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) != selectedProfile.name ||
+            profileDescriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines) != (selectedProfile.description ?? "")
+    }
+
+    private var profileSubtitle: String {
+        let active = controller.state.activeProfile
+        let viewingHint: String
+        if resolvedSelectedProfileID == active.id {
+            viewingHint = "You are editing the active profile."
+        } else {
+            viewingHint = "You are only viewing \(selectedProfile.name) here. Activate it to make AC use it live."
+        }
+
+        if active.isDefault {
+            return "General profile is active. \(viewingHint)"
+        }
+        let until: String
+        if let exp = active.expiresAt {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "HH:mm"
+            until = " until \(formatter.string(from: exp))"
+        } else {
+            until = ""
+        }
+        return "\(active.name) is active\(until). \(viewingHint)"
+    }
+
+    private func profileMenuLabel(for profile: FocusProfile) -> String {
+        if profile.id == controller.state.activeProfileID {
+            return "● \(profile.name)"
+        }
+        return profile.name
+    }
+
+    private func syncProfileDrafts() {
+        profileNameDraft = selectedProfile.name
+        profileDescriptionDraft = selectedProfile.description ?? ""
+    }
+
+    private var profileOverviewSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Button(showingProfileOverview ? "Hide saved profiles" : "Manage all profiles") {
+                    withAnimation(.acSnap) {
+                        showingProfileOverview.toggle()
+                    }
+                }
+                .buttonStyle(ACSecondaryButton())
+
+                Text(profileOverviewSubtitle)
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+            }
+
+            if showingProfileOverview {
+                VStack(spacing: 8) {
+                    ForEach(profileOverviewProfiles, id: \.id) { profile in
+                        ProfileSummaryRowView(
+                            profile: profile,
+                            isActive: controller.state.activeProfileID == profile.id,
+                            isSelected: resolvedSelectedProfileID == profile.id,
+                            manualRuleCount: manualRuleCount(for: profile.id),
+                            safelistRuleCount: safelistRuleCount(for: profile.id),
+                            lockedRuleCount: lockedRuleCount(for: profile.id),
+                            canDelete: controller.canDeleteProfile(id: profile.id),
+                            onViewDetails: {
+                                selectedProfileID = profile.id
+                            },
+                            onActivate: profile.isDefault ? nil : {
+                                _ = controller.activateProfile(
+                                    id: profile.id,
+                                    reason: "user_switched",
+                                    announce: true
+                                )
+                            },
+                            onDelete: profile.isDefault ? nil : {
+                                controller.deleteProfile(id: profile.id)
+                                if resolvedSelectedProfileID == profile.id {
+                                    selectedProfileID = controller.state.activeProfileID
+                                }
+                            }
+                        )
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.acSnap, value: showingProfileOverview)
+    }
+
+    private var profileOverviewProfiles: [FocusProfile] {
+        controller.state.profiles.sorted { lhs, rhs in
+            if lhs.id == controller.state.activeProfileID { return true }
+            if rhs.id == controller.state.activeProfileID { return false }
+            if lhs.isDefault != rhs.isDefault { return lhs.isDefault }
+            return lhs.lastUsedAt > rhs.lastUsedAt
+        }
+    }
+
+    private var profileOverviewSubtitle: String {
+        if namedProfileCount == 0 {
+            return "Only General exists so far."
+        }
+        return "View/edit does not switch AC. Activate changes live behavior."
+    }
+
+    private func manualRuleCount(for profileID: String) -> Int {
+        controller.state.policyMemory.rules.filter { !$0.isAutoSafelistRule && $0.profileID == profileID }.count
+    }
+
+    private func safelistRuleCount(for profileID: String) -> Int {
+        controller.state.policyMemory.rules.filter { $0.isAutoSafelistRule && $0.profileID == profileID }.count
+    }
+
+    private func lockedRuleCount(for profileID: String) -> Int {
+        controller.lockedRuleCount(forProfileID: profileID)
     }
 
     // MARK: - Focus
@@ -336,7 +581,7 @@ struct BrainView: View {
     private func commitRule() {
         let trimmed = newRuleSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        controller.addUserRule(trimmed, kind: newRuleKind)
+        controller.addUserRule(trimmed, kind: newRuleKind, profileID: resolvedSelectedProfileID)
         withAnimation(.acSnap) {
             showingAddRule = false
             newRuleSummary = ""
@@ -406,6 +651,144 @@ struct BrainView: View {
                 .animation(.acSnap, value: controller.state.memoryEntries.map(\.id))
             }
         }
+    }
+}
+
+// MARK: - Profile Summary Row
+
+private struct ProfileSummaryRowView: View {
+    let profile: FocusProfile
+    let isActive: Bool
+    let isSelected: Bool
+    let manualRuleCount: Int
+    let safelistRuleCount: Int
+    let lockedRuleCount: Int
+    let canDelete: Bool
+    let onViewDetails: () -> Void
+    let onActivate: (() -> Void)?
+    let onDelete: (() -> Void)?
+
+    @Environment(\.acAccent) private var accent
+    @State private var hoveringDelete = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(profile.name)
+                        .font(.ac(12, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+
+                    if isActive {
+                        profileBadge("Active", fill: accent.opacity(0.16), stroke: accent.opacity(0.22))
+                    }
+                    if isSelected {
+                        profileBadge("Viewing", fill: Color.acSurface, stroke: Color.acHairline)
+                    }
+                    if profile.isDefault {
+                        profileBadge("General", fill: Color.secondary.opacity(0.12), stroke: Color.secondary.opacity(0.18))
+                    }
+                }
+
+                if let description = profile.description, !description.isEmpty {
+                    Text(description)
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 4) {
+                    Text("\(manualRuleCount) rule\(manualRuleCount == 1 ? "" : "s")")
+                    Text("·")
+                    Text("\(safelistRuleCount) safelist")
+                    Text("·")
+                    Text("Last used \(profile.lastUsedAt.profileRelativeLabel)")
+                    if lockedRuleCount > 0 {
+                        Text("·")
+                        Text("\(lockedRuleCount) locked")
+                    }
+                }
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+
+                if !canDelete && !profile.isDefault {
+                    Text("Unlock or remove locked rules before deleting this profile.")
+                        .font(.ac(10))
+                        .foregroundStyle(Color.orange.opacity(0.85))
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 6) {
+                Button("View details", action: onViewDetails)
+                    .buttonStyle(ACSecondaryButton())
+
+                if let onActivate {
+                    Button("Activate", action: onActivate)
+                        .buttonStyle(ACSecondaryButton())
+                        .disabled(isActive)
+                }
+
+                if let onDelete {
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(
+                                canDelete
+                                ? (hoveringDelete ? Color.red.opacity(0.78) : Color.secondary.opacity(0.40))
+                                : Color.secondary.opacity(0.22)
+                            )
+                            .frame(width: 26, height: 26)
+                            .background(
+                                Circle()
+                                    .fill(
+                                        canDelete && hoveringDelete
+                                        ? Color.red.opacity(0.08)
+                                        : Color.acSurface
+                                    )
+                                    .overlay(
+                                        Circle().stroke(
+                                            canDelete && hoveringDelete
+                                            ? Color.red.opacity(0.22)
+                                            : Color.acHairline,
+                                            lineWidth: 1
+                                        )
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canDelete)
+                    .onHover { hoveringDelete = $0 }
+                    .help(canDelete ? "Delete this profile" : "Locked rules must be resolved before deleting this profile")
+                    .animation(.acFade, value: hoveringDelete)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(isActive ? accent.opacity(0.05) : Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(isActive ? accent.opacity(0.18) : Color.acHairline, lineWidth: 1)
+                )
+        )
+    }
+
+    private func profileBadge(_ text: String, fill: Color, stroke: Color) -> some View {
+        Text(text)
+            .font(.ac(9, weight: .semibold))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.78))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(fill)
+                    .overlay(Capsule(style: .continuous).stroke(stroke, lineWidth: 1))
+            )
     }
 }
 
@@ -702,5 +1085,11 @@ private extension Date {
         let d = Int(s / 86400)
         if d < 30    { return "\(d)d ago" }
         return "\(Int(d / 30))mo ago"
+    }
+
+    var profileRelativeLabel: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: self, relativeTo: Date())
     }
 }

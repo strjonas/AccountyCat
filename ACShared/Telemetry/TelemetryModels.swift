@@ -16,6 +16,7 @@ nonisolated enum TelemetryEventKind: String, Codable, CaseIterable, Sendable {
     case modelOutputParsed = "model_output_parsed"
     case policyDecided = "policy_decided"
     case actionExecuted = "action_executed"
+    case monitoringMetric = "monitoring_metric"
     case userReaction = "user_reaction"
     case annotationSaved = "annotation_saved"
     case sessionEnded = "session_ended"
@@ -69,6 +70,7 @@ nonisolated struct TelemetryEvent: Codable, Hashable, Identifiable, Sendable {
     var parsedOutput: ModelOutputParsedRecord?
     var policy: PolicyDecisionRecord?
     var action: ActionExecutionRecord?
+    var metric: MonitoringMetricRecord? = nil
     var reaction: UserReactionRecord?
     var annotation: EpisodeAnnotation?
     var failure: FailureRecord?
@@ -197,6 +199,8 @@ nonisolated struct EvaluationRequestRecord: Codable, Hashable, Sendable {
     var promptMode: String
     var promptVersion: String
     var strategy: MonitoringExecutionMetadataRecord?
+    var activeProfileID: String? = nil
+    var activeProfileName: String? = nil
 }
 
 nonisolated struct PromptTemplateRecord: Codable, Hashable, Sendable {
@@ -261,6 +265,43 @@ nonisolated struct ModelOutputRecord: Codable, Hashable, Sendable {
     var stderrArtifact: ArtifactRef?
     var stdoutPreview: String
     var stderrPreview: String
+    var tokenUsage: TokenUsageRecord?
+
+    nonisolated init(
+        evaluationID: String,
+        runtimePath: String,
+        modelIdentifier: String,
+        promptMode: String,
+        runtimeOptions: TelemetryRuntimeOptions?,
+        stdoutArtifact: ArtifactRef?,
+        stderrArtifact: ArtifactRef?,
+        stdoutPreview: String,
+        stderrPreview: String,
+        tokenUsage: TokenUsageRecord? = nil
+    ) {
+        self.evaluationID = evaluationID
+        self.runtimePath = runtimePath
+        self.modelIdentifier = modelIdentifier
+        self.promptMode = promptMode
+        self.runtimeOptions = runtimeOptions
+        self.stdoutArtifact = stdoutArtifact
+        self.stderrArtifact = stderrArtifact
+        self.stdoutPreview = stdoutPreview
+        self.stderrPreview = stderrPreview
+        self.tokenUsage = tokenUsage
+    }
+}
+
+nonisolated struct TokenUsageRecord: Codable, Hashable, Sendable {
+    var promptTokens: Int
+    var completionTokens: Int
+    var totalTokens: Int
+    var cacheReadTokens: Int?
+    var imageTokens: Int?
+    var costUSD: Double?
+    /// True when tokens were estimated from char count rather than reported by the runtime.
+    var estimated: Bool
+    var includesScreenshot: Bool
 }
 
 nonisolated struct TelemetryRuntimeOptions: Codable, Hashable, Sendable {
@@ -298,6 +339,8 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
     var finalAction: TelemetryCompanionActionRecord
     var distractionBefore: TelemetryDistractionState
     var distractionAfter: TelemetryDistractionState
+    var activeProfileID: String?
+    var activeProfileName: String?
 
     enum CodingKeys: String, CodingKey {
         case evaluationID
@@ -311,6 +354,8 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
         case finalAction
         case distractionBefore
         case distractionAfter
+        case activeProfileID
+        case activeProfileName
     }
 
     init(
@@ -324,7 +369,9 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
         blockReason: String?,
         finalAction: TelemetryCompanionActionRecord,
         distractionBefore: TelemetryDistractionState,
-        distractionAfter: TelemetryDistractionState
+        distractionAfter: TelemetryDistractionState,
+        activeProfileID: String? = nil,
+        activeProfileName: String? = nil
     ) {
         self.evaluationID = evaluationID
         self.model = model
@@ -337,6 +384,8 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
         self.finalAction = finalAction
         self.distractionBefore = distractionBefore
         self.distractionAfter = distractionAfter
+        self.activeProfileID = activeProfileID
+        self.activeProfileName = activeProfileName
     }
 
     init(from decoder: Decoder) throws {
@@ -362,6 +411,8 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
         finalAction = try c.decode(TelemetryCompanionActionRecord.self, forKey: .finalAction)
         distractionBefore = try c.decode(TelemetryDistractionState.self, forKey: .distractionBefore)
         distractionAfter = try c.decode(TelemetryDistractionState.self, forKey: .distractionAfter)
+        activeProfileID = try c.decodeIfPresent(String.self, forKey: .activeProfileID)
+        activeProfileName = try c.decodeIfPresent(String.self, forKey: .activeProfileName)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -377,7 +428,23 @@ nonisolated struct PolicyDecisionRecord: Codable, Hashable, Sendable {
         try c.encode(finalAction, forKey: .finalAction)
         try c.encode(distractionBefore, forKey: .distractionBefore)
         try c.encode(distractionAfter, forKey: .distractionAfter)
+        try c.encodeIfPresent(activeProfileID, forKey: .activeProfileID)
+        try c.encodeIfPresent(activeProfileName, forKey: .activeProfileName)
     }
+}
+
+nonisolated enum MonitoringMetricKind: String, Codable, Sendable {
+    case evaluationSkipped = "evaluation_skipped"
+    case visionRetried = "vision_retried"
+    case profileChanged = "profile_changed"
+}
+
+nonisolated struct MonitoringMetricRecord: Codable, Hashable, Sendable {
+    var kind: MonitoringMetricKind
+    var reason: String
+    var activeProfileID: String?
+    var activeProfileName: String?
+    var detail: String?
 }
 
 nonisolated struct ActionExecutionRecord: Codable, Hashable, Sendable {

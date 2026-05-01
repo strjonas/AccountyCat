@@ -17,7 +17,6 @@ enum LLMPolicyStage: String, Codable, CaseIterable, Sendable {
 }
 
 struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
-    var modelIdentifier: String
     var maxTokens: Int
     var temperature: Double
     var topP: Double
@@ -29,7 +28,6 @@ struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
     var thinkingEnabled: Bool
 
     nonisolated init(
-        modelIdentifier: String,
         maxTokens: Int,
         temperature: Double,
         topP: Double,
@@ -40,7 +38,6 @@ struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
         timeoutSeconds: UInt64,
         thinkingEnabled: Bool = false
     ) {
-        self.modelIdentifier = modelIdentifier
         self.maxTokens = maxTokens
         self.temperature = temperature
         self.topP = topP
@@ -54,9 +51,9 @@ struct RuntimeInferenceOptions: Codable, Hashable, Sendable {
 }
 
 extension TelemetryRuntimeOptions {
-    nonisolated init(_ options: RuntimeInferenceOptions) {
+    nonisolated init(_ options: RuntimeInferenceOptions, modelIdentifier: String) {
         self.init(
-            modelIdentifier: options.modelIdentifier,
+            modelIdentifier: modelIdentifier,
             maxTokens: options.maxTokens,
             temperature: options.temperature,
             topP: options.topP,
@@ -83,7 +80,6 @@ struct MonitoringRuntimeProfile: Hashable, Sendable {
 
     nonisolated func options(for stage: LLMPolicyStage) -> RuntimeInferenceOptions {
         optionsByStage[stage] ?? RuntimeInferenceOptions(
-            modelIdentifier: descriptor.modelIdentifier,
             maxTokens: 160,
             temperature: 0.2,
             topP: 0.95,
@@ -159,7 +155,6 @@ enum LLMPolicyCatalog {
             }
 
             optionsByStage[stage] = RuntimeInferenceOptions(
-                modelIdentifier: stageDefinition.options.modelIdentifier,
                 maxTokens: stageDefinition.options.maxTokens,
                 temperature: stageDefinition.options.temperature,
                 topP: stageDefinition.options.topP,
@@ -175,8 +170,7 @@ enum LLMPolicyCatalog {
             descriptor: MonitoringRuntimeProfileDescriptor(
                 id: definition.id,
                 displayName: definition.displayName,
-                summary: definition.summary,
-                modelIdentifier: definition.options(for: .decision)?.modelIdentifier ?? LocalModelRuntime.defaultModelIdentifier
+                summary: definition.summary
             ),
             optionsByStage: optionsByStage
         )
@@ -191,7 +185,7 @@ enum LLMPolicyCatalog {
         case .perceptionVision:
             return .perceptionVision
         case .onlineDecision:
-            return nil
+            return .onlineDecision
         case .decision:
             return .decision
         case .nudgeCopy:

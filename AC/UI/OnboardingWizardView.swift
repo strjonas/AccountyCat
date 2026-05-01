@@ -581,7 +581,9 @@ struct WizardTierPicker: View {
                 Image(systemName: "key.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                Text("BYOK: \(AppController.shortModelName(for: selectedTier.byokModelIdentifier)) · \(selectedTier.byokCostEstimate)")
+                let textShort = AppController.shortModelName(for: selectedTier.byokModelIdentifierText)
+                let imageShort = AppController.shortModelName(for: selectedTier.byokModelIdentifierImage)
+                Text("BYOK: \(textShort) · \(imageShort) · \(selectedTier.byokCostEstimate)")
                     .font(.ac(10))
                     .foregroundStyle(.secondary)
             }

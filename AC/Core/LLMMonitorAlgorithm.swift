@@ -84,7 +84,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             bundleIdentifier: context.bundleIdentifier,
             appName: context.appName,
             windowTitle: context.windowTitle,
-            isBrowser: heuristics.browser
+            isBrowser: heuristics.browser,
+            titleLengthThreshold: configuration.titleLengthForTextOnly
         )
         let requiresScreenshot = profile.descriptor.requiresScreenshot && !canSkipScreenshot
         let matchingRules = policyMemory.activeRules(at: now, matching: context)
@@ -165,10 +166,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let pipelineProfile = LLMPolicyCatalog.pipelineProfile(id: input.configuration.pipelineProfileID)
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
         let usesOnlineInference = input.configuration.usesOnlineInference
-        let effectiveModelIdentifier = usesOnlineInference
-            ? input.configuration.onlineModelIdentifier
-            : (input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
-                ?? runtimeProfile.descriptor.modelIdentifier)
+        let effectiveModelIdentifier = selectedModelIdentifier(
+            for: input.configuration,
+            isTextOnly: !pipelineProfile.descriptor.requiresScreenshot
+        )
         let runtimeLocation = usesOnlineInference ? OnlineModelService.endpointURLString : runtimePath
         let execution = MonitoringExecutionMetadata(
             algorithmID: descriptor.id,
@@ -301,6 +302,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 titlePerception = await runTextStage(
                     stage: .perceptionTitle,
                     runtimePath: runtimePath,
+                    modelIdentifier: selectedModelIdentifier(for: input.configuration, isTextOnly: true),
                     configuration: input.configuration,
                     options: applyOverrides(runtimeProfile.options(for: .perceptionTitle), configuration: input.configuration),
                     payload: MonitoringTitlePerceptionPromptPayload(
@@ -320,6 +322,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 visionPerception = await runVisionStage(
                     stage: .perceptionVision,
                     runtimePath: runtimePath,
+                    modelIdentifier: selectedModelIdentifier(for: input.configuration, isTextOnly: false),
                     configuration: input.configuration,
                     snapshotPath: screenshotPath,
                     options: applyOverrides(runtimeProfile.options(for: .perceptionVision), configuration: input.configuration),
@@ -335,6 +338,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let decisionEnvelope = await runTextStage(
                 stage: .decision,
                 runtimePath: runtimePath,
+                modelIdentifier: selectedModelIdentifier(for: input.configuration, isTextOnly: true),
                 configuration: input.configuration,
                 options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
                 payload: MonitoringDecisionPromptPayload(
@@ -356,7 +360,14 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     ),
                     titlePerception: titlePerception,
                     visionPerception: visionPerception,
-                    calendarContext: input.calendarContext
+                    calendarContext: input.calendarContext,
+                    activeProfile: MonitoringActiveProfilePromptPayload(
+                        id: input.activeProfileID,
+                        name: input.activeProfileName,
+                        isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
+                        description: input.activeProfileDescription,
+                        expiresAt: input.activeProfileExpiresAt
+                    )
                 ),
                 attempts: &attempts,
                 decoder: MonitoringDecisionEnvelope.self
@@ -679,7 +690,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             for: workingStat,
             policyMemory: policyMemory,
             context: frontmost,
-            now: input.now
+            now: input.now,
+            inNamedProfile: input.activeProfileID != PolicyRule.defaultProfileID
         )
         guard case .eligible(let tier) = eligibility else {
             if case .ineligible(let reason) = eligibility {
@@ -833,6 +845,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
         let usesOnlineInference = input.configuration.usesOnlineInference
         let runtimeLocation = usesOnlineInference ? OnlineModelService.endpointURLString : runtimePath
+        let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
+        let effectiveModelIdentifier = selectedModelIdentifier(
+            for: input.configuration,
+            isTextOnly: true
+        )
+
         if !usesOnlineInference && !FileManager.default.isExecutableFile(atPath: runtimePath) {
             return MonitoringAppealReviewOutput(
                 result: AppealReviewResult(
@@ -841,9 +859,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 ),
                 evaluation: LLMEvaluationResult(
                     runtimePath: runtimeLocation,
-                    modelIdentifier: usesOnlineInference
-                        ? input.configuration.onlineModelIdentifier
-                        : LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID).descriptor.modelIdentifier,
+                    modelIdentifier: effectiveModelIdentifier,
                     promptProfileID: descriptor.id,
                     promptProfileVersion: descriptor.version,
                     attempts: [],
@@ -855,15 +871,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
         }
 
-        let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
-        let effectiveModelIdentifier = usesOnlineInference
-            ? input.configuration.onlineModelIdentifier
-            : (input.configuration.modelOverride.flatMap { $0.isEmpty ? nil : $0 }
-                ?? runtimeProfile.descriptor.modelIdentifier)
         var attempts: [LLMEvaluationAttempt] = []
         let envelope = await runTextStage(
             stage: .appealReview,
             runtimePath: runtimePath,
+            modelIdentifier: effectiveModelIdentifier,
             configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .appealReview), configuration: input.configuration),
             payload: MonitoringAppealPromptPayload(
@@ -921,7 +933,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 },
                 runtimeProfileID: input.configuration.runtimeProfileID,
                 inferenceBackend: input.configuration.inferenceBackend,
-                onlineModelIdentifier: input.configuration.onlineModelIdentifier
+                onlineModelIdentifier: input.configuration.onlineModelIdentifier,
+                onlineTextModelIdentifier: input.configuration.onlineModelIdentifierText,
+                localModelIdentifier: input.configuration.localModelIdentifierText,
+                activeProfile: ProfilePromptSummary(
+                    id: PolicyRule.defaultProfileID,
+                    name: FocusProfile.defaultDisplayName,
+                    isDefault: true
+                ),
+                availableProfiles: []
             ),
             runtimeOverride: input.runtimeOverride
         ) {
@@ -934,7 +954,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         if result.decision == AppealReviewDecision.allow {
             updatedAlgorithmState.llmPolicy.activeAppeal = nil
             updatedAlgorithmState.llmPolicy.distraction.lastAssessment = .unclear
-            updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(input.configuration.cadenceMode.distractedFollowUp)
+            updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(45)
         }
 
         return MonitoringAppealReviewOutput(
@@ -984,7 +1004,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     blockReason: blockReason,
                     finalAction: CompanionPolicy.telemetryActionRecord(for: action),
                     distractionBefore: input.algorithmState.llmPolicy.distraction.telemetryState,
-                    distractionAfter: updatedState.llmPolicy.distraction.telemetryState
+                    distractionAfter: updatedState.llmPolicy.distraction.telemetryState,
+                    activeProfileID: input.activeProfileID,
+                    activeProfileName: input.activeProfileName
                 )
             ),
             updatedAlgorithmState: updatedState,
@@ -1054,7 +1076,14 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             ),
             heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
             calendarContext: input.calendarContext,
-            screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration)
+            screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration),
+            activeProfile: MonitoringActiveProfilePromptPayload(
+                id: input.activeProfileID,
+                name: input.activeProfileName,
+                isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
+                description: input.activeProfileDescription,
+                expiresAt: input.activeProfileExpiresAt
+            )
         )
 
         let screenshotPath = visionEnabled(for: input.configuration)
@@ -1065,9 +1094,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return await runVisionStage(
                 stage: .onlineDecision,
                 runtimePath: RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride),
+                modelIdentifier: selectedModelIdentifier(for: input.configuration, isTextOnly: false),
                 configuration: input.configuration,
                 snapshotPath: screenshotPath,
-                options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
+                options: applyOverrides(runtimeProfile.options(for: .onlineDecision), configuration: input.configuration),
                 payload: payload,
                 attempts: &attempts,
                 decoder: MonitoringDecisionEnvelope.self
@@ -1077,8 +1107,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         return await runTextStage(
             stage: .onlineDecision,
             runtimePath: RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride),
+            modelIdentifier: selectedModelIdentifier(for: input.configuration, isTextOnly: true),
             configuration: input.configuration,
-            options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
+            options: applyOverrides(runtimeProfile.options(for: .onlineDecision), configuration: input.configuration),
             payload: payload,
             attempts: &attempts,
             decoder: MonitoringDecisionEnvelope.self
@@ -1107,6 +1138,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let nudgeEnvelope = await runTextStage(
             stage: .nudgeCopy,
             runtimePath: runtimePath,
+            modelIdentifier: selectedModelIdentifier(for: input.configuration, isTextOnly: true),
             configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
             payload: MonitoringNudgePromptPayload(
@@ -1139,6 +1171,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private func runTextStage<T: Decodable & Sendable, P: Encodable>(
         stage: LLMPolicyStage,
         runtimePath: String,
+        modelIdentifier: String,
         configuration: MonitoringConfiguration,
         options: RuntimeInferenceOptions,
         payload: P,
@@ -1163,7 +1196,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 templateContents: systemPrompt,
                 payloadJSON: payloadJSON,
                 renderedPrompt: userPrompt,
-                runtimeOptions: TelemetryRuntimeOptions(options),
+                runtimeOptions: TelemetryRuntimeOptions(options, modelIdentifier: modelIdentifier),
                 runtimeOutput: nil,
                 parsedDecision: nil
             )
@@ -1174,7 +1207,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             if configuration.usesOnlineInference {
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
-                        modelIdentifier: configuration.onlineModelIdentifier,
+                        source: .monitoringText,
+                        modelIdentifier: modelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: nil,
@@ -1184,6 +1218,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             } else {
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
                     options: options
@@ -1204,6 +1239,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private func runVisionStage<T: Decodable & Sendable, P: Encodable>(
         stage: LLMPolicyStage,
         runtimePath: String,
+        modelIdentifier: String,
         configuration: MonitoringConfiguration,
         snapshotPath: String,
         options: RuntimeInferenceOptions,
@@ -1229,7 +1265,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 templateContents: systemPrompt,
                 payloadJSON: payloadJSON,
                 renderedPrompt: userPrompt,
-                runtimeOptions: TelemetryRuntimeOptions(options),
+                runtimeOptions: TelemetryRuntimeOptions(options, modelIdentifier: modelIdentifier),
                 runtimeOutput: nil,
                 parsedDecision: nil
             )
@@ -1240,7 +1276,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             if configuration.usesOnlineInference {
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
-                        modelIdentifier: configuration.onlineModelIdentifier,
+                        source: .monitoringVision,
+                        modelIdentifier: modelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: snapshotPath,
@@ -1250,6 +1287,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             } else {
                 output = try await runtime.runVisionInference(
                     runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
                     snapshotPath: snapshotPath,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
@@ -1275,14 +1313,36 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         StructuredOutputJSON.decode(type, from: output)
     }
 
+    private func selectedModelIdentifier(
+        for configuration: MonitoringConfiguration,
+        isTextOnly: Bool
+    ) -> String {
+        if configuration.usesOnlineInference {
+            if isTextOnly {
+                return configuration.onlineModelIdentifierText
+                    ?? configuration.onlineModelIdentifierImage
+                    ?? configuration.onlineModelIdentifier
+            }
+            return configuration.onlineModelIdentifierImage
+                ?? configuration.onlineModelIdentifierText
+                ?? configuration.onlineModelIdentifier
+        }
+
+        if isTextOnly {
+            return configuration.localModelIdentifierText
+                ?? configuration.localModelIdentifierImage
+                ?? AITier.balanced.localModelIdentifierText
+        }
+        return configuration.localModelIdentifierImage
+            ?? configuration.localModelIdentifierText
+            ?? AITier.balanced.localModelIdentifierImage
+    }
+
     private func applyOverrides(
         _ opts: RuntimeInferenceOptions,
         configuration: MonitoringConfiguration
     ) -> RuntimeInferenceOptions {
         var result = opts
-        if let modelOverride = configuration.modelOverride, !modelOverride.isEmpty {
-            result.modelIdentifier = modelOverride
-        }
         result.thinkingEnabled = configuration.thinkingEnabled
         return result
     }

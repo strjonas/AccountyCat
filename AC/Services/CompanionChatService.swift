@@ -19,16 +19,22 @@ struct CompanionChatResult: Sendable {
 actor CompanionChatService {
     private let runtime: LocalModelRuntime
     private let onlineModelService: any OnlineModelServing
-    private let modelIdentifier: String
 
     init(
         runtime: LocalModelRuntime,
-        onlineModelService: any OnlineModelServing,
-        modelIdentifier: String = LocalModelRuntime.defaultModelIdentifier
+        onlineModelService: any OnlineModelServing
     ) {
         self.runtime = runtime
         self.onlineModelService = onlineModelService
-        self.modelIdentifier = modelIdentifier
+    }
+
+    nonisolated static func fallbackReply(for error: Error) -> String {
+        if let onlineError = error as? OnlineModelError,
+           case let .httpFailure(statusCode, _, rawBody) = onlineError,
+           statusCode == 429 || rawBody.localizedCaseInsensitiveContains("rate-limit") || rawBody.localizedCaseInsensitiveContains("rate limited") {
+            return "OpenRouter is overloaded right now. I tried the backup path, but this turn still failed. Send that again in a moment."
+        }
+        return "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
     }
 
     func chat(
@@ -42,7 +48,9 @@ actor CompanionChatService {
         character: ACCharacter = .mochi,
         runtimeOverride: String?,
         inferenceBackend: MonitoringInferenceBackend = .local,
-        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier
+        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier,
+        onlineTextModelIdentifier: String? = nil,
+        localTextModelIdentifier: String? = nil
     ) async -> CompanionChatResult? {
         let systemPrompt = PromptCatalog.loadChatSystemPrompt(character: character)
         let prompt = Self.makeChatPrompt(
@@ -58,13 +66,15 @@ actor CompanionChatService {
         let output: RuntimeProcessOutput
         do {
             if inferenceBackend == .openRouter {
+                let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
-                        modelIdentifier: onlineModelIdentifier,
+                        source: .chat,
+                        modelIdentifier: resolvedOnlineModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: prompt,
                         imagePath: nil,
-                        options: Self.onlineChatOptions(modelIdentifier: onlineModelIdentifier)
+                        options: Self.onlineChatOptions()
                     )
                 )
             } else {
@@ -76,9 +86,16 @@ actor CompanionChatService {
                     )
                     return nil
                 }
+                guard let localTextModelIdentifier, !localTextModelIdentifier.isEmpty else {
+                    await ActivityLogService.shared.append(
+                        category: "chat-error",
+                        message: "No local text model configured."
+                    )
+                    return nil
+                }
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
-                    modelIdentifier: modelIdentifier,
+                    modelIdentifier: localTextModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: prompt
                 )
@@ -88,6 +105,12 @@ actor CompanionChatService {
                 category: "chat-error",
                 message: error.localizedDescription
             )
+            if inferenceBackend == .openRouter {
+                return CompanionChatResult(
+                    reply: Self.fallbackReply(for: error),
+                    memoryUpdate: nil
+                )
+            }
             return nil
         }
 
@@ -99,7 +122,11 @@ actor CompanionChatService {
                 reply: parsed.reply,
                 memoryUpdate: parsed.memoryUpdate,
                 usedModelIdentifier: output.usedModelIdentifier
-                    ?? resolvedModelIdentifier(for: inferenceBackend, onlineModelIdentifier: onlineModelIdentifier)
+                    ?? resolvedModelIdentifier(
+                        for: inferenceBackend,
+                        onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
+                        localModelIdentifier: localTextModelIdentifier
+                    )
             )
         }
         // Legacy/fallback: pull a plain reply, no memory update.
@@ -110,13 +137,16 @@ actor CompanionChatService {
                 reply: reply,
                 memoryUpdate: nil,
                 usedModelIdentifier: output.usedModelIdentifier
-                    ?? resolvedModelIdentifier(for: inferenceBackend, onlineModelIdentifier: onlineModelIdentifier)
+                    ?? resolvedModelIdentifier(
+                        for: inferenceBackend,
+                        onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
+                        localModelIdentifier: localTextModelIdentifier
+                    )
             )
     }
 
-    nonisolated private static func onlineChatOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+    nonisolated private static func onlineChatOptions() -> RuntimeInferenceOptions {
         RuntimeInferenceOptions(
-            modelIdentifier: modelIdentifier,
             maxTokens: 320,
             temperature: 0.5,
             topP: 0.95,
@@ -200,13 +230,14 @@ actor CompanionChatService {
 
     private func resolvedModelIdentifier(
         for inferenceBackend: MonitoringInferenceBackend,
-        onlineModelIdentifier: String
+        onlineModelIdentifier: String,
+        localModelIdentifier: String?
     ) -> String {
         switch inferenceBackend {
         case .openRouter:
             return onlineModelIdentifier
         case .local:
-            return modelIdentifier
+            return localModelIdentifier ?? ""
         }
     }
 }

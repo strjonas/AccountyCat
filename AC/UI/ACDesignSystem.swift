@@ -44,14 +44,14 @@ extension Color {
     /// Neutral surface fill that reads as a subtle card on either appearance.
     static let acSurface = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1.0, alpha: 0.045)
+            ? NSColor(white: 1.0, alpha: 0.07)
             : NSColor(white: 0.0, alpha: 0.025)
     })
 
     /// Hairline stroke that reads on both appearances.
     static let acHairline = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1.0, alpha: 0.10)
+            ? NSColor(white: 1.0, alpha: 0.13)
             : NSColor(white: 0.0, alpha: 0.08)
     })
 }

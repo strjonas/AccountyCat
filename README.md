@@ -38,25 +38,29 @@ Whether you run fully offline or with a cloud API, the privacy model is explicit
 
 ### Run fully on-device
 
-No account, no API key, no internet. Everything runs locally via `llama.cpp` using the Gemma 4 model family.
+No account, no API key, no internet. Everything runs locally via `llama.cpp` using the Qwen model family (multimodal, works for both text and screenshots).
 
 | Tier | Model | RAM footprint | Notes |
 |------|-------|---------------|-------|
-| Economy | Gemma 4 E2B | ~1.3 GB | Instant responses, vision-capable |
-| Default | Gemma 4 E4B | ~3–4 GB | Better reasoning, still very fast |
-| Smartest | Gemma 4 26B A4B | ~10–12 GB | Near cloud quality, MoE architecture |
+| Economy | Qwen 3.5 4B | ~2–3 GB | Safe for 8GB machines |
+| Default | Qwen 3.5 9B | ~5–7 GB | Better reasoning, recommended |
+| Smartest | Qwen 3.6 27B | ~15–18 GB | Best local reasoning |
 
-The app detects your available memory and suggests the right tier automatically. The E2B model uses about as much RAM as a browser tab.
+The app detects your available memory and suggests the right tier automatically.
 
 ### Bring your own API key (OpenRouter)
 
 Connect your own [OpenRouter](https://openrouter.ai) account. You control the spend — typical usage runs well under a dollar a month. All requests use OpenRouter's Zero Data Retention (ZDR) enforcement, meaning providers contractually cannot log or train on your data.
 
-| Tier | Model | Approx. cost/month |
-|------|-------|--------------------|
-| Economy | Gemma 4 26B A4B | $0.25–$0.50 |
-| Default | Gemma 4 31B Dense | $0.35–$0.70 |
-| Smartest | Gemini 2.5 Flash | $0.95–$1.90 |
+AccountyCat intelligently selects the right model based on what you're doing:
+- **Text-only decisions** (memory, profile, nudges): Uses optimized text-only models for speed and cost
+- **Screenshot analysis**: Uses vision-capable models when visual context helps
+
+| Tier | Text-only model | Image model | Approx. cost/month |
+|------|-----------------|-------------|----------------------|
+| Economy | Nemotron-3 Super 120B | Qwen 3.5 9B | $0.10–$0.25 |
+| Default | DeepSeek V4 Flash | Gemma 4 31B | $0.20–$0.50 |
+| Smartest | DeepSeek V4 Flash | Gemini 3 Flash | $0.50–$1.00 |
 
 Cost range reflects normal to heavy usage. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
 

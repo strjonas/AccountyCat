@@ -131,17 +131,22 @@ enum SafelistPromotionPolicy {
     }
 
     /// Decide whether `stat` qualifies for promotion right now.
+    /// `inNamedProfile` lowers the trusted-tier bar (1 day instead of 2 distinct days, 4
+    /// observations instead of 6) and bypasses the post-throttle cooldown — named profiles
+    /// are explicit user-scoped sessions where aggressive safelisting is the whole point.
     static func eligibility(
         for stat: FocusedObservationStat,
         policyMemory: PolicyMemory,
         context: FrontmostContext,
-        now: Date
+        now: Date,
+        inNamedProfile: Bool = false
     ) -> SafelistPromotionEligibility {
         if stat.distractedCount > 0 {
             return .ineligible(reason: "distracted_history")
         }
 
-        if let attempt = stat.promotionAttemptedAt,
+        if !inNamedProfile,
+           let attempt = stat.promotionAttemptedAt,
            now.timeIntervalSince(attempt) < promotionAttemptCooldown {
             return .ineligible(reason: "throttled")
         }
@@ -154,18 +159,23 @@ enum SafelistPromotionPolicy {
             return .ineligible(reason: "already_allowed")
         }
 
+        let trustedFocusedThreshold = inNamedProfile ? 4 : 6
+        let trustedDayThreshold = inNamedProfile ? 1 : 2
+        let probationaryFocusedThreshold = inNamedProfile ? 2 : 2
+
         let prior = stat.previousAutoAllowOutcome
         if prior == .expiredClean {
-            if stat.focusedCount >= 6, stat.distinctDayCount >= 2 {
+            if stat.focusedCount >= trustedFocusedThreshold,
+               stat.distinctDayCount >= trustedDayThreshold {
                 return .eligible(tier: .trusted)
             }
-            if stat.focusedCount >= 2 {
+            if stat.focusedCount >= probationaryFocusedThreshold {
                 return .eligible(tier: .rePromotion)
             }
             return .ineligible(reason: "needs_more_observations_after_clean_expiry")
         }
 
-        if prior == nil, stat.focusedCount >= 2 {
+        if prior == nil, stat.focusedCount >= probationaryFocusedThreshold {
             return .eligible(tier: .probationary)
         }
 
@@ -292,6 +302,7 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             if configuration.usesOnlineInference {
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
+                        source: .safelistAppeal,
                         modelIdentifier: configuration.onlineModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
@@ -302,8 +313,16 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             } else if let screenshotPath {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
                 guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                
+                // Fallback to text model if image model isn't set, as there shouldn't be a hardcoded fallback.
+                guard let localModelIdentifier = configuration.localModelIdentifierImage ?? configuration.localModelIdentifierText else {
+                    await ActivityLogService.shared.append(category: "safelist-appeal-error", message: "No local model configured.")
+                    return nil
+                }
+                
                 output = try await runtime.runVisionInference(
                     runtimePath: runtimePath,
+                    modelIdentifier: localModelIdentifier,
                     snapshotPath: screenshotPath,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
@@ -312,8 +331,15 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
                 guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                
+                guard let localModelIdentifier = configuration.localModelIdentifierText ?? configuration.localModelIdentifierImage else {
+                    await ActivityLogService.shared.append(category: "safelist-appeal-error", message: "No local model configured.")
+                    return nil
+                }
+                
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
+                    modelIdentifier: localModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
                     options: options

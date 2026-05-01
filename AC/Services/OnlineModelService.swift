@@ -6,12 +6,41 @@
 import Foundation
 import Security
 
+enum OnlineModelRequestSource: String, Sendable {
+    case chat
+    case policyMemory = "policy-memory"
+    case memoryConsolidation = "memory-consolidation"
+    case monitoringText = "monitoring-text"
+    case monitoringVision = "monitoring-vision"
+    case safelistAppeal = "safelist-appeal"
+}
+
 struct OnlineModelRequest: Sendable {
+    var source: OnlineModelRequestSource
+    var requestID: String
     var modelIdentifier: String
     var systemPrompt: String
     var userPrompt: String
     var imagePath: String?
     var options: RuntimeInferenceOptions
+
+    init(
+        source: OnlineModelRequestSource,
+        requestID: String = UUID().uuidString,
+        modelIdentifier: String,
+        systemPrompt: String,
+        userPrompt: String,
+        imagePath: String?,
+        options: RuntimeInferenceOptions
+    ) {
+        self.source = source
+        self.requestID = requestID
+        self.modelIdentifier = modelIdentifier
+        self.systemPrompt = systemPrompt
+        self.userPrompt = userPrompt
+        self.imagePath = imagePath
+        self.options = options
+    }
 }
 
 protocol OnlineModelServing: Sendable {
@@ -99,7 +128,11 @@ enum OnlineModelCredentialStore {
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
     nonisolated static let fallbackNonFreeModelIdentifier = "google/gemma-4-31b-it"
-    nonisolated static let zdrFallbackModelIdentifier = "mistralai/mistral-small-3.1-24b-instruct"
+    nonisolated static let economyTextFallbackModelIdentifier = "nvidia/nemotron-3-super-120b-a12b"
+    nonisolated static let smartestTextFallbackModelIdentifier = "google/gemini-3-flash-preview"
+    nonisolated static let economyVisionFallbackModelIdentifier = "qwen/qwen3.5-9b"
+    nonisolated static let smartestVisionFallbackModelIdentifier = "google/gemini-3-flash-preview"
+    nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
 
     private let session: URLSession
 
@@ -115,49 +148,64 @@ actor OnlineModelService: OnlineModelServing {
     }
 
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput {
-        // Try the requested model first.
-        var lastError: OnlineModelError
-        do {
-            return try await runInference(
-                request,
-                modelIdentifier: request.modelIdentifier,
-                enforceZDR: true
-            )
-        } catch let error as OnlineModelError {
-            lastError = error
-        }
+        let fallbackModelIdentifiers = Self.requestFallbackModelIdentifiers(
+            for: request.modelIdentifier,
+            includesImage: request.imagePath != nil
+        )
+        let maxAttempts = request.source == .chat ? 2 : 1
+        var attempt = 0
+        var lastError: Error?
+        var primaryModelIdentifier = request.modelIdentifier
+        var secondaryFallbacks = fallbackModelIdentifiers
 
-        // Build a prioritised fallback chain from the first failure.
-        let chain = Self.fallbackChain(for: request.modelIdentifier, error: lastError)
-        guard !chain.isEmpty else { throw lastError }
-
-        for fallbackID in chain {
-            await ActivityLogService.shared.append(
-                category: "chat-fallback",
-                message: "OpenRouter couldn't serve \(request.modelIdentifier); retrying with \(fallbackID) (ZDR enforced)."
-            )
+        while attempt < maxAttempts {
+            attempt += 1
             do {
+                if attempt > 1 {
+                    let retryDetail = primaryModelIdentifier == request.modelIdentifier
+                        ? "after transient failure"
+                        : "using backup model \(primaryModelIdentifier)"
+                    await OpenRouterHealthStatsService.shared.recordRetry(requestedModel: request.modelIdentifier)
+                    await ActivityLogService.shared.append(
+                        category: "openrouter-retry",
+                        message: "[\(request.source.rawValue) \(request.requestID)] Retrying OpenRouter request \(retryDetail) (attempt \(attempt)/\(maxAttempts))."
+                    )
+                }
                 return try await runInference(
                     request,
-                    modelIdentifier: fallbackID,
+                    modelIdentifier: primaryModelIdentifier,
+                    fallbackModelIdentifiers: secondaryFallbacks,
                     enforceZDR: true
                 )
-            } catch let error as OnlineModelError {
+            } catch {
                 lastError = error
-                // Only keep walking the chain for ZDR unavailability — any other
-                // error (rate-limit on fallback, auth, etc.) should surface immediately.
-                guard Self.isZDRUnavailableFallbackWarranted(error: error) else {
+                let onlineError = error as? OnlineModelError
+                await OpenRouterHealthStatsService.shared.recordFailure(
+                    requestedModel: request.modelIdentifier,
+                    source: request.source,
+                    statusCode: Self.statusCode(from: onlineError),
+                    providerName: Self.providerName(from: onlineError)
+                )
+                guard attempt < maxAttempts, Self.isRetryable(error: error) else {
                     throw error
                 }
+                if request.source == .chat,
+                   let promotedModel = secondaryFallbacks.first,
+                   promotedModel != primaryModelIdentifier {
+                    primaryModelIdentifier = promotedModel
+                    secondaryFallbacks.removeAll { $0 == promotedModel }
+                }
+                try? await Task.sleep(for: .milliseconds(650))
             }
         }
 
-        throw lastError
+        throw lastError ?? OnlineModelError.malformedResponse
     }
 
     private func runInference(
         _ request: OnlineModelRequest,
         modelIdentifier: String,
+        fallbackModelIdentifiers: [String],
         enforceZDR: Bool
     ) async throws -> RuntimeProcessOutput {
         let apiKey = (OnlineModelCredentialStore.loadAPIKey() ?? "")
@@ -186,7 +234,7 @@ actor OnlineModelService: OnlineModelServing {
             )
         }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": modelIdentifier,
             "messages": [
                 [
@@ -207,10 +255,19 @@ actor OnlineModelService: OnlineModelServing {
                 "type": "json_object",
             ],
             "provider": [
-                "sort": "latency",
                 "zdr": enforceZDR,
             ],
         ]
+        if !request.options.thinkingEnabled {
+            body["reasoning"] = ["max_reasoning_tokens": 0] as [String: Any]
+        }
+        if !fallbackModelIdentifiers.isEmpty {
+            body["models"] = fallbackModelIdentifiers
+        }
+        if var provider = body["provider"] as? [String: Any] {
+            provider["allow_fallbacks"] = true
+            body["provider"] = provider
+        }
 
         var urlRequest = URLRequest(url: endpointURL)
         urlRequest.httpMethod = "POST"
@@ -243,46 +300,64 @@ actor OnlineModelService: OnlineModelServing {
             throw OnlineModelError.emptyResponse
         }
 
+        let usedModelIdentifier = Self.responseModelIdentifier(from: json) ?? modelIdentifier
+        await OpenRouterHealthStatsService.shared.recordSuccess(
+            requestedModel: request.modelIdentifier,
+            servedModel: usedModelIdentifier,
+            source: request.source
+        )
+        if usedModelIdentifier != modelIdentifier {
+            await ActivityLogService.shared.append(
+                category: "openrouter-fallback",
+                message: "[\(request.source.rawValue) \(request.requestID)] OpenRouter served \(usedModelIdentifier) instead of \(modelIdentifier) after provider/model fallback (ZDR enforced)."
+            )
+        }
+
         return RuntimeProcessOutput(
             stdout: content,
             stderr: Self.usageSummary(from: json),
-            usedModelIdentifier: modelIdentifier
+            usedModelIdentifier: usedModelIdentifier,
+            tokenUsage: Self.tokenUsage(from: json)
         )
     }
 
-    /// Returns an ordered list of model identifiers to try after `modelIdentifier`
-    /// fails with `error`.  The caller walks this chain in order, stopping as
-    /// soon as one succeeds (or a non-retryable error is thrown).
-    nonisolated private static func fallbackChain(
+    nonisolated private static func tokenUsage(from json: [String: Any]) -> TokenUsage? {
+        guard let usage = json["usage"] as? [String: Any] else { return nil }
+        let prompt = usage["prompt_tokens"] as? Int ?? 0
+        let completion = usage["completion_tokens"] as? Int ?? 0
+        let total = usage["total_tokens"] as? Int
+        let cost = usage["cost"] as? Double
+        let cached = (usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int
+        let image = (usage["prompt_tokens_details"] as? [String: Any])?["image_tokens"] as? Int
+        guard prompt > 0 || completion > 0 else { return nil }
+        return TokenUsage(
+            promptTokens: prompt,
+            completionTokens: completion,
+            totalTokens: total,
+            cacheReadTokens: cached,
+            imageTokens: image,
+            costUSD: cost,
+            estimated: false
+        )
+    }
+
+    nonisolated static func requestFallbackModelIdentifiers(
         for modelIdentifier: String,
-        error: OnlineModelError
+        includesImage: Bool = false
     ) -> [String] {
-        if isRateLimitFallbackWarranted(error: error) {
-            // Rate-limited: try the paid variant of the same model only.
-            if let nonFree = nonFreeModelIdentifier(from: modelIdentifier),
-               nonFree != modelIdentifier {
-                return [nonFree]
-            }
-            return []
+        var chain: [String] = []
+        if let nonFree = nonFreeModelIdentifier(from: modelIdentifier),
+           nonFree != modelIdentifier {
+            chain.append(nonFree)
         }
+        let tierFallbacks = includesImage
+            ? [economyVisionFallbackModelIdentifier, smartestVisionFallbackModelIdentifier]
+            : [economyTextFallbackModelIdentifier, smartestTextFallbackModelIdentifier]
 
-        if isZDRUnavailableFallbackWarranted(error: error) {
-            var chain: [String] = []
-            // 1. Try paid variant of same model first — different provider pool,
-            //    higher chance of finding a ZDR-capable endpoint.
-            if let nonFree = nonFreeModelIdentifier(from: modelIdentifier),
-               nonFree != modelIdentifier {
-                chain.append(nonFree)
-            }
-            // 2. Fall back to the designated ZDR fallback model (different family).
-            if modelIdentifier != zdrFallbackModelIdentifier,
-               !chain.contains(zdrFallbackModelIdentifier) {
-                chain.append(zdrFallbackModelIdentifier)
-            }
-            return chain
+        for fallback in tierFallbacks where modelIdentifier != fallback && !chain.contains(fallback) {
+            chain.append(fallback)
         }
-
-        return []
+        return chain
     }
 
     nonisolated private static func nonFreeModelIdentifier(from modelIdentifier: String) -> String? {
@@ -302,31 +377,61 @@ actor OnlineModelService: OnlineModelServing {
         return String(trimmed.dropLast(5))
     }
 
-    nonisolated private static func isZDRUnavailableFallbackWarranted(error: OnlineModelError) -> Bool {
-        guard case let .httpFailure(statusCode, message, rawBody) = error,
-              statusCode == 404 else {
-            return false
-        }
-        let combined = [message, rawBody].joined(separator: " ").lowercased()
-        return combined.contains("data policy") || combined.contains("zero data retention")
-    }
-
-    nonisolated private static func isRateLimitFallbackWarranted(error: OnlineModelError) -> Bool {
-        guard case let .httpFailure(statusCode, message, rawBody) = error,
-              statusCode == 429 else {
-            return false
-        }
-
-        let combined = [message, rawBody].joined(separator: " ").lowercased()
-        return combined.contains("rate-limited") || combined.contains("rate limited")
-    }
-
     nonisolated private static func errorMessage(from json: [String: Any]?) -> String? {
         if let error = json?["error"] as? [String: Any],
            let message = error["message"] as? String {
             return message
         }
         return nil
+    }
+
+    nonisolated static func isRetryable(error: Error) -> Bool {
+        if let onlineError = error as? OnlineModelError {
+            switch onlineError {
+            case let .httpFailure(statusCode, _, _):
+                return retryableStatusCodes.contains(statusCode)
+            case .malformedResponse, .emptyResponse:
+                return true
+            default:
+                return false
+            }
+        }
+
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        return [
+            NSURLErrorTimedOut,
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorCannotFindHost,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorDNSLookupFailed,
+            NSURLErrorNotConnectedToInternet,
+        ].contains(nsError.code)
+    }
+
+    nonisolated static func responseModelIdentifier(from json: [String: Any]) -> String? {
+        if let model = json["model"] as? String,
+           !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return model
+        }
+        return nil
+    }
+
+    nonisolated private static func statusCode(from error: OnlineModelError?) -> Int? {
+        guard case let .httpFailure(statusCode, _, _) = error else { return nil }
+        return statusCode
+    }
+
+    nonisolated private static func providerName(from error: OnlineModelError?) -> String? {
+        guard case let .httpFailure(_, _, rawBody) = error,
+              let data = rawBody.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = json["error"] as? [String: Any],
+              let metadata = error["metadata"] as? [String: Any],
+              let providerName = metadata["provider_name"] as? String else {
+            return nil
+        }
+        return providerName
     }
 
     nonisolated private static func messageContent(from json: [String: Any]) -> String? {

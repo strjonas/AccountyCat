@@ -76,9 +76,49 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    var offlineDescription: String {
+        switch self {
+        case .economy:
+            return "Qwen 3.5 4B. ~2–3 GB RAM. Safe for 8GB machines."
+        case .balanced:
+            return "Qwen 3.5 9B. ~5–7 GB RAM. Better reasoning, recommended for most."
+        case .smartest:
+            return "Qwen 3.6 27B. ~15–18 GB RAM. Best local reasoning."
+        }
+    }
+
+    var onlineDescription: String {
+        switch self {
+        case .economy:
+            return "Nemotron-3 Super 120B (text), Qwen 3.5 9B (images). ~$0.10–$0.25/mo."
+        case .balanced:
+            return "DeepSeek V4 Flash (text), Gemma 4 31B (images). ~$0.20–$0.50/mo."
+        case .smartest:
+            return "DeepSeek V4 Flash (text), Gemini 3 Flash (images). ~$0.50–$1.00/mo."
+        }
+    }
+
     // MARK: BYOK (OpenRouter) model identifiers per tier
 
     var byokModelIdentifier: String {
+        switch self {
+        case .economy:  return "qwen/qwen3.5-9b"
+        case .balanced: return "google/gemma-4-31b-it"
+        case .smartest: return "google/gemini-3-flash-preview"
+        }
+    }
+
+    /// Text-only optimized model for OpenRouter
+    var byokModelIdentifierText: String {
+        switch self {
+        case .economy:  return "nvidia/nemotron-3-super-120b-a12b"
+        case .balanced: return "deepseek/deepseek-v4-flash"
+        case .smartest: return "deepseek/deepseek-v4-flash"
+        }
+    }
+
+    /// Image/vision optimized model for OpenRouter
+    var byokModelIdentifierImage: String {
         switch self {
         case .economy:  return "qwen/qwen3.5-9b"
         case .balanced: return "google/gemma-4-31b-it"
@@ -98,25 +138,43 @@ enum AITier: String, Codable, CaseIterable, Sendable {
 
     var localModelOverride: String {
         switch self {
-        case .economy:  return "unsloth/gemma-4-E2B-it-GGUF:Q4_0"
-        case .balanced: return "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
-        case .smartest: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        case .economy:  return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+        case .balanced: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        case .smartest: return "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL"
+        }
+    }
+
+    /// Text-only optimized model for local (same as default for now, but can be customized)
+    var localModelIdentifierText: String {
+        switch self {
+        case .economy:  return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+        case .balanced: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        case .smartest: return "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL"
+        }
+    }
+
+    /// Image/vision optimized model for local (same as default for now, but can be customized)
+    var localModelIdentifierImage: String {
+        switch self {
+        case .economy:  return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+        case .balanced: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        case .smartest: return "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL"
         }
     }
 
     var localModelDisplayName: String {
         switch self {
-        case .economy:  return "Gemma 4 E2B"
-        case .balanced: return "Gemma 4 E4B"
-        case .smartest: return "Qwen 3.5 9B"
+        case .economy:  return "Qwen 3.5 4B"
+        case .balanced: return "Qwen 3.5 9B"
+        case .smartest: return "Qwen 3.6 27B"
         }
     }
 
     var localRAMEstimate: String {
         switch self {
-        case .economy:  return "~1.3 GB RAM"
-        case .balanced: return "~3–4 GB RAM"
-        case .smartest: return "~6–7 GB RAM"
+        case .economy:  return "~2-3 GB RAM"
+        case .balanced: return "~5-7 GB RAM"
+        case .smartest: return "~15-18 GB RAM"
         }
     }
 }
@@ -398,10 +456,51 @@ enum ChatRole: String, Codable, Sendable {
     case assistant
 }
 
+/// Structured payload for a `.suggestion` chat message. Today: profile-switch suggestions
+/// from the calendar pipeline.
+struct ChatSuggestionData: Codable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case calendarProfileSuggest = "calendar_profile_suggest"
+    }
+
+    var kind: Kind
+    /// Profile id to activate (when matching an existing profile). Mutually exclusive with
+    /// `proposedProfileName` for create-and-activate suggestions.
+    var profileID: String?
+    /// Name for a new profile to create. Mutually exclusive with `profileID`.
+    var proposedProfileName: String?
+    var proposedProfileDescription: String?
+    /// Suggested duration in minutes. Optional; AppController picks a default if nil.
+    var durationMinutes: Int?
+    /// Calendar event id we're acting on, so the same event isn't re-suggested.
+    var calendarEventID: String?
+    /// True when the user has actioned the suggestion (Accept/Dismiss); UI hides buttons.
+    var resolved: Bool = false
+    /// Final action chosen by the user, for telemetry.
+    var resolution: Resolution?
+
+    enum Resolution: String, Codable, Sendable {
+        case accepted
+        case dismissed
+    }
+}
+
 enum ChatMessageStyle: String, Codable, Sendable {
     case standard
     case nudge
     case celebration
+    /// Inline calendar/profile suggestion — renders Accept/Dismiss action buttons.
+    case suggestion
+}
+
+/// Whether a chat message is allowed to surface immediately or should sit quietly until the
+/// user comes to it.
+enum ChatInterruptionPolicy: String, Codable, Sendable {
+    /// Render immediately (default for direct user/assistant exchanges and nudge orb pops).
+    case immediate
+    /// Queue silently. Marked as unread; revealed when the user opens the popover, becomes
+    /// idle, or the active named profile expires.
+    case deferred
 }
 
 struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
@@ -410,6 +509,12 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
     var text: String
     var timestamp: Date
     var style: ChatMessageStyle
+    var interruptionPolicy: ChatInterruptionPolicy
+    /// True until the user opens the popover (or otherwise marks it read).
+    var isUnread: Bool
+    /// Optional structured payload for suggestion messages (e.g. calendar-suggested profile).
+    /// Decoded as JSON keys when present, kept opaque to the rest of the system otherwise.
+    var suggestionData: ChatSuggestionData?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -417,6 +522,9 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         case text
         case timestamp
         case style
+        case interruptionPolicy
+        case isUnread
+        case suggestionData
     }
 
     nonisolated init(
@@ -424,13 +532,19 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         role: ChatRole,
         text: String,
         timestamp: Date = Date(),
-        style: ChatMessageStyle = .standard
+        style: ChatMessageStyle = .standard,
+        interruptionPolicy: ChatInterruptionPolicy = .immediate,
+        isUnread: Bool = false,
+        suggestionData: ChatSuggestionData? = nil
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.timestamp = timestamp
         self.style = style
+        self.interruptionPolicy = interruptionPolicy
+        self.isUnread = isUnread || (interruptionPolicy == .deferred && role == .assistant)
+        self.suggestionData = suggestionData
     }
 
     init(from decoder: Decoder) throws {
@@ -440,6 +554,9 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         text = try container.decode(String.self, forKey: .text)
         timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
         style = try container.decodeIfPresent(ChatMessageStyle.self, forKey: .style) ?? .standard
+        interruptionPolicy = try container.decodeIfPresent(ChatInterruptionPolicy.self, forKey: .interruptionPolicy) ?? .immediate
+        isUnread = try container.decodeIfPresent(Bool.self, forKey: .isUnread) ?? false
+        suggestionData = try container.decodeIfPresent(ChatSuggestionData.self, forKey: .suggestionData)
     }
 
     nonisolated var promptTimestampLabel: String {
@@ -580,6 +697,11 @@ struct ACState: Codable, Sendable {
     /// can narrow the list from the picker to exclude noisy shared calendars.
     /// Stored as an array on disk for stable Codable encoding.
     var enabledCalendarIdentifiers: Set<String> = []
+    /// Stored focus profiles (default + up to N named). Default is always present.
+    /// LRU eviction by `lastUsedAt` enforces `FocusProfile.maximumProfileCount`.
+    var profiles: [FocusProfile] = [FocusProfile.makeDefault()]
+    /// Id of the currently active profile. Defaults to `general`.
+    var activeProfileID: String = PolicyRule.defaultProfileID
 
     enum CodingKeys: String, CodingKey {
         case character
@@ -606,6 +728,8 @@ struct ACState: Codable, Sendable {
         case chatHistory
         case calendarIntelligenceEnabled
         case enabledCalendarIdentifiers
+        case profiles
+        case activeProfileID
     }
 
 
@@ -676,6 +800,15 @@ struct ACState: Codable, Sendable {
         } else {
             enabledCalendarIdentifiers = []
         }
+        profiles = try container.decodeIfPresent([FocusProfile].self, forKey: .profiles) ?? [FocusProfile.makeDefault()]
+        activeProfileID = try container.decodeIfPresent(String.self, forKey: .activeProfileID) ?? PolicyRule.defaultProfileID
+        // Migration safety: legacy state files have no profiles array. Make sure default is present.
+        if !profiles.contains(where: { $0.isDefault }) {
+            profiles.insert(FocusProfile.makeDefault(), at: 0)
+        }
+        if !profiles.contains(where: { $0.id == activeProfileID }) {
+            activeProfileID = PolicyRule.defaultProfileID
+        }
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -721,6 +854,8 @@ struct ACState: Codable, Sendable {
         try container.encode(chatHistory, forKey: .chatHistory)
         try container.encode(calendarIntelligenceEnabled, forKey: .calendarIntelligenceEnabled)
         try container.encode(Array(enabledCalendarIdentifiers).sorted(), forKey: .enabledCalendarIdentifiers)
+        try container.encode(profiles, forKey: .profiles)
+        try container.encode(activeProfileID, forKey: .activeProfileID)
     }
 
     mutating func resetAlgorithmProfile() {
@@ -741,6 +876,8 @@ struct ACState: Codable, Sendable {
         lastMemoryConsolidationAt = nil
         policyMemory = PolicyMemory()
         chatHistory = []
+        profiles = [FocusProfile.makeDefault()]
+        activeProfileID = PolicyRule.defaultProfileID
     }
 
     // MARK: - Memory helpers
@@ -775,7 +912,7 @@ struct ACState: Codable, Sendable {
         maxCharacters: Int = 700
     ) -> String {
         policyMemory
-            .chatSummary(now: now, limit: maxLines)
+            .chatSummary(now: now, limit: maxLines, profileID: activeProfileID)
             .truncatedMultilineForPrompt(
                 maxLength: maxCharacters,
                 maxLines: maxLines
@@ -785,6 +922,93 @@ struct ACState: Codable, Sendable {
     /// True when the stored memory has grown past the soft cap and consolidation should run.
     var memoryExceedsSoftCap: Bool {
         memoryEntries.count > Self.memorySoftLineCap
+    }
+
+    // MARK: - Focus profiles
+
+    /// Returns the profile with the given id, or `nil` if it doesn't exist.
+    func profile(withID id: String) -> FocusProfile? {
+        profiles.first(where: { $0.id == id })
+    }
+
+    /// The currently active profile. Always returns a non-nil value: if `activeProfileID` no
+    /// longer matches a stored profile, the default profile is returned (and it is always present).
+    var activeProfile: FocusProfile {
+        profile(withID: activeProfileID) ?? FocusProfile.makeDefault()
+    }
+
+    /// Ensure the default profile exists. Idempotent. Call on first launch / migration.
+    mutating func ensureDefaultProfileExists() {
+        if !profiles.contains(where: { $0.isDefault }) {
+            profiles.insert(FocusProfile.makeDefault(), at: 0)
+        }
+        if !profiles.contains(where: { $0.id == activeProfileID }) {
+            activeProfileID = PolicyRule.defaultProfileID
+        }
+    }
+}
+
+// MARK: - FocusProfile
+
+/// A named focus context (e.g. "Coding", "Presentation prep") plus an always-present default.
+/// Each `PolicyRule.profileID` references one of these. Profiles persist across activations —
+/// per-rule expiry handles freshness — but they are evicted LRU once the cap is exceeded.
+struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
+    /// Maximum number of stored profiles (default + named). The oldest unused named profile is
+    /// evicted when a new one would exceed this cap.
+    static let maximumProfileCount = 8
+
+    /// Display name shown in the menu bar and Brain tab when the default is active.
+    /// Picked over "Default" to feel less system-y while staying neutral.
+    static let defaultDisplayName = "General"
+
+    let id: String
+    var name: String
+    var isDefault: Bool
+    var description: String?
+    let createdAt: Date
+    var lastUsedAt: Date
+    var activatedAt: Date?
+    /// `nil` for default; set on activation, cleared on switch.
+    var expiresAt: Date?
+    var createdReason: String?
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        isDefault: Bool = false,
+        description: String? = nil,
+        createdAt: Date = Date(),
+        lastUsedAt: Date = Date(),
+        activatedAt: Date? = nil,
+        expiresAt: Date? = nil,
+        createdReason: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.isDefault = isDefault
+        self.description = description
+        self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
+        self.activatedAt = activatedAt
+        self.expiresAt = expiresAt
+        self.createdReason = createdReason
+    }
+
+    static func makeDefault() -> FocusProfile {
+        FocusProfile(
+            id: PolicyRule.defaultProfileID,
+            name: defaultDisplayName,
+            isDefault: true,
+            description: "Everyday baseline. Active when no named focus session is running.",
+            createdReason: "system_default"
+        )
+    }
+
+    /// Has this profile expired by the given moment?
+    func isExpired(at now: Date) -> Bool {
+        guard !isDefault, let expiresAt else { return false }
+        return expiresAt <= now
     }
 }
 

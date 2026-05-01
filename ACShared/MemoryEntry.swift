@@ -27,11 +27,39 @@ public struct MemoryEntry: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var createdAt: Date
     public var text: String
+    /// Profile context this entry was captured under. `nil` (legacy) or `"general"` is rendered
+    /// without a prefix; named profiles render as `[ProfileName] ...` so the LLM can scope
+    /// memory to the active session.
+    public var profileID: String?
+    /// Display name of the profile at capture time. Stored alongside the id so renaming a
+    /// profile doesn't desync the memory prefix.
+    public var profileName: String?
 
-    nonisolated public init(id: UUID = UUID(), createdAt: Date = Date(), text: String) {
+    private enum CodingKeys: String, CodingKey {
+        case id, createdAt, text, profileID, profileName
+    }
+
+    nonisolated public init(
+        id: UUID = UUID(),
+        createdAt: Date = Date(),
+        text: String,
+        profileID: String? = nil,
+        profileName: String? = nil
+    ) {
         self.id = id
         self.createdAt = createdAt
         self.text = text
+        self.profileID = profileID
+        self.profileName = profileName
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        text = try c.decode(String.self, forKey: .text)
+        profileID = try? c.decodeIfPresent(String.self, forKey: .profileID)
+        profileName = try? c.decodeIfPresent(String.self, forKey: .profileName)
     }
 }
 
@@ -62,7 +90,8 @@ public enum MemoryRendering {
             let cleaned = entry.text.cleanedSingleLine
             guard !cleaned.isEmpty else { continue }
             let label = timestampLabel(for: entry.createdAt, now: now)
-            let line = "[\(label)] \(cleaned)"
+            let profilePrefix = profilePrefix(for: entry)
+            let line = "[\(label)]\(profilePrefix) \(cleaned)"
             let prospective = totalChars + line.count + 1
             if prospective > maxCharacters { break }
             lines.insert(line, at: 0)
@@ -77,7 +106,19 @@ public enum MemoryRendering {
         let sorted = entries.sorted { $0.createdAt > $1.createdAt }
         return sorted.map { entry in
             let label = timestampLabel(for: entry.createdAt, now: now)
-            return "[\(label)] \(entry.text.cleanedSingleLine)"
+            let profilePrefix = profilePrefix(for: entry)
+            return "[\(label)]\(profilePrefix) \(entry.text.cleanedSingleLine)"
         }.joined(separator: "\n")
+    }
+
+    /// Render `[ProfileName]` only for non-default named profiles. Empty for default/legacy.
+    private static func profilePrefix(for entry: MemoryEntry) -> String {
+        guard let profileID = entry.profileID,
+              profileID != "general",
+              let name = entry.profileName?.cleanedSingleLine,
+              !name.isEmpty else {
+            return ""
+        }
+        return " [\(name)]"
     }
 }

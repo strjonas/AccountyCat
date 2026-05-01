@@ -68,6 +68,28 @@ nonisolated struct MonitoringPromptUsageRecord: Codable, Hashable, Sendable {
     var seconds: TimeInterval
 }
 
+nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var isDefault: Bool
+    var description: String?
+    var expiresAt: Date?
+
+    nonisolated init(
+        id: String = "general",
+        name: String = "General",
+        isDefault: Bool = true,
+        description: String? = nil,
+        expiresAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.isDefault = isDefault
+        self.description = description
+        self.expiresAt = expiresAt
+    }
+}
+
 nonisolated struct MonitoringTitlePerceptionPromptPayload: Encodable, Sendable {
     var appName: String
     var bundleIdentifier: String?
@@ -98,6 +120,7 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var heuristics: MonitoringPromptHeuristicSummary
     var calendarContext: String?
     var screenshotIncluded: Bool
+    var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
 }
 
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
@@ -122,6 +145,7 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     /// change), so the prompt instructs the model to use this as a tiebreaker,
     /// not authority.
     var calendarContext: String?
+    var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
 }
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {

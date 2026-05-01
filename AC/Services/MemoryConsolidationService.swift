@@ -12,16 +12,13 @@ import Foundation
 actor MemoryConsolidationService {
     private let runtime: LocalModelRuntime
     private let onlineModelService: any OnlineModelServing
-    private let modelIdentifier: String
 
     init(
         runtime: LocalModelRuntime,
-        onlineModelService: any OnlineModelServing,
-        modelIdentifier: String = LocalModelRuntime.defaultModelIdentifier
+        onlineModelService: any OnlineModelServing
     ) {
         self.runtime = runtime
         self.onlineModelService = onlineModelService
-        self.modelIdentifier = modelIdentifier
     }
 
     /// Ask AC to produce a consolidated memory list.
@@ -36,7 +33,9 @@ actor MemoryConsolidationService {
         now: Date,
         runtimeOverride: String?,
         inferenceBackend: MonitoringInferenceBackend = .local,
-        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier
+        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier,
+        onlineTextModelIdentifier: String? = nil,
+        localTextModelIdentifier: String? = nil
     ) async -> [MemoryEntry]? {
         guard !entries.isEmpty else { return nil }
 
@@ -51,23 +50,33 @@ actor MemoryConsolidationService {
         let output: RuntimeProcessOutput
         do {
             if inferenceBackend == .openRouter {
+                let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
-                        modelIdentifier: onlineModelIdentifier,
+                        source: .memoryConsolidation,
+                        modelIdentifier: resolvedOnlineModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: nil,
-                        options: Self.inferenceOptions(modelIdentifier: onlineModelIdentifier)
+                        options: Self.inferenceOptions()
                     )
                 )
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
                 guard FileManager.default.isExecutableFile(atPath: runtimePath) else { return nil }
+                guard let localTextModelIdentifier, !localTextModelIdentifier.isEmpty else {
+                    await ActivityLogService.shared.append(
+                        category: "memory-consolidation-error",
+                        message: "No local text model configured."
+                    )
+                    return nil
+                }
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
+                    modelIdentifier: localTextModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
-                    options: Self.inferenceOptions(modelIdentifier: modelIdentifier)
+                    options: Self.inferenceOptions()
                 )
             }
         } catch {
@@ -136,9 +145,8 @@ actor MemoryConsolidationService {
         """
     }
 
-    nonisolated private static func inferenceOptions(modelIdentifier: String) -> RuntimeInferenceOptions {
+    nonisolated private static func inferenceOptions() -> RuntimeInferenceOptions {
         RuntimeInferenceOptions(
-            modelIdentifier: modelIdentifier,
             maxTokens: 320,
             temperature: 0.15,
             topP: 0.9,
@@ -194,7 +202,9 @@ actor MemoryConsolidationService {
                 return MemoryEntry(
                     id: existing?.id ?? fallbackByID[existing?.id ?? UUID()]?.id ?? UUID(),
                     createdAt: existing?.createdAt ?? created,
-                    text: text
+                    text: text,
+                    profileID: existing?.profileID,
+                    profileName: existing?.profileName
                 )
             }
 

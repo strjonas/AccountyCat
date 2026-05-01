@@ -81,7 +81,7 @@ struct PromptLabPromptSet: Codable, Hashable, Identifiable, Sendable {
         prompts[index].userTemplate = userTemplate
     }
 
-    static var defaults: [PromptLabPromptSet] {
+    nonisolated static var defaults: [PromptLabPromptSet] {
         MonitoringPromptTuning.promptSets.map {
             PromptLabPromptSet(
                 id: $0.id,
@@ -111,7 +111,7 @@ struct PromptLabPipelineProfile: Codable, Hashable, Identifiable, Sendable {
     var usesVisionPerception: Bool
     var splitCopyGeneration: Bool
 
-    static var defaults: [PromptLabPipelineProfile] {
+    nonisolated static var defaults: [PromptLabPipelineProfile] {
         MonitoringPromptTuning.pipelineDefinitions.map {
             PromptLabPipelineProfile(
                 id: $0.id,
@@ -166,7 +166,7 @@ struct PromptLabRuntimeProfile: Codable, Hashable, Identifiable, Sendable {
         )
     }
 
-    static var defaults: [PromptLabRuntimeProfile] {
+    nonisolated static var defaults: [PromptLabRuntimeProfile] {
         MonitoringPromptTuning.runtimeDefinitions.map {
             PromptLabRuntimeProfile(
                 id: $0.id,
@@ -413,8 +413,22 @@ struct PromptLabMatrixSummary: Hashable, Sendable {
     var unmatchedRuns: Int
 }
 
+struct PromptLabGoldenSummary: Codable, Hashable, Sendable {
+    var name: String
+    var total: Int
+    var matched: Int
+    var differingScenarioNames: [String]
+
+    var oneLineSummary: String {
+        if differingScenarioNames.isEmpty {
+            return "\(name): \(matched)/\(total) match"
+        }
+        return "\(name): \(matched)/\(total) match, \(differingScenarioNames.count) differ (\(differingScenarioNames.joined(separator: ", ")))"
+    }
+}
+
 private extension PromptLabStage {
-    init?(sharedStage: MonitoringPromptTuningStage) {
+    nonisolated init?(sharedStage: MonitoringPromptTuningStage) {
         switch sharedStage {
         case .perceptionTitle:
             self = .perceptionTitle

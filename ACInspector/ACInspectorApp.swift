@@ -162,6 +162,10 @@ private struct PromptLabRootView: View {
                     controller.importSelectedEpisodeIntoPromptLab()
                 }
                 .disabled(controller.selectedEpisode == nil)
+                Button(controller.promptLabIsRunning ? "Running…" : "Run Golden") {
+                    controller.runPromptLabGolden()
+                }
+                .disabled(controller.promptLabIsRunning)
                 Button(controller.promptLabIsRunning ? "Running…" : "Run Matrix") {
                     controller.runPromptLab()
                 }

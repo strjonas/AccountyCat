@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var cancellables = Set<AnyCancellable>()
     private var terminationRequested = false
+    private var chipRefreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -66,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setUpStatusItem()
         bindMood()
+        bindActiveProfile()
+        startChipRefreshTimer()
 
         // Show popover on first launch if setup isn't complete
         if controller.state.setupStatus != .ready {
@@ -106,10 +109,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let size: CGFloat = 16
             img.size = NSSize(width: size, height: size)
             item.button?.image = img
-            item.button?.title = ""
         } else {
-            item.button?.title = "AC"
+            item.button?.image = nil
         }
+        item.button?.imagePosition = .imageLeft
+        applyChipTitle(to: item)
+    }
+
+    /// Append the active profile's name + remaining time to the menu bar button.
+    /// The default profile is shown too, so profile state is never hidden.
+    private func applyChipTitle(to item: NSStatusItem) {
+        guard let button = item.button else { return }
+        let active = controller.state.activeProfile
+        let unreadDot = controller.hasUnreadChatMessages ? " •" : ""
+
+        if active.isDefault {
+            button.title = " AC · \(active.name)\(unreadDot)"
+            button.toolTip = controller.hasUnreadChatMessages
+                ? "Active focus profile: \(active.name) — new message"
+                : "Active focus profile: \(active.name)"
+            return
+        }
+        let nameSegment = active.name
+        let remainingSegment: String
+        if let exp = active.expiresAt {
+            let mins = Int(max(0, exp.timeIntervalSinceNow) / 60)
+            if mins >= 60 {
+                let hours = mins / 60
+                let leftover = mins % 60
+                remainingSegment = leftover == 0 ? " · \(hours)h" : " · \(hours)h\(leftover)m"
+            } else {
+                remainingSegment = " · \(max(1, mins))m"
+            }
+        } else {
+            remainingSegment = ""
+        }
+        button.title = " AC · \(nameSegment)\(remainingSegment)\(unreadDot)"
+        button.toolTip = controller.hasUnreadChatMessages
+            ? "Active focus profile: \(nameSegment) — new message"
+            : "Active focus profile: \(nameSegment)"
+    }
+
+    /// Refresh the chip whenever the active profile id changes (also covers expiry-driven
+    /// switches back to default in BrainService.tick) or unread-state changes.
+    private func bindActiveProfile() {
+        controller.$state
+            .map { $0.activeProfileID }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let item = self.statusItem else { return }
+                self.applyChipTitle(to: item)
+            }
+            .store(in: &cancellables)
+        controller.$hasUnreadChatMessages
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let item = self.statusItem else { return }
+                self.applyChipTitle(to: item)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Refresh the chip title every 30 s so the remaining-time countdown stays current.
+    private func startChipRefreshTimer() {
+        chipRefreshTimer?.invalidate()
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self, let item = self.statusItem else { return }
+            self.applyChipTitle(to: item)
+        }
+        chipRefreshTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     // MARK: - Mood-reactive icon
@@ -159,6 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !p.isShown else { return }
         p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
+        controller.markAllChatMessagesRead()
     }
 
     private func togglePopover(relativeTo button: NSStatusBarButton) {
@@ -169,6 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover = p
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
+            controller.markAllChatMessagesRead()
         }
     }
 
@@ -197,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
         NSApp.activate(ignoringOtherApps: true)
+        controller.markAllChatMessagesRead()
     }
 
     private func makePopover() -> NSPopover {
@@ -208,6 +282,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: ContentView()
                 .environmentObject(controller)
         )
+        controller.dismissPopover = { [weak p] in
+            p?.performClose(nil)
+        }
         return p
     }
 

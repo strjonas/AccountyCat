@@ -129,7 +129,7 @@ struct FakeRuntimeFixture {
           printf '%s\n' "$memory_extraction_output"
         elif [[ "$system_prompt" == *'Write one short nudge'* ]]; then
           printf '%s\n' "$nudge_output"
-        elif [[ "$system_prompt" == *'decision stage'* ]]; then
+        elif [[ "$system_prompt" == *'decision stage'* ]] || [[ "$system_prompt" == *'suggested_action'* && "$system_prompt" == *'assessment'* ]]; then
           printf '%s\n' "$decision_output"
         elif [[ "$has_image" -eq 1 ]] || [[ "$system_prompt" == *'screenshot perception stage'* ]]; then
           printf '%s\n' "$vision_output"
