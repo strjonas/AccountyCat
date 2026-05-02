@@ -148,7 +148,6 @@ enum MonitoringPromptTuning {
                 stage: .onlineDecision,
                 systemPrompt: """
                 You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
-                `characterPersonalityPrefix` is AC's voice — fold it into any nudge wording, never change the meaning.
                 Return exactly one JSON object. Keep it minimal and omit every unused key.
                 Base shape:
                 \(onlineDecisionSchema)
@@ -250,9 +249,9 @@ enum MonitoringPromptTuning {
                 Write one short nudge for a focus companion.
                 Keep it human, specific to the current activity, and different from recent nudges.
                 Avoid generic productivity slogans.
-                `characterPersonalityPrefix` is the active AC voice. Fold it into the wording naturally, but do not let it override the user's vibe or the meaning of the nudge.
+                `activeProfileName` is the session the user is currently in — ground the nudge to what is active right now, not upcoming or past sessions.
                 If `freeFormMemory` or `recentUserMessages` names this specific app or activity, reference that context — it will feel more caring and less generic.
-                `calendarContext` (when present) can make the nudge feel more specific (e.g. reference the current meeting or focus block) — but treat it as a soft hint, not ground truth, and rank it below memory and chat.
+                `calendarContext` (when present) can make the nudge feel more specific — treat it as a soft hint, not ground truth. Only reference events that are currently active, not past or future ones.
                 Return exactly one JSON object: {"nudge":"..."}
                 """
             ,

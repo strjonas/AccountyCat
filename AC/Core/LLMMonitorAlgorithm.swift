@@ -1063,7 +1063,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let payload = MonitoringOnlineDecisionPromptPayload(
             now: input.now,
             goals: requestScope.goals,
-            characterPersonalityPrefix: input.characterPersonalityPrefix,
             freeFormMemory: requestScope.freeFormMemory,
             recentUserMessages: requestScope.recentUserMessages,
             policySummary: requestScope.policySummary,
@@ -1096,7 +1095,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 options: applyOverrides(runtimeProfile.options(for: .onlineDecision), configuration: input.configuration),
                 payload: payload,
                 attempts: &attempts,
-                decoder: MonitoringDecisionEnvelope.self
+                decoder: MonitoringDecisionEnvelope.self,
+                systemPromptPrefix: input.characterPersonalityPrefix
             )
         }
 
@@ -1108,7 +1108,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             options: applyOverrides(runtimeProfile.options(for: .onlineDecision), configuration: input.configuration),
             payload: payload,
             attempts: &attempts,
-            decoder: MonitoringDecisionEnvelope.self
+            decoder: MonitoringDecisionEnvelope.self,
+            systemPromptPrefix: input.characterPersonalityPrefix
         )
     }
 
@@ -1138,7 +1139,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             payload: MonitoringNudgePromptPayload(
                 goals: requestScope.goals,
                 freeFormMemory: requestScope.freeFormMemory,
-                characterPersonalityPrefix: input.characterPersonalityPrefix,
                 recentUserMessages: requestScope.recentUserMessages,
                 policySummary: requestScope.policySummary,
                 appName: compactAppName,
@@ -1149,10 +1149,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     input.algorithmState.llmPolicy.recentNudgeMessages
                         .prefix(MonitoringPromptContextBudget.recentNudgeCount)
                 ),
-                calendarContext: input.calendarContext
+                calendarContext: input.calendarContext,
+                activeProfileName: input.activeProfileName
             ),
             attempts: &attempts,
-            decoder: MonitoringNudgeEnvelope.self
+            decoder: MonitoringNudgeEnvelope.self,
+            systemPromptPrefix: input.characterPersonalityPrefix
         )
         guard let nudge = nudgeEnvelope?.nudge?.cleanedSingleLine, !nudge.isEmpty else {
             return nil
@@ -1168,10 +1170,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         options: RuntimeInferenceOptions,
         payload: P,
         attempts: inout [LLMEvaluationAttempt],
-        decoder: T.Type
+        decoder: T.Type,
+        systemPromptPrefix: String = ""
     ) async -> T? {
         let payloadJSON = MonitoringLLMClient.encodePayload(payload)
-        let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: stage)
+        let baseSystemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: stage)
+        let systemPrompt = systemPromptPrefix.isEmpty ? baseSystemPrompt : "\(systemPromptPrefix)\n\n\(baseSystemPrompt)"
         let userPrompt = PromptCatalog.renderPolicyUserPrompt(stage: stage, payloadJSON: payloadJSON)
         let template = PromptTemplateRecord(
             id: "policy.\(stage.rawValue)",
@@ -1237,10 +1241,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         options: RuntimeInferenceOptions,
         payload: P,
         attempts: inout [LLMEvaluationAttempt],
-        decoder: T.Type
+        decoder: T.Type,
+        systemPromptPrefix: String = ""
     ) async -> T? {
         let payloadJSON = MonitoringLLMClient.encodePayload(payload)
-        let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: stage)
+        let baseSystemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: stage)
+        let systemPrompt = systemPromptPrefix.isEmpty ? baseSystemPrompt : "\(systemPromptPrefix)\n\n\(baseSystemPrompt)"
         let userPrompt = PromptCatalog.renderPolicyUserPrompt(stage: stage, payloadJSON: payloadJSON)
         let template = PromptTemplateRecord(
             id: "policy.\(stage.rawValue)",

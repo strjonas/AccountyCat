@@ -106,7 +106,6 @@ nonisolated struct MonitoringVisionPerceptionPromptPayload: Encodable, Sendable 
 nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var now: Date
     var goals: String
-    var characterPersonalityPrefix: String
     var freeFormMemory: String
     var recentUserMessages: [String]
     var policySummary: String
@@ -151,7 +150,6 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
     var goals: String
     var freeFormMemory: String
-    var characterPersonalityPrefix: String
     var recentUserMessages: [String]
     var policySummary: String
     var appName: String
@@ -163,6 +161,9 @@ nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
     /// it to phrase nudges more specifically (e.g. "didn't you block this hour
     /// for writing?") without treating it as ground truth.
     var calendarContext: String?
+    /// The name of the currently active profile (e.g. "General", "Paper Writing").
+    /// Ground the nudge to what is actually active right now.
+    var activeProfileName: String
 }
 
 nonisolated struct MonitoringSafelistAppealPromptPayload: Encodable, Sendable {

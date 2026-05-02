@@ -45,10 +45,17 @@ struct PromptCatalogTests {
     func chatAndNudgePromptsReferenceCharacterVoice() {
         let chatPrompt = PromptCatalog.loadChatSystemPrompt(character: .nova)
         let nudgePrompt = MonitoringPromptTuning.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt
+        let decisionPrompt = MonitoringPromptTuning.policyDefaultPromptSet.prompt(for: .onlineDecision).systemPrompt
 
+        // Chat injects the personality directly into the system prompt.
         #expect(chatPrompt.contains("Character voice:"))
         #expect(chatPrompt.contains("sharp-minded, energetic focus co-pilot"))
-        #expect(nudgePrompt.contains("characterPersonalityPrefix"))
+
+        // Nudge and decision prompts must NOT contain the personality prefix as a
+        // payload field reference — it is injected as a system-prompt prefix at
+        // call time so weak models cannot echo it verbatim as output.
+        #expect(!nudgePrompt.contains("characterPersonalityPrefix"))
+        #expect(!decisionPrompt.contains("characterPersonalityPrefix"))
     }
 
     @Test
