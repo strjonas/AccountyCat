@@ -1937,7 +1937,12 @@ final class AppController: ObservableObject {
 
     /// Route profile lifecycle ops emitted by the policy_memory pipeline through the
     /// AppController helpers so persistence, eviction, and announcement happen consistently.
-    private func applyProfileOperations(_ operations: [PolicyMemoryOperation]) {
+    /// If multiple profile ops appear in one response, only the final effective state is
+    /// announced so the user does not get spammed by contradictory deferred messages.
+    func applyProfileOperations(_ operations: [PolicyMemoryOperation]) {
+        var announcementReason: String?
+        var shouldAnnounce = false
+
         for op in operations {
             switch op.type {
             case .activateProfile:
@@ -1948,30 +1953,39 @@ final class AppController: ObservableObject {
                 } else {
                     expiresAt = nil
                 }
-                _ = activateProfile(id: profileID, expiresAt: expiresAt, reason: op.reason)
-                announceProfileSwitch(reason: op.reason)
+                if activateProfile(id: profileID, expiresAt: expiresAt, reason: op.reason) {
+                    announcementReason = op.reason
+                    shouldAnnounce = true
+                }
 
             case .createAndActivateProfile:
                 guard let name = op.profileName?.cleanedSingleLine, !name.isEmpty else { continue }
                 let duration: TimeInterval? = (op.profileDurationMinutes ?? 0) > 0
                     ? TimeInterval(op.profileDurationMinutes!) * 60
                     : nil
-                _ = createAndActivateProfile(
+                if createAndActivateProfile(
                     name: name,
                     description: op.profileDescription,
                     duration: duration,
                     reason: op.reason
-                )
-                announceProfileSwitch(reason: op.reason)
+                ) != nil {
+                    announcementReason = op.reason
+                    shouldAnnounce = true
+                }
 
             case .endActiveProfile:
                 guard state.activeProfileID != PolicyRule.defaultProfileID else { continue }
                 endActiveProfile()
-                announceProfileSwitch(reason: op.reason ?? "ended")
+                announcementReason = op.reason ?? "ended"
+                shouldAnnounce = true
 
             default:
                 continue
             }
+        }
+
+        if shouldAnnounce {
+            announceProfileSwitch(reason: announcementReason)
         }
     }
 
