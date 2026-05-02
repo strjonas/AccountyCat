@@ -1,12 +1,6 @@
 //
 //  ContentView.swift
 //  AC
-//
-//  Compact popover content. Two tabs in release builds (Home + Settings); a
-//  third Logs tab only shows in DEBUG. Home surfaces at-a-glance stats and
-//  chat. Settings keeps Goals, primary controls, Rescue App, and Quit visible
-//  while tucking the rest under a collapsible Advanced section.
-//
 
 import AppKit
 import SwiftUI
@@ -14,12 +8,12 @@ import SwiftUI
 // MARK: - Tab enum
 
 enum ACPopoverTab: String {
-    case home     = "house.fill"
-    case brain    = "brain.head.profile"
+    case home = "house.fill"
+    case brain = "brain.head.profile"
     case settings = "gearshape.fill"
     #if DEBUG
-    case stats    = "chart.bar.xaxis"
-    case logs     = "scroll.fill"
+        case stats = "chart.bar.xaxis"
+        case logs = "scroll.fill"
     #endif
 }
 
@@ -51,12 +45,15 @@ struct ContentView: View {
         .acAccent(for: controller.state.character)
         .animation(.acFade, value: controller.state.character)
         .onAppear { controller.refreshSystemState() }
-        .alert("Are you sure?", isPresented: Binding(
-            get: { pendingSettingsAction != nil },
-            set: { isPresented in
-                if !isPresented { pendingSettingsAction = nil }
-            }
-        )) {
+        .alert(
+            "Are you sure?",
+            isPresented: Binding(
+                get: { pendingSettingsAction != nil },
+                set: { isPresented in
+                    if !isPresented { pendingSettingsAction = nil }
+                }
+            )
+        ) {
             if pendingSettingsAction == .resetAlgorithm {
                 Button("Reset Algorithm", role: .destructive) {
                     controller.resetAlgorithmProfile()
@@ -73,19 +70,26 @@ struct ContentView: View {
         } message: {
             switch pendingSettingsAction {
             case .resetAlgorithm:
-                Text("This clears saved chat history, learned memory, recent context, and usage profile.")
+                Text(
+                    "This clears saved chat history, learned memory, recent context, and usage profile."
+                )
             case .deleteLocalModels:
-                Text("This removes the selected AC-downloaded local model from Application Support. The runtime stays installed.")
+                Text(
+                    "This removes the selected AC-downloaded local model from Application Support. The runtime stays installed."
+                )
             case .none:
                 Text("")
             }
         }
-        .alert("Done", isPresented: Binding(
-            get: { settingsSuccessMessage != nil },
-            set: { isPresented in
-                if !isPresented { settingsSuccessMessage = nil }
-            }
-        )) {
+        .alert(
+            "Done",
+            isPresented: Binding(
+                get: { settingsSuccessMessage != nil },
+                set: { isPresented in
+                    if !isPresented { settingsSuccessMessage = nil }
+                }
+            )
+        ) {
             Button("OK", role: .cancel) { settingsSuccessMessage = nil }
         } message: {
             Text(settingsSuccessMessage ?? "")
@@ -93,7 +97,9 @@ struct ContentView: View {
         .alert(item: $controller.modelDownloadNotice) { notice in
             Alert(
                 title: Text("Download needed"),
-                message: Text("\(notice.modelDisplayName) isn't downloaded yet. AC will keep using \(notice.fallbackDisplayName) until the download finishes, then switch automatically."),
+                message: Text(
+                    "\(notice.modelDisplayName) isn't downloaded yet. AC will keep using \(notice.fallbackDisplayName) until the download finishes, then switch automatically."
+                ),
                 dismissButton: .default(Text("OK"))
             )
         }
@@ -106,20 +112,19 @@ struct ContentView: View {
     private var tabContent: some View {
         ScrollView {
             switch selectedTab {
-            case .home:     homeTab
-            case .brain:    BrainView().environmentObject(controller)
+            case .home: homeTab
+            case .brain: BrainView().environmentObject(controller)
             case .settings: settingsTab
             #if DEBUG
-            case .stats:    StatsView()
-            case .logs:     logsTab
+                case .stats: StatsView()
+                case .logs: logsTab
             #else
-            default: EmptyView()
+                default: EmptyView()
             #endif
             }
         }
         .animation(.acFade, value: selectedTab)
     }
-
 
     private var popoverHeader: some View {
         VStack(spacing: 0) {
@@ -127,16 +132,18 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 8) {
                 HeaderMark(character: controller.state.character)
                     .frame(width: 32, height: 32)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(controller.state.character.displayName)
                         .font(.ac(14, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
-                    
+
                     HStack(spacing: 5) {
-                        StatusDot(status: controller.state.setupStatus,
-                                  isPaused: controller.state.isPaused)
-                            .fixedSize(horizontal: true, vertical: false)
+                        StatusDot(
+                            status: controller.state.setupStatus,
+                            isPaused: controller.state.isPaused
+                        )
+                        .fixedSize(horizontal: true, vertical: false)
 
                         if controller.state.setupStatus == .ready && !controller.state.isPaused {
                             Text("·")
@@ -150,12 +157,12 @@ struct ContentView: View {
                         }
                     }
                 }
-                
+
                 Spacer(minLength: 4)
-                
+
                 ProfileControlBar()
                     .environmentObject(controller)
-                
+
                 Button {
                     controller.dismissPopover?()
                 } label: {
@@ -187,7 +194,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            
+
             Divider()
         }
         .background(headerBackground)
@@ -198,17 +205,23 @@ struct ContentView: View {
             withAnimation(.acSnap) { selectedTab = tab }
         } label: {
             Image(systemName: tab.rawValue)
-                .font(.system(size: 12.5,
-                              weight: selectedTab == tab ? .semibold : .regular))
-                .foregroundStyle(selectedTab == tab
-                                 ? controller.state.character.accentColor
-                                 : Color.primary.opacity(0.45))
+                .font(
+                    .system(
+                        size: 12.5,
+                        weight: selectedTab == tab ? .semibold : .regular)
+                )
+                .foregroundStyle(
+                    selectedTab == tab
+                        ? controller.state.character.accentColor
+                        : Color.primary.opacity(0.45)
+                )
                 .frame(width: 32, height: 26)
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                        .fill(selectedTab == tab
-                              ? controller.state.character.accentSoft.opacity(0.68)
-                              : Color.clear)
+                        .fill(
+                            selectedTab == tab
+                                ? controller.state.character.accentSoft.opacity(0.68)
+                                : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -223,14 +236,17 @@ struct ContentView: View {
                 OnboardingWizardView()
                     .environmentObject(controller)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else if controller.state.setupStatus != .ready || controller.showingOnboardingCompletion {
+            } else if controller.state.setupStatus != .ready
+                || controller.showingOnboardingCompletion
+            {
                 // Wizard done but still setting up (e.g. local download in progress)
                 OnboardingDialogView(showModeChooser: false)
                     .environmentObject(controller)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
-                StatsSection(stats: controller.todayStats,
-                             accent: controller.state.character.accentColor)
+                StatsSection(
+                    stats: controller.todayStats,
+                    accent: controller.state.character.accentColor)
             }
 
             ChatView()
@@ -297,19 +313,23 @@ struct ContentView: View {
             CalendarIntelligenceSection()
                 .environmentObject(controller)
 
-            SettingsSection(title: "Rescue app", icon: "arrow.uturn.backward.circle",
-                            subtitle: "Where AC sends you when you've drifted too far.") {
+            SettingsSection(
+                title: "Rescue app", icon: "arrow.uturn.backward.circle",
+                subtitle: "Where AC sends you when you've drifted too far."
+            ) {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(controller.state.rescueApp.displayName)
                             .font(.ac(13, weight: .medium))
                             .foregroundStyle(Color.acTextPrimary)
-                        Text(controller.state.rescueApp.applicationPath
-                             ?? controller.state.rescueApp.bundleIdentifier)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        Text(
+                            controller.state.rescueApp.applicationPath
+                                ?? controller.state.rescueApp.bundleIdentifier
+                        )
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     }
                     Spacer(minLength: 8)
                     HStack(spacing: 6) {
@@ -331,9 +351,12 @@ struct ContentView: View {
                 )
             }
 
-            SettingsSection(title: "Reset monitoring profile",
-                            icon: "arrow.counterclockwise",
-                            subtitle: "Clears learned memory, recent behavior context, chat history, and usage context.") {
+            SettingsSection(
+                title: "Reset monitoring profile",
+                icon: "arrow.counterclockwise",
+                subtitle:
+                    "Clears learned memory, recent behavior context, chat history, and usage context."
+            ) {
                 Button("Reset") { pendingSettingsAction = .resetAlgorithm }
                     .buttonStyle(ACDangerButton())
             }
@@ -365,144 +388,150 @@ struct ContentView: View {
             }
         }
         .padding(20)
-}
+    }
 
-private struct LocalModelStorageSection: View {
-    @EnvironmentObject private var controller: AppController
-    let onDelete: () -> Void
+    private struct LocalModelStorageSection: View {
+        @EnvironmentObject private var controller: AppController
+        let onDelete: () -> Void
 
-    var body: some View {
-        let installed = controller.installedManagedModels
-        let selected = controller.selectedInstalledModel
+        var body: some View {
+            let installed = controller.installedManagedModels
+            let selected = controller.selectedInstalledModel
 
-        SettingsSection(
-            title: "Local model storage",
-            icon: "externaldrive",
-            subtitle: "AC stores downloaded local models in its own Application Support cache."
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                storageRow(
-                    title: "AC model cache",
-                    value: controller.localModelDiagnostics.managedModelCachePath
-                )
-
-                if installed.isEmpty {
-                    Text("No AC-downloaded local models found yet.")
-                        .font(.ac(11))
-                        .foregroundStyle(.secondary)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Installed models")
-                            .font(.ac(11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Picker(
-                            "Installed models",
-                            selection: Binding(
-                                get: { controller.selectedInstalledModel?.cachePath ?? installed.first?.cachePath ?? "" },
-                                set: { controller.selectInstalledModel(cachePath: $0) }
-                            )
-                        ) {
-                            ForEach(installed) { model in
-                                Text(AppController.shortModelName(for: model.modelIdentifier))
-                                    .tag(model.cachePath)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-
-                    if let selected {
-                        storageRow(
-                            title: "Selected model",
-                            value: AppController.shortModelName(for: selected.modelIdentifier)
-                        )
-
-                        storageRow(
-                            title: "Model identifier",
-                            value: selected.modelIdentifier
-                        )
-
-                        storageRow(
-                            title: "Path to model",
-                            value: selected.modelPath
-                        )
-
-                        if let projectorPath = selected.projectorPath {
-                            storageRow(title: "Projector", value: projectorPath)
-                        }
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    Button("Reveal") {
-                        controller.revealManagedModelLocation()
-                    }
-                    .buttonStyle(ACSecondaryButton())
-                    .disabled(selected == nil)
-
-                    Button(controller.importingModelToOllama ? "Importing…" : "Import to Ollama") {
-                        controller.importCurrentModelToOllama()
-                    }
-                    .buttonStyle(ACPrimaryButton())
-                    .disabled(
-                        controller.importingModelToOllama ||
-                        selected == nil
+            SettingsSection(
+                title: "Local model storage",
+                icon: "externaldrive",
+                subtitle: "AC stores downloaded local models in its own Application Support cache."
+            ) {
+                VStack(alignment: .leading, spacing: 10) {
+                    storageRow(
+                        title: "AC model cache",
+                        value: controller.localModelDiagnostics.managedModelCachePath
                     )
 
-                    Button(controller.deletingManagedModels ? "Deleting…" : "Delete Selected") {
-                        onDelete()
-                    }
-                    .buttonStyle(ACDangerButton())
-                    .disabled(controller.deletingManagedModels || selected == nil)
-                }
+                    if installed.isEmpty {
+                        Text("No AC-downloaded local models found yet.")
+                            .font(.ac(11))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Installed models")
+                                .font(.ac(11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Picker(
+                                "Installed models",
+                                selection: Binding(
+                                    get: {
+                                        controller.selectedInstalledModel?.cachePath ?? installed
+                                            .first?.cachePath ?? ""
+                                    },
+                                    set: { controller.selectInstalledModel(cachePath: $0) }
+                                )
+                            ) {
+                                ForEach(installed) { model in
+                                    Text(AppController.shortModelName(for: model.modelIdentifier))
+                                        .tag(model.cachePath)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                        }
 
-                Text("AC now only uses its Application Support cache for local models. Ollama import creates a separate Ollama-managed copy under an `ac-...` name; it does not reuse Ollama's folder in place.")
+                        if let selected {
+                            storageRow(
+                                title: "Selected model",
+                                value: AppController.shortModelName(for: selected.modelIdentifier)
+                            )
+
+                            storageRow(
+                                title: "Model identifier",
+                                value: selected.modelIdentifier
+                            )
+
+                            storageRow(
+                                title: "Path to model",
+                                value: selected.modelPath
+                            )
+
+                            if let projectorPath = selected.projectorPath {
+                                storageRow(title: "Projector", value: projectorPath)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("Reveal") {
+                            controller.revealManagedModelLocation()
+                        }
+                        .buttonStyle(ACSecondaryButton())
+                        .disabled(selected == nil)
+
+                        Button(
+                            controller.importingModelToOllama ? "Importing…" : "Import to Ollama"
+                        ) {
+                            controller.importCurrentModelToOllama()
+                        }
+                        .buttonStyle(ACPrimaryButton())
+                        .disabled(
+                            controller.importingModelToOllama || selected == nil
+                        )
+
+                        Button(controller.deletingManagedModels ? "Deleting…" : "Delete Selected") {
+                            onDelete()
+                        }
+                        .buttonStyle(ACDangerButton())
+                        .disabled(controller.deletingManagedModels || selected == nil)
+                    }
+
+                    Text(
+                        "AC now only uses its Application Support cache for local models. Ollama import creates a separate Ollama-managed copy under an `ac-...` name; it does not reuse Ollama's folder in place."
+                    )
                     .font(.ac(10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if let error = controller.localModelStorageError, !error.isEmpty {
-                    Text(error)
-                        .font(.ac(10, weight: .medium))
-                        .foregroundStyle(Color.red.opacity(0.82))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if let message = controller.localModelStorageMessage, !message.isEmpty {
-                    Text(message)
-                        .font(.ac(10, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let error = controller.localModelStorageError, !error.isEmpty {
+                        Text(error)
+                            .font(.ac(10, weight: .medium))
+                            .foregroundStyle(Color.red.opacity(0.82))
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if let message = controller.localModelStorageMessage, !message.isEmpty {
+                        Text(message)
+                            .font(.ac(10, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                                .stroke(Color.acHairline, lineWidth: 1)
+                        )
+                )
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                    .fill(Color.acSurface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(Color.acHairline, lineWidth: 1)
-                    )
-            )
+        }
+
+        @ViewBuilder
+        private func storageRow(title: String, value: String) -> some View {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.acTextPrimary)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
         }
     }
 
-    @ViewBuilder
-    private func storageRow(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.ac(11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Color.acTextPrimary)
-                .textSelection(.enabled)
-                .lineLimit(2)
-                .truncationMode(.middle)
-        }
-    }
-}
-
-// MARK: - Developer (DEBUG only)
+    // MARK: - Developer (DEBUG only)
 
     @ViewBuilder
     private var developerSection: some View {
@@ -525,7 +554,9 @@ private struct LocalModelStorageSection: View {
                     get: { controller.state.monitoringConfiguration.promptProfileID },
                     set: { controller.updateMonitoringPromptProfile($0) }
                 ),
-                options: controller.availableMonitoringPromptProfiles.map { ($0.id, $0.displayName, $0.summary) }
+                options: controller.availableMonitoringPromptProfiles.map {
+                    ($0.id, $0.displayName, $0.summary)
+                }
             )
 
             developerPicker(
@@ -534,7 +565,9 @@ private struct LocalModelStorageSection: View {
                     get: { controller.state.monitoringConfiguration.pipelineProfileID },
                     set: { controller.updateMonitoringPipelineProfile($0) }
                 ),
-                options: controller.availablePipelineProfiles.map { ($0.id, $0.displayName, $0.summary) }
+                options: controller.availablePipelineProfiles.map {
+                    ($0.id, $0.displayName, $0.summary)
+                }
             )
 
             developerPicker(
@@ -543,25 +576,32 @@ private struct LocalModelStorageSection: View {
                     get: { controller.state.monitoringConfiguration.runtimeProfileID },
                     set: { controller.updateMonitoringRuntimeProfile($0) }
                 ),
-                options: controller.availableRuntimeProfiles.map { ($0.id, $0.displayName, $0.summary) }
+                options: controller.availableRuntimeProfiles.map {
+                    ($0.id, $0.displayName, $0.summary)
+                }
             )
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("llama.cpp path override")
                     .font(.ac(11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                TextField("Optional custom path", text: Binding(
-                    get: { controller.state.runtimePathOverride ?? "" },
-                    set: { controller.updateRuntimeOverride($0) }
-                ))
+                TextField(
+                    "Optional custom path",
+                    text: Binding(
+                        get: { controller.state.runtimePathOverride ?? "" },
+                        set: { controller.updateRuntimeOverride($0) }
+                    )
+                )
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 11, design: .monospaced))
             }
 
-            Toggle(isOn: Binding(
-                get: { controller.state.monitoringConfiguration.thinkingEnabled },
-                set: { controller.updateThinkingEnabled($0) }
-            )) {
+            Toggle(
+                isOn: Binding(
+                    get: { controller.state.monitoringConfiguration.thinkingEnabled },
+                    set: { controller.updateThinkingEnabled($0) }
+                )
+            ) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Thinking / reasoning")
                         .font(.ac(11, weight: .semibold))
@@ -625,7 +665,8 @@ private struct LocalModelStorageSection: View {
 
             logConsole(
                 title: "Recent text log",
-                text: controller.activityLog.isEmpty ? "No recent log tail yet." : controller.activityLog,
+                text: controller.activityLog.isEmpty
+                    ? "No recent log tail yet." : controller.activityLog,
                 height: 210
             )
 
@@ -735,10 +776,10 @@ private struct StatusDot: View {
 
     private var label: String {
         switch status {
-        case .ready:       return isPaused ? "Paused" : "With you"
-        case .installing:  return "Installing"
-        case .checking:    return "Checking"
-        default:           return "Setup needed"
+        case .ready: return isPaused ? "Paused" : "With you"
+        case .installing: return "Installing"
+        case .checking: return "Checking"
+        default: return "Setup needed"
         }
     }
 }
@@ -811,7 +852,9 @@ private struct ToggleTile: View {
     let tint: Color
 
     var body: some View {
-        Button { isOn.toggle() } label: {
+        Button {
+            isOn.toggle()
+        } label: {
             HStack(spacing: 11) {
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .semibold))
@@ -837,10 +880,11 @@ private struct ToggleTile: View {
                     .fill(isOn ? tint.opacity(0.10) : Color.acSurface)
                     .overlay(
                         RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(isOn
+                            .stroke(
+                                isOn
                                     ? tint.opacity(0.45)
                                     : Color.acHairline,
-                                    lineWidth: 1)
+                                lineWidth: 1)
                     )
             )
         }
@@ -869,18 +913,21 @@ private struct StatsSection: View {
             )
 
             HStack(spacing: 8) {
-                StatCard(icon: "clock.fill",
-                         value: formatDuration(stats.focusedSeconds),
-                         label: "Focused",
-                         accent: accent)
-                StatCard(icon: "bolt.fill",
-                         value: formatDuration(stats.longestFocusedBlockSeconds),
-                         label: "Best block",
-                         accent: accent)
-                StatCard(icon: "flame.fill",
-                         value: "\(stats.streakDays)d",
-                         label: "Streak",
-                         accent: accent)
+                StatCard(
+                    icon: "clock.fill",
+                    value: formatDuration(stats.focusedSeconds),
+                    label: "Focused",
+                    accent: accent)
+                StatCard(
+                    icon: "bolt.fill",
+                    value: formatDuration(stats.longestFocusedBlockSeconds),
+                    label: "Best block",
+                    accent: accent)
+                StatCard(
+                    icon: "flame.fill",
+                    value: "\(stats.streakDays)d",
+                    label: "Streak",
+                    accent: accent)
             }
         }
     }
@@ -1077,10 +1124,12 @@ private struct CalendarIntelligenceSection: View {
         VStack(alignment: .leading, spacing: 10) {
             header
 
-            Toggle(isOn: Binding(
-                get: { isOn },
-                set: { controller.setCalendarIntelligence(enabled: $0) }
-            )) {
+            Toggle(
+                isOn: Binding(
+                    get: { isOn },
+                    set: { controller.setCalendarIntelligence(enabled: $0) }
+                )
+            ) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Use my calendar")
                         .font(.ac(13, weight: .medium))
@@ -1123,13 +1172,15 @@ private struct CalendarIntelligenceSection: View {
             Image(systemName: "info.circle")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-                .help("""
-                Let AC read your current calendar event to infer what you want \
-                to focus on — so it stays out of the way with less effort \
-                from you. Works with any calendar already in Apple Calendar \
-                (iCloud, Google, Exchange, Fastmail, …). Events are read \
-                locally and never leave your Mac.
-                """)
+                .help(
+                    """
+                    Let AC read your current calendar event to infer what you want \
+                    to focus on — so it stays out of the way with less effort \
+                    from you. Works with any calendar already in Apple Calendar \
+                    (iCloud, Google, Exchange, Fastmail, …). Events are read \
+                    locally and never leave your Mac.
+                    """
+                )
                 .onHover { hoveringInfo = $0 }
                 .opacity(hoveringInfo ? 1.0 : 0.75)
         }
@@ -1137,10 +1188,12 @@ private struct CalendarIntelligenceSection: View {
 
     private var permissionPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Calendar access is required. If you denied it earlier, re-enable it in System Settings → Privacy & Security → Calendars.")
-                .font(.ac(11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "Calendar access is required. If you denied it earlier, re-enable it in System Settings → Privacy & Security → Calendars."
+            )
+            .font(.ac(11))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
                 Button("Request access") {
@@ -1150,7 +1203,10 @@ private struct CalendarIntelligenceSection: View {
                 .buttonStyle(ACSecondaryButton())
 
                 Button("Open System Settings") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                    if let url = URL(
+                        string:
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+                    ) {
                         NSWorkspace.shared.open(url)
                     }
                 }
@@ -1191,7 +1247,9 @@ private struct CalendarIntelligenceSection: View {
                     )
             )
         } else {
-            let enabledCount = controller.availableCalendars.filter { controller.isCalendarEnabled($0.id) }.count
+            let enabledCount = controller.availableCalendars.filter {
+                controller.isCalendarEnabled($0.id)
+            }.count
             VStack(alignment: .leading, spacing: 0) {
                 Button {
                     withAnimation(.acSnap) { calendarListExpanded.toggle() }
@@ -1219,11 +1277,15 @@ private struct CalendarIntelligenceSection: View {
                     Divider().opacity(0.4)
                     ScrollView {
                         VStack(spacing: 0) {
-                            ForEach(Array(controller.availableCalendars.enumerated()), id: \.element.id) { index, cal in
-                                Toggle(isOn: Binding(
-                                    get: { controller.isCalendarEnabled(cal.id) },
-                                    set: { _ in controller.toggleCalendarEnabled(cal.id) }
-                                )) {
+                            ForEach(
+                                Array(controller.availableCalendars.enumerated()), id: \.element.id
+                            ) { index, cal in
+                                Toggle(
+                                    isOn: Binding(
+                                        get: { controller.isCalendarEnabled(cal.id) },
+                                        set: { _ in controller.toggleCalendarEnabled(cal.id) }
+                                    )
+                                ) {
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(cal.title)
                                             .font(.ac(12, weight: .medium))
@@ -1336,7 +1398,9 @@ private struct CharacterCard: View {
                     .overlay(
                         Circle()
                             .stroke(
-                                isSelected ? character.accentColor.opacity(0.55) : Color.white.opacity(0.45),
+                                isSelected
+                                    ? character.accentColor.opacity(0.55)
+                                    : Color.white.opacity(0.45),
                                 lineWidth: 1
                             )
                     )
@@ -1364,9 +1428,11 @@ private struct CharacterCard: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                .fill(isSelected
-                      ? character.accentSoft.opacity(0.55)
-                      : Color.acSurface)
+                .fill(
+                    isSelected
+                        ? character.accentSoft.opacity(0.55)
+                        : Color.acSurface
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                         .stroke(
@@ -1515,7 +1581,8 @@ private struct AISettingsSection: View {
     }
 
     private var showLocalModelProgress: Bool {
-        !controller.usingOnlineMonitoring && (controller.installingRuntime || controller.pendingLocalModelChange != nil)
+        !controller.usingOnlineMonitoring
+            && (controller.installingRuntime || controller.pendingLocalModelChange != nil)
     }
 
     @ViewBuilder
@@ -1567,7 +1634,9 @@ private struct CadencePicker: View {
                     HStack(alignment: .top, spacing: 9) {
                         Image(systemName: selected == mode ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(selected == mode ? accent : Color.secondary.opacity(0.45))
+                            .foregroundStyle(
+                                selected == mode ? accent : Color.secondary.opacity(0.45)
+                            )
                             .padding(.top, 1)
 
                         VStack(alignment: .leading, spacing: 2) {
@@ -1596,7 +1665,9 @@ private struct CadencePicker: View {
                             .fill(selected == mode ? accent.opacity(0.10) : Color.acSurface)
                             .overlay(
                                 RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                    .stroke(selected == mode ? accent.opacity(0.35) : Color.acHairline, lineWidth: 1)
+                                    .stroke(
+                                        selected == mode ? accent.opacity(0.35) : Color.acHairline,
+                                        lineWidth: 1)
                             )
                     )
                 }
@@ -1640,7 +1711,9 @@ private struct VisionGateSettingsCard: View {
                         get: { Double(threshold) },
                         set: { threshold = Int($0.rounded()) }
                     ),
-                    in: Double(MonitoringConfiguration.minTitleLengthForTextOnly)...Double(MonitoringConfiguration.maxTitleLengthForTextOnly),
+                    in: Double(
+                        MonitoringConfiguration.minTitleLengthForTextOnly)...Double(
+                            MonitoringConfiguration.maxTitleLengthForTextOnly),
                     step: 1
                 )
 
@@ -1650,15 +1723,20 @@ private struct VisionGateSettingsCard: View {
                         Button(String(preset)) {
                             threshold = preset
                         }
-                        .buttonStyle(isSelected ? AnyButtonStyle(ACPrimaryButton()) : AnyButtonStyle(ACSecondaryButton()))
+                        .buttonStyle(
+                            isSelected
+                                ? AnyButtonStyle(ACPrimaryButton())
+                                : AnyButtonStyle(ACSecondaryButton()))
                     }
                     Spacer(minLength: 0)
                 }
 
-                Text("30 is the balanced default. Lower is cheaper but risks more unclear retries; higher keeps vision on longer. Browsers and ambiguous apps still keep screenshots regardless.")
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "30 is the balanced default. Lower is cheaper but risks more unclear retries; higher keeps vision on longer. Browsers and ambiguous apps still keep screenshots regardless."
+                )
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
             .padding(10)
             .background(
@@ -1706,8 +1784,8 @@ private struct SettingsModeRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            modeButton(.local,      label: "Local",   icon: "lock.fill",  subtext: "Private")
-            modeButton(.openRouter, label: "BYOK",    icon: "key.fill",   subtext: "OpenRouter")
+            modeButton(.local, label: "Local", icon: "lock.fill", subtext: "Private")
+            modeButton(.openRouter, label: "BYOK", icon: "key.fill", subtext: "OpenRouter")
             managedButton
         }
     }
@@ -1720,7 +1798,9 @@ private struct SettingsModeRow: View {
         subtext: String
     ) -> some View {
         let isSelected = current == backend
-        Button { onChange(backend) } label: {
+        Button {
+            onChange(backend)
+        } label: {
             VStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .semibold))
@@ -1739,8 +1819,9 @@ private struct SettingsModeRow: View {
                     .fill(isSelected ? accent.opacity(0.10) : Color.acSurface)
                     .overlay(
                         RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                            .stroke(isSelected ? accent.opacity(0.45) : Color.acHairline,
-                                    lineWidth: isSelected ? 1.5 : 1)
+                            .stroke(
+                                isSelected ? accent.opacity(0.45) : Color.acHairline,
+                                lineWidth: isSelected ? 1.5 : 1)
                     )
             )
         }

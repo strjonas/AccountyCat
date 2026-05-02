@@ -32,6 +32,14 @@ struct FakeRuntimeOutputSet {
     var memoryCompression = """
     {"memory":"- Focus on coding\\n- Keep social breaks short"}
     """
+
+    var chatReply = """
+    {"reply":"Hey there! I'm AccountyCat, your focus companion.","memory":null}
+    """
+
+    var chatReplyWithMemory = """
+    {"reply":"Got it — I'll remember that for next time.","memory":"User prefers short breaks every 45 minutes."}
+    """
 }
 
 struct FakeRuntimeFixture {
@@ -118,6 +126,10 @@ struct FakeRuntimeFixture {
         \(outputs.memoryCompression)
         EOF_AC_MEMORY_COMPRESS
         )
+        chat_output=$(cat <<'EOF_AC_CHAT'
+        \(outputs.chatReply)
+        EOF_AC_CHAT
+        )
 
         if [[ "$system_prompt" == *'update structured policy memory'* ]]; then
           printf '%s\n' "$policy_memory_output"
@@ -133,6 +145,8 @@ struct FakeRuntimeFixture {
           printf '%s\n' "$decision_output"
         elif [[ "$has_image" -eq 1 ]] || [[ "$system_prompt" == *'screenshot perception stage'* ]]; then
           printf '%s\n' "$vision_output"
+        elif [[ "$system_prompt" == *'AccountyCat'* ]] || [[ "$prompt" == *'[New user message]'* ]] || [[ "$prompt" == *'{"reply"'* ]]; then
+          printf '%s\n' "$chat_output"
         else
           printf '%s\n' "$title_output"
         fi

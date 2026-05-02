@@ -72,7 +72,7 @@ final class AppController: ObservableObject {
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 8
 
-    let storageService = StorageService()
+    let storageService: StorageService
     let telemetryStore = TelemetryStore.shared
     let localModelRuntime: LocalModelRuntime
     let onlineModelService: OnlineModelService
@@ -90,6 +90,55 @@ final class AppController: ObservableObject {
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
     
     private init() {
+        self.storageService = StorageService()
+        let runtime = LocalModelRuntime()
+        let onlineModelService = OnlineModelService()
+        let companionChatService = CompanionChatService(
+            runtime: runtime,
+            onlineModelService: onlineModelService
+        )
+        let memoryConsolidationService = MemoryConsolidationService(
+            runtime: runtime,
+            onlineModelService: onlineModelService
+        )
+        let policyMemoryService = PolicyMemoryService(
+            runtime: runtime,
+            onlineModelService: onlineModelService
+        )
+        self.localModelRuntime = runtime
+        self.onlineModelService = onlineModelService
+        self.companionChatService = companionChatService
+        self.memoryConsolidationService = memoryConsolidationService
+        self.policyMemoryService = policyMemoryService
+        self.monitoringAlgorithmRegistry = MonitoringAlgorithmRegistry(
+            runtime: runtime,
+            onlineModelService: onlineModelService,
+            policyMemoryService: policyMemoryService
+        )
+        let loadedState = storageService.loadState()
+        self.state = loadedState
+        self.onlineAPIKeyDraft = OnlineModelCredentialStore.loadAPIKey() ?? ""
+        self.setupDiagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: loadedState.runtimePathOverride,
+            modelIdentifier: Self.effectiveSetupModelIdentifier(for: loadedState.monitoringConfiguration)
+        )
+        self.chatMessages = Self.makeChatMessages(from: loadedState.chatHistory)
+        self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
+
+        Task { @MainActor [weak self] in
+            self?.activityLog = await ActivityLogService.shared.loadRecentContents()
+        }
+    }
+
+    @MainActor
+    static func makeForTesting(storageService: StorageService) -> AppController {
+        let controller = AppController(storageService: storageService)
+        return controller
+    }
+
+    @MainActor
+    private init(storageService: StorageService) {
+        self.storageService = storageService
         let runtime = LocalModelRuntime()
         let onlineModelService = OnlineModelService()
         let companionChatService = CompanionChatService(
@@ -418,7 +467,7 @@ final class AppController: ObservableObject {
     }
 
     private nonisolated static func ollamaModelName(for modelIdentifier: String) -> String {
-        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
+        let repository = RuntimeSetupService.repositoryIdentifier(for: modelIdentifier)
         let quant = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first.map(String.init) ?? ""
         let rawName = "ac-\(repository)-\(quant)"
         let lower = rawName.lowercased()
@@ -764,7 +813,15 @@ final class AppController: ObservableObject {
     }
 
     func updateRuntimeOverride(_ path: String) {
-        state.runtimePathOverride = path.isEmpty ? nil : path
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            state.runtimePathOverride = nil
+        } else if trimmed.hasPrefix(NSTemporaryDirectory()) || trimmed.contains("ac-fake-runtime") {
+            state.runtimePathOverride = nil
+            logActivity("setup", "Ignored runtime override that looks like a test fixture path.")
+        } else {
+            state.runtimePathOverride = trimmed
+        }
         refreshSystemState()
     }
 
@@ -1091,7 +1148,9 @@ final class AppController: ObservableObject {
         state.monitoringConfiguration.localModelIdentifierText = textModel
         state.monitoringConfiguration.localModelIdentifierImage = imageModel ?? textModel
         let effectiveModel = activeLocalModelIdentifier()
-        if !DevelopmentModelConfiguration.supportsVision(for: effectiveModel) && visionEnabled {
+        let lowerModel = effectiveModel.lowercased()
+        let isTextOnly = lowerModel.contains("phi") && !lowerModel.contains("vision") && !lowerModel.contains("multimodal")
+        if isTextOnly && visionEnabled {
             state.monitoringConfiguration.pipelineProfileID = "title_only_default"
         }
     }

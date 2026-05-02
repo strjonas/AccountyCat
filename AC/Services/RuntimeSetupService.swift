@@ -16,8 +16,17 @@ enum RuntimeSetupService {
     /// artifacts, HF cache metadata, and user margin.
     nonisolated static let requiredFreeBytesForInstall: Int64 = 6 * 1024 * 1024 * 1024
 
+    nonisolated static func repositoryIdentifier(for modelIdentifier: String) -> String {
+        String(
+            modelIdentifier
+                .split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+                .first ?? ""
+        )
+    }
+
     nonisolated private static func modelCacheRelativePath(for modelIdentifier: String) -> String {
-        DevelopmentModelConfiguration.cacheRelativePath(for: modelIdentifier)
+        let repo = repositoryIdentifier(for: modelIdentifier)
+        return "\(repo)/models--\(repo.replacingOccurrences(of: "/", with: "--"))"
     }
 
     nonisolated private static var preferredBaseDirectory: URL {
@@ -80,7 +89,7 @@ enum RuntimeSetupService {
     }
 
     nonisolated static func managedModelCacheURL(for modelIdentifier: String) -> URL {
-        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
+        let repository = repositoryIdentifier(for: modelIdentifier)
         let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
         return defaultHuggingFaceCacheURL()
             .appendingPathComponent("hub", isDirectory: true)
@@ -346,7 +355,7 @@ enum RuntimeSetupService {
         forRuntimePath runtimePath: String,
         modelIdentifier: String
     ) -> [URL] {
-        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
+        let repository = repositoryIdentifier(for: modelIdentifier)
         let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
         return [
             defaultHuggingFaceCacheURL()

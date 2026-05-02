@@ -154,7 +154,7 @@ struct PromptLabRuntimeProfile: Codable, Hashable, Identifiable, Sendable {
     nonisolated func options(for stage: PromptLabStage) -> PromptLabRuntimeOptions {
         optionsByStage.first(where: { $0.stage == stage })?.options
         ?? PromptLabRuntimeOptions(
-            modelIdentifier: DevelopmentModelConfiguration.defaultModelIdentifier,
+            modelIdentifier: AITier.balanced.localModelIdentifierText,
             maxTokens: 180,
             temperature: 0.2,
             topP: 0.95,
@@ -167,19 +167,19 @@ struct PromptLabRuntimeProfile: Codable, Hashable, Identifiable, Sendable {
     }
 
     nonisolated static var defaults: [PromptLabRuntimeProfile] {
-        MonitoringPromptTuning.runtimeDefinitions.map {
+        MonitoringPromptTuning.runtimeDefinitions.map { definition -> PromptLabRuntimeProfile in
             PromptLabRuntimeProfile(
-                id: $0.id,
-                displayName: $0.displayName,
-                summary: $0.summary,
-                optionsByStage: $0.optionsByStage.compactMap { stageDefinition in
+                id: definition.id,
+                displayName: definition.displayName,
+                summary: definition.summary,
+                optionsByStage: definition.optionsByStage.compactMap { stageDefinition -> PromptLabRuntimeStageOptions? in
                     guard let stage = PromptLabStage(sharedStage: stageDefinition.stage) else {
                         return nil
                     }
                     return PromptLabRuntimeStageOptions(
                         stage: stage,
                         options: PromptLabRuntimeOptions(
-                            modelIdentifier: stageDefinition.options.modelIdentifier,
+                            modelIdentifier: stageDefinition.options.modelIdentifier ?? AITier.balanced.localModelIdentifierText,
                             maxTokens: stageDefinition.options.maxTokens,
                             temperature: stageDefinition.options.temperature,
                             topP: stageDefinition.options.topP,

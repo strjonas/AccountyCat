@@ -23,6 +23,18 @@ final class StorageService {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     }
 
+    init(stateURL: URL) {
+        self.stateURL = stateURL
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    }
+
+    static func temporary() -> StorageService {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ac-test-state-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("state.json")
+        return StorageService(stateURL: url)
+    }
+
     func loadState() -> ACState {
         guard let data = try? Data(contentsOf: stateURL) else {
             return ACState()

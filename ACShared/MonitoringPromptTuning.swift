@@ -53,6 +53,7 @@ struct MonitoringPipelineDefinition: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct MonitoringRuntimeOptionsDefinition: Codable, Hashable, Sendable {
+    var modelIdentifier: String?
     var maxTokens: Int
     var temperature: Double
     var topP: Double
@@ -530,14 +531,14 @@ enum MonitoringPromptTuning {
             displayName: "Gemma Balanced",
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
                 MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -545,14 +546,14 @@ enum MonitoringPromptTuning {
             displayName: "Gemma Low RAM",
             summary: "Lower context and token limits for lighter local tests.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierImage, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
                 MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 96, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(maxTokens: 110, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 1536, batchSize: 512, ubatchSize: 256, timeoutSeconds: 20)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 110, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 1536, batchSize: 512, ubatchSize: 256, timeoutSeconds: 20)),
             ]
         ),
         MonitoringRuntimeDefinition(
@@ -560,14 +561,14 @@ enum MonitoringPromptTuning {
             displayName: "Llama Experiment",
             summary: "Llama-family preset for side-by-side comparisons.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
                 MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(maxTokens: 130, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 130, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
     ]

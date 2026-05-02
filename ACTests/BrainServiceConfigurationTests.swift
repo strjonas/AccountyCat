@@ -30,7 +30,7 @@ struct BrainServiceConfigurationTests {
                 showOverlay: { _ in },
                 hideOverlay: { }
             ),
-            storageService: StorageService(),
+            storageService: StorageService.temporary(),
             telemetryStore: TelemetryStore(
                 rootURL: FileManager.default.temporaryDirectory
                     .appendingPathComponent("ac-brain-tests-\(UUID().uuidString)", isDirectory: true)

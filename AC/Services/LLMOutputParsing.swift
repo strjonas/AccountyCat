@@ -107,6 +107,10 @@ enum LLMOutputParsing {
     }
 
     nonisolated static func cleanChatOutput(_ output: String) -> String {
+        if isLikelyMonitoringOutput(output) {
+            return "I had trouble understanding that. Could you rephrase?"
+        }
+
         let normalized = output
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -220,6 +224,12 @@ enum LLMOutputParsing {
         default:
             return nil
         }
+    }
+
+    nonisolated private static func isLikelyMonitoringOutput(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let monitoringKeys = ["activity_summary", "focus_guess", "reason_tags"]
+        return monitoringKeys.contains { trimmed.contains("\"\($0)\"") }
     }
 
     nonisolated private static func parsedSuggestedAction(from rawValue: String) -> ModelSuggestedAction {

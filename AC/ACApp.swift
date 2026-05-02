@@ -23,7 +23,7 @@ struct ACApp: App {
 // MARK: - App Delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let controller = AppController.shared
+    private let controller: AppController
     private var statusItem: NSStatusItem?
     private var windowCoordinator: WindowCoordinator?
     private var popover: NSPopover?
@@ -32,7 +32,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var terminationRequested = false
     private var chipRefreshTimer: Timer?
 
+    override init() {
+        if NSClassFromString("XCTest") != nil {
+            self.controller = AppController.makeForTesting(storageService: .temporary())
+        } else {
+            self.controller = AppController.shared
+        }
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard NSClassFromString("XCTest") == nil else { return }
         NSApp.setActivationPolicy(.accessory)
 
         controller.bootstrap()

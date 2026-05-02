@@ -14,7 +14,7 @@ struct ProfileManagementTests {
 
     @Test
     func deleteProfileBlocksWhenLockedScopedRulesExist() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         defer {
             controller.state = originalState
@@ -50,7 +50,7 @@ struct ProfileManagementTests {
 
     @Test
     func deleteProfileRemovesUnlockedScopedRules() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -89,7 +89,7 @@ struct ProfileManagementTests {
 
     @Test
     func activatingNamedProfileWithAnnouncementCreatesSingleUnreadDeferredMessage() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -135,7 +135,7 @@ struct ProfileManagementTests {
 
     @Test
     func endingActiveProfileWithAnnouncementReturnsToGeneralAndMarksMessageUnread() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -173,7 +173,7 @@ struct ProfileManagementTests {
 
     @Test
     func policyMemoryActivateProfileOperationSwitchesAndAnnouncesOnce() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -213,7 +213,7 @@ struct ProfileManagementTests {
 
     @Test
     func policyMemoryCreateAndActivateProfileOperationCreatesProfileAndAnnouncesOnce() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -255,7 +255,7 @@ struct ProfileManagementTests {
 
     @Test
     func policyMemoryEndActiveProfileOperationReturnsToGeneralAndAnnouncesOnce() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -290,7 +290,7 @@ struct ProfileManagementTests {
 
     @Test
     func policyMemoryEndActiveProfileWhenAlreadyDefaultDoesNothing() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -319,7 +319,7 @@ struct ProfileManagementTests {
 
     @Test
     func policyMemoryProfileOperationsAnnounceFinalStateOnlyOnce() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -376,7 +376,7 @@ struct ProfileManagementTests {
 
     @Test
     func policyMemoryUnknownProfileActivationDoesNotAnnounceOrSwitch() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -410,7 +410,7 @@ struct ProfileManagementTests {
 
     @Test
     func markAllChatMessagesReadClearsDeferredUnreadState() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -441,7 +441,7 @@ struct ProfileManagementTests {
 
     @Test
     func activateProfileWithDurationMinutesSetsRelativeExpiry() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         defer {
             controller.state = originalState
@@ -470,7 +470,7 @@ struct ProfileManagementTests {
 
     @Test
     func extendActiveProfileAddsMinutesFromExistingExpiry() throws {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         defer {
             controller.state = originalState
@@ -498,7 +498,7 @@ struct ProfileManagementTests {
 
     @Test
     func mergeBrainStatePreservesConcurrentProfileActivationAndChatHistory() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
@@ -538,7 +538,7 @@ struct ProfileManagementTests {
 
     @Test
     func mergeBrainStateAppendsBrainExpiryNoteWithoutDroppingNewerChat() {
-        let controller = AppController.shared
+        let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
         let originalUnreadState = controller.hasUnreadChatMessages
