@@ -492,6 +492,58 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func requestScopeContextReusesSharedPromptFields() {
+        let now = Date(timeIntervalSince1970: 8_100)
+        let policyMemory = PolicyMemory(
+            rules: [
+                PolicyRule(
+                    kind: .allow,
+                    summary: "Allow docs needed to unblock the build.",
+                    source: .userChat,
+                    scope: PolicyRuleScope(appName: "Google Chrome", titleContains: ["Docs"])
+                ),
+            ],
+            tonePreference: nil,
+            lastUpdatedAt: now
+        )
+        let input = makeDecisionInput(
+            now: now,
+            evaluationID: "eval-request-scope",
+            runtimeOverride: "/tmp/runtime",
+            memory: """
+            [2026-05-01 10:00] Keep nudges blunt during coding.
+            [2026-05-01 10:05] Presentation prep is secondary today.
+            """,
+            recentUserMessages: [
+                "[2026-05-01 10:10] focus on coding for the next hour",
+                "[2026-05-01 10:12] docs are allowed if they unblock the build",
+            ],
+            policyMemory: policyMemory,
+            activeProfileID: "coding",
+            activeProfileName: "Coding",
+            activeProfileDescription: "Deep coding work in this repo",
+            activeProfileExpiresAt: now.addingTimeInterval(3600)
+        )
+
+        let scope = MonitoringRequestScopeContext(input: input)
+
+        #expect(scope.goals == "Ship AC and stay focused on engineering work.")
+        #expect(scope.freeFormMemory.contains("Keep nudges blunt during coding."))
+        #expect(scope.recentUserMessages == [
+            "[2026-05-01 10:10] focus on coding for the next hour",
+            "[2026-05-01 10:12] docs are allowed if they unblock the build",
+        ])
+        #expect(scope.policySummary.contains("Allow docs needed to unblock the build."))
+        #expect(scope.activeProfile == MonitoringActiveProfilePromptPayload(
+            id: "coding",
+            name: "Coding",
+            isDefault: false,
+            description: "Deep coding work in this repo",
+            expiresAt: now.addingTimeInterval(3600)
+        ))
+    }
+
+    @Test
     func appealReviewAppliesPolicyMemoryUpdateAndClearsSessionWhenAllowed() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.appealReview = """
@@ -571,7 +623,12 @@ struct LLMMonitorAlgorithmTests {
         memory: String = "Keep social media short during focused work.",
         recentUserMessages: [String] = [],
         recentActions: [ActionRecord] = [],
-        configuration: MonitoringConfiguration? = nil
+        configuration: MonitoringConfiguration? = nil,
+        policyMemory: PolicyMemory = PolicyMemory(),
+        activeProfileID: String = PolicyRule.defaultProfileID,
+        activeProfileName: String = FocusProfile.defaultDisplayName,
+        activeProfileDescription: String? = nil,
+        activeProfileExpiresAt: Date? = nil
     ) -> MonitoringDecisionInput {
         var configuration = configuration ?? MonitoringConfiguration()
         if configuration == MonitoringConfiguration() {
@@ -588,10 +645,14 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             memory: memory,
             recentUserMessages: recentUserMessages,
-            policyMemory: PolicyMemory(),
+            policyMemory: policyMemory,
             runtimeOverride: runtimeOverride,
             configuration: configuration,
-            algorithmState: algorithmState
+            algorithmState: algorithmState,
+            activeProfileID: activeProfileID,
+            activeProfileName: activeProfileName,
+            activeProfileDescription: activeProfileDescription,
+            activeProfileExpiresAt: activeProfileExpiresAt
         )
     }
 

@@ -6,6 +6,37 @@
 import CryptoKit
 import Foundation
 
+struct MonitoringRequestScopeContext: Sendable, Equatable {
+    var goals: String
+    var freeFormMemory: String
+    var recentUserMessages: [String]
+    var policySummary: String
+    var activeProfile: MonitoringActiveProfilePromptPayload
+
+    init(input: MonitoringDecisionInput) {
+        goals = input.goals.cleanedSingleLine.truncatedForPrompt(
+            maxLength: MonitoringPromptContextBudget.goalCharacters
+        )
+        freeFormMemory = input.memory.truncatedMultilineForPrompt(
+            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
+            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
+        )
+        recentUserMessages = LLMMonitorAlgorithm.compactRecentUserMessages(input.recentUserMessages)
+        policySummary = LLMMonitorAlgorithm.makePolicySummary(
+            policyMemory: input.policyMemory,
+            snapshot: input.snapshot,
+            now: input.now
+        )
+        activeProfile = MonitoringActiveProfilePromptPayload(
+            id: input.activeProfileID,
+            name: input.activeProfileName,
+            isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
+            description: input.activeProfileDescription,
+            expiresAt: input.activeProfileExpiresAt
+        )
+    }
+}
+
 final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
         id: MonitoringConfiguration.currentLLMMonitorAlgorithmID,
@@ -205,7 +236,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             from: input.recentActions,
             at: input.now
         )
-        let compactAppName = input.snapshot.appName.truncatedForPrompt(maxLength: 80)
+        let requestScope = MonitoringRequestScopeContext(input: input)
+        let compactAppName = input.snapshot.appName.truncatedForPrompt(
+            maxLength: MonitoringPromptContextBudget.appNameCharacters
+        )
         let compactWindowTitle = input.snapshot.windowTitle?.truncatedForPrompt(
             maxLength: MonitoringPromptContextBudget.windowTitleCharacters
         )
@@ -218,24 +252,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             limit: MonitoringPromptContextBudget.decisionUsageCount
         )
         let compactInterventions = compactInterventionSummary(relevantActions)
-        let policySummary = makePolicySummary(
-            policyMemory: input.policyMemory,
-            snapshot: input.snapshot,
-            now: input.now
-        )
-        // `input.memory` is already pre-rendered with timestamps at the caller. We only
-        // cap it to the byte budget (a last-resort guard — normally consolidation keeps it
-        // under budget). No heuristic scoring or keyword filtering: AC decides what's relevant.
-        let freeFormMemory = input.memory.truncatedMultilineForPrompt(
-            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
-            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
-        )
-        let recentUserMessages = Self.compactRecentUserMessages(input.recentUserMessages)
         if Self.hasActiveExplicitAllowanceOverride(
             snapshot: input.snapshot,
             now: input.now,
-            recentUserMessages: recentUserMessages,
-            freeFormMemory: freeFormMemory
+            recentUserMessages: requestScope.recentUserMessages,
+            freeFormMemory: requestScope.freeFormMemory
         ) {
             var updatedState = input.algorithmState
             updatedState.llmPolicy.activeAppeal = nil
@@ -289,9 +310,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 compactSwitches: compactSwitches,
                 compactUsage: compactUsage,
                 compactInterventions: compactInterventions,
-                policySummary: policySummary,
-                freeFormMemory: freeFormMemory,
-                recentUserMessages: recentUserMessages,
+                requestScope: requestScope,
                 runtimeProfile: runtimeProfile,
                 attempts: &attempts
             )
@@ -343,12 +362,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
                 payload: MonitoringDecisionPromptPayload(
                     now: input.now,
-                    goals: input.goals.cleanedSingleLine.truncatedForPrompt(
-                        maxLength: MonitoringPromptContextBudget.goalCharacters
-                    ),
-                    freeFormMemory: freeFormMemory,
-                    recentUserMessages: recentUserMessages,
-                    policySummary: policySummary,
+                    goals: requestScope.goals,
+                    freeFormMemory: requestScope.freeFormMemory,
+                    recentUserMessages: requestScope.recentUserMessages,
+                    policySummary: requestScope.policySummary,
                     appName: compactAppName,
                     bundleIdentifier: input.snapshot.bundleIdentifier,
                     windowTitle: compactWindowTitle,
@@ -361,13 +378,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     titlePerception: titlePerception,
                     visionPerception: visionPerception,
                     calendarContext: input.calendarContext,
-                    activeProfile: MonitoringActiveProfilePromptPayload(
-                        id: input.activeProfileID,
-                        name: input.activeProfileName,
-                        isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
-                        description: input.activeProfileDescription,
-                        expiresAt: input.activeProfileExpiresAt
-                    )
+                    activeProfile: requestScope.activeProfile
                 ),
                 attempts: &attempts,
                 decoder: MonitoringDecisionEnvelope.self
@@ -383,9 +394,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     runtimeProfile: runtimeProfile,
                     titlePerception: titlePerception,
                     visionPerception: visionPerception,
-                    freeFormMemory: freeFormMemory,
-                    recentUserMessages: recentUserMessages,
-                    policySummary: policySummary,
+                    requestScope: requestScope,
                     compactAppName: compactAppName,
                     compactWindowTitle: compactWindowTitle,
                     attempts: &attempts
@@ -409,9 +418,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 runtimeProfile: runtimeProfile,
                 titlePerception: titlePerception,
                 visionPerception: visionPerception,
-                freeFormMemory: freeFormMemory,
-                recentUserMessages: recentUserMessages,
-                policySummary: policySummary,
+                requestScope: requestScope,
                 compactAppName: compactAppName,
                 compactWindowTitle: compactWindowTitle,
                 attempts: &attempts
@@ -615,6 +622,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     observation: observationContext,
                     frontmost: frontmost,
                     input: input,
+                    requestScope: requestScope,
                     policyMemory: input.policyMemory,
                     policyState: &policyState
                 ) {
@@ -671,6 +679,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         observation: SafelistObservationContext,
         frontmost: FrontmostContext,
         input: MonitoringDecisionInput,
+        requestScope: MonitoringRequestScopeContext,
         policyMemory: PolicyMemory,
         policyState: inout LLMPolicyAlgorithmState
     ) async -> PolicyMemoryUpdateResponse? {
@@ -712,11 +721,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             sampleWindowTitles: workingStat.sampleWindowTitles,
             focusedCount: workingStat.focusedCount,
             distinctDays: workingStat.distinctDayCount,
-            goals: input.goals,
-            freeFormMemory: input.memory.truncatedMultilineForPrompt(
-                maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
-                maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
-            ),
+            goals: requestScope.goals,
+            freeFormMemory: requestScope.freeFormMemory,
             configuration: input.configuration,
             runtimeOverride: input.runtimeOverride,
             screenshotPath: visionEnabled(for: input.configuration) ? input.snapshot.screenshotPath : nil
@@ -887,7 +893,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                 ),
-                policySummary: makePolicySummary(
+                policySummary: Self.makePolicySummary(
                     policyMemory: input.policyMemory,
                     snapshot: input.snapshot,
                     now: input.now
@@ -1014,7 +1020,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
     }
 
-    private func makePolicySummary(
+    static func makePolicySummary(
         policyMemory: PolicyMemory,
         snapshot: AppSnapshot?,
         now: Date
@@ -1050,21 +1056,17 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         compactSwitches: [MonitoringPromptSwitchRecord],
         compactUsage: [MonitoringPromptUsageRecord],
         compactInterventions: MonitoringPromptInterventionSummary,
-        policySummary: String,
-        freeFormMemory: String,
-        recentUserMessages: [String],
+        requestScope: MonitoringRequestScopeContext,
         runtimeProfile: MonitoringRuntimeProfile,
         attempts: inout [LLMEvaluationAttempt]
     ) async -> MonitoringDecisionEnvelope? {
         let payload = MonitoringOnlineDecisionPromptPayload(
             now: input.now,
-            goals: input.goals.cleanedSingleLine.truncatedForPrompt(
-                maxLength: MonitoringPromptContextBudget.goalCharacters
-            ),
+            goals: requestScope.goals,
             characterPersonalityPrefix: input.characterPersonalityPrefix,
-            freeFormMemory: freeFormMemory,
-            recentUserMessages: recentUserMessages,
-            policySummary: policySummary,
+            freeFormMemory: requestScope.freeFormMemory,
+            recentUserMessages: requestScope.recentUserMessages,
+            policySummary: requestScope.policySummary,
             appName: compactAppName,
             bundleIdentifier: input.snapshot.bundleIdentifier,
             windowTitle: compactWindowTitle,
@@ -1077,13 +1079,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
             calendarContext: input.calendarContext,
             screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration),
-            activeProfile: MonitoringActiveProfilePromptPayload(
-                id: input.activeProfileID,
-                name: input.activeProfileName,
-                isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
-                description: input.activeProfileDescription,
-                expiresAt: input.activeProfileExpiresAt
-            )
+            activeProfile: requestScope.activeProfile
         )
 
         let screenshotPath = visionEnabled(for: input.configuration)
@@ -1128,9 +1124,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         runtimeProfile: MonitoringRuntimeProfile,
         titlePerception: MonitoringPerceptionEnvelope?,
         visionPerception: MonitoringPerceptionEnvelope?,
-        freeFormMemory: String,
-        recentUserMessages: [String],
-        policySummary: String,
+        requestScope: MonitoringRequestScopeContext,
         compactAppName: String,
         compactWindowTitle: String?,
         attempts: inout [LLMEvaluationAttempt]
@@ -1142,13 +1136,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
             payload: MonitoringNudgePromptPayload(
-                goals: input.goals.cleanedSingleLine.truncatedForPrompt(
-                    maxLength: MonitoringPromptContextBudget.goalCharacters
-                ),
-                freeFormMemory: freeFormMemory,
+                goals: requestScope.goals,
+                freeFormMemory: requestScope.freeFormMemory,
                 characterPersonalityPrefix: input.characterPersonalityPrefix,
-                recentUserMessages: recentUserMessages,
-                policySummary: policySummary,
+                recentUserMessages: requestScope.recentUserMessages,
+                policySummary: requestScope.policySummary,
                 appName: compactAppName,
                 windowTitle: compactWindowTitle,
                 titlePerception: titlePerception?.activitySummary,
