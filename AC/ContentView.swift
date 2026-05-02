@@ -1353,6 +1353,14 @@ private struct AISettingsSection: View {
                 )
                 .padding(.leading, 26)
             }
+
+            VisionGateSettingsCard(
+                threshold: Binding(
+                    get: { controller.state.monitoringConfiguration.titleLengthForTextOnly },
+                    set: { controller.updateTitleLengthForTextOnly($0) }
+                )
+            )
+            .padding(.leading, 26)
         }
     }
 
@@ -1445,6 +1453,98 @@ private struct CadencePicker: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+}
+
+private struct VisionGateSettingsCard: View {
+    @Binding var threshold: Int
+    @Environment(\.acAccent) private var accent
+
+    private let presets = [20, 30, 50]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Vision gate")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("Longer titles can stay text-only before AC attaches a screenshot.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(threshold) characters")
+                        .font(.ac(13, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Spacer(minLength: 8)
+                    Text(thresholdLabel)
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(accent.opacity(0.86))
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { Double(threshold) },
+                        set: { threshold = Int($0.rounded()) }
+                    ),
+                    in: Double(MonitoringConfiguration.minTitleLengthForTextOnly)...Double(MonitoringConfiguration.maxTitleLengthForTextOnly),
+                    step: 1
+                )
+
+                HStack(spacing: 8) {
+                    ForEach(presets, id: \.self) { preset in
+                        let isSelected = preset == threshold
+                        Button(String(preset)) {
+                            threshold = preset
+                        }
+                        .buttonStyle(isSelected ? AnyButtonStyle(ACPrimaryButton()) : AnyButtonStyle(ACSecondaryButton()))
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Text("30 is the balanced default. Lower is cheaper but risks more unclear retries; higher keeps vision on longer. Browsers and ambiguous apps still keep screenshots regardless.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    private var thresholdLabel: String {
+        switch threshold {
+        case ..<25:
+            return "Aggressive"
+        case ..<41:
+            return "Balanced"
+        default:
+            return "Conservative"
+        }
+    }
+}
+
+private struct AnyButtonStyle: ButtonStyle {
+    private let makeBodyClosure: (Configuration) -> AnyView
+
+    init<S: ButtonStyle>(_ style: S) {
+        self.makeBodyClosure = { configuration in
+            AnyView(style.makeBody(configuration: configuration))
+        }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        makeBodyClosure(configuration)
     }
 }
 

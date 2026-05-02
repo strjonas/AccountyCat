@@ -31,10 +31,28 @@ struct MonitoringStatsSnapshot: Sendable {
         var value: String
     }
 
+    enum WatchStatus: Sendable {
+        case healthy
+        case watch
+        case alert
+    }
+
+    struct WatchItem: Identifiable, Sendable {
+        var id: String { label }
+        var label: String
+        var message: String
+        var status: WatchStatus
+    }
+
     var callsPerHour: String
+    var callsPerHourValue: Double
     var averageTokenSummary: String
     var visionAttachRate: String
+    var visionAttachRateValue: Double
     var visionRetryCount: Int
+    var visionRetryRateValue: Double
+    var focusedRateValue: Double
+    var unclearRateValue: Double
     var decisionMix: [Row]
     var skipCauses: [Row]
     var stageBreakdown: [Row]
@@ -42,14 +60,75 @@ struct MonitoringStatsSnapshot: Sendable {
 
     static let empty = MonitoringStatsSnapshot(
         callsPerHour: "0.0",
+        callsPerHourValue: 0,
         averageTokenSummary: "0 / 0 / 0",
         visionAttachRate: "0%",
+        visionAttachRateValue: 0,
         visionRetryCount: 0,
+        visionRetryRateValue: 0,
+        focusedRateValue: 0,
+        unclearRateValue: 0,
         decisionMix: [],
         skipCauses: [],
         stageBreakdown: [],
         profileBreakdown: []
     )
+
+    var watchItems: [WatchItem] {
+        var items: [WatchItem] = []
+
+        if unclearRateValue >= 15 {
+            items.append(
+                WatchItem(
+                    label: "Unclear rate",
+                    message: "\(Self.percentString(unclearRateValue)) is high. Raise the title-only threshold or keep vision on for more contexts.",
+                    status: .alert
+                )
+            )
+        }
+
+        if visionRetryRateValue > 20 {
+            items.append(
+                WatchItem(
+                    label: "Vision retries",
+                    message: "\(Self.percentString(visionRetryRateValue)) of decisions retried with vision. The text-only gate is probably too loose.",
+                    status: .alert
+                )
+            )
+        }
+
+        if focusedRateValue > 90, callsPerHourValue >= 4 {
+            items.append(
+                WatchItem(
+                    label: "Focused saturation",
+                    message: "\(Self.percentString(focusedRateValue)) focused at \(String(format: "%.1f", callsPerHourValue)) calls/hr. Skip logic may still be too eager.",
+                    status: .watch
+                )
+            )
+        }
+
+        if visionAttachRateValue > 70 {
+            items.append(
+                WatchItem(
+                    label: "Vision attach rate",
+                    message: "\(Self.percentString(visionAttachRateValue)) of calls still include screenshots. Raise the threshold only if unclear and retry rates stay healthy.",
+                    status: .watch
+                )
+            )
+        }
+
+        if items.isEmpty {
+            items.append(
+                WatchItem(
+                    label: "Vision gate",
+                    message: "Unclear, retry, and call-volume signals look healthy in this window.",
+                    status: .healthy
+                )
+            )
+        }
+
+        return items
+    }
 
     static func load(from store: TelemetryStore, window: StatsWindow) async -> MonitoringStatsSnapshot {
         let now = Date()
@@ -82,16 +161,19 @@ struct MonitoringStatsSnapshot: Sendable {
         let avgPrompt = average(tokenUsages.map { $0.1.promptTokens })
         let avgCompletion = average(tokenUsages.map { $0.1.completionTokens })
         let avgImage = average(tokenUsages.map { $0.1.imageTokens ?? 0 })
-        let visionRate = percent(
-            part: tokenUsages.filter { $0.1.includesScreenshot }.count,
-            total: tokenUsages.count
-        )
+        let visionAttachCount = tokenUsages.filter { $0.1.includesScreenshot }.count
+        let visionRateValue = percentValue(part: visionAttachCount, total: tokenUsages.count)
+        let visionRate = percentString(visionRateValue)
 
         let focused = policyDecisions.filter { $0.model.assessment == .focused }.count
         let distracted = policyDecisions.filter { $0.model.assessment == .distracted }.count
         let unclear = policyDecisions.filter { $0.model.assessment == .unclear }.count
         let abstain = policyDecisions.filter { $0.model.suggestedAction == .abstain }.count
         let decisionTotal = max(1, policyDecisions.count)
+        let focusedRateValue = percentValue(part: focused, total: decisionTotal)
+        let unclearRateValue = percentValue(part: unclear, total: decisionTotal)
+        let visionRetryCount = metricsRecords.filter { $0.kind == .visionRetried }.count
+        let visionRetryRateValue = percentValue(part: visionRetryCount, total: decisionTotal)
         let decisionMix = [
             Row(label: "focused", value: "\(focused) · \(percent(part: focused, total: decisionTotal))"),
             Row(label: "distracted", value: "\(distracted) · \(percent(part: distracted, total: decisionTotal))"),
@@ -128,9 +210,14 @@ struct MonitoringStatsSnapshot: Sendable {
 
         return MonitoringStatsSnapshot(
             callsPerHour: String(format: "%.1f", callsPerHour),
+            callsPerHourValue: callsPerHour,
             averageTokenSummary: "\(avgPrompt) / \(avgCompletion) / \(avgImage)",
             visionAttachRate: visionRate,
-            visionRetryCount: metricsRecords.filter { $0.kind == .visionRetried }.count,
+            visionAttachRateValue: visionRateValue,
+            visionRetryCount: visionRetryCount,
+            visionRetryRateValue: visionRetryRateValue,
+            focusedRateValue: focusedRateValue,
+            unclearRateValue: unclearRateValue,
             decisionMix: decisionMix,
             skipCauses: skipRows,
             stageBreakdown: stageRows,
@@ -144,8 +231,16 @@ struct MonitoringStatsSnapshot: Sendable {
     }
 
     private static func percent(part: Int, total: Int) -> String {
-        guard total > 0 else { return "0%" }
-        return "\(Int((Double(part) / Double(total) * 100).rounded()))%"
+        percentString(percentValue(part: part, total: total))
+    }
+
+    private static func percentValue(part: Int, total: Int) -> Double {
+        guard total > 0 else { return 0 }
+        return Double(part) / Double(total) * 100
+    }
+
+    private static func percentString(_ value: Double) -> String {
+        "\(Int(value.rounded()))%"
     }
 
     private static func groupedRows(_ values: [String]) -> [Row] {

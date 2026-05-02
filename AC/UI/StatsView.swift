@@ -52,6 +52,12 @@ struct StatsView: View {
                 }
             }
 
+            statsSection("Watch list") {
+                ForEach(snapshot.watchItems) { item in
+                    WatchRow(item: item)
+                }
+            }
+
             statsSection("Skip causes") {
                 if snapshot.skipCauses.isEmpty {
                     Text("No skip metrics recorded in this window.")
@@ -187,3 +193,42 @@ private struct StatsRow: View {
     }
 }
 
+private struct WatchRow: View {
+    let item: MonitoringStatsSnapshot.WatchItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.label)
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+                Text(item.message)
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface.opacity(0.62))
+        )
+    }
+
+    private var statusColor: Color {
+        switch item.status {
+        case .healthy:
+            return .green.opacity(0.85)
+        case .watch:
+            return Color.acAmber
+        case .alert:
+            return .red.opacity(0.78)
+        }
+    }
+}

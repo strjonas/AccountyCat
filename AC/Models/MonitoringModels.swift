@@ -93,6 +93,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let defaultOnlineModelIdentifierText = "nvidia/nemotron-3-nano-30b-a3b"
     nonisolated static let defaultOnlineModelIdentifierImage = "qwen/qwen3.5-9b"
     nonisolated static let banditAlgorithmID = "bandit_focus_v1"
+    nonisolated static let minTitleLengthForTextOnly = 12
+    nonisolated static let maxTitleLengthForTextOnly = 120
 
     var algorithmID: String
     var promptProfileID: String
@@ -174,7 +176,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         self.localModelIdentifierImage = Self.normalizedOptionalLocalModelIdentifier(localModelIdentifierImage)
             ?? resolvedLocalTextModel
         self.thinkingEnabled = thinkingEnabled
-        self.titleLengthForTextOnly = max(12, titleLengthForTextOnly)
+        self.titleLengthForTextOnly = Self.clampedTitleLengthForTextOnly(titleLengthForTextOnly)
     }
 
     nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
@@ -246,6 +248,10 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         return trimmed
     }
 
+    nonisolated static func clampedTitleLengthForTextOnly(_ value: Int) -> Int {
+        min(maxTitleLengthForTextOnly, max(minTitleLengthForTextOnly, value))
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         algorithmID = Self.normalizedAlgorithmID(
@@ -277,10 +283,9 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
             try c.decodeIfPresent(String.self, forKey: .localModelIdentifierImage)
         ) ?? legacyModelOverride ?? localModelIdentifierText
         thinkingEnabled = try c.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? false
-        titleLengthForTextOnly = max(
-            12,
+        titleLengthForTextOnly = Self.clampedTitleLengthForTextOnly(
             try c.decodeIfPresent(Int.self, forKey: .titleLengthForTextOnly)
-                ?? MonitoringHeuristics.defaultTitleLengthForTextOnly
+            ?? MonitoringHeuristics.defaultTitleLengthForTextOnly
         )
     }
 

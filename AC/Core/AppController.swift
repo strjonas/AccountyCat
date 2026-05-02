@@ -522,6 +522,15 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Monitoring cadence: \(cadenceMode.rawValue)")
     }
 
+    func updateTitleLengthForTextOnly(_ value: Int) {
+        let clamped = MonitoringConfiguration.clampedTitleLengthForTextOnly(value)
+        guard state.monitoringConfiguration.titleLengthForTextOnly != clamped else { return }
+        state.monitoringConfiguration.titleLengthForTextOnly = clamped
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Title-only vision gate threshold: \(clamped) chars")
+    }
+
     var visionEnabled: Bool {
         LLMPolicyCatalog.pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
             .descriptor

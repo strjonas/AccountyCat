@@ -53,4 +53,28 @@ struct MonitoringHeuristicsTests {
     func keepsHelpfulWindowTitles() {
         #expect(MonitoringHeuristics.isUnhelpfulWindowTitle("Inbox - Gmail - Google Chrome", appName: "Google Chrome") == false)
     }
+
+    @Test
+    func longDescriptiveTitlesCanSkipVisionAtConfiguredThreshold() {
+        let title = "Draft Phase 4 monitoring threshold notes"
+
+        #expect(
+            MonitoringHeuristics.canRelyOnTitleAlone(
+                bundleIdentifier: "com.apple.TextEdit",
+                appName: "TextEdit",
+                windowTitle: title,
+                isBrowser: false,
+                titleLengthThreshold: 30
+            )
+        )
+        #expect(
+            MonitoringHeuristics.canRelyOnTitleAlone(
+                bundleIdentifier: "com.apple.TextEdit",
+                appName: "TextEdit",
+                windowTitle: title,
+                isBrowser: false,
+                titleLengthThreshold: 50
+            ) == false
+        )
+    }
 }

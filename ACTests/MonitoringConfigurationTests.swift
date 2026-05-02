@@ -78,6 +78,16 @@ struct MonitoringConfigurationTests {
         #expect(configuration.onlineModelIdentifierImage == MonitoringConfiguration.defaultOnlineModelIdentifier)
         #expect(configuration.localModelIdentifierText == AITier.balanced.localModelIdentifierText)
         #expect(configuration.localModelIdentifierImage == AITier.balanced.localModelIdentifierImage)
+        #expect(configuration.titleLengthForTextOnly == MonitoringHeuristics.defaultTitleLengthForTextOnly)
+    }
+
+    @Test
+    func clampsTitleLengthForTextOnlyIntoSupportedRange() {
+        let low = MonitoringConfiguration(titleLengthForTextOnly: 1)
+        let high = MonitoringConfiguration(titleLengthForTextOnly: 999)
+
+        #expect(low.titleLengthForTextOnly == MonitoringConfiguration.minTitleLengthForTextOnly)
+        #expect(high.titleLengthForTextOnly == MonitoringConfiguration.maxTitleLengthForTextOnly)
     }
 
     @Test

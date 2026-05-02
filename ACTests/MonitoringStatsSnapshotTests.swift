@@ -306,5 +306,8 @@ struct MonitoringStatsSnapshotTests {
         #expect(snapshot.stageBreakdown.first(where: { $0.label == "decision" })?.value == "1x · avg 150 · img 40 · total 150")
         #expect(snapshot.profileBreakdown.first(where: { $0.label == "Coding" })?.value == "1x · F 1 / D 0 / U 0")
         #expect(snapshot.profileBreakdown.first(where: { $0.label == "General" })?.value == "1x · F 0 / D 0 / U 1")
+        #expect(snapshot.watchItems.first(where: { $0.label == "Vision retries" })?.status == .alert)
+        #expect(snapshot.watchItems.first(where: { $0.label == "Vision retries" })?.message.contains("50%") == true)
+        #expect(snapshot.watchItems.first(where: { $0.label == "Unclear rate" })?.status == .alert)
     }
 }
