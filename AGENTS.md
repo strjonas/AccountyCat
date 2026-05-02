@@ -4,6 +4,8 @@
 
 Native macOS Swift app (Apple Silicon). Menu bar focus companion that uses LLMs to evaluate screenshots and active-app context, then nudges you when you drift off-task. Ships with local `llama.cpp` runtime or BYOK via OpenRouter.
 
+Read files in /docs to get an overview over AC (but in case of doubt, do not trust them since they might be slightly out of date). 
+
 ## Build & test
 
 ```bash

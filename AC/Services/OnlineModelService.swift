@@ -160,6 +160,15 @@ actor OnlineModelService: OnlineModelServing {
         var primaryModelIdentifier = request.modelIdentifier
         var secondaryFallbacks = fallbackModelIdentifiers
 
+        let startTime = Date()
+
+        await ActivityLogService.shared.append(level: .verbose,
+            category: "api:\(request.source.rawValue)",
+            message: "─── Calling OpenRouter \(request.requestID) ───\n"
+                + "model: \(request.modelIdentifier) | source: \(request.source.rawValue)"
+                + (fallbackModelIdentifiers.isEmpty ? "" : " | fallbacks: \(fallbackModelIdentifiers.joined(separator: ", "))")
+        )
+
         while attempt < maxAttempts {
             attempt += 1
             do {
@@ -172,12 +181,17 @@ actor OnlineModelService: OnlineModelServing {
                         category: "openrouter-retry",
                         message: "[\(request.source.rawValue) \(request.requestID)] Retrying OpenRouter request \(retryDetail) (attempt \(attempt)/\(maxAttempts))."
                     )
+                    await ActivityLogService.shared.append(level: .verbose,
+                        category: "api:\(request.source.rawValue)",
+                        message: "retry attempt \(attempt)/\(maxAttempts) → \(primaryModelIdentifier) | 650ms backoff"
+                    )
                 }
                 return try await runInference(
                     request,
                     modelIdentifier: primaryModelIdentifier,
                     fallbackModelIdentifiers: secondaryFallbacks,
-                    enforceZDR: true
+                    enforceZDR: true,
+                    startTime: startTime
                 )
             } catch {
                 lastError = error
@@ -187,6 +201,11 @@ actor OnlineModelService: OnlineModelServing {
                     source: request.source,
                     statusCode: Self.statusCode(from: onlineError),
                     providerName: Self.providerName(from: onlineError)
+                )
+                let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                await ActivityLogService.shared.append(level: .verbose,
+                    category: "api:\(request.source.rawValue)",
+                    message: "✗ failed → \(primaryModelIdentifier) · \(elapsedMs)ms · \(error.localizedDescription)"
                 )
                 guard attempt < maxAttempts, Self.isRetryable(error: error) else {
                     throw error
@@ -208,7 +227,8 @@ actor OnlineModelService: OnlineModelServing {
         _ request: OnlineModelRequest,
         modelIdentifier: String,
         fallbackModelIdentifiers: [String],
-        enforceZDR: Bool
+        enforceZDR: Bool,
+        startTime: Date = Date()
     ) async throws -> RuntimeProcessOutput {
         let apiKey = (OnlineModelCredentialStore.loadAPIKey() ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,6 +323,12 @@ actor OnlineModelService: OnlineModelServing {
         }
 
         let usedModelIdentifier = Self.responseModelIdentifier(from: json) ?? modelIdentifier
+        let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+        let usage = Self.tokenUsage(from: json)
+        let providerName = (json["provider"] as? String) ?? (json["route"] as? [String: Any])?["provider"] as? String
+        let tokenSummary = usage.map { "\($0.promptTokens)p/\($0.completionTokens)c" } ?? "— tok"
+        let costStr = usage?.costUSD.map { String(format: "$%.5f", $0) }
+
         await OpenRouterHealthStatsService.shared.recordSuccess(
             requestedModel: request.modelIdentifier,
             servedModel: usedModelIdentifier,
@@ -315,11 +341,18 @@ actor OnlineModelService: OnlineModelServing {
             )
         }
 
+        await ActivityLogService.shared.append(level: .verbose,
+            category: "api:\(request.source.rawValue)",
+            message: "✓ \(httpResponse.statusCode) → \(usedModelIdentifier) · \(elapsedMs)ms · \(tokenSummary)"
+                + (providerName.map { " · provider: \($0)" } ?? "")
+                + (costStr.map { " · cost: \($0)" } ?? "")
+        )
+
         return RuntimeProcessOutput(
             stdout: content,
             stderr: Self.usageSummary(from: json),
             usedModelIdentifier: usedModelIdentifier,
-            tokenUsage: Self.tokenUsage(from: json)
+            tokenUsage: usage
         )
     }
 

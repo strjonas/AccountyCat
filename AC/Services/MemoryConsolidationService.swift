@@ -51,6 +51,10 @@ actor MemoryConsolidationService {
         do {
             if inferenceBackend == .openRouter {
                 let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
+                await ActivityLogService.shared.append(level: .verbose,
+                    category: "llm:memory",
+                    message: "─── Request → openrouter/\(resolvedOnlineModelIdentifier) · consolidating \(entries.count) entries ───"
+                )
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .memoryConsolidation,

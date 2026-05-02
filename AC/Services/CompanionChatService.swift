@@ -72,6 +72,12 @@ actor CompanionChatService {
         do {
             if inferenceBackend == .openRouter {
                 let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
+                await ActivityLogService.shared.append(level: .verbose,
+                    category: "llm:chat",
+                    message: "─── Request → openrouter/\(resolvedOnlineModelIdentifier) ───\n"
+                        + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
+                        + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
+                )
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .chat,
@@ -98,11 +104,21 @@ actor CompanionChatService {
                     )
                     return nil
                 }
+                await ActivityLogService.shared.append(level: .verbose,
+                    category: "llm:chat",
+                    message: "─── Request → llama.cpp/\(localTextModelIdentifier) ───\n"
+                        + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
+                        + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
+                )
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
                     modelIdentifier: localTextModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: prompt
+                )
+                await ActivityLogService.shared.append(level: .verbose,
+                    category: "llm:chat",
+                    message: "← llama.cpp · \(output.usedModelIdentifier ?? localTextModelIdentifier)"
                 )
             }
         } catch {

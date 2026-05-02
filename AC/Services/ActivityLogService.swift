@@ -20,6 +20,8 @@ actor ActivityLogService {
     private let logURL: URL
     private let formatter: ISO8601DateFormatter
 
+    private var _minimumLogLevel: LogLevel = LogLevel.defaultForBuild
+
     init(fileManager: FileManager = .default) {
         let supportURL = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support", isDirectory: true)
@@ -32,9 +34,21 @@ actor ActivityLogService {
         self.formatter = formatter
     }
 
-    func append(category: String, message: String) async {
+    var minimumLogLevel: LogLevel {
+        _minimumLogLevel
+    }
+
+    func setMinimumLogLevel(_ level: LogLevel) {
+        _minimumLogLevel = level
+    }
+
+    func append(level: LogLevel = .standard, category: String, message: String) async {
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else { return }
+
+        guard level == .error || level.ordinal <= _minimumLogLevel.ordinal else {
+            return
+        }
 
         let entry = "[\(formatter.string(from: Date()))] [\(category)] \(trimmedMessage)\n\n"
 

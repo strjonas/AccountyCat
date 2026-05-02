@@ -74,7 +74,7 @@ actor TelemetryStore {
         return try await startSession(reason: reason)
     }
 
-    func startSession(reason: String, retentionDays: Int = 14) async throws -> TelemetrySessionDescriptor {
+    func startSession(reason: String, retentionDays: Int = 7) async throws -> TelemetrySessionDescriptor {
         try await cleanupExpiredSessions(retentionDays: retentionDays)
 
         if let currentSession {
@@ -381,7 +381,7 @@ actor TelemetryStore {
         )
     }
 
-    func cleanupExpiredSessions(retentionDays: Int = 14) async throws {
+    func cleanupExpiredSessions(retentionDays: Int = 7) async throws {
         try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true, attributes: nil)
 
         let sessions = await listSessions()

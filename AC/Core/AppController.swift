@@ -88,6 +88,7 @@ final class AppController: ObservableObject {
     private var onboardingCompletionTask: DispatchWorkItem?
     private var lastPromptedDependencySignature: String?
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
+    private var installRuntimeTask: Task<Void, Never>?
     
     private init() {
         self.storageService = StorageService()
@@ -126,6 +127,7 @@ final class AppController: ObservableObject {
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
         Task { @MainActor [weak self] in
+            await ActivityLogService.shared.setMinimumLogLevel(loadedState.minimumLogLevel)
             self?.activityLog = await ActivityLogService.shared.loadRecentContents()
         }
     }
@@ -174,6 +176,7 @@ final class AppController: ObservableObject {
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
         Task { @MainActor [weak self] in
+            await ActivityLogService.shared.setMinimumLogLevel(loadedState.minimumLogLevel)
             self?.activityLog = await ActivityLogService.shared.loadRecentContents()
         }
     }
@@ -1117,6 +1120,16 @@ final class AppController: ObservableObject {
                 targetModelIdentifier: state.aiTier.localModelIdentifierText,
                 fallbackIdentifier: activeLocalModelIdentifier()
             ) {
+                pendingLocalModelChange = nil
+                modelDownloadNotice = nil
+                modelDownloadSuccess = nil
+                installRuntimeTask?.cancel()
+                installRuntimeTask = nil
+                if installingRuntime {
+                    installingRuntime = false
+                    setupProgressValue = nil
+                    setupProgressMessage = nil
+                }
                 applyLocalModelSelection(
                     textModel: state.aiTier.localModelIdentifierText,
                     imageModel: state.aiTier.localModelIdentifierImage
@@ -1529,7 +1542,9 @@ final class AppController: ObservableObject {
         logActivity("setup", "Runtime install started")
         refreshSystemState()
 
-        Task {
+        installRuntimeTask?.cancel()
+        let task = Task {
+            var cancelledDuringInstall = false
             do {
                 let setupModelIdentifier = modelIdentifier ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
                 let diagnosticsBeforeInstall = RuntimeSetupService.inspect(
@@ -1544,6 +1559,8 @@ final class AppController: ObservableObject {
                     }
                 }
 
+                guard !Task.isCancelled else { throw CancellationError() }
+
                 let diagnostics = RuntimeSetupService.inspect(
                     runtimeOverride: state.runtimePathOverride,
                     modelIdentifier: setupModelIdentifier
@@ -1555,25 +1572,34 @@ final class AppController: ObservableObject {
                     self?.appendSetupLog(chunk)
                 }
 
+                guard !Task.isCancelled else { throw CancellationError() }
+
                 // Warm-up can complete slightly before cache metadata settles; poll
                 // briefly so setup/chat unlocks without requiring an app restart.
                 await waitForRuntimeReadinessAfterWarmUp(
                     modelIdentifier: setupModelIdentifier,
                     timeoutSeconds: 12
                 )
+                if Task.isCancelled { throw CancellationError() }
                 logActivity("setup", "Runtime setup warm-up finished")
+            } catch is CancellationError {
+                cancelledDuringInstall = true
             } catch {
                 setupErrorMessage = error.localizedDescription
                 logActivity("setup", "Runtime setup failed: \(error.localizedDescription)")
                 pendingLocalModelChange = nil
             }
 
+            if cancelledDuringInstall {
+                return
+            }
             installingRuntime = false
             setupProgressValue = nil
             setupProgressMessage = nil
             _ = applyPendingLocalModelIfReady()
             refreshSystemState()
         }
+        installRuntimeTask = task
     }
 
     func chooseRescueApp() {
@@ -2827,10 +2853,17 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
         )
     }
 
-    private func logActivity(_ category: String, _ message: String) {
+    private func logActivity(_ category: String, _ message: String, level: LogLevel = .standard) {
         Task {
-            await ActivityLogService.shared.append(category: category, message: message)
+            await ActivityLogService.shared.append(level: level, category: category, message: message)
         }
+    }
+
+    func setMinimumLogLevel(_ level: LogLevel) {
+        state.minimumLogLevel = level
+        Task { await ActivityLogService.shared.setMinimumLogLevel(level) }
+        logActivity("app", "Log level set to \(level.displayName)", level: .error)
+        persistState()
     }
 }
 

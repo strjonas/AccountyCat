@@ -1199,9 +1199,13 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
         )
 
+        let startTime = Date()
+
         do {
             let output: RuntimeProcessOutput
+            let runtimeLabel: String
             if configuration.usesOnlineInference {
+                runtimeLabel = "openrouter"
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .monitoringText,
@@ -1213,6 +1217,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     )
                 )
             } else {
+                runtimeLabel = "llama.cpp"
                 output = try await runtime.runTextInference(
                     runtimePath: runtimePath,
                     modelIdentifier: modelIdentifier,
@@ -1221,6 +1226,21 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     options: options
                 )
             }
+            let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            let servedModel = output.usedModelIdentifier ?? modelIdentifier
+            let tokenSummary = output.tokenUsage.map { "\($0.promptTokens)p/\($0.completionTokens)c" } ?? "— tok"
+            let stdoutPreview = output.stdout.cleanedSingleLine.truncatedForPrompt(maxLength: 400)
+
+            await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
+                message: "─── Request → \(runtimeLabel)/\(modelIdentifier) ───\n"
+                    + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))\n"
+                    + "user: \(userPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))"
+            )
+            await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
+                message: "← \(runtimeLabel) · \(elapsedMs)ms · \(tokenSummary) · \(servedModel)\n"
+                    + "stdout: \(stdoutPreview)"
+            )
+
             attempts[attemptIndex].runtimeOutput = output
             if stage == .decision || stage == .onlineDecision {
                 attempts[attemptIndex].parsedDecision = LLMOutputParsing.extractDecision(
@@ -1229,6 +1249,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             }
             return Self.decodeJSON(decoder, from: output.stdout + "\n" + output.stderr)
         } catch {
+            let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
+                message: "✗ \(configuration.usesOnlineInference ? "openrouter" : "llama.cpp") · \(elapsedMs)ms · error: \(error.localizedDescription)"
+            )
             return nil
         }
     }
@@ -1271,9 +1295,13 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
         )
 
+        let startTime = Date()
+
         do {
             let output: RuntimeProcessOutput
+            let runtimeLabel: String
             if configuration.usesOnlineInference {
+                runtimeLabel = "openrouter"
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .monitoringVision,
@@ -1285,6 +1313,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     )
                 )
             } else {
+                runtimeLabel = "llama.cpp"
                 output = try await runtime.runVisionInference(
                     runtimePath: runtimePath,
                     modelIdentifier: modelIdentifier,
@@ -1294,6 +1323,21 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     options: options
                 )
             }
+            let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            let servedModel = output.usedModelIdentifier ?? modelIdentifier
+            let tokenSummary = output.tokenUsage.map { "\($0.promptTokens)p/\($0.completionTokens)c" } ?? "— tok"
+            let stdoutPreview = output.stdout.cleanedSingleLine.truncatedForPrompt(maxLength: 400)
+
+            await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
+                message: "─── Request → \(runtimeLabel)/\(modelIdentifier) ───\n"
+                    + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))\n"
+                    + "user: \(userPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))"
+            )
+            await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
+                message: "← \(runtimeLabel) · \(elapsedMs)ms · \(tokenSummary) · \(servedModel)\n"
+                    + "stdout: \(stdoutPreview)"
+            )
+
             attempts[attemptIndex].runtimeOutput = output
             if stage == .onlineDecision {
                 attempts[attemptIndex].parsedDecision = LLMOutputParsing.extractDecision(
@@ -1302,6 +1346,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             }
             return Self.decodeJSON(decoder, from: output.stdout + "\n" + output.stderr)
         } catch {
+            let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
+                message: "✗ \(configuration.usesOnlineInference ? "openrouter" : "llama.cpp") · \(elapsedMs)ms · error: \(error.localizedDescription)"
+            )
             return nil
         }
     }

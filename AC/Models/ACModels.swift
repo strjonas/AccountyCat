@@ -58,6 +58,35 @@ enum ACBuild {
     }()
 }
 
+enum LogLevel: String, CaseIterable, Codable {
+    case error
+    case standard
+    case more
+    case verbose
+
+    var ordinal: Int {
+        switch self {
+        case .error: return 0
+        case .standard: return 1
+        case .more: return 2
+        case .verbose: return 3
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .error: return "Errors Only"
+        case .standard: return "Standard"
+        case .more: return "More"
+        case .verbose: return "Verbose"
+        }
+    }
+
+    static var defaultForBuild: LogLevel {
+        ACBuild.isDebug ? .standard : .error
+    }
+}
+
 enum TelemetryPersistencePolicy {
     static func storesVerboseTelemetry(debugMode: Bool) -> Bool {
         ACBuild.isDebug && debugMode
@@ -533,6 +562,7 @@ struct ACState: Codable, Sendable {
     var setupStatus: SetupStatus = .checking
     var isPaused = false
     var debugMode = ACBuild.isDebug
+    var minimumLogLevel = LogLevel.defaultForBuild
     var goalsText = Self.defaultGoalsText
     var rescueApp = RescueAppTarget.xcode
     var runtimePathOverride: String?
@@ -591,6 +621,7 @@ struct ACState: Codable, Sendable {
         case setupStatus
         case isPaused
         case debugMode
+        case minimumLogLevel
         case goalsText
         case rescueApp
         case runtimePathOverride
@@ -641,6 +672,7 @@ struct ACState: Codable, Sendable {
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
         debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? ACBuild.isDebug
+        minimumLogLevel = try container.decodeIfPresent(LogLevel.self, forKey: .minimumLogLevel) ?? LogLevel.defaultForBuild
         goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
         rescueApp = try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
         let decodedOverride = try container.decodeIfPresent(String.self, forKey: .runtimePathOverride)
@@ -721,6 +753,7 @@ struct ACState: Codable, Sendable {
         try container.encode(setupStatus, forKey: .setupStatus)
         try container.encode(isPaused, forKey: .isPaused)
         try container.encode(debugMode, forKey: .debugMode)
+        try container.encode(minimumLogLevel, forKey: .minimumLogLevel)
         try container.encode(goalsText, forKey: .goalsText)
         try container.encode(rescueApp, forKey: .rescueApp)
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)

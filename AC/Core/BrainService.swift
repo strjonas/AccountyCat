@@ -595,6 +595,12 @@ final class BrainService: NSObject {
         )
 
         let evaluationID = UUID().uuidString
+        let inferBackend = state.monitoringConfiguration.inferenceBackend.rawValue
+        let reason = evaluationPlan.reason ?? "stable_context"
+        await ActivityLogService.shared.append(level: .more,
+            category: "eval",
+            message: "tick #\(evaluationID.prefix(8)) · reason: \(reason) · backend: \(inferBackend) · profile: \(state.activeProfileID)"
+        )
         await appendEvaluationRequestedEvent(
             sessionID: session?.id,
             evaluationID: evaluationID,
@@ -687,6 +693,13 @@ final class BrainService: NSObject {
         var decisionResult: MonitoringDecisionResult
         do {
             decisionResult = try await evaluationTask.value
+            let attemptsSummary = decisionResult.evaluation.attempts
+                .map { "\($0.promptMode):\($0.parsedDecision?.assessment.rawValue ?? "?")" }
+                .joined(separator: ", ")
+            await ActivityLogService.shared.append(level: .more,
+                category: "eval",
+                message: "verdict: \(decisionResult.decision.assessment.rawValue) · attempts: [\(attemptsSummary)]"
+            )
         } catch is CancellationError {
             moodSink?(.watching)
             statusSink?("Context changed during evaluation — cancelled.")

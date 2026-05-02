@@ -610,6 +610,22 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Log level")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Picker("Log level", selection: Binding(
+                    get: { controller.state.minimumLogLevel },
+                    set: { controller.setMinimumLogLevel($0) }
+                )) {
+                    ForEach([LogLevel.error, .standard, .more, .verbose], id: \.self) { level in
+                        Text(level.displayName).tag(level)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: 200)
+            }
         }
     }
 
