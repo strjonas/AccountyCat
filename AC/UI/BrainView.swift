@@ -43,11 +43,11 @@ struct BrainView: View {
     }
     private var rules: [PolicyRule] {
         controller.state.policyMemory.rules
-            .filter { !$0.isAutoSafelistRule && $0.profileID == resolvedSelectedProfileID }
+            .filter { !$0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == resolvedSelectedProfileID) }
     }
     private var safelistRules: [PolicyRule] {
         controller.state.policyMemory.rules
-            .filter { $0.isAutoSafelistRule && $0.profileID == resolvedSelectedProfileID }
+            .filter { $0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == resolvedSelectedProfileID) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
     private var safelistObservations: [FocusedObservationStat] {
@@ -259,11 +259,11 @@ struct BrainView: View {
     }
 
     private func manualRuleCount(for profileID: String) -> Int {
-        controller.state.policyMemory.rules.filter { !$0.isAutoSafelistRule && $0.profileID == profileID }.count
+        controller.state.policyMemory.rules.filter { !$0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == profileID) }.count
     }
 
     private func safelistRuleCount(for profileID: String) -> Int {
-        controller.state.policyMemory.rules.filter { $0.isAutoSafelistRule && $0.profileID == profileID }.count
+        controller.state.policyMemory.rules.filter { $0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == profileID) }.count
     }
 
     private func lockedRuleCount(for profileID: String) -> Int {
@@ -560,7 +560,7 @@ struct BrainView: View {
     private func commitRule() {
         let trimmed = newRuleSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        controller.addUserRule(trimmed, kind: newRuleKind, profileID: resolvedSelectedProfileID)
+        controller.addUserRule(trimmed, kind: newRuleKind, profileID: nil)
         withAnimation(.acSnap) {
             showingAddRule = false
             newRuleSummary = ""

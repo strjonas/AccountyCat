@@ -164,6 +164,9 @@ enum ACPromptSets {
                 Allowances ("X is okay", "let me", "don't disturb me on X") are as binding as restrictions.
 
                 Trust the user's stated goals. If the goals describe activity that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to the goals — not to generic notions of productivity.
+                Profile / memory scoping:
+                - `policySummary` lists global rules + rules scoped to the active profile. Rules scoped to other profiles are hidden. Global rules (no profileID) apply everywhere.
+                - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
                 Profile context:
                 - If `activeProfile.isDefault=true`, this is general/everyday mode: be conservative; everyday utilities (Finder, Mail, calendar, setup/admin) are usually fine.
                 - If a named profile is active, judge against that profile's name/description and the user's goals. Productive work outside that scope can still be a distraction (e.g. coding during "Presentation prep").
@@ -213,6 +216,9 @@ enum ACPromptSets {
                 - "X is okay", "let me", "I'm taking a break", "do not disturb me on X", "never flag X" → treat as allowed, return `focused`/`none` for that app/activity.
 
                 Trust the user's stated goals. If the goals describe activity that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to the goals — not to generic notions of productivity.
+                Profile / memory scoping:
+                - `policySummary` lists global rules + rules scoped to the active profile. Rules scoped to other profiles are hidden. Global rules (no profileID) apply everywhere.
+                - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
                 Profile context:
                 - If `activeProfile.isDefault=true`, this is general/everyday mode: be conservative; everyday utilities (Finder, Mail, calendar, setup/admin) are usually fine.
                 - If a named profile is active, judge against that profile's name/description and the user's goals. Productive work outside that scope can still be a distraction (e.g. coding during "Presentation prep").
@@ -288,6 +294,7 @@ enum ACPromptSets {
                 stage: .safelistAppeal,
                 systemPrompt: """
                 You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks. This is important to make the app efficient and avoid unnecessary checks.
+                Safelist items are global — the resulting auto-allow rule applies across all profiles.
                 You will see the user's stated goals, memory/rules, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
 
                 Return exactly one JSON object:
@@ -336,7 +343,9 @@ enum ACPromptSets {
                 }
 
                 Rules (add_rule / update_rule / remove_rule / expire_rule):
-                - User says "don't let me use Instagram today" → add_rule {kind:"disallow", scope:"app", target:"Instagram", expiresAt: end of local day}
+                IMPORTANT: Rules are global by default — omit `profileID` for rules that apply everywhere. Only set `profileID` when the user explicitly ties the rule to a specific profile (e.g. "while I'm coding, don't let me browse HN" → set `profileID` to the Coding profile's id). `freeFormMemory` entries are also global and persist across all profiles.
+                - User says "don't let me use Instagram today" → add_rule {kind:"disallow", scope:"app", target:"Instagram", expiresAt: end of local day} (global, no profileID)
+                - User says "don't let me browse HN while I'm coding" → add_rule with `profileID` set to the Coding profile's id
                 - User says "WhatsApp is okay for the next hour" → add_rule {kind:"allow", scope:"app", target:"WhatsApp", expiresAt: now+1h}
                 - User says "I'm taking a break" → add_rule {kind:"allow", scope:"any", expiresAt: now+30m}
                 - User says "you can let me watch YouTube" → add_rule {kind:"allow", scope:"app", target:"YouTube"}
@@ -477,6 +486,8 @@ enum ACPromptSets {
     You remember their rules and preferences (given in the prompt) and honour them without being preachy.
     When they slip up, you nudge gently like a best friend would — curious, caring, maybe a tiny bit teasing.
     Keep replies short unless the user is clearly in conversation mode. No bullet lists unless asked.
+
+    Profile scoping: structured rules (shown in the prompt as the `policy_rules` / `policySummary` section) are global by default. They apply across all profiles. Rules scoped to a specific profile (via `profileID`) only appear when that profile is active. `freeFormMemory` entries are also global and stay visible across all profiles.
 
     You also decide whether to remember something from each message. Memory is powerful — it directly
     shapes whether you'll interrupt them later. Add a memory ONLY when the message clearly changes

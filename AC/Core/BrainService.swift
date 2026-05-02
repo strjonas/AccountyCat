@@ -525,12 +525,13 @@ final class BrainService: NSObject {
             return
         }
 
-        // Profile-scope the policy memory the algorithm sees: only rules belonging to the
-        // currently active profile apply. Default profile is the everyday baseline; a named
-        // profile (e.g. "Coding") makes its safelist the only one in effect.
+        // Scoped policy memory: global rules (profileID == nil) always apply, plus rules
+        // scoped to the active profile. Rules scoped to other profiles are hidden.
         let activeProfileID = state.activeProfileID
         var scopedPolicyMemory = state.policyMemory
-        scopedPolicyMemory.rules = scopedPolicyMemory.rules.filter { $0.profileID == activeProfileID }
+        scopedPolicyMemory.rules = scopedPolicyMemory.rules.filter {
+            $0.profileID == nil || $0.profileID == activeProfileID
+        }
 
         let evaluationPlan: MonitoringEvaluationPlan
         do {
@@ -824,19 +825,9 @@ final class BrainService: NSObject {
 
         if let policyMemoryUpdate = decisionResult.policyMemoryUpdate,
            !policyMemoryUpdate.operations.isEmpty {
-            // Stamp newly-added rules with the currently active profile id so promotion
-            // (e.g. safelist_appeal) and chat-driven additions land in the right scope.
-            var stamped = policyMemoryUpdate
-            stamped.operations = stamped.operations.map { op in
-                guard op.type == .addRule, var rule = op.rule else { return op }
-                if rule.profileID.isEmpty || rule.profileID == PolicyRule.defaultProfileID {
-                    rule.profileID = activeProfileID
-                }
-                var copy = op
-                copy.rule = rule
-                return copy
-            }
-            state.policyMemory.apply(stamped, now: now)
+            // Rules carry their own profile scoping (nil = global, value = profile-scoped).
+            // Don't stamp them here — the LLM or safelist builder decides the scope.
+            state.policyMemory.apply(policyMemoryUpdate, now: now)
         }
 
         await appendPolicyDecisionEvent(

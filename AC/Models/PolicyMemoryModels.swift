@@ -63,8 +63,7 @@ nonisolated struct PolicyRuleSchedule: Codable, Hashable, Sendable {
 }
 
 nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
-    /// Sentinel id of the always-present default profile. Rules with this `profileID`
-    /// (or a missing/legacy nil value) belong to the user's everyday "general" mode.
+    /// Sentinel id of the always-present default profile.
     nonisolated static let defaultProfileID: String = "general"
 
     var id: String
@@ -83,9 +82,10 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
     var active: Bool
     /// When true, AC will not autonomously modify or delete this rule.
     var isLocked: Bool
-    /// Profile this rule belongs to. Defaults to `defaultProfileID` ("general").
-    /// Backward-compatible: pre-profile state files decode as the default.
-    var profileID: String
+    /// Profile this rule is scoped to. `nil` means global — the rule applies across all
+    /// profiles. Non-nil scopes the rule to a single profile (e.g. "while coding, don't let
+    /// me browse HN"). Legacy rules with `"general"` decode as global.
+    var profileID: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, summary, source, createdAt, updatedAt, priority
@@ -109,7 +109,7 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         tonePreference: PolicyTonePreference? = nil,
         active: Bool = true,
         isLocked: Bool = false,
-        profileID: String = PolicyRule.defaultProfileID
+        profileID: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -146,7 +146,8 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         tonePreference = try c.decodeIfPresent(PolicyTonePreference.self, forKey: .tonePreference)
         active = try c.decode(Bool.self, forKey: .active)
         isLocked = (try? c.decode(Bool.self, forKey: .isLocked)) ?? false
-        profileID = (try? c.decode(String.self, forKey: .profileID)) ?? PolicyRule.defaultProfileID
+        let raw = try? c.decode(String.self, forKey: .profileID)
+        profileID = raw.flatMap { $0 == PolicyRule.defaultProfileID ? nil : $0 }
     }
 
     func isActive(at now: Date, calendar: Calendar = .current) -> Bool {
@@ -372,7 +373,12 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
         rules
             .filter { rule in
                 guard rule.isActive(at: now) else { return false }
-                if let profileID, rule.profileID != profileID { return false }
+                if let profileID {
+                    // Include global rules (nil) + rules scoped to the requested profile.
+                    guard rule.profileID == nil || rule.profileID == profileID else {
+                        return false
+                    }
+                }
                 if let context { return rule.matches(context: context) }
                 return true
             }

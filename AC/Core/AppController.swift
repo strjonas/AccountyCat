@@ -420,7 +420,7 @@ final class AppController: ObservableObject {
             source: .explicitFeedback,
             priority: 75,
             scope: scope,
-            profileID: profileID ?? state.activeProfileID
+            profileID: profileID
         )
         state.policyMemory.apply(PolicyMemoryUpdateResponse(operations: [
             PolicyMemoryOperation(type: .addRule, rule: rule)
@@ -2408,21 +2408,10 @@ final class AppController: ObservableObject {
             ) else { return }
 
             await MainActor.run {
-                // Stamp non-profile rule ops with the active profile id so newly added rules
-                // land in the right scope.
-                let activeID = self.state.activeProfileID
-                var stamped = response
-                stamped.operations = stamped.operations.map { op in
-                    guard op.type == .addRule, var rule = op.rule else { return op }
-                    if rule.profileID.isEmpty || rule.profileID == PolicyRule.defaultProfileID {
-                        rule.profileID = activeID
-                    }
-                    var copy = op
-                    copy.rule = rule
-                    return copy
-                }
-                self.state.policyMemory.apply(stamped, now: request.now)
-                self.applyProfileOperations(stamped.operations)
+                // Rules carry their own profile scoping (nil = global, value = profile-scoped).
+                // The LLM decides scope based on user language.
+                self.state.policyMemory.apply(response, now: request.now)
+                self.applyProfileOperations(response.operations)
                 self.persistState()
             }
         }
