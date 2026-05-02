@@ -7,8 +7,8 @@
 
 import Foundation
 
-/// Combined chat reply + memory update + optional profile action.
-/// AC decides all three in one call.
+/// Combined chat reply + memory update + optional profile action + optional scheduled action.
+/// AC decides all in one call.
 struct CompanionChatResult: Sendable {
     var reply: String
     /// When non-nil, a single bullet to append to persistent memory (AC's choice).
@@ -16,7 +16,23 @@ struct CompanionChatResult: Sendable {
     /// When non-nil, a short instruction for profile operations (switch, create, end).
     /// Processed through the policy-memory pipeline.
     var profileAction: String?
+    /// When non-nil, a scheduled action parsed from the LLM output (timed nudge or delayed profile).
+    var schedule: ScheduledActionCandidate?
     var usedModelIdentifier: String? = nil
+}
+
+/// Lightweight representation of a schedule request from the LLM before conversion to
+/// a persisted `ScheduledAction` with a resolved `fireAt` date.
+struct ScheduledActionCandidate: Sendable {
+    enum Kind: String, Sendable {
+        case nudge
+        case profileActivation = "profile"
+    }
+
+    var kind: Kind
+    var delayMinutes: Int
+    var message: String?
+    var profileName: String?
 }
 
 actor CompanionChatService {
@@ -130,7 +146,8 @@ actor CompanionChatService {
                 return CompanionChatResult(
                     reply: Self.fallbackReply(for: error),
                     memoryUpdate: nil,
-                    profileAction: nil
+                    profileAction: nil,
+                    schedule: nil
                 )
             }
             return nil
@@ -144,6 +161,7 @@ actor CompanionChatService {
                 reply: parsed.reply,
                 memoryUpdate: parsed.memoryUpdate,
                 profileAction: parsed.profileAction,
+                schedule: parsed.schedule,
                 usedModelIdentifier: output.usedModelIdentifier
                     ?? resolvedModelIdentifier(
                         for: inferenceBackend,
@@ -160,6 +178,7 @@ actor CompanionChatService {
                 reply: reply,
                 memoryUpdate: nil,
                 profileAction: nil,
+                schedule: nil,
                 usedModelIdentifier: output.usedModelIdentifier
                     ?? resolvedModelIdentifier(
                         for: inferenceBackend,
@@ -234,9 +253,17 @@ actor CompanionChatService {
         Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
         Use the profile_action field when the user explicitly asks to switch/create/end a profile.
 
-        Return exactly one JSON object: {"reply":"your response","memory":null,"profile_action":null}
-        or with memory: {"reply":"your response","memory":"single concise bullet under 20 words","profile_action":null}
-        or with profile: {"reply":"your response","memory":null,"profile_action":"activate Coding profile for 60 min, allow Xcode and Terminal"}
+        Scheduled actions:
+        When the user asks for a *timed* action ("nudge me in 2 min" / "remind me to focus in 10 min" / "start Coding profile in 15 min"), include a `schedule` field. The app will execute the action at the right time.
+        Schedule format: {"type":"nudge","delay_minutes":2,"message":"Focus reminder!"}
+        or for profiles: {"type":"profile","delay_minutes":10,"profile_name":"Coding"}
+        delay_minutes max 1440 (24h). Only schedule when the user explicitly asks with a time.
+        Do NOT schedule for things you can't actually do (calendar events, persistent alarms, app-restart-surviving reminders). If asked for something impossible, say so politely instead of pretending.
+
+        Return exactly one JSON object: {"reply":"your response","memory":null,"profile_action":null,"schedule":null}
+        or with memory: {"reply":"your response","memory":"single concise bullet under 20 words","profile_action":null,"schedule":null}
+        or with profile: {"reply":"your response","memory":null,"profile_action":"activate Coding profile for 60 min, allow Xcode and Terminal","schedule":null}
+        or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","memory":null,"profile_action":null,"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
         No markdown outside the JSON value. No other keys.
         """
     }

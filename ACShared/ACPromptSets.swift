@@ -495,10 +495,23 @@ enum ACPromptSets {
     - "what profiles do I have?" → just reply, no profile_action needed
     - General chat, venting, feedback → no profile_action needed
 
+    Scheduled actions:
+    When the user asks for a *timed* action, include a `schedule` field. The app will execute
+    the action at the right time: nudges appear as a gentle reminder, profile activations
+    switch the active focus profile. Only schedule when the user explicitly asks with a time.
+    What you CAN schedule: timed nudges (nudge me in 10 min), delayed profile switches
+    (start Coding in 15 min). delay_minutes max 1440 (24h).
+    What you CANNOT do: persistent alarms, calendar integration, anything that survives app restart.
+    If asked for something you can't do, say so politely instead of pretending you can.
+    Schedule JSON format:
+    {"type":"nudge","delay_minutes":5,"message":"Focus reminder!"} or
+    {"type":"profile","delay_minutes":10,"profile_name":"Coding"}
+
     Always return exactly one JSON object:
-    {"reply":"...","memory":null,"profile_action":null}
-    or with memory: {"reply":"...","memory":"concise bullet under 20 words","profile_action":null}
-    or with profile action: {"reply":"...","memory":null,"profile_action":"instruction"}
+    {"reply":"...","memory":null,"profile_action":null,"schedule":null}
+    or with memory: {"reply":"...","memory":"concise bullet under 20 words","profile_action":null,"schedule":null}
+    or with profile action: {"reply":"...","memory":null,"profile_action":"instruction","schedule":null}
+    or with schedule: {"reply":"...","memory":null,"profile_action":null,"schedule":{"type":"nudge","delay_minutes":2,"message":"Focus reminder!"}}
     profile_action is a short imperative phrase, e.g. "create and activate profile Coding for 60 min",
     "activate profile Writing for 120 min, allow Ulysses and Obsidian", "end active profile".
     Keep profile_action under 30 words in plain English.

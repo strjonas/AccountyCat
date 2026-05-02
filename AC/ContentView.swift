@@ -549,17 +549,6 @@ struct ContentView: View {
             }
 
             developerPicker(
-                title: "Monitoring prompt profile",
-                selection: Binding(
-                    get: { controller.state.monitoringConfiguration.promptProfileID },
-                    set: { controller.updateMonitoringPromptProfile($0) }
-                ),
-                options: controller.availableMonitoringPromptProfiles.map {
-                    ($0.id, $0.displayName, $0.summary)
-                }
-            )
-
-            developerPicker(
                 title: "Pipeline profile",
                 selection: Binding(
                     get: { controller.state.monitoringConfiguration.pipelineProfileID },

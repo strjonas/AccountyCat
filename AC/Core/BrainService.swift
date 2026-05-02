@@ -602,7 +602,7 @@ final class BrainService: NSObject {
         let executionMetadata = MonitoringExecutionMetadata(
             algorithmID: algorithmDescriptor.id,
             algorithmVersion: algorithmDescriptor.version,
-            promptProfileID: state.monitoringConfiguration.promptProfileID,
+            promptProfileID: algorithmDescriptor.id,
             pipelineProfileID: state.monitoringConfiguration.pipelineProfileID,
             runtimeProfileID: state.monitoringConfiguration.runtimeProfileID,
             experimentArm: state.monitoringConfiguration.experimentArm

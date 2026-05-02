@@ -88,7 +88,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let legacyLLMFocusAlgorithmID = "llm_focus_legacy_v1"
     nonisolated static let currentLLMMonitorAlgorithmID = "llm_monitor_v1"
     nonisolated static let defaultAlgorithmID = currentLLMMonitorAlgorithmID
-    nonisolated static let defaultPromptProfileID = "focus_default_v2"
     nonisolated static let defaultPipelineProfileID = "vision_split_default"
     nonisolated static let defaultOnlineVisionPipelineProfileID = "online_single_round_vision"
     nonisolated static let defaultOnlineTextPipelineProfileID = "online_single_round_text"
@@ -100,7 +99,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let defaultPeriodicFullScreenInterval: TimeInterval = 1800
 
     var algorithmID: String
-    var promptProfileID: String
     var pipelineProfileID: String
     var runtimeProfileID: String
     var inferenceBackend: MonitoringInferenceBackend
@@ -125,7 +123,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case algorithmID
-        case promptProfileID
         case pipelineProfileID
         case runtimeProfileID
         case inferenceBackend
@@ -146,7 +143,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
 
     init(
         algorithmID: String = Self.defaultAlgorithmID,
-        promptProfileID: String = Self.defaultPromptProfileID,
         pipelineProfileID: String = Self.defaultPipelineProfileID,
         runtimeProfileID: String = Self.defaultRuntimeProfileID,
         inferenceBackend: MonitoringInferenceBackend = Self.defaultInferenceBackend,
@@ -164,7 +160,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         periodicFullScreenInterval: TimeInterval = Self.defaultPeriodicFullScreenInterval
     ) {
         self.algorithmID = Self.normalizedAlgorithmID(algorithmID)
-        self.promptProfileID = promptProfileID
         self.pipelineProfileID = pipelineProfileID
         self.runtimeProfileID = runtimeProfileID
         self.inferenceBackend = inferenceBackend
@@ -215,7 +210,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
             cadenceMode.rawValue,
             pipelineProfileID,
             runtimeProfileID,
-            promptProfileID,
         ].joined(separator: ":")
     }
 
@@ -268,7 +262,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         algorithmID = Self.normalizedAlgorithmID(
             try c.decodeIfPresent(String.self, forKey: .algorithmID) ?? Self.defaultAlgorithmID
         )
-        promptProfileID = try c.decodeIfPresent(String.self, forKey: .promptProfileID) ?? Self.defaultPromptProfileID
         pipelineProfileID = try c.decodeIfPresent(String.self, forKey: .pipelineProfileID) ?? Self.defaultPipelineProfileID
         runtimeProfileID = try c.decodeIfPresent(String.self, forKey: .runtimeProfileID) ?? Self.defaultRuntimeProfileID
         inferenceBackend = try c.decodeIfPresent(MonitoringInferenceBackend.self, forKey: .inferenceBackend) ?? Self.defaultInferenceBackend
@@ -305,7 +298,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(Self.normalizedAlgorithmID(algorithmID), forKey: .algorithmID)
-        try c.encode(promptProfileID, forKey: .promptProfileID)
         try c.encode(pipelineProfileID, forKey: .pipelineProfileID)
         try c.encode(runtimeProfileID, forKey: .runtimeProfileID)
         try c.encode(inferenceBackend, forKey: .inferenceBackend)
@@ -325,13 +317,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
 }
 
 struct MonitoringAlgorithmDescriptor: Hashable, Sendable {
-    var id: String
-    var version: String
-    var displayName: String
-    var summary: String
-}
-
-struct MonitoringPromptProfileDescriptor: Hashable, Sendable {
     var id: String
     var version: String
     var displayName: String

@@ -38,7 +38,6 @@ struct BrainServiceConfigurationTests {
             )
         )
         var state = ACState()
-        state.monitoringConfiguration.promptProfileID = "focus_default_v2"
         state.algorithmState.llmPolicy.distraction = DistractionMetadata(
             contextKey: "com.google.Chrome|feed",
             stableSince: Date(timeIntervalSince1970: 1),
@@ -56,7 +55,6 @@ struct BrainServiceConfigurationTests {
         brainService.handleMonitoringConfigurationChange()
 
         #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
-        #expect(state.monitoringConfiguration.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
         #expect(state.algorithmState == AlgorithmStateEnvelope())
     }
 

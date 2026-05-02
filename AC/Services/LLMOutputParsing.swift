@@ -53,10 +53,13 @@ enum LLMOutputParsing {
                 normalizedProfileAction = nil
             }
 
+            let scheduleCandidate = Self.parseScheduleCandidate(from: object)
+
             return CompanionChatResult(
                 reply: cleanedReply,
                 memoryUpdate: normalizedMemory,
-                profileAction: normalizedProfileAction
+                profileAction: normalizedProfileAction,
+                schedule: scheduleCandidate
             )
         }
 
@@ -266,5 +269,38 @@ enum LLMOutputParsing {
         default:
             return .abstain
         }
+    }
+
+    nonisolated private static func parseScheduleCandidate(from object: [String: Any]) -> ScheduledActionCandidate? {
+        guard let scheduleDict = object["schedule"] as? [String: Any] else { return nil }
+
+        let kindString = (scheduleDict["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            ?? (scheduleDict["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let kindString,
+              let kind = ScheduledActionCandidate.Kind(rawValue: kindString) else { return nil }
+
+        let delayMinutes: Int
+        if let d = scheduleDict["delay_minutes"] as? Int {
+            delayMinutes = d
+        } else if let d = scheduleDict["delayMinutes"] as? Int {
+            delayMinutes = d
+        } else if let d = scheduleDict["delay"] as? Int {
+            delayMinutes = d
+        } else {
+            return nil
+        }
+
+        guard delayMinutes > 0, delayMinutes <= 1440 else { return nil } // max 24h
+
+        let message = (scheduleDict["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profileName = (scheduleDict["profile_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? (scheduleDict["profileName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return ScheduledActionCandidate(
+            kind: kind,
+            delayMinutes: delayMinutes,
+            message: message.flatMap { $0.isEmpty ? nil : $0 },
+            profileName: profileName.flatMap { $0.isEmpty ? nil : $0 }
+        )
     }
 }

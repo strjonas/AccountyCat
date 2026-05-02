@@ -27,7 +27,6 @@ struct MonitoringConfigurationTests {
         let state = try JSONDecoder().decode(ACState.self, from: data)
 
         #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
-        #expect(state.monitoringConfiguration.promptProfileID == MonitoringConfiguration.defaultPromptProfileID)
         #expect(state.monitoringConfiguration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(state.monitoringConfiguration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
         #expect(state.algorithmState.llmPolicy.distraction.contextKey == "com.google.Chrome|youtube")
@@ -57,10 +56,9 @@ struct MonitoringConfigurationTests {
                 MonitoringConfiguration.currentLLMMonitorAlgorithmID,
                 MonitoringInferenceBackend.local.rawValue,
                 MonitoringCadenceMode.balanced.rawValue,
-                MonitoringConfiguration.defaultPipelineProfileID,
-                MonitoringConfiguration.defaultRuntimeProfileID,
-                MonitoringConfiguration.defaultPromptProfileID,
-            ].joined(separator: ":")
+            MonitoringConfiguration.defaultPipelineProfileID,
+            MonitoringConfiguration.defaultRuntimeProfileID,
+        ].joined(separator: ":")
         )
     }
 

@@ -89,7 +89,8 @@ final class AppController: ObservableObject {
     private var lastPromptedDependencySignature: String?
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
     private var installRuntimeTask: Task<Void, Never>?
-    
+    private var activeScheduledTimers: [UUID: DispatchWorkItem] = [:]
+
     private init() {
         self.storageService = StorageService()
         let runtime = LocalModelRuntime()
@@ -197,6 +198,7 @@ final class AppController: ObservableObject {
         }
         refreshSystemState(persist: false)
         configureBrainIfNeeded()
+        restorePendingScheduledActions()
         recomputeTodayStats()
     }
 
@@ -688,6 +690,61 @@ final class AppController: ObservableObject {
         )
     }
 
+    // MARK: - Scheduled actions
+
+    func scheduleActionTimer(_ action: ScheduledAction) {
+        let delay = action.fireAt.timeIntervalSince(Date())
+        guard delay > 0 else {
+            executeScheduledAction(action)
+            return
+        }
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.executeScheduledAction(action)
+            }
+        }
+        activeScheduledTimers[action.id] = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    func executeScheduledAction(_ action: ScheduledAction) {
+        guard let index = state.scheduledActions.firstIndex(where: { $0.id == action.id }),
+              !state.scheduledActions[index].fired else { return }
+        state.scheduledActions[index].fired = true
+
+        switch action.type {
+        case .nudge:
+            let message = action.message ?? "Reminder from AccountyCat"
+            executiveArm?.perform(.showNudge(message))
+            recordDisplayedNudge(message)
+            logActivity("schedule", "Fired scheduled nudge: \(message)")
+        case .profileActivation:
+            let name = action.profileName ?? ""
+            if let profile = state.profiles.first(where: {
+                $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+            }) {
+                activateProfile(id: profile.id)
+            } else {
+                createAndActivateProfile(name: name, duration: 90 * 60)
+            }
+            logActivity("schedule", "Fired scheduled profile activation: \(name)")
+        }
+
+        activeScheduledTimers.removeValue(forKey: action.id)
+        persistState()
+    }
+
+    func restorePendingScheduledActions() {
+        let now = Date()
+        for index in state.scheduledActions.indices where !state.scheduledActions[index].fired {
+            if state.scheduledActions[index].fireAt <= now {
+                executeScheduledAction(state.scheduledActions[index])
+            } else {
+                scheduleActionTimer(state.scheduledActions[index])
+            }
+        }
+    }
+
     /// Called by BrainService at the top of every monitoring tick. If the active profile has
     /// expired, swap to default and persist. Returns true when a swap happened (so the caller
     /// can post a deferred chat note).
@@ -826,14 +883,6 @@ final class AppController: ObservableObject {
             state.runtimePathOverride = trimmed
         }
         refreshSystemState()
-    }
-
-    func updateMonitoringPromptProfile(_ promptProfileID: String) {
-        guard state.monitoringConfiguration.promptProfileID != promptProfileID else { return }
-        state.monitoringConfiguration.promptProfileID = promptProfileID
-        brainService?.handleMonitoringConfigurationChange()
-        persistState()
-        logActivity("monitoring", "Selected prompt profile: \(promptProfileID)")
     }
 
     func updateMonitoringPipelineProfile(_ pipelineProfileID: String) {
@@ -1957,10 +2006,6 @@ final class AppController: ObservableObject {
         }
     }
 
-    var availableMonitoringPromptProfiles: [MonitoringPromptProfileDescriptor] {
-        []
-    }
-
     var availablePipelineProfiles: [MonitoringPipelineProfileDescriptor] {
         LLMPolicyCatalog.availablePipelineProfiles.map(\.descriptor)
     }
@@ -2098,7 +2143,8 @@ final class AppController: ObservableObject {
                         ? "Add your OpenRouter API key in Settings, then I can chat."
                         : "Finish local setup first, or switch to online mode in Settings.",
                     memoryUpdate: nil,
-                    profileAction: nil
+                    profileAction: nil,
+                    schedule: nil
                 )
             } else if let response = await companionChatService.chat(
                 userMessage: cappedDraft,
@@ -2123,7 +2169,8 @@ final class AppController: ObservableObject {
                         ? "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
                         : "I couldn't answer just now. Check the logs and local runtime status.",
                     memoryUpdate: nil,
-                    profileAction: nil
+                    profileAction: nil,
+                    schedule: nil
                 )
             }
 
@@ -2138,6 +2185,18 @@ final class AppController: ObservableObject {
                         profileName: activeProfile.name
                     ))
                     self.logActivity("memory", "Remembered: \(update)")
+                }
+                if let schedule = result.schedule {
+                    let fireAt = Date().addingTimeInterval(Double(schedule.delayMinutes) * 60)
+                    let action = ScheduledAction(
+                        type: schedule.kind == .nudge ? .nudge : .profileActivation,
+                        fireAt: fireAt,
+                        message: schedule.message,
+                        profileName: schedule.profileName
+                    )
+                    self.state.scheduledActions.append(action)
+                    self.scheduleActionTimer(action)
+                    self.logActivity("schedule", "Scheduled \(schedule.kind) in \(schedule.delayMinutes)m")
                 }
                 self.persistState()
                 self.sendingChatMessage = false

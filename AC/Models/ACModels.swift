@@ -343,6 +343,7 @@ struct ActiveEscalation: Codable, Hashable, Equatable, Sendable {
     var lastMinimizedAt: Date?
     var lastAppealText: String?
     var lastAppealResult: AppealReviewDecision?
+    var denialCount: Int = 0
 }
 
 enum AppealReviewDecision: String, Codable, Sendable {
@@ -398,6 +399,39 @@ struct ChatSuggestionData: Codable, Hashable, Sendable {
     enum Resolution: String, Codable, Sendable {
         case accepted
         case dismissed
+    }
+}
+
+struct ScheduledAction: Identifiable, Codable, Sendable {
+    enum ActionType: String, Codable, Sendable {
+        case nudge
+        case profileActivation
+    }
+
+    var id: UUID
+    var type: ActionType
+    var fireAt: Date
+    var message: String?
+    var profileName: String?
+    var createdAt: Date
+    var fired: Bool
+
+    init(
+        id: UUID = UUID(),
+        type: ActionType,
+        fireAt: Date,
+        message: String? = nil,
+        profileName: String? = nil,
+        createdAt: Date = Date(),
+        fired: Bool = false
+    ) {
+        self.id = id
+        self.type = type
+        self.fireAt = fireAt
+        self.message = message
+        self.profileName = profileName
+        self.createdAt = createdAt
+        self.fired = fired
     }
 }
 
@@ -623,6 +657,8 @@ struct ACState: Codable, Sendable {
     var lastFullScreenCheckAt: Date?
     /// Active hard escalation: when set, the brain auto-minimizes the named app if the user re-opens it.
     var hardEscalation: ActiveEscalation?
+    /// Scheduled actions (timed nudges, delayed profile activations) created via chat.
+    var scheduledActions: [ScheduledAction] = []
 
     private static func sanitizeRuntimePathOverride(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
@@ -665,6 +701,7 @@ struct ACState: Codable, Sendable {
         case activeProfileID
         case lastFullScreenCheckAt
         case hardEscalation
+        case scheduledActions
     }
 
 
@@ -748,6 +785,7 @@ struct ACState: Codable, Sendable {
         }
         lastFullScreenCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastFullScreenCheckAt)
         hardEscalation = try container.decodeIfPresent(ActiveEscalation.self, forKey: .hardEscalation)
+        scheduledActions = try container.decodeIfPresent([ScheduledAction].self, forKey: .scheduledActions) ?? []
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -798,6 +836,7 @@ struct ACState: Codable, Sendable {
         try container.encode(activeProfileID, forKey: .activeProfileID)
         try container.encodeIfPresent(lastFullScreenCheckAt, forKey: .lastFullScreenCheckAt)
         try container.encodeIfPresent(hardEscalation, forKey: .hardEscalation)
+        try container.encode(scheduledActions, forKey: .scheduledActions)
     }
 
     mutating func resetAlgorithmProfile() {
@@ -808,7 +847,6 @@ struct ACState: Codable, Sendable {
         usageByDay = [:]
         focusSegments = []
         monitoringConfiguration.algorithmID = MonitoringConfiguration.defaultAlgorithmID
-        monitoringConfiguration.promptProfileID = MonitoringConfiguration.defaultPromptProfileID
         monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
         monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
         monitoringConfiguration.cadenceMode = .balanced
@@ -820,6 +858,7 @@ struct ACState: Codable, Sendable {
         chatHistory = []
         profiles = [FocusProfile.makeDefault()]
         activeProfileID = PolicyRule.defaultProfileID
+        scheduledActions = []
     }
 
     // MARK: - Memory helpers

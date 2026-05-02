@@ -17,7 +17,6 @@ struct ACStateResetTests {
         var state = ACState()
         state.monitoringConfiguration = MonitoringConfiguration(
             algorithmID: MonitoringConfiguration.deprecatedLegacyLLMAlgorithmID,
-            promptProfileID: "focus_default_v2",
             selectionMode: .fixed,
             experimentArmOverride: "manual:test"
         )
@@ -50,7 +49,6 @@ struct ACStateResetTests {
         #expect(state.distraction == DistractionMetadata())
         #expect(state.memoryEntries.isEmpty)
         #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
-        #expect(state.monitoringConfiguration.promptProfileID == "focus_default_v2")
         #expect(state.monitoringConfiguration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(state.monitoringConfiguration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
         #expect(state.monitoringConfiguration.experimentArm == "manual:test")
