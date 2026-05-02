@@ -75,6 +75,11 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     }
 }
 
+enum ScreenshotCaptureMode: String, Codable, Hashable, Sendable, CaseIterable {
+    case fullScreen
+    case activeWindow
+}
+
 struct MonitoringConfiguration: Codable, Hashable, Sendable {
     // Historical ids retained only so old state files migrate onto the active algorithm.
     nonisolated static let deprecatedLegacyLLMAlgorithmID = "legacy_focus_v1"
@@ -95,6 +100,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let banditAlgorithmID = "bandit_focus_v1"
     nonisolated static let minTitleLengthForTextOnly = 12
     nonisolated static let maxTitleLengthForTextOnly = 120
+    nonisolated static let defaultPeriodicFullScreenInterval: TimeInterval = 1800
 
     var algorithmID: String
     var promptProfileID: String
@@ -117,6 +123,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     /// Window-title length at which deterministic text context is considered enough to skip
     /// a screenshot for non-ambiguous apps. Kept configurable so unclear/retry rates can tune it.
     var titleLengthForTextOnly: Int
+    var screenshotCaptureMode: ScreenshotCaptureMode
+    var periodicFullScreenInterval: TimeInterval
 
     enum CodingKeys: String, CodingKey {
         case algorithmID
@@ -135,6 +143,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         case localModelIdentifierImage
         case thinkingEnabled
         case titleLengthForTextOnly
+        case screenshotCaptureMode
+        case periodicFullScreenInterval
     }
 
     init(
@@ -152,7 +162,9 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         localModelIdentifierText: String? = nil,
         localModelIdentifierImage: String? = nil,
         thinkingEnabled: Bool = false,
-        titleLengthForTextOnly: Int = MonitoringHeuristics.defaultTitleLengthForTextOnly
+        titleLengthForTextOnly: Int = MonitoringHeuristics.defaultTitleLengthForTextOnly,
+        screenshotCaptureMode: ScreenshotCaptureMode = .activeWindow,
+        periodicFullScreenInterval: TimeInterval = Self.defaultPeriodicFullScreenInterval
     ) {
         self.algorithmID = Self.normalizedAlgorithmID(algorithmID)
         self.promptProfileID = promptProfileID
@@ -177,6 +189,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
             ?? resolvedLocalTextModel
         self.thinkingEnabled = thinkingEnabled
         self.titleLengthForTextOnly = Self.clampedTitleLengthForTextOnly(titleLengthForTextOnly)
+        self.screenshotCaptureMode = screenshotCaptureMode
+        self.periodicFullScreenInterval = max(300, periodicFullScreenInterval) // minimum 5 min
     }
 
     nonisolated static func normalizedAlgorithmID(_ id: String) -> String {
@@ -287,6 +301,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
             try c.decodeIfPresent(Int.self, forKey: .titleLengthForTextOnly)
             ?? MonitoringHeuristics.defaultTitleLengthForTextOnly
         )
+        screenshotCaptureMode = try c.decodeIfPresent(ScreenshotCaptureMode.self, forKey: .screenshotCaptureMode) ?? .activeWindow
+        periodicFullScreenInterval = try c.decodeIfPresent(TimeInterval.self, forKey: .periodicFullScreenInterval) ?? Self.defaultPeriodicFullScreenInterval
     }
 
     func encode(to encoder: Encoder) throws {
@@ -306,6 +322,8 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         try c.encodeIfPresent(localModelIdentifierImage, forKey: .localModelIdentifierImage)
         try c.encode(thinkingEnabled, forKey: .thinkingEnabled)
         try c.encode(titleLengthForTextOnly, forKey: .titleLengthForTextOnly)
+        try c.encode(screenshotCaptureMode, forKey: .screenshotCaptureMode)
+        try c.encode(periodicFullScreenInterval, forKey: .periodicFullScreenInterval)
     }
 }
 

@@ -79,8 +79,8 @@ actor PolicyMemoryService: PolicyMemoryServicing {
     ) async -> PolicyMemoryUpdateResponse? {
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: request.runtimeProfileID)
         let options = runtimeProfile.options(for: .policyMemory)
-        let systemPrompt = PromptCatalog.loadPolicyMemorySystemPrompt()
-        let userPrompt = PromptCatalog.renderPolicyMemoryUserPrompt(
+        let systemPrompt = ACPromptSets.policyMemorySystemPrompt()
+        let userPrompt = ACPromptSets.renderPolicyMemoryUserPrompt(
             payloadJSON: Self.makePayloadJSON(request: request)
         )
 

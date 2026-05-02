@@ -570,6 +570,8 @@ struct ACState: Codable, Sendable {
     var profiles: [FocusProfile] = [FocusProfile.makeDefault()]
     /// Id of the currently active profile. Defaults to `general`.
     var activeProfileID: String = PolicyRule.defaultProfileID
+    /// Timestamp of the last forced full-screen screenshot (safety net when using active-window mode).
+    var lastFullScreenCheckAt: Date?
 
     private static func sanitizeRuntimePathOverride(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
@@ -609,6 +611,7 @@ struct ACState: Codable, Sendable {
         case enabledCalendarIdentifiers
         case profiles
         case activeProfileID
+        case lastFullScreenCheckAt
     }
 
 
@@ -689,6 +692,7 @@ struct ACState: Codable, Sendable {
         if !profiles.contains(where: { $0.id == activeProfileID }) {
             activeProfileID = PolicyRule.defaultProfileID
         }
+        lastFullScreenCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastFullScreenCheckAt)
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -736,6 +740,7 @@ struct ACState: Codable, Sendable {
         try container.encode(Array(enabledCalendarIdentifiers).sorted(), forKey: .enabledCalendarIdentifiers)
         try container.encode(profiles, forKey: .profiles)
         try container.encode(activeProfileID, forKey: .activeProfileID)
+        try container.encodeIfPresent(lastFullScreenCheckAt, forKey: .lastFullScreenCheckAt)
     }
 
     mutating func resetAlgorithmProfile() {

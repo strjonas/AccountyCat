@@ -12,8 +12,8 @@ struct PromptCatalogTests {
 
     @Test
     func policyDecisionPromptUsesSharedDecisionRules() {
-        let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .decision)
-        let perceptionPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .perceptionVision)
+        let systemPrompt = ACPromptSets.systemPrompt(for: .decision)
+        let perceptionPrompt = ACPromptSets.systemPrompt(for: .perceptionVision)
         let runtimeProfile = LLMPolicyCatalog.defaultRuntimeProfile
 
         #expect(systemPrompt.contains("assessment` and `suggested_action` must agree"))
@@ -26,7 +26,7 @@ struct PromptCatalogTests {
 
     @Test
     func chatAndNudgePromptsReferenceCharacterVoice() {
-        let chatPrompt = PromptCatalog.loadChatSystemPrompt(character: .nova)
+        let chatPrompt = ACPromptSets.chatSystemPrompt(withPersonality: ACCharacter.nova.personalityPrefix)
         let nudgePrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt
         let decisionPrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .onlineDecision).systemPrompt
 
@@ -43,10 +43,12 @@ struct PromptCatalogTests {
 
     @Test
     func memoryConsolidationPromptPrefersLatestUserInstruction() {
-        let prompt = PromptCatalog.loadMemoryConsolidationSystemPrompt()
+        let prompt = ACPromptSets.memoryConsolidationSystemPrompt
 
         #expect(prompt.contains("most recent user interaction"))
         #expect(prompt.contains("source of truth"))
         #expect(prompt.contains("preserve both sides"))
+        #expect(prompt.contains("Treat explicit directives in recent user chat messages as fresh ground truth"))
+        #expect(prompt.contains("It is fine to return fewer"))
     }
 }

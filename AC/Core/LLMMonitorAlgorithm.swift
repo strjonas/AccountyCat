@@ -1174,9 +1174,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         systemPromptPrefix: String = ""
     ) async -> T? {
         let payloadJSON = MonitoringLLMClient.encodePayload(payload)
-        let baseSystemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: stage)
+        let promptStage = ACPromptStage(rawValue: stage.rawValue)!
+        let baseSystemPrompt = ACPromptSets.systemPrompt(for: promptStage)
         let systemPrompt = systemPromptPrefix.isEmpty ? baseSystemPrompt : "\(systemPromptPrefix)\n\n\(baseSystemPrompt)"
-        let userPrompt = PromptCatalog.renderPolicyUserPrompt(stage: stage, payloadJSON: payloadJSON)
+        let userPrompt = ACPromptSets.renderUserPrompt(for: promptStage, payloadJSON: payloadJSON)
         let template = PromptTemplateRecord(
             id: "policy.\(stage.rawValue)",
             version: descriptor.version,
@@ -1245,9 +1246,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         systemPromptPrefix: String = ""
     ) async -> T? {
         let payloadJSON = MonitoringLLMClient.encodePayload(payload)
-        let baseSystemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: stage)
+        let promptStage = ACPromptStage(rawValue: stage.rawValue)!
+        let baseSystemPrompt = ACPromptSets.systemPrompt(for: promptStage)
         let systemPrompt = systemPromptPrefix.isEmpty ? baseSystemPrompt : "\(systemPromptPrefix)\n\n\(baseSystemPrompt)"
-        let userPrompt = PromptCatalog.renderPolicyUserPrompt(stage: stage, payloadJSON: payloadJSON)
+        let userPrompt = ACPromptSets.renderUserPrompt(for: promptStage, payloadJSON: payloadJSON)
         let template = PromptTemplateRecord(
             id: "policy.\(stage.rawValue)",
             version: descriptor.version,

@@ -78,6 +78,7 @@ enum OnlineModelCredentialStore {
     nonisolated private static let account = "openrouter_api_key"
 
     nonisolated static func loadAPIKey() -> String? {
+        guard NSClassFromString("XCTest") == nil else { return nil }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -98,6 +99,7 @@ enum OnlineModelCredentialStore {
 
     @discardableResult
     nonisolated static func saveAPIKey(_ value: String?) -> Bool {
+        guard NSClassFromString("XCTest") == nil else { return false }
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,

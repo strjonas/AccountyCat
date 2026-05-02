@@ -7,12 +7,15 @@
 
 import Foundation
 
-/// Combined chat reply + memory update. AC decides both in one call so the user never
-/// receives a reply that "promises" to remember something AC doesn't actually commit.
+/// Combined chat reply + memory update + optional profile action.
+/// AC decides all three in one call.
 struct CompanionChatResult: Sendable {
     var reply: String
     /// When non-nil, a single bullet to append to persistent memory (AC's choice).
     var memoryUpdate: String?
+    /// When non-nil, a short instruction for profile operations (switch, create, end).
+    /// Processed through the policy-memory pipeline.
+    var profileAction: String?
     var usedModelIdentifier: String? = nil
 }
 
@@ -46,13 +49,14 @@ actor CompanionChatService {
         memory: String = "",
         policyRules: String = "",
         character: ACCharacter = .mochi,
+        activeProfileContext: String = "",
         runtimeOverride: String?,
         inferenceBackend: MonitoringInferenceBackend = .local,
         onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier,
         onlineTextModelIdentifier: String? = nil,
         localTextModelIdentifier: String? = nil
     ) async -> CompanionChatResult? {
-        let systemPrompt = PromptCatalog.loadChatSystemPrompt(character: character)
+        let systemPrompt = ACPromptSets.chatSystemPrompt(withPersonality: character.personalityPrefix)
         let prompt = Self.makeChatPrompt(
             userMessage: userMessage,
             goals: goals,
@@ -60,7 +64,8 @@ actor CompanionChatService {
             context: context,
             history: history,
             memory: memory,
-            policyRules: policyRules
+            policyRules: policyRules,
+            profileContext: activeProfileContext
         )
 
         let output: RuntimeProcessOutput
@@ -108,7 +113,8 @@ actor CompanionChatService {
             if inferenceBackend == .openRouter {
                 return CompanionChatResult(
                     reply: Self.fallbackReply(for: error),
-                    memoryUpdate: nil
+                    memoryUpdate: nil,
+                    profileAction: nil
                 )
             }
             return nil
@@ -121,6 +127,7 @@ actor CompanionChatService {
             return CompanionChatResult(
                 reply: parsed.reply,
                 memoryUpdate: parsed.memoryUpdate,
+                profileAction: parsed.profileAction,
                 usedModelIdentifier: output.usedModelIdentifier
                     ?? resolvedModelIdentifier(
                         for: inferenceBackend,
@@ -136,6 +143,7 @@ actor CompanionChatService {
             : CompanionChatResult(
                 reply: reply,
                 memoryUpdate: nil,
+                profileAction: nil,
                 usedModelIdentifier: output.usedModelIdentifier
                     ?? resolvedModelIdentifier(
                         for: inferenceBackend,
@@ -165,7 +173,8 @@ actor CompanionChatService {
         context: ChatContext,
         history: [ChatMessage],
         memory: String,
-        policyRules: String
+        policyRules: String,
+        profileContext: String
     ) -> String {
         let historySection: String
         if history.isEmpty {
@@ -189,6 +198,7 @@ actor CompanionChatService {
         Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
         Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
 
+        \(profileContext)
         [User goals]
         \(goals.cleanedSingleLine)
 
@@ -205,25 +215,12 @@ actor CompanionChatService {
         \(userMessage.cleanedSingleLine)
 
         Respond as AccountyCat. Match the energy and tone of the user's message.
-        If they're casual, be casual. If they're excited, share the excitement. If they're stressed, be warm and grounding.
         Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
+        Use the profile_action field when the user explicitly asks to switch/create/end a profile.
 
-        You also maintain persistent memory. If — and only if — this message contains something worth
-        remembering across future sessions (a new rule like "don't let me use Instagram today", an
-        explicit allowance like "WhatsApp is okay for the next hour", a lasting preference, or
-        something that would clearly contradict a future nudge otherwise), include a `memory` field.
-        Otherwise set `memory` to null. Be conservative — do NOT add a memory for every message.
-        Add one memory only when it clearly adds value on top of what's already remembered, and
-        phrase it so it still makes sense on its own days from now.
-        If the user gives a time-boxed rule or allowance, rewrite it with an explicit local expiry
-        time instead of relative words like "today", "tonight", or "for the next hour".
-        Good: "X.com is allowed until 2026-04-23 17:15"
-        Good: "Do not allow Instagram until 2026-04-23 23:59"
-        Bad: "X.com is okay for a bit"
-        Bad: "No Instagram today"
-
-        Return exactly one JSON object: {"reply":"your response","memory":null}
-        or {"reply":"your response","memory":"single concise bullet under 20 words"}
+        Return exactly one JSON object: {"reply":"your response","memory":null,"profile_action":null}
+        or with memory: {"reply":"your response","memory":"single concise bullet under 20 words","profile_action":null}
+        or with profile: {"reply":"your response","memory":null,"profile_action":"activate Coding profile for 60 min, allow Xcode and Terminal"}
         No markdown outside the JSON value. No other keys.
         """
     }

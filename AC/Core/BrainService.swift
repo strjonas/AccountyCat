@@ -107,9 +107,8 @@ final class BrainService: NSObject {
         return try? await telemetryStore.ensureCurrentSession(reason: "runtime")
     }
 
-    private func cleanupEphemeralScreenshotIfNeeded(_ snapshot: AppSnapshot, sessionID: String?) {
-        guard sessionID == nil,
-              let screenshotPath = snapshot.screenshotPath,
+    private func cleanupEphemeralScreenshotIfNeeded(_ snapshot: AppSnapshot) {
+        guard let screenshotPath = snapshot.screenshotPath,
               !screenshotPath.isEmpty else {
             return
         }
@@ -611,7 +610,7 @@ final class BrainService: NSObject {
         do {
             snapshot = try await buildSnapshot(
                 from: context,
-                state: state,
+                state: &state,
                 idle: false,
                 now: now,
                 sessionID: session?.id,
@@ -631,7 +630,7 @@ final class BrainService: NSObject {
             return
         }
         defer {
-            cleanupEphemeralScreenshotIfNeeded(snapshot, sessionID: session?.id)
+            cleanupEphemeralScreenshotIfNeeded(snapshot)
         }
 
         let preEvaluationDistraction = currentDistractionMetadata(from: state)
@@ -710,7 +709,7 @@ final class BrainService: NSObject {
             do {
                 let escalatedSnapshot = try await buildSnapshot(
                     from: context,
-                    state: state,
+                    state: &state,
                     idle: false,
                     now: now,
                     sessionID: session?.id,
@@ -718,7 +717,7 @@ final class BrainService: NSObject {
                     requiresScreenshot: true
                 )
                 defer {
-                    cleanupEphemeralScreenshotIfNeeded(escalatedSnapshot, sessionID: session?.id)
+                    cleanupEphemeralScreenshotIfNeeded(escalatedSnapshot)
                 }
                 if escalatedSnapshot.screenshotPath != nil {
                     let retryInput = MonitoringDecisionInput(
@@ -902,7 +901,7 @@ final class BrainService: NSObject {
 
     private func buildSnapshot(
         from context: FrontmostContext,
-        state: ACState,
+        state: inout ACState,
         idle: Bool,
         now: Date,
         sessionID: String?,
@@ -915,7 +914,24 @@ final class BrainService: NSObject {
             if let overrideCapture = screenshotCapture {
                 screenshotURL = try await overrideCapture()
             } else {
-                screenshotURL = try await SnapshotService.captureScreenshot()
+                switch state.monitoringConfiguration.screenshotCaptureMode {
+                case .activeWindow:
+                    let interval = state.monitoringConfiguration.periodicFullScreenInterval
+                    let needsFullScreen: Bool
+                    if let lastCheck = state.lastFullScreenCheckAt {
+                        needsFullScreen = now.timeIntervalSince(lastCheck) >= interval
+                    } else {
+                        needsFullScreen = true // first check should be full screen
+                    }
+                    if needsFullScreen {
+                        screenshotURL = try await SnapshotService.captureScreenshot()
+                        state.lastFullScreenCheckAt = now
+                    } else {
+                        screenshotURL = try await SnapshotService.captureActiveWindowScreenshot()
+                    }
+                case .fullScreen:
+                    screenshotURL = try await SnapshotService.captureScreenshot()
+                }
             }
         } else {
             screenshotURL = nil

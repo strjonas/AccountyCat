@@ -16,12 +16,10 @@ enum SnapshotService {
     private static let captureTimeoutSeconds: UInt64 = 8
 
     static func idleSeconds() -> TimeInterval {
-        // kCGAnyInputEventType tracks real user activity (keyboard/mouse), unlike .null.
-        guard let anyInput = CGEventType(rawValue: UInt32.max) else {
-            return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
-        }
-        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: Self.anyInputEventType)
     }
+
+    private static let anyInputEventType: CGEventType = CGEventType(rawValue: ~0)!
 
     static func frontmostContext() -> FrontmostContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else {
@@ -52,8 +50,8 @@ enum SnapshotService {
         if AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedWindowValue) == .success,
            let focusedWindowValue,
            CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() {
-            let focusedWindow = unsafeBitCast(focusedWindowValue, to: AXUIElement.self)
-            var titleValue: CFTypeRef?
+            let focusedWindow = (focusedWindowValue as! AXUIElement)
+            var titleValue: CFTypeRef? 
             if AXUIElementCopyAttributeValue(focusedWindow, kAXTitleAttribute as CFString, &titleValue) == .success,
                let title = titleValue as? String,
                !title.cleanedSingleLine.isEmpty {
@@ -74,6 +72,17 @@ enum SnapshotService {
 
     static func captureScreenshot() async throws -> URL {
         let rect = captureRect()
+        return try await captureScreenshot(in: rect)
+    }
+
+    static func captureActiveWindowScreenshot() async throws -> URL {
+        if let windowRect = activeWindowRect() {
+            return try await captureScreenshot(in: windowRect)
+        }
+        return try await captureScreenshot()
+    }
+
+    private static func captureScreenshot(in rect: CGRect) async throws -> URL {
         let image = try await captureImage(in: rect)
 
         let tempURL = FileManager.default.temporaryDirectory
@@ -103,7 +112,9 @@ enum SnapshotService {
                 throw SnapshotError.captureTimedOut
             }
 
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw SnapshotError.captureTimedOut
+            }
             group.cancelAll()
             return result
         }
@@ -134,19 +145,52 @@ enum SnapshotService {
         }
     }
 
-    private static func cgWindowTitle(for pid: pid_t) -> String? {
-        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] else {
+    private static func activeWindowRect() -> CGRect? {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
             return nil
         }
 
-        let matchingWindow = windows.first { window in
-            guard let ownerPID = window[kCGWindowOwnerPID] as? pid_t else {
-                return false
-            }
-            return ownerPID == pid
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        var focusedWindowValue: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedWindowValue) == .success,
+              let focusedWindowValue,
+              CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        let focusedWindow = (focusedWindowValue as! AXUIElement)
+
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(focusedWindow, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(focusedWindow, kAXSizeAttribute as CFString, &sizeValue) == .success else {
+            return nil
         }
 
-        return (matchingWindow?[kCGWindowName] as? String)?.cleanedSingleLine
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else {
+            return nil
+        }
+
+        // Reject degenerate rects (fully offscreen, zero-area, or implausibly huge)
+        let rect = CGRect(origin: position, size: size)
+        guard rect.width > 40, rect.height > 40,
+              rect.width < 8000, rect.height < 8000 else {
+            return nil
+        }
+
+        return rect
+    }
+
+    private static func cgWindowTitle(for pid: pid_t) -> String? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], CGWindowID(pid)) as? [[CFString: Any]] else {
+            return nil
+        }
+
+        guard let matchingWindow = windows.first else { return nil }
+        return (matchingWindow[kCGWindowName] as? String)?.cleanedSingleLine
     }
 
     private static func browserTabTitle(for app: NSRunningApplication) -> String? {

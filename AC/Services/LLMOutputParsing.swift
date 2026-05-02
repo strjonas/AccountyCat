@@ -13,8 +13,8 @@ enum LLMOutputParsing {
     }
 
     /// Parses the combined chat reply object:
-    /// `{"reply":"...", "memory": null | "short bullet"}`. Falls back to
-    /// a reply-only shape if the `memory` key is missing.
+    /// `{"reply":"...", "memory": null | "short bullet", "profile_action": null | "instruction"}`.
+    /// Falls back to a reply-only shape if the `memory` key is missing.
     nonisolated static func extractChatResult(from output: String) -> CompanionChatResult? {
         for json in jsonObjects(in: output).reversed() {
             guard let data = json.data(using: .utf8),
@@ -40,7 +40,24 @@ enum LLMOutputParsing {
                 normalizedMemory = nil
             }
 
-            return CompanionChatResult(reply: cleanedReply, memoryUpdate: normalizedMemory)
+            let profileActionValue = (object["profile_action"] as? String)
+                ?? (object["profileAction"] as? String)
+            let trimmedProfileAction = profileActionValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedProfileAction: String?
+            if let trimmedProfileAction,
+               !trimmedProfileAction.isEmpty,
+               trimmedProfileAction.lowercased() != "none",
+               trimmedProfileAction.lowercased() != "null" {
+                normalizedProfileAction = trimmedProfileAction
+            } else {
+                normalizedProfileAction = nil
+            }
+
+            return CompanionChatResult(
+                reply: cleanedReply,
+                memoryUpdate: normalizedMemory,
+                profileAction: normalizedProfileAction
+            )
         }
 
         return nil

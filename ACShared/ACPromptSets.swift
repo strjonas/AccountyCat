@@ -2,8 +2,8 @@
 //  ACPromptSets.swift
 //  ACShared
 //
-//  Single source of truth for all AC prompt text.
-//  PromptCatalog.swift is a thin forwarding accessor.
+//  Single source of truth for all AC prompt text — system prompts, user templates,
+//  and rendering helpers. Former PromptCatalog.swift forwarding is absorbed here.
 //
 
 import Foundation
@@ -91,6 +91,8 @@ enum ACPromptSets {
     private static let onlineDecisionSchema = """
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","reason_tags":["tag"]}
     """
+
+    // MARK: - Policy stage prompt set
 
     nonisolated static let policyDefaultPromptSet = ACPromptSetDefinition(
         id: "policy_default_v1",
@@ -364,6 +366,8 @@ enum ACPromptSets {
         ]
     )
 
+    // MARK: - Pipeline & runtime definitions
+
     nonisolated static let pipelineDefinitions: [ACPipelineDefinition] = [
         ACPipelineDefinition(
             id: "vision_split_default",
@@ -414,7 +418,7 @@ enum ACPromptSets {
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
                 ACRuntimeStageDefinition(stage: .perceptionTitle, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 220, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 9216, batchSize: 4608, ubatchSize: 2048, timeoutSeconds: 45)),
                 ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 ACRuntimeStageDefinition(stage: .decision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
                 ACRuntimeStageDefinition(stage: .nudgeCopy, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
@@ -429,11 +433,45 @@ enum ACPromptSets {
         policyDefaultPromptSet,
     ]
 
+    // MARK: - Policy stage accessors (absorbed from PromptCatalog)
+
+    /// System prompt for a given policy stage.
+    nonisolated static func systemPrompt(for stage: ACPromptStage) -> String {
+        policyDefaultPromptSet.prompt(for: stage).systemPrompt
+    }
+
+    /// User prompt rendered from the template for a given stage, with `{{PAYLOAD_JSON}}` substituted.
+    nonisolated static func renderUserPrompt(for stage: ACPromptStage, payloadJSON: String) -> String {
+        let template = policyDefaultPromptSet.prompt(for: stage).userTemplate
+        return template.replacingOccurrences(of: "{{PAYLOAD_JSON}}", with: payloadJSON)
+    }
+
+    nonisolated static func policyMemorySystemPrompt() -> String {
+        systemPrompt(for: .policyMemory)
+    }
+
+    nonisolated static func renderPolicyMemoryUserPrompt(payloadJSON: String) -> String {
+        renderUserPrompt(for: .policyMemory, payloadJSON: payloadJSON)
+    }
+
     // MARK: - Chat system prompt
 
-    nonisolated static let chatSystemPrompt = """
+    /// Build the chat system prompt with a character personality prefix.
+    ///
+    /// The personality voice is prepended so the LLM adopts the right tone. Profile context
+    /// (active profile, available profiles) is provided through the user prompt at runtime.
+    nonisolated static func chatSystemPrompt(withPersonality voice: String) -> String {
+        """
+        Character voice:
+        \(voice)
+
+        \(Self.baseChatSystemPrompt)
+        """
+    }
+
+    private nonisolated static let baseChatSystemPrompt = """
     You are AccountyCat — a warm, witty, slightly cheeky focus companion who happens to live on the user's screen.
-    You have access to what apps they use and when, but you're never creepy about it.
+    You have access to what apps they use, what focus profile is active, and their stated goals and rules, but you're never creepy about it.
     Your superpower is matching the user's energy: if they say "hi" you say hi back simply;
     if they write "HIIII :DDD" you're hyped too. You're a friend who *gets* them, not a productivity robot.
     You remember their rules and preferences (given in the prompt) and honour them without being preachy.
@@ -448,39 +486,118 @@ enum ACPromptSets {
     When you store a time-bounded rule or allowance, rewrite it with an explicit local expiry
     time instead of vague relative wording like "today" or "for the next hour".
 
+    Profile actions:
+    You can see the currently active focus profile and which other profiles are available.
+    When the user explicitly asks to switch profiles, start one, or end one, include a
+    `profile_action` field with a short instruction. Otherwise set `profile_action` to null.
+    Examples of when to use profile_action:
+    - "switch to my Coding profile" / "start a Writing profile for an hour" / "I'm done with Coding"
+    - "what profiles do I have?" → just reply, no profile_action needed
+    - General chat, venting, feedback → no profile_action needed
+
     Always return exactly one JSON object:
-    {"reply":"...","memory":null}
-    or {"reply":"...","memory":"concise bullet under 20 words"}
+    {"reply":"...","memory":null,"profile_action":null}
+    or with memory: {"reply":"...","memory":"concise bullet under 20 words","profile_action":null}
+    or with profile action: {"reply":"...","memory":null,"profile_action":"instruction"}
+    profile_action is a short imperative phrase, e.g. "create and activate profile Coding for 60 min",
+    "activate profile Writing for 120 min, allow Ulysses and Obsidian", "end active profile".
+    Keep profile_action under 30 words in plain English.
     No markdown outside the JSON value. No extra keys.
     """
 
-    // MARK: - Memory consolidation prompt
+    // MARK: - Memory consolidation prompts
 
     nonisolated static let memoryConsolidationSystemPrompt = """
     You curate the persistent memory of a focus companion called AccountyCat.
-    Each run you receive the current time, the user's goals, and the existing memory entries
-    with creation timestamps. You produce a consolidated entry list.
+    Each run you receive the current time, the user's goals, recent user chat messages,
+    and the existing memory entries with creation timestamps. You produce a consolidated
+    entry list.
 
     Rules:
     - Drop entries whose time scope has clearly passed. Examples: "today" when the entry was
       created on a previous day; "this evening" once it's the next morning; "for the next hour"
       if more than an hour has elapsed.
     - Merge duplicates and near-duplicates into one concise bullet.
-            - Treat the most recent user interaction as the source of truth for active rules and
-                preferences. If a newer message changes, cancels, or narrows an older memory, rewrite the
-                memory so the final list stays consistent and does not preserve both sides of the
-                contradiction.
+    - Treat the most recent user interaction as the source of truth for active rules and
+      preferences. If a newer message changes, cancels, or narrows an older memory, rewrite the
+      memory so the final list stays consistent and does not preserve both sides of the
+      contradiction.
+    - Treat explicit directives in recent user chat messages as fresh ground truth even if they
+      are not yet present in memory.
     - Keep both restrictions ("don't let me use X") and allowances ("X is okay", "taking a
-                break"). Neither is more important than the other. If two entries conflict, keep the most
-                recent one and drop the older.
-    - Preserve load-bearing detail — app names, durations, explicit time scopes.
+      break"). Neither is more important than the other. If two entries conflict, keep the most
+      recent one and drop the older.
+    - When a memory line uses relative time language, resolve it against the current time and
+      prefer rewriting the surviving line with an explicit end time when that makes it clearer.
+    - Preserve load-bearing detail — app names, durations, explicit time scopes. Don't
+      paraphrase things away.
     - Prefer explicit dates/times over vague relative phrases when a time-bounded rule survives.
     - Prefer recent entries over older ones when both can't fit. Aim for ≤10 final entries.
-    - Do not paraphrase something until it loses meaning. Better to keep the user's wording.
+      It is fine to return fewer.
 
     Return exactly one JSON object:
     {"entries":[{"created":"<ISO-8601 timestamp>","text":"..."}, ...]}
     Use the original `created` timestamp when keeping or merging an entry (pick the most
-    recent contributor). Use the current time for a brand-new summary line. No other keys.
+    recent contributor). Use the current time for a brand-new summary line.
+
+    In `text`, prefer explicit times over vague relative phrases when the expiry matters.
+    No markdown, no other keys, no commentary.
     """
+
+    /// Template for the memory consolidation user prompt. Callers splice in data.
+    nonisolated static func renderMemoryConsolidationUserPrompt(
+        nowISO: String,
+        nowLabel: String,
+        goals: String,
+        recentMessages: String,
+        entries: String
+    ) -> String {
+        """
+        Current local time: \(nowLabel)
+        Current ISO time: \(nowISO)
+
+        User goals:
+        \(goals)
+
+        Recent user chat messages (oldest first):
+        \(recentMessages.isEmpty ? "(none)" : recentMessages)
+
+        Current memory (oldest first):
+        \(entries.isEmpty ? "(empty)" : entries)
+
+        Produce a consolidated memory list following the system prompt rules.
+
+        Return exactly one JSON object:
+        {"entries":[{"created":"ISO-8601 timestamp","text":"single concise bullet"}, ...]}
+        - Use the original created timestamp when keeping/merging an entry (pick the most recent contributor).
+        - Use the current time for any genuinely new summary line.
+        - In `text`, prefer explicit times over vague relative phrases when the expiry matters.
+        - No markdown, no other keys, no commentary.
+        """
+    }
+
+    // MARK: - Chat user prompt profile context section
+
+    /// Profile context section for the chat user prompt.
+    /// Injected into the user prompt so the chat LLM knows which profile is active
+    /// and which others are available.
+    nonisolated static func chatProfileContextSection(
+        activeProfileName: String,
+        activeProfileDescription: String?,
+        activeProfileIsDefault: Bool,
+        activeProfileExpiresAtLabel: String?,
+        availableProfiles: String
+    ) -> String {
+        let defaultLabel = activeProfileIsDefault ? " (default)" : ""
+        let descriptionLine = activeProfileDescription.map { "\nDescription: \($0)" } ?? ""
+        let expiryLine = activeProfileExpiresAtLabel.map { "\nExpires at: \($0)" } ?? ""
+
+        return """
+        [Active profile]
+        \(activeProfileName)\(defaultLabel)\(descriptionLine)\(expiryLine)
+
+        [Available profiles]
+        \(availableProfiles.isEmpty ? "(none other)" : availableProfiles)
+        """
+    }
 }

@@ -289,9 +289,9 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             screenshotIncluded: screenshotPath != nil
         )
         let payloadJSON = MonitoringLLMClient.encodePayload(payload)
-        let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .safelistAppeal)
-        let userPrompt = PromptCatalog.renderPolicyUserPrompt(
-            stage: .safelistAppeal,
+        let systemPrompt = ACPromptSets.systemPrompt(for: .safelistAppeal)
+        let userPrompt = ACPromptSets.renderUserPrompt(
+            for: .safelistAppeal,
             payloadJSON: payloadJSON
         )
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: configuration.runtimeProfileID)

@@ -358,6 +358,7 @@ enum RuntimeSetupService {
         let repository = repositoryIdentifier(for: modelIdentifier)
         let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
         return [
+            modelCacheURL(forRuntimePath: runtimePath, modelIdentifier: modelIdentifier),
             defaultHuggingFaceCacheURL()
                 .appendingPathComponent("hub", isDirectory: true)
                 .appendingPathComponent(cacheDirectoryName, isDirectory: true)

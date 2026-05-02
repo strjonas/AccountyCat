@@ -900,7 +900,10 @@ actor LocalModelRuntime {
 
     private func modelCacheRoots(runtimePath: String, repository: String) -> [URL] {
         let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
+        let runtimeCacheURL = repositoryURL(forRuntimePath: runtimePath)
+            .appendingPathComponent("\(repository)/\(cacheDirectoryName)", isDirectory: true)
         return [
+            runtimeCacheURL,
             Self.defaultHuggingFaceCacheURL()
                 .appendingPathComponent("hub", isDirectory: true)
                 .appendingPathComponent(cacheDirectoryName, isDirectory: true)

@@ -1973,6 +1973,11 @@ final class AppController: ObservableObject {
         let renderedMemory = state.memoryForPrompt(now: Date())
         let renderedPolicyRules = state.policyRulesForChatPrompt(now: Date())
 
+        let profileContext = AppControllerChatSupport.makeProfileContextForChatPrompt(
+            activeProfile: state.activeProfile,
+            availableProfiles: state.profiles.filter { $0.id != state.activeProfileID }
+        )
+
         let backend = state.monitoringConfiguration.inferenceBackend
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
         let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
@@ -1988,7 +1993,8 @@ final class AppController: ObservableObject {
                     reply: usingOnline
                         ? "Add your OpenRouter API key in Settings, then I can chat."
                         : "Finish local setup first, or switch to online mode in Settings.",
-                    memoryUpdate: nil
+                    memoryUpdate: nil,
+                    profileAction: nil
                 )
             } else if let response = await companionChatService.chat(
                 userMessage: cappedDraft,
@@ -1999,6 +2005,7 @@ final class AppController: ObservableObject {
                 memory: renderedMemory,
                 policyRules: renderedPolicyRules,
                 character: state.character,
+                activeProfileContext: profileContext,
                 runtimeOverride: state.runtimePathOverride,
                 inferenceBackend: backend,
                 onlineModelIdentifier: onlineModelIdentifier,
@@ -2011,7 +2018,8 @@ final class AppController: ObservableObject {
                     reply: usingOnline
                         ? "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
                         : "I couldn't answer just now. Check the logs and local runtime status.",
-                    memoryUpdate: nil
+                    memoryUpdate: nil,
+                    profileAction: nil
                 )
             }
 
@@ -2031,10 +2039,23 @@ final class AppController: ObservableObject {
                 self.sendingChatMessage = false
             }
             self.logActivity("chat", "Assistant: \(result.reply)")
-            self.schedulePolicyMemoryUpdate(
-                eventSummary: "Latest user chat message: \(trimmedDraft.cleanedSingleLine)",
-                context: SnapshotService.frontmostContext()
-            )
+
+            // Only call policyMemory when there's meaningful work.
+            // Profile actions + memory additions go through the designed policy_memory pipeline
+            // (per V1 Phase 5: LLM converts chat intent to structured profile/rule operations).
+            // No longer fires after every chat message.
+            if let profileAction = result.profileAction?.cleanedSingleLine, !profileAction.isEmpty {
+                self.logActivity("chat", "Profile action: \(profileAction)")
+                self.schedulePolicyMemoryUpdate(
+                    eventSummary: "Profile action: \(profileAction)",
+                    context: SnapshotService.frontmostContext()
+                )
+            } else if let memoryUpdate = result.memoryUpdate?.cleanedSingleLine, !memoryUpdate.isEmpty {
+                self.schedulePolicyMemoryUpdate(
+                    eventSummary: "Latest user chat message: \(trimmedDraft.cleanedSingleLine)",
+                    context: SnapshotService.frontmostContext()
+                )
+            }
             // Run consolidation lazily so the chat reply never waits for it.
             self.maybeConsolidateMemory()
         }
@@ -2947,5 +2968,35 @@ private enum AppControllerChatSupport {
             "actually productive",
         ]
         return markers.contains { lowered.contains($0) }
+    }
+
+    static func makeProfileContextForChatPrompt(
+        activeProfile: FocusProfile,
+        availableProfiles: [FocusProfile]
+    ) -> String {
+        let expiryLabel: String?
+        if let exp = activeProfile.expiresAt {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "HH:mm"
+            expiryLabel = formatter.string(from: exp)
+        } else {
+            expiryLabel = nil
+        }
+
+        let availableText = availableProfiles
+            .map { profile in
+                let desc = profile.description.map { " — \($0)" } ?? ""
+                return "- \(profile.name)\(desc)"
+            }
+            .joined(separator: "\n")
+
+        return ACPromptSets.chatProfileContextSection(
+            activeProfileName: activeProfile.name,
+            activeProfileDescription: activeProfile.description,
+            activeProfileIsDefault: activeProfile.isDefault,
+            activeProfileExpiresAtLabel: expiryLabel,
+            availableProfiles: availableText
+        )
     }
 }
