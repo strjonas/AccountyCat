@@ -16,6 +16,13 @@ final class BrainService: NSObject {
     var statusSink: ((String) -> Void)?
     var modelUsageSink: ((String) -> Void)?
 
+    /// Override for testing: substitute a real `SnapshotService.frontmostContext()` call.
+    var contextProvider: (() -> FrontmostContext?)?
+    /// Override for testing: substitute a real `SnapshotService.captureScreenshot()` call.
+    var screenshotCapture: (() async throws -> URL?)?
+    /// Override for testing: substitute a real `SnapshotService.idleSeconds()` call.
+    var idleSecondsProvider: (() -> TimeInterval)?
+
     private let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
     private let executiveArm: ExecutiveArm
     private let storageService: StorageService
@@ -337,7 +344,7 @@ final class BrainService: NSObject {
         }
     }
 
-    private func tick() async {
+    func tick() async {
         guard let stateProvider, var state = Optional(stateProvider()) else {
             return
         }
@@ -402,7 +409,7 @@ final class BrainService: NSObject {
             )
         }
 
-        let idleSeconds = SnapshotService.idleSeconds()
+        let idleSeconds = idleSecondsProvider?() ?? SnapshotService.idleSeconds()
         if idleSeconds >= 60 {
             cancelActiveEvaluationIfNeeded(reason: "idle_reset")
             await endActiveEpisode(
@@ -434,7 +441,7 @@ final class BrainService: NSObject {
             return
         }
 
-        guard let context = SnapshotService.frontmostContext() else {
+        guard let context = contextProvider?() ?? SnapshotService.frontmostContext() else {
             moodSink?(.idle)
             statusSink?("Could not read the active app yet.")
             return
@@ -899,7 +906,11 @@ final class BrainService: NSObject {
         let persistVerboseTelemetry = shouldPersistVerboseTelemetry(state: state)
         let screenshotURL: URL?
         if requiresScreenshot {
-            screenshotURL = try await SnapshotService.captureScreenshot()
+            if let overrideCapture = screenshotCapture {
+                screenshotURL = try await overrideCapture()
+            } else {
+                screenshotURL = try await SnapshotService.captureScreenshot()
+            }
         } else {
             screenshotURL = nil
         }
