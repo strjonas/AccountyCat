@@ -31,7 +31,7 @@ Key directories:
 - `AC/Models/` — data types and state definitions
 - `AC/UI/` — SwiftUI views
 - `ACShared/` — code shared between AC and ACInspector (model config, prompt tuning, telemetry)
-- `AC/Resources/Prompts/` — prompt text files organized by function (Chat, Extraction, Memory, Monitoring, Nudge)
+- `AC/Resources/Prompts/` — prompt text files organized by function (Chat, Memory, Monitoring)
 - `_Legacy/` — old monitoring implementations excluded from build; don't add to active targets
 
 ## Testing
@@ -40,6 +40,7 @@ Key directories:
 - `ACTests/Goldens/` holds golden JSON files for snapshot-style tests.
 - UI tests exist in `ACUITests/` but are minimal.
 - **Never use `AppController.shared` or `StorageService()` in tests.** Both write to the user's real state file at `~/Library/Application Support/AC/state.json`. Use `AppController.makeForTesting(storageService: .temporary())` or `StorageService.temporary()` instead. The test host launches `AppDelegate`, which now detects XCTest and skips real initialization — but explicit isolation in test code is still required for correctness.
+- **Never let `runtimePathOverride` from a `FakeRuntimeFixture` leak into the real state file.** A fixture path persisted as `runtimePathOverride` routes all LLM calls (including chat) through the fakery script, which returns wrong-format JSON for anything it doesn't recognize. `ACState.sanitizeRuntimePathOverride` discards override paths under `NSTemporaryDirectory` or containing `ac-fake-runtime` on decode, and `AppController.updateRuntimeOverride` applies the same guard when set via Settings.
 
 ## V1 roadmap
 
