@@ -1818,9 +1818,29 @@ final class AppController: ObservableObject {
                 self.state.algorithmState = output.updatedAlgorithmState
 
                 // Hard escalation deny → minimize the app
-                if presentation.isHardEscalation, output.result.decision == .deny {
+                if presentation.isHardEscalation && output.result.decision == .deny {
                     self.state.hardEscalation?.lastAppealText = trimmedAppeal
                     self.state.hardEscalation?.lastAppealResult = output.result.decision
+                    self.state.hardEscalation?.denialCount += 1
+                    let denialCount = self.state.hardEscalation?.denialCount ?? 1
+
+                    // Auto-release after 3 consecutive denials — the user really wants this app
+                    if denialCount >= 3 {
+                        self.appendMemoryLine("• AC released hard escalation on \(presentation.appName) after \(denialCount) denials. User appeal: \"\(trimmedAppeal)\"")
+                        self.schedulePolicyMemoryUpdate(
+                            eventSummary: "AC gave up on hard escalation for \(presentation.appName) after \(denialCount) denied appeals. User's last explanation: \(trimmedAppeal).",
+                            context: SnapshotService.frontmostContext()
+                        )
+                        self.state.hardEscalation = nil
+                        self.activeOverlay = nil
+                        self.overlayVisible = false
+                        self.executiveArm?.dismissOverlay()
+                        self.overlayAppealDraft = ""
+                        self.companionMood = .watching
+                        self.persistState()
+                        return
+                    }
+
                     // Find and minimize the app
                     if let escalation = self.state.hardEscalation,
                        let bid = escalation.bundleIdentifier ?? SnapshotService.frontmostContext()?.bundleIdentifier {
@@ -1853,7 +1873,7 @@ final class AppController: ObservableObject {
                         secondaryButtonTitle: "I'll get back to work",
                         isHardEscalation: true
                     )
-                } else if presentation.isHardEscalation, output.result.decision == .allow {
+                } else if presentation.isHardEscalation && output.result.decision == .allow {
                     // User convinced AC — save to memory, clear hard escalation
                     self.state.hardEscalation = nil
                     self.appendMemoryLine("• User convinced AC to allow \(presentation.appName): \"\(trimmedAppeal)\"")

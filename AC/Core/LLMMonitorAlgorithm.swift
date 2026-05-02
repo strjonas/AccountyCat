@@ -483,7 +483,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     secondaryButtonTitle: "Back to work"
                 )
                 let finalPresentation = isHard
-                    ? presentation.withHardEscalation
+                    ? presentation.withHardEscalation(character: input.character)
                     : presentation
                 policyState.lastOverlayAt = input.now
                 policyState.lastInterventionAt = input.now
@@ -2077,6 +2077,44 @@ private extension OverlayPresentation {
             secondaryButtonTitle: "Back to work",
             isHardEscalation: true
         )
+    }
+
+    func withHardEscalation(character: ACCharacter) -> OverlayPresentation {
+        switch character {
+        case .mochi:
+            return OverlayPresentation(
+                headline: "Hey, can I ask you something?",
+                body: "I've noticed you're spending time on \(appName). I just want to make sure — is this really helping you move forward right now?",
+                prompt: "Tell me why \(appName) is supporting your goals…",
+                appName: appName,
+                evaluationID: evaluationID,
+                submitButtonTitle: "Let me explain",
+                secondaryButtonTitle: "You're right, back to work",
+                isHardEscalation: true
+            )
+        case .nova:
+            return OverlayPresentation(
+                headline: "Accountability check.",
+                body: "You're on \(appName) again. Two nudges haven't helped, and no feedback from your side. Tell me why I should let this slide.",
+                prompt: "Is \(appName) actually serving your goals right now? Convince me.",
+                appName: appName,
+                evaluationID: evaluationID,
+                submitButtonTitle: "Make your case",
+                secondaryButtonTitle: "Fine, get me back to work",
+                isHardEscalation: true
+            )
+        case .sage:
+            return OverlayPresentation(
+                headline: "A moment of reflection.",
+                body: "You've returned to \(appName) several times. Rather than nudging again, I'd like to understand — does this serve your deeper goals?",
+                prompt: "Why is \(appName) the right place for you right now?",
+                appName: appName,
+                evaluationID: evaluationID,
+                submitButtonTitle: "Reflect",
+                secondaryButtonTitle: "Return to work",
+                isHardEscalation: true
+            )
+        }
     }
 }
 
