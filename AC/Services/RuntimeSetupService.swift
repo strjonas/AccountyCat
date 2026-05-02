@@ -38,6 +38,10 @@ enum RuntimeSetupService {
         runtimeRepositoryURL(in: resolvedBaseDirectory()).path
     }
 
+    nonisolated static var managedHuggingFaceCachePath: String {
+        defaultHuggingFaceCacheURL().path
+    }
+
     nonisolated static func inspect(runtimeOverride: String?, modelIdentifier: String) -> RuntimeDiagnostics {
         let runtimePath = normalizedRuntimePath(from: runtimeOverride)
         let runtimeDirectory = runtimeDirectoryPath(for: runtimePath)
@@ -45,15 +49,17 @@ enum RuntimeSetupService {
             forRuntimePath: runtimePath,
             modelIdentifier: modelIdentifier
         )
+        let resolvedArtifacts = resolvedModelArtifacts(
+            cacheRoots: modelCacheRoots,
+            modelIdentifier: modelIdentifier
+        )
         let existingModelCacheRoot = modelCacheRoots.first {
             FileManager.default.fileExists(atPath: $0.path)
         }
         let modelCachePath = (existingModelCacheRoot ?? modelCacheRoots.first)?.path ?? ""
         let modelCachePresent = existingModelCacheRoot != nil
-        let modelArtifactsPresent = hasModelArtifacts(
-            cacheRoots: modelCacheRoots,
-            modelIdentifier: modelIdentifier
-        )
+        let managedModelCachePath = managedModelCacheURL(for: modelIdentifier).path
+        let modelArtifactsPresent = resolvedArtifacts != nil
         let tools = ["git", "cmake", "ninja"]
         let missingTools = tools.filter { tool in
             !toolExists(tool)
@@ -64,10 +70,121 @@ enum RuntimeSetupService {
             runtimeDirectory: runtimeDirectory,
             runtimePresent: FileManager.default.isExecutableFile(atPath: runtimePath),
             modelCachePath: modelCachePath,
+            managedModelCachePath: managedModelCachePath,
             modelCachePresent: modelCachePresent,
             modelArtifactsPresent: modelArtifactsPresent,
+            resolvedModelPath: resolvedArtifacts?.modelURL.path,
+            resolvedProjectorPath: resolvedArtifacts?.projectorURL?.path,
             missingTools: missingTools
         )
+    }
+
+    nonisolated static func managedModelCacheURL(for modelIdentifier: String) -> URL {
+        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
+        let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
+        return defaultHuggingFaceCacheURL()
+            .appendingPathComponent("hub", isDirectory: true)
+            .appendingPathComponent(cacheDirectoryName, isDirectory: true)
+    }
+
+    @discardableResult
+    static func deleteManagedModelCache(for modelIdentifier: String) throws -> Bool {
+        let cacheURL = managedModelCacheURL(for: modelIdentifier)
+        guard FileManager.default.fileExists(atPath: cacheURL.path) else {
+            return false
+        }
+        try FileManager.default.removeItem(at: cacheURL)
+        return true
+    }
+
+    @discardableResult
+    static func deleteAllManagedModelCaches() throws -> Bool {
+        let hubURL = defaultHuggingFaceCacheURL().appendingPathComponent("hub", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: hubURL.path) else {
+            return false
+        }
+        try FileManager.default.removeItem(at: hubURL)
+        return true
+    }
+
+    @discardableResult
+    static func deleteManagedModelCache(at cachePath: String) throws -> Bool {
+        let cacheURL = URL(fileURLWithPath: cachePath)
+        guard FileManager.default.fileExists(atPath: cacheURL.path) else {
+            return false
+        }
+        try FileManager.default.removeItem(at: cacheURL)
+        return true
+    }
+
+    @discardableResult
+    static func deleteCachesCreatedByAC(
+        for modelIdentifier: String,
+        selectedCachePath: String,
+        runtimePath: String
+    ) throws -> Int {
+        var removed = 0
+        var seenPaths = Set<String>()
+
+        let candidateURLs = [
+            URL(fileURLWithPath: selectedCachePath),
+            modelCacheURL(forRuntimePath: runtimePath, modelIdentifier: modelIdentifier)
+        ]
+
+        for url in candidateURLs {
+            let standardizedPath = url.standardizedFileURL.path
+            guard seenPaths.insert(standardizedPath).inserted else { continue }
+            guard FileManager.default.fileExists(atPath: standardizedPath) else { continue }
+            try FileManager.default.removeItem(at: URL(fileURLWithPath: standardizedPath))
+            removed += 1
+        }
+
+        return removed
+    }
+
+    nonisolated static func managedInstalledModels() -> [InstalledLocalModel] {
+        let hubURL = defaultHuggingFaceCacheURL().appendingPathComponent("hub", isDirectory: true)
+        guard
+            let cacheRoots = try? FileManager.default.contentsOfDirectory(
+                at: hubURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return []
+        }
+
+        return cacheRoots.compactMap { cacheRoot in
+            let values = try? cacheRoot.resourceValues(forKeys: [.isDirectoryKey])
+            guard values?.isDirectory == true else { return nil }
+            guard cacheRoot.lastPathComponent.hasPrefix("models--") else { return nil }
+
+            let repository = repositoryIdentifier(fromCacheDirectoryName: cacheRoot.lastPathComponent)
+            guard
+                let artifacts = resolvedModelArtifacts(
+                    cacheRoots: [cacheRoot],
+                    modelIdentifier: repository
+                )
+            else {
+                return nil
+            }
+
+            let modelIdentifier = inferredModelIdentifier(
+                repository: repository,
+                modelURL: artifacts.modelURL
+            )
+            return InstalledLocalModel(
+                modelIdentifier: modelIdentifier,
+                repositoryIdentifier: repository,
+                cachePath: cacheRoot.path,
+                snapshotPath: artifacts.snapshotURL.path,
+                modelPath: artifacts.modelURL.path,
+                projectorPath: artifacts.projectorURL?.path
+            )
+        }
+        .sorted { lhs, rhs in
+            lhs.modelIdentifier.localizedCaseInsensitiveCompare(rhs.modelIdentifier) == .orderedAscending
+        }
     }
 
     static func installRuntime(log: @escaping @MainActor (String) -> Void) async throws {
@@ -222,9 +339,35 @@ enum RuntimeSetupService {
         cacheRoots: [URL],
         modelIdentifier: String
     ) -> Bool {
+        resolvedModelArtifacts(cacheRoots: cacheRoots, modelIdentifier: modelIdentifier) != nil
+    }
+
+    nonisolated private static func modelCacheRoots(
+        forRuntimePath runtimePath: String,
+        modelIdentifier: String
+    ) -> [URL] {
+        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
+        let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
+        return [
+            defaultHuggingFaceCacheURL()
+                .appendingPathComponent("hub", isDirectory: true)
+                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
+        ]
+    }
+
+    nonisolated private static func defaultHuggingFaceCacheURL() -> URL {
+        TelemetryPaths.applicationSupportURL()
+            .appendingPathComponent("runtime", isDirectory: true)
+            .appendingPathComponent("hf-cache", isDirectory: true)
+    }
+
+    nonisolated private static func resolvedModelArtifacts(
+        cacheRoots: [URL],
+        modelIdentifier: String
+    ) -> ResolvedModelArtifacts? {
         let components = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard components.first != nil else {
-            return false
+            return nil
         }
 
         let quant = components.count > 1 ? String(components[1]).uppercased() : nil
@@ -244,76 +387,64 @@ enum RuntimeSetupService {
                 continue
             }
 
-            let modelCandidates = files.filter {
-                $0.pathExtension.lowercased() == "gguf" &&
+            let ggufFiles = files.filter { $0.pathExtension.lowercased() == "gguf" }
+            let projectorURL = ggufFiles.first {
+                $0.lastPathComponent.lowercased().contains("mmproj")
+            }
+            let modelCandidates = ggufFiles.filter {
                 !$0.lastPathComponent.lowercased().contains("mmproj")
             }
-            if modelCandidates.isEmpty {
+            guard let modelURL = selectModelFile(from: modelCandidates, quant: quant) else {
                 continue
             }
 
-            guard let quant else {
-                return true
-            }
-
-            let hasQuantMatch = modelCandidates.contains { candidate in
-                let basename = candidate.deletingPathExtension().lastPathComponent.uppercased()
-                return basename.hasSuffix("-\(quant)") ||
-                    basename.hasSuffix("_\(quant)") ||
-                    basename.contains("-\(quant)-") ||
-                    basename.contains("_\(quant)_") ||
-                    basename.contains(quant)
-            }
-            if hasQuantMatch {
-                return true
-            }
-        }
-
-        return false
-    }
-
-    nonisolated private static func modelCacheRoots(
-        forRuntimePath runtimePath: String,
-        modelIdentifier: String
-    ) -> [URL] {
-        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
-        let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
-
-        var roots: [URL] = [
-            modelCacheURL(forRuntimePath: runtimePath, modelIdentifier: modelIdentifier)
-        ]
-
-        if let hfHome = ProcessInfo.processInfo.environment["HF_HOME"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !hfHome.isEmpty {
-            roots.append(
-                URL(fileURLWithPath: hfHome, isDirectory: true)
-                    .appendingPathComponent("hub", isDirectory: true)
-                    .appendingPathComponent(cacheDirectoryName, isDirectory: true)
+            return ResolvedModelArtifacts(
+                cacheRoot: cacheRoot,
+                snapshotURL: snapshotURL,
+                modelURL: modelURL,
+                projectorURL: projectorURL
             )
         }
 
-        roots.append(
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache", isDirectory: true)
-                .appendingPathComponent("huggingface", isDirectory: true)
-                .appendingPathComponent("hub", isDirectory: true)
-                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
-        )
-
-        roots.append(
-            defaultHuggingFaceCacheURL()
-                .appendingPathComponent("hub", isDirectory: true)
-                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
-        )
-
-        return roots
+        return nil
     }
 
-    nonisolated private static func defaultHuggingFaceCacheURL() -> URL {
-        TelemetryPaths.applicationSupportURL()
-            .appendingPathComponent("runtime", isDirectory: true)
-            .appendingPathComponent("hf-cache", isDirectory: true)
+    nonisolated private static func selectModelFile(from candidates: [URL], quant: String?) -> URL? {
+        guard !candidates.isEmpty else { return nil }
+        guard let quant, !quant.isEmpty else { return candidates.first }
+
+        return candidates.first { candidate in
+            let basename = candidate.deletingPathExtension().lastPathComponent.uppercased()
+            return basename.hasSuffix("-\(quant)") ||
+                basename.hasSuffix("_\(quant)") ||
+                basename.contains("-\(quant)-") ||
+                basename.contains("_\(quant)_") ||
+                basename.contains(quant)
+        } ?? candidates.first
+    }
+
+    nonisolated private static func repositoryIdentifier(fromCacheDirectoryName directoryName: String) -> String {
+        let encoded = String(directoryName.dropFirst("models--".count))
+        return encoded.replacingOccurrences(of: "--", with: "/")
+    }
+
+    nonisolated private static func inferredModelIdentifier(repository: String, modelURL: URL) -> String {
+        let baseName = modelURL.deletingPathExtension().lastPathComponent
+        let repositoryName = repository.components(separatedBy: "/").last ?? repository
+        let normalizedRepositoryName = repositoryName.replacingOccurrences(of: "-GGUF", with: "")
+        let quant: String?
+        if baseName.hasPrefix(normalizedRepositoryName + "-") {
+            quant = String(baseName.dropFirst(normalizedRepositoryName.count + 1))
+        } else if baseName.hasPrefix(normalizedRepositoryName + "_") {
+            quant = String(baseName.dropFirst(normalizedRepositoryName.count + 1))
+        } else {
+            quant = nil
+        }
+
+        guard let quant, !quant.isEmpty else {
+            return repository
+        }
+        return "\(repository):\(quant)"
     }
 
     nonisolated private static func resolvedSnapshotURL(cacheRoot: URL, snapshotsRoot: URL) -> URL? {
@@ -478,6 +609,13 @@ enum RuntimeSetupService {
         }
         return removed
     }
+}
+
+private struct ResolvedModelArtifacts: Sendable {
+    var cacheRoot: URL
+    var snapshotURL: URL
+    var modelURL: URL
+    var projectorURL: URL?
 }
 
 /// Rolling buffer for the last N lines of stderr so we can include them when

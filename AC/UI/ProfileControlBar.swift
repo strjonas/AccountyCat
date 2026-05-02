@@ -17,31 +17,13 @@ struct ProfileControlBar: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var nowTick: Date = Date()
     @State private var isHovering: Bool = false
+    @State private var isShowingPopover = false
 
     private var active: FocusProfile { controller.state.activeProfile }
-    private var otherProfiles: [FocusProfile] {
-        controller.state.profiles
-            .filter { $0.id != active.id && !$0.isDefault }
-            .sorted { $0.lastUsedAt > $1.lastUsedAt }
-    }
-    private var standardProfile: FocusProfile? {
-        controller.state.profiles.first(where: { $0.isDefault })
-    }
-    private var switchableProfiles: [FocusProfile] {
-        var profiles: [FocusProfile] = []
-        if let standard = standardProfile, standard.id != active.id {
-            profiles.append(standard)
-        }
-        profiles.append(contentsOf: otherProfiles)
-        return profiles
-    }
 
     var body: some View {
-        Menu {
-            profileStatusSection
-            Divider()
-            monitoringControlsSection
-            profileControlsSection
+        Button {
+            isShowingPopover.toggle()
         } label: {
             HStack(spacing: 0) {
                 HStack(spacing: 6) {
@@ -103,14 +85,18 @@ struct ProfileControlBar: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .animation(.acFade, value: isHovering)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
         .onHover { hovering in
             isHovering = hovering
         }
         .onReceive(Self.tickPublisher) { date in
             nowTick = date
+        }
+        .popover(isPresented: $isShowingPopover, arrowEdge: .top) {
+            ProfileQuickPopoverView(showOpenAppButton: false)
+                .environmentObject(controller)
+                .acAccent(for: controller.state.character)
         }
         .help("Click to manage focus profile. \(helpText)")
     }
@@ -148,71 +134,6 @@ struct ProfileControlBar: View {
         colorScheme == .dark ? Color.white.opacity(active.isDefault ? 0.88 : 0.96) : Color.acTextPrimary
     }
 
-    @ViewBuilder
-    private var profileStatusSection: some View {
-        Text(active.isDefault ? "Profile: \(active.name)" : "Profile: \(active.name) \(remainingText)")
-        if active.isDefault {
-            Text("Tip: tell AC “focus on writing for 90 minutes” to start a session.")
-        } else if let exp = active.expiresAt {
-            Text("Ends at \(timeLabel(exp))")
-        }
-    }
-
-    @ViewBuilder
-    private var monitoringControlsSection: some View {
-        Button {
-            controller.togglePause()
-        } label: {
-            Label(
-                controller.state.isPaused ? "Resume Monitoring" : "Pause Monitoring",
-                systemImage: controller.state.isPaused ? "play.fill" : "pause.fill"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var profileControlsSection: some View {
-        if !active.isDefault {
-            Button {
-                extendActiveProfile(minutes: 30)
-            } label: {
-                Label("Extend by 30 Minutes", systemImage: "plus.circle")
-            }
-            Button {
-                extendActiveProfile(minutes: 60)
-            } label: {
-                Label("Extend by 1 Hour", systemImage: "plus.circle.fill")
-            }
-            Button(role: .destructive) {
-                controller.endActiveProfile(announce: true)
-            } label: {
-                Label("End \(active.name)", systemImage: "stop.fill")
-            }
-            Divider()
-        }
-
-        if switchableProfiles.isEmpty {
-            Text("No other saved profiles")
-        } else {
-            ForEach(switchableProfiles, id: \.id) { profile in
-                Button {
-                    _ = controller.activateProfile(
-                        id: profile.id,
-                        expiresAt: nil,
-                        reason: "user_switched",
-                        announce: true
-                    )
-                } label: {
-                    Label(switchLabel(for: profile), systemImage: "arrow.triangle.2.circlepath")
-                }
-            }
-        }
-    }
-
-    private func switchLabel(for profile: FocusProfile) -> String {
-        profile.isDefault ? "Switch to General" : "Switch to \(profile.name)"
-    }
-
     private var labelText: String {
         if active.isDefault {
             return active.name
@@ -237,24 +158,5 @@ struct ProfileControlBar: View {
             return "Active focus profile: \(active.name)"
         }
         return "Active focus profile: \(active.name)\(remainingText)"
-    }
-
-    private func extendActiveProfile(minutes: Int) {
-        guard !active.isDefault else { return }
-        let baseline = max(active.expiresAt ?? Date(), Date())
-        let newExpiry = baseline.addingTimeInterval(TimeInterval(minutes) * 60)
-        _ = controller.activateProfile(
-            id: active.id,
-            expiresAt: newExpiry,
-            reason: "user_extended",
-            announce: true
-        )
-    }
-
-    private func timeLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
     }
 }

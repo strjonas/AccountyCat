@@ -11,7 +11,9 @@ import Foundation
 @MainActor
 final class BrainService: NSObject {
     var stateProvider: (() -> ACState)?
-    var stateSink: ((ACState) -> Void)?
+    /// Applies BrainService output on top of the original state snapshot used for the work.
+    /// This lets AppController merge monitoring changes without wiping unrelated concurrent edits.
+    var stateSink: ((ACState, ACState) -> Void)?
     var moodSink: ((CompanionMood) -> Void)?
     var statusSink: ((String) -> Void)?
     var modelUsageSink: ((String) -> Void)?
@@ -161,7 +163,8 @@ final class BrainService: NSObject {
     }
 
     func resetDistractionState() {
-        guard var state = stateProvider?() else { return }
+        guard let baseState = stateProvider?() else { return }
+        var state = baseState
         do {
             try monitoringAlgorithmRegistry.resetSelectedAlgorithmTransientState(
                 configuration: state.monitoringConfiguration,
@@ -170,7 +173,7 @@ final class BrainService: NSObject {
         } catch {
             handleMonitoringConfigurationError(error)
         }
-        stateSink?(state)
+        stateSink?(baseState, state)
     }
 
     func resetAlgorithmProfile() {
@@ -182,9 +185,10 @@ final class BrainService: NSObject {
 
     func handleMonitoringConfigurationChange() {
         cancelActiveEvaluationIfNeeded(reason: "monitoring_configuration_changed")
-        guard var state = stateProvider?() else { return }
+        guard let baseState = stateProvider?() else { return }
+        var state = baseState
         state.algorithmState = AlgorithmStateEnvelope()
-        stateSink?(state)
+        stateSink?(baseState, state)
         resetRuntimeContext()
     }
 
@@ -223,7 +227,8 @@ final class BrainService: NSObject {
         // but the seam remains in place if learning-based variants return later.
         if let reward = Self.rewardValue(for: reaction.kind),
            let captured = matchingPendingReaction(for: reaction),
-           var state = stateProvider?() {
+           let baseState = stateProvider?() {
+            var state = baseState
             let signal = MonitoringRewardSignal(
                 evaluationID: captured.evaluationID,
                 kind: reaction.kind,
@@ -238,8 +243,8 @@ final class BrainService: NSObject {
             } catch {
                 handleMonitoringConfigurationError(error)
             }
-            stateSink?(state)
-            maybePersist(state: state, at: Date(), force: true)
+            stateSink?(baseState, state)
+            maybePersist(base: baseState, updated: state, at: Date(), force: true)
             pendingReactionsByEvaluationID.removeValue(forKey: captured.evaluationID)
         }
 
@@ -345,9 +350,10 @@ final class BrainService: NSObject {
     }
 
     func tick() async {
-        guard let stateProvider, var state = Optional(stateProvider()) else {
+        guard let stateProvider, let baseState = Optional(stateProvider()) else {
             return
         }
+        var state = baseState
 
         if state.setupStatus != .ready {
             moodSink?(.setup)
@@ -400,7 +406,7 @@ final class BrainService: NSObject {
                 timestamp: now,
                 interruptionPolicy: .deferred
             ))
-            stateSink?(state)
+            stateSink?(baseState, state)
             await appendMonitoringMetric(
                 kind: .profileChanged,
                 reason: "profile_expired",
@@ -434,7 +440,7 @@ final class BrainService: NSObject {
                 state: state,
                 detail: "\(Int(idleSeconds))s"
             )
-            stateSink?(state)
+            stateSink?(baseState, state)
             moodSink?(.idle)
             statusSink?("You look idle, so AC backed off.")
             lastObservedAt = now
@@ -483,7 +489,7 @@ final class BrainService: NSObject {
 
         lastObservedContext = context
         state.recentSwitches = recentSwitches
-        maybePersist(state: state, at: now)
+        maybePersist(base: baseState, updated: state, at: now)
 
         await resolvePendingReactionIfNeeded(now: now, context: context)
 
@@ -492,7 +498,7 @@ final class BrainService: NSObject {
         guard !isEvaluating else {
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")
-            stateSink?(state)
+            stateSink?(baseState, state)
             return
         }
 
@@ -527,7 +533,7 @@ final class BrainService: NSObject {
             )
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")
-            stateSink?(state)
+            stateSink?(baseState, state)
             return
         }
 
@@ -614,7 +620,7 @@ final class BrainService: NSObject {
             )
         } catch {
             statusSink?("Snapshot capture failed. Trying again later.")
-            stateSink?(state)
+            stateSink?(baseState, state)
             await ActivityLogService.shared.append(category: "snapshot-error", message: error.localizedDescription)
             await appendFailureIfNeeded(
                 domain: "snapshot",
@@ -685,7 +691,7 @@ final class BrainService: NSObject {
         } catch is CancellationError {
             moodSink?(.watching)
             statusSink?("Context changed during evaluation — cancelled.")
-            stateSink?(state)
+            stateSink?(baseState, state)
             return
         } catch {
             handleMonitoringConfigurationError(error)
@@ -754,7 +760,7 @@ final class BrainService: NSObject {
             } catch is CancellationError {
                 moodSink?(.watching)
                 statusSink?("Context changed during retry — cancelled.")
-                stateSink?(state)
+                stateSink?(baseState, state)
                 return
             } catch {
                 // Retry failure: keep the original unclear verdict, log, and continue.
@@ -804,7 +810,7 @@ final class BrainService: NSObject {
         guard lastObservedContext?.contextKey == context.contextKey else {
             moodSink?(.watching)
             statusSink?("Context changed during evaluation — action discarded.")
-            stateSink?(state)
+            stateSink?(baseState, state)
             await appendFailureIfNeeded(
                 domain: "policy",
                 message: "stale_context: evaluation started in \(context.appName) but user has since moved away",
@@ -818,7 +824,7 @@ final class BrainService: NSObject {
                 action: .none,
                 execution: decisionResult.execution
             )
-            maybePersist(state: state, at: now, force: true)
+            maybePersist(base: baseState, updated: state, at: now, force: true)
             return
         }
 
@@ -838,7 +844,7 @@ final class BrainService: NSObject {
             ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             attachIntervention(actionID, toLatestSegmentIn: &state)
-            stateSink?(state)
+            stateSink?(baseState, state)
             moodSink?(.nudging)
             statusSink?("Nudged while you were in \(context.appName).")
             executiveArm.perform(.showNudge(message))
@@ -865,7 +871,7 @@ final class BrainService: NSObject {
             ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             attachIntervention(actionID, toLatestSegmentIn: &state)
-            stateSink?(state)
+            stateSink?(baseState, state)
             moodSink?(.escalated)
             statusSink?("Escalated after repeated distraction signals.")
             executiveArm.perform(.showOverlay(presentation))
@@ -880,7 +886,7 @@ final class BrainService: NSObject {
         case .none:
             moodSink?(.watching)
             statusSink?("No action needed in \(context.appName).")
-            stateSink?(state)
+            stateSink?(baseState, state)
         }
 
         await appendActionExecutedEvent(
@@ -891,7 +897,7 @@ final class BrainService: NSObject {
             execution: decisionResult.execution
         )
 
-        maybePersist(state: state, at: now, force: true)
+        maybePersist(base: baseState, updated: state, at: now, force: true)
     }
 
     private func buildSnapshot(
@@ -1048,12 +1054,13 @@ final class BrainService: NSObject {
         }
     }
 
-    private func maybePersist(state: ACState, at now: Date, force: Bool = false) {
+    private func maybePersist(base: ACState, updated: ACState, at now: Date, force: Bool = false) {
         guard force || now.timeIntervalSince(lastPersistAt) >= 30 else {
             return
         }
 
-        storageService.saveState(state)
+        stateSink?(base, updated)
+        storageService.saveState(stateProvider?() ?? updated)
         lastPersistAt = now
     }
 

@@ -1017,8 +1017,11 @@ struct RuntimeDiagnostics: Sendable {
     var runtimeDirectory: String
     var runtimePresent: Bool
     var modelCachePath: String
+    var managedModelCachePath: String
     var modelCachePresent: Bool
     var modelArtifactsPresent: Bool
+    var resolvedModelPath: String?
+    var resolvedProjectorPath: String?
     var missingTools: [String]
 
     var isReady: Bool {
@@ -1028,4 +1031,14 @@ struct RuntimeDiagnostics: Sendable {
     var canInstall: Bool {
         missingTools.isEmpty
     }
+}
+
+struct InstalledLocalModel: Identifiable, Sendable, Hashable {
+    var id: String { cachePath }
+    var modelIdentifier: String
+    var repositoryIdentifier: String
+    var cachePath: String
+    var snapshotPath: String
+    var modelPath: String
+    var projectorPath: String?
 }

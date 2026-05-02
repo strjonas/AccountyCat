@@ -33,6 +33,11 @@ final class AppController: ObservableObject {
     @Published var modelDownloadNotice: ModelDownloadNotice?
     @Published var modelDownloadSuccess: ModelDownloadSuccess?
     @Published var dependencyInstallPromptVisible = false
+    @Published var deletingManagedModels = false
+    @Published var importingModelToOllama = false
+    @Published var selectedInstalledModelCachePath: String?
+    @Published var localModelStorageMessage: String?
+    @Published var localModelStorageError: String?
     @Published var showingOnboardingCompletion = false
     @Published var activityStatusText = "Checking permissions and local runtime."
     @Published var chatMessages: [ChatMessage]
@@ -59,6 +64,10 @@ final class AppController: ObservableObject {
     /// Closure set by AppDelegate to allow UI components (like ContentView's X button)
     /// to close the main NSPopover.
     var dismissPopover: (() -> Void)?
+    /// Closure set by AppDelegate so compact controls can open the full app popover on demand.
+    var openMainPopover: (() -> Void)?
+    /// Closure set by AppDelegate so compact controls can dismiss the menu-bar quick popover.
+    var dismissProfilePopover: (() -> Void)?
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 8
@@ -202,6 +211,136 @@ final class AppController: ObservableObject {
         storageService.saveState(state)
     }
 
+    var selectedLocalModelIdentifier: String {
+        pendingLocalModelChange?.modelIdentifier
+            ?? state.monitoringConfiguration.localModelIdentifierImage
+            ?? state.monitoringConfiguration.localModelIdentifierText
+            ?? state.aiTier.localModelIdentifierText
+    }
+
+    var localModelDiagnostics: RuntimeDiagnostics {
+        RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: selectedLocalModelIdentifier
+        )
+    }
+
+    var installedManagedModels: [InstalledLocalModel] {
+        RuntimeSetupService.managedInstalledModels()
+    }
+
+    var selectedInstalledModel: InstalledLocalModel? {
+        let installed = installedManagedModels
+        guard !installed.isEmpty else { return nil }
+
+        if let selectedInstalledModelCachePath,
+           let exact = installed.first(where: { $0.cachePath == selectedInstalledModelCachePath }) {
+            return exact
+        }
+
+        if let current = installed.first(where: { $0.modelIdentifier == selectedLocalModelIdentifier }) {
+            return current
+        }
+
+        return installed.first
+    }
+
+    func selectInstalledModel(cachePath: String) {
+        selectedInstalledModelCachePath = cachePath
+    }
+
+    func revealManagedModelLocation() {
+        localModelStorageError = nil
+        guard let selectedInstalledModel else {
+            localModelStorageError = "No AC-downloaded local models were found."
+            return
+        }
+        let targetPath = selectedInstalledModel.modelPath
+        let url = URL(fileURLWithPath: targetPath)
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+
+        let parentURL = url.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: parentURL.path) else {
+            localModelStorageError = "The model folder does not exist yet."
+            return
+        }
+
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: parentURL.path)
+    }
+
+    func deleteManagedModels() {
+        guard !deletingManagedModels else { return }
+        guard let selectedInstalledModel else {
+            localModelStorageError = "No AC-downloaded local models were found."
+            return
+        }
+
+        deletingManagedModels = true
+        localModelStorageMessage = nil
+        localModelStorageError = nil
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.localModelRuntime.shutdown()
+
+            do {
+                let removed = try RuntimeSetupService.deleteCachesCreatedByAC(
+                    for: selectedInstalledModel.modelIdentifier,
+                    selectedCachePath: selectedInstalledModel.cachePath,
+                    runtimePath: RuntimeSetupService.normalizedRuntimePath(from: self.state.runtimePathOverride)
+                )
+                self.pendingLocalModelChange = nil
+                self.modelDownloadNotice = nil
+                self.modelDownloadSuccess = nil
+                self.refreshSystemState()
+                let remaining = self.installedManagedModels
+                self.selectedInstalledModelCachePath = remaining.first?.cachePath
+                self.localModelStorageMessage = removed > 0
+                    ? "Deleted \(Self.shortModelName(for: selectedInstalledModel.modelIdentifier))."
+                    : "That AC-downloaded local model was already gone."
+            } catch {
+                self.localModelStorageError = error.localizedDescription
+            }
+
+            self.deletingManagedModels = false
+        }
+    }
+
+    func importCurrentModelToOllama() {
+        guard !importingModelToOllama else { return }
+        guard let selectedInstalledModel else {
+            localModelStorageError = "Download a local model first."
+            return
+        }
+        guard let ollamaPath = Self.resolvedExecutablePath("ollama") else {
+            localModelStorageError = "Ollama is not installed or not on PATH."
+            return
+        }
+
+        importingModelToOllama = true
+        localModelStorageMessage = nil
+        localModelStorageError = nil
+
+        let ollamaModelName = Self.ollamaModelName(for: selectedInstalledModel.modelIdentifier)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Self.importModelToOllama(
+                    ollamaPath: ollamaPath,
+                    modelPath: selectedInstalledModel.modelPath,
+                    modelName: ollamaModelName
+                )
+                self.localModelStorageMessage = "Imported to Ollama as \(ollamaModelName). Ollama stores its own copy; check `ollama list`."
+            } catch {
+                self.localModelStorageError = error.localizedDescription
+            }
+            self.importingModelToOllama = false
+        }
+    }
+
     func updateGoals(_ text: String) {
         state.goalsText = text
         persistState()
@@ -257,6 +396,112 @@ final class AppController: ObservableObject {
         logActivity("brain", "User deleted rule: \(id)")
     }
 
+    private nonisolated static func importModelToOllama(
+        ollamaPath: String,
+        modelPath: String,
+        modelName: String
+    ) async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AC-Ollama-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let modelfileURL = tempDirectory.appendingPathComponent("Modelfile")
+        let modelfileContents = "FROM \(modelPath)\n"
+        try modelfileContents.write(to: modelfileURL, atomically: true, encoding: .utf8)
+
+        _ = try await runProcess(
+            launchPath: ollamaPath,
+            arguments: ["create", modelName, "-f", modelfileURL.path],
+            currentDirectory: tempDirectory
+        )
+    }
+
+    private nonisolated static func ollamaModelName(for modelIdentifier: String) -> String {
+        let repository = DevelopmentModelConfiguration.repositoryIdentifier(for: modelIdentifier)
+        let quant = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first.map(String.init) ?? ""
+        let rawName = "ac-\(repository)-\(quant)"
+        let lower = rawName.lowercased()
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-._")
+        let scalars = lower.unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let collapsed = String(scalars)
+            .replacingOccurrences(of: "--", with: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return collapsed.isEmpty ? "ac-local-model" : collapsed
+    }
+
+    private nonisolated static func resolvedExecutablePath(_ tool: String) -> String? {
+        let commonLocations = [
+            "/usr/bin/\(tool)",
+            "/usr/local/bin/\(tool)",
+            "/opt/homebrew/bin/\(tool)",
+        ]
+        if let match = commonLocations.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return match
+        }
+
+        return ProcessInfo.processInfo.environment["PATH"]?
+            .split(separator: ":")
+            .map(String.init)
+            .map { "\($0)/\(tool)" }
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+    }
+
+    private nonisolated static func runProcess(
+        launchPath: String,
+        arguments: [String],
+        currentDirectory: URL
+    ) async throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launchPath)
+        process.arguments = arguments
+        process.currentDirectoryURL = currentDirectory
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        let stdoutBuffer = ProcessOutputBuffer()
+        let stderrBuffer = ProcessOutputBuffer()
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            stdoutBuffer.append(data)
+        }
+
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            stderrBuffer.append(data)
+        }
+
+        try process.run()
+        let status = await withCheckedContinuation { continuation in
+            process.terminationHandler = { finishedProcess in
+                continuation.resume(returning: finishedProcess.terminationStatus)
+            }
+        }
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        let stdout = String(decoding: stdoutBuffer.snapshot(), as: UTF8.self)
+        let stderr = String(decoding: stderrBuffer.snapshot(), as: UTF8.self)
+
+        guard status == 0 else {
+            throw LocalModelStorageActionError.commandFailed(
+                command: ([launchPath] + arguments).joined(separator: " "),
+                status: status,
+                output: stderr.isEmpty ? stdout : stderr
+            )
+        }
+
+        return stdout
+    }
+
     func toggleRuleLocked(id: String) {
         guard let i = state.policyMemory.rules.firstIndex(where: { $0.id == id }) else { return }
         state.policyMemory.rules[i].isLocked.toggle()
@@ -305,6 +550,24 @@ final class AppController: ObservableObject {
         return true
     }
 
+    /// Activate an existing profile for a specific number of minutes from now.
+    @discardableResult
+    func activateProfile(
+        id: String,
+        durationMinutes: Int,
+        reason: String? = nil,
+        announce: Bool = false
+    ) -> Bool {
+        guard durationMinutes > 0 else { return false }
+        let expiresAt = Date().addingTimeInterval(TimeInterval(durationMinutes) * 60)
+        return activateProfile(
+            id: id,
+            expiresAt: expiresAt,
+            reason: reason,
+            announce: announce
+        )
+    }
+
     /// Create and activate a new named profile. Enforces the LRU cap.
     @discardableResult
     func createAndActivateProfile(
@@ -351,6 +614,26 @@ final class AppController: ObservableObject {
         if announce {
             announceProfileSwitch(reason: "ended")
         }
+    }
+
+    /// Extend the currently active named profile by the given number of minutes.
+    @discardableResult
+    func extendActiveProfile(
+        byMinutes minutes: Int,
+        reason: String? = "user_extended",
+        announce: Bool = false
+    ) -> Bool {
+        guard minutes > 0 else { return false }
+        let active = state.activeProfile
+        guard !active.isDefault else { return false }
+        let baseline = max(active.expiresAt ?? Date(), Date())
+        let newExpiry = baseline.addingTimeInterval(TimeInterval(minutes) * 60)
+        return activateProfile(
+            id: active.id,
+            expiresAt: newExpiry,
+            reason: reason,
+            announce: announce
+        )
     }
 
     /// Called by BrainService at the top of every monitoring tick. If the active profile has
@@ -1912,6 +2195,97 @@ final class AppController: ObservableObject {
         recomputeUnreadChatBadge()
     }
 
+    /// BrainService works on whole-state snapshots. Merge its result against the original
+    /// snapshot so concurrent chat/profile edits are preserved instead of being replaced by
+    /// a stale monitoring copy.
+    func mergeBrainState(base: ACState, updated: ACState) {
+        var merged = state
+        merged.algorithmState = updated.algorithmState
+        merged.recentSwitches = updated.recentSwitches
+        merged.recentActions = updated.recentActions
+        merged.usageByDay = updated.usageByDay
+        merged.focusSegments = updated.focusSegments
+        merged.policyMemory = Self.mergePolicyMemory(
+            base: base.policyMemory,
+            current: merged.policyMemory,
+            updated: updated.policyMemory
+        )
+
+        if updated.profiles != base.profiles {
+            merged.profiles = updated.profiles
+        }
+        if updated.activeProfileID != base.activeProfileID {
+            merged.activeProfileID = updated.activeProfileID
+        }
+        if updated.chatHistory != base.chatHistory {
+            merged.chatHistory = Self.mergeChatHistory(
+                base: base.chatHistory,
+                current: merged.chatHistory,
+                updated: updated.chatHistory
+            )
+        }
+
+        merged.ensureDefaultProfileExists()
+        state = merged
+        syncChatMessagesFromState()
+        recomputeTodayStats()
+    }
+
+    private static func mergeChatHistory(
+        base: [ChatMessage],
+        current: [ChatMessage],
+        updated: [ChatMessage]
+    ) -> [ChatMessage] {
+        guard updated != base else { return current }
+        guard updated.starts(with: base) else { return updated }
+
+        var merged = current
+        for message in updated.dropFirst(base.count) where !merged.contains(where: { $0.id == message.id }) {
+            merged.append(message)
+        }
+        return merged
+    }
+
+    private static func mergePolicyMemory(
+        base: PolicyMemory,
+        current: PolicyMemory,
+        updated: PolicyMemory
+    ) -> PolicyMemory {
+        guard updated != base else { return current }
+
+        let baseRules = Dictionary(uniqueKeysWithValues: base.rules.map { ($0.id, $0) })
+        let updatedRules = Dictionary(uniqueKeysWithValues: updated.rules.map { ($0.id, $0) })
+        var mergedRules = Dictionary(uniqueKeysWithValues: current.rules.map { ($0.id, $0) })
+
+        for (id, rule) in updatedRules {
+            if baseRules[id] != rule || baseRules[id] == nil {
+                mergedRules[id] = rule
+            }
+        }
+
+        let removedIDs = Set(baseRules.keys).subtracting(updatedRules.keys)
+        for id in removedIDs where mergedRules[id] == baseRules[id] {
+            mergedRules.removeValue(forKey: id)
+        }
+
+        var merged = current
+        merged.rules = Array(mergedRules.values).sorted {
+            if $0.priority == $1.priority {
+                return $0.updatedAt > $1.updatedAt
+            }
+            return $0.priority > $1.priority
+        }
+
+        if updated.tonePreference != base.tonePreference {
+            merged.tonePreference = updated.tonePreference
+        }
+        if updated.lastUpdatedAt != base.lastUpdatedAt {
+            merged.lastUpdatedAt = max(updated.lastUpdatedAt ?? .distantPast, current.lastUpdatedAt ?? .distantPast)
+        }
+
+        return merged
+    }
+
     /// Build a compact, prompt-safe summary of a profile (name, description, top rules).
     private func makeProfilePromptSummary(_ profile: FocusProfile) -> ProfilePromptSummary {
         let rules = state.policyMemory.rules
@@ -2121,10 +2495,8 @@ final class AppController: ObservableObject {
             brainService.stateProvider = { [weak self] in
                 self?.state ?? ACState()
             }
-            brainService.stateSink = { [weak self] updatedState in
-                self?.state = updatedState
-                self?.syncChatMessagesFromState()
-                self?.recomputeTodayStats()
+            brainService.stateSink = { [weak self] baseState, updatedState in
+                self?.mergeBrainState(base: baseState, updated: updatedState)
             }
             brainService.moodSink = { [weak self] mood in
                 guard self?.companionMood != mood else { return }
@@ -2226,6 +2598,41 @@ final class AppController: ObservableObject {
 
 struct PendingLocalModelChange: Equatable, Sendable {
     let modelIdentifier: String
+}
+
+private enum LocalModelStorageActionError: LocalizedError {
+    case commandFailed(command: String, status: Int32, output: String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .commandFailed(command, status, output):
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return "Command failed (\(status)): \(command)"
+            }
+            return "Command failed (\(status)): \(trimmed)"
+        }
+    }
+}
+
+private final class ProcessOutputBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    nonisolated(unsafe) private var data = Data()
+
+    nonisolated init() {}
+
+    nonisolated func append(_ chunk: Data) {
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    nonisolated func snapshot() -> Data {
+        lock.lock()
+        let snapshot = data
+        lock.unlock()
+        return snapshot
+    }
 }
 
 struct ModelDownloadNotice: Identifiable, Sendable {

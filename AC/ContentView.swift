@@ -25,6 +25,7 @@ enum ACPopoverTab: String {
 
 private enum SettingsAlertAction: String, Identifiable {
     case resetAlgorithm
+    case deleteLocalModels
 
     var id: String { rawValue }
 }
@@ -62,12 +63,19 @@ struct ContentView: View {
                     settingsSuccessMessage = "Algorithm profile was reset to defaults."
                     pendingSettingsAction = nil
                 }
+            } else if pendingSettingsAction == .deleteLocalModels {
+                Button("Delete Models", role: .destructive) {
+                    controller.deleteManagedModels()
+                    pendingSettingsAction = nil
+                }
             }
             Button("Cancel", role: .cancel) { pendingSettingsAction = nil }
         } message: {
             switch pendingSettingsAction {
             case .resetAlgorithm:
                 Text("This clears saved chat history, learned memory, recent context, and usage profile.")
+            case .deleteLocalModels:
+                Text("This removes the selected AC-downloaded local model from Application Support. The runtime stays installed.")
             case .none:
                 Text("")
             }
@@ -338,6 +346,13 @@ struct ContentView: View {
 
             AboutSection()
 
+            Divider().opacity(0.3)
+
+            LocalModelStorageSection(
+                onDelete: { pendingSettingsAction = .deleteLocalModels }
+            )
+            .environmentObject(controller)
+
             Divider().opacity(0.5)
 
             // ── Quit (always visible) ──
@@ -350,9 +365,144 @@ struct ContentView: View {
             }
         }
         .padding(20)
+}
+
+private struct LocalModelStorageSection: View {
+    @EnvironmentObject private var controller: AppController
+    let onDelete: () -> Void
+
+    var body: some View {
+        let installed = controller.installedManagedModels
+        let selected = controller.selectedInstalledModel
+
+        SettingsSection(
+            title: "Local model storage",
+            icon: "externaldrive",
+            subtitle: "AC stores downloaded local models in its own Application Support cache."
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                storageRow(
+                    title: "AC model cache",
+                    value: controller.localModelDiagnostics.managedModelCachePath
+                )
+
+                if installed.isEmpty {
+                    Text("No AC-downloaded local models found yet.")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Installed models")
+                            .font(.ac(11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Picker(
+                            "Installed models",
+                            selection: Binding(
+                                get: { controller.selectedInstalledModel?.cachePath ?? installed.first?.cachePath ?? "" },
+                                set: { controller.selectInstalledModel(cachePath: $0) }
+                            )
+                        ) {
+                            ForEach(installed) { model in
+                                Text(AppController.shortModelName(for: model.modelIdentifier))
+                                    .tag(model.cachePath)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+
+                    if let selected {
+                        storageRow(
+                            title: "Selected model",
+                            value: AppController.shortModelName(for: selected.modelIdentifier)
+                        )
+
+                        storageRow(
+                            title: "Model identifier",
+                            value: selected.modelIdentifier
+                        )
+
+                        storageRow(
+                            title: "Path to model",
+                            value: selected.modelPath
+                        )
+
+                        if let projectorPath = selected.projectorPath {
+                            storageRow(title: "Projector", value: projectorPath)
+                        }
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button("Reveal") {
+                        controller.revealManagedModelLocation()
+                    }
+                    .buttonStyle(ACSecondaryButton())
+                    .disabled(selected == nil)
+
+                    Button(controller.importingModelToOllama ? "Importing…" : "Import to Ollama") {
+                        controller.importCurrentModelToOllama()
+                    }
+                    .buttonStyle(ACPrimaryButton())
+                    .disabled(
+                        controller.importingModelToOllama ||
+                        selected == nil
+                    )
+
+                    Button(controller.deletingManagedModels ? "Deleting…" : "Delete Selected") {
+                        onDelete()
+                    }
+                    .buttonStyle(ACDangerButton())
+                    .disabled(controller.deletingManagedModels || selected == nil)
+                }
+
+                Text("AC now only uses its Application Support cache for local models. Ollama import creates a separate Ollama-managed copy under an `ac-...` name; it does not reuse Ollama's folder in place.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let error = controller.localModelStorageError, !error.isEmpty {
+                    Text(error)
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(Color.red.opacity(0.82))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let message = controller.localModelStorageMessage, !message.isEmpty {
+                    Text(message)
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+        }
     }
 
-    // MARK: - Developer (DEBUG only)
+    @ViewBuilder
+    private func storageRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.ac(11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color.acTextPrimary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+    }
+}
+
+// MARK: - Developer (DEBUG only)
 
     @ViewBuilder
     private var developerSection: some View {

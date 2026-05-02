@@ -2,9 +2,9 @@
 //  ACApp.swift
 //  AC
 //
-//  App entry point. Menu bar icon with NSPopover — no separate settings window.
-//  Left-click: toggle popover. Right-click: minimal context menu (pause / quit).
-//  Status icon switches symbol based on companion mood.
+//  App entry point. Menu bar icon with two NSPopovers: a compact profile-control
+//  surface for quick session changes, plus the full app popover for chat/settings.
+//  Right-click keeps a minimal context menu.
 //
 
 import AppKit
@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var windowCoordinator: WindowCoordinator?
     private var popover: NSPopover?
+    private var profilePopover: NSPopover?
     private var cancellables = Set<AnyCancellable>()
     private var terminationRequested = false
     private var chipRefreshTimer: Timer?
@@ -206,6 +207,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if mood == .nudging, let p = self.popover, p.isShown {
                     p.performClose(nil)
                 }
+                if mood == .nudging, let p = self.profilePopover, p.isShown {
+                    p.performClose(nil)
+                }
             }
             .store(in: &cancellables)
     }
@@ -215,18 +219,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleStatusClick(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
+            profilePopover?.performClose(nil)
             showContextMenu(for: sender)
         } else {
-            togglePopover(relativeTo: sender)
+            toggleStatusPopover(relativeTo: sender)
         }
     }
 
-    // MARK: - Popover
+    // MARK: - Main popover
 
     private func openPopover() {
         guard let button = statusItem?.button else { return }
         let p = popover ?? makePopover()
         popover = p
+        profilePopover?.performClose(nil)
         guard !p.isShown else { return }
         p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
@@ -239,6 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             let p = popover ?? makePopover()
             popover = p
+            profilePopover?.performClose(nil)
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
             controller.markAllChatMessagesRead()
@@ -256,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let p = popover ?? makePopover()
         popover = p
+        profilePopover?.performClose(nil)
 
         if let wc = windowCoordinator,
            let panel = wc.companionPanel,
@@ -288,10 +296,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return p
     }
 
+    // MARK: - Quick profile popover
+
+    private func toggleStatusPopover(relativeTo button: NSStatusBarButton) {
+        if controller.state.setupStatus != .ready {
+            togglePopover(relativeTo: button)
+            return
+        }
+
+        if let quick = profilePopover, quick.isShown {
+            quick.performClose(nil)
+            return
+        }
+
+        let quick = profilePopover ?? makeProfilePopover()
+        profilePopover = quick
+        popover?.performClose(nil)
+        quick.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
+        controller.markAllChatMessagesRead()
+    }
+
+    private func makeProfilePopover() -> NSPopover {
+        let p = NSPopover()
+        p.contentSize = NSSize(width: 336, height: 430)
+        p.behavior = .transient
+        p.animates = true
+        p.contentViewController = NSHostingController(
+            rootView: ProfileQuickPopoverView(showOpenAppButton: true)
+                .environmentObject(controller)
+        )
+        controller.dismissProfilePopover = { [weak p] in
+            p?.performClose(nil)
+        }
+        controller.openMainPopover = { [weak self, weak p] in
+            p?.performClose(nil)
+            self?.openPopover()
+        }
+        return p
+    }
+
     // MARK: - Right-click context menu (minimal — full controls live in the popover)
 
     private func showContextMenu(for button: NSStatusBarButton) {
         let menu = NSMenu()
+
+        let openItem = NSMenuItem(title: "Open AccountyCat",
+                                  action: #selector(openMainPopoverFromMenu),
+                                  keyEquivalent: "")
+        openItem.target = self
+        menu.addItem(openItem)
 
         let pauseTitle = controller.state.isPaused ? "Resume Monitoring" : "Pause Monitoring"
         let pauseItem = NSMenuItem(title: pauseTitle,
@@ -314,10 +368,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePause()  { controller.togglePause() }
+    @objc private func openMainPopoverFromMenu() { openPopover() }
     @objc private func quitApp()      { NSApp.terminate(nil) }
 
     @objc private func closePopoverOnResignActive() {
         if let p = popover, p.isShown {
+            p.performClose(nil)
+        }
+        if let p = profilePopover, p.isShown {
             p.performClose(nil)
         }
     }

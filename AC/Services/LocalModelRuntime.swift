@@ -900,37 +900,11 @@ actor LocalModelRuntime {
 
     private func modelCacheRoots(runtimePath: String, repository: String) -> [URL] {
         let cacheDirectoryName = "models--\(repository.replacingOccurrences(of: "/", with: "--"))"
-        var roots: [URL] = [
-            repositoryURL(forRuntimePath: runtimePath)
-                .appendingPathComponent(repository, isDirectory: true)
-                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
-        ]
-
-        if let hfHome = ProcessInfo.processInfo.environment["HF_HOME"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !hfHome.isEmpty {
-            roots.append(
-                URL(fileURLWithPath: hfHome, isDirectory: true)
-                    .appendingPathComponent("hub", isDirectory: true)
-                    .appendingPathComponent(cacheDirectoryName, isDirectory: true)
-            )
-        }
-
-        roots.append(
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache", isDirectory: true)
-                .appendingPathComponent("huggingface", isDirectory: true)
-                .appendingPathComponent("hub", isDirectory: true)
-                .appendingPathComponent(cacheDirectoryName, isDirectory: true)
-        )
-
-        roots.append(
+        return [
             Self.defaultHuggingFaceCacheURL()
                 .appendingPathComponent("hub", isDirectory: true)
                 .appendingPathComponent(cacheDirectoryName, isDirectory: true)
-        )
-
-        return roots
+        ]
     }
 
     private nonisolated static func defaultHuggingFaceCacheURL() -> URL {

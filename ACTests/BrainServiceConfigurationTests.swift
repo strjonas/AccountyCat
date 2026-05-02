@@ -47,7 +47,10 @@ struct BrainServiceConfigurationTests {
         )
 
         brainService.stateProvider = { state }
-        brainService.stateSink = { state = $0 }
+        func applyStateUpdate(_: ACState, updatedState: ACState) {
+            state = updatedState
+        }
+        brainService.stateSink = applyStateUpdate
 
         brainService.handleMonitoringConfigurationChange()
 

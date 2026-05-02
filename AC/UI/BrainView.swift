@@ -83,7 +83,7 @@ struct BrainView: View {
         VStack(alignment: .leading, spacing: 10) {
             brainSectionHeader(
                 icon: "person.crop.rectangle.stack",
-                title: "Focus profile",
+                title: "Profile rules",
                 subtitle: profileSubtitle
             )
 
@@ -102,29 +102,14 @@ struct BrainView: View {
                 Spacer()
 
                 if !selectedProfile.isDefault {
-                    if controller.state.activeProfileID == selectedProfile.id {
-                        Button("End now") {
-                            controller.endActiveProfile(announce: true)
-                        }
-                        .buttonStyle(ACSecondaryButton())
-                    } else {
-                        Button("Activate") {
-                            _ = controller.activateProfile(
-                                id: selectedProfile.id,
-                                reason: "user_switched",
-                                announce: true
-                            )
-                        }
-                        .buttonStyle(ACSecondaryButton())
-                        Button(role: .destructive) {
-                            controller.deleteProfile(id: selectedProfile.id)
-                            selectedProfileID = nil
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(!controller.canDeleteProfile(id: selectedProfile.id))
+                    Button(role: .destructive) {
+                        controller.deleteProfile(id: selectedProfile.id)
+                        selectedProfileID = nil
+                    } label: {
+                        Image(systemName: "trash")
                     }
+                    .buttonStyle(.borderless)
+                    .disabled(!controller.canDeleteProfile(id: selectedProfile.id))
                 }
             }
 
@@ -178,13 +163,13 @@ struct BrainView: View {
         let active = controller.state.activeProfile
         let viewingHint: String
         if resolvedSelectedProfileID == active.id {
-            viewingHint = "You are editing the active profile."
+            viewingHint = "You are editing the rules for the active profile."
         } else {
-            viewingHint = "You are only viewing \(selectedProfile.name) here. Activate it to make AC use it live."
+            viewingHint = "You are editing \(selectedProfile.name) here. Use the top-right profile control to switch AC into it live."
         }
 
         if active.isDefault {
-            return "General profile is active. \(viewingHint)"
+            return "General is active. \(viewingHint)"
         }
         let until: String
         if let exp = active.expiresAt {
@@ -213,7 +198,7 @@ struct BrainView: View {
     private var profileOverviewSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Button(showingProfileOverview ? "Hide saved profiles" : "Manage all profiles") {
+                Button(showingProfileOverview ? "Hide saved profiles" : "Browse saved profiles") {
                     withAnimation(.acSnap) {
                         showingProfileOverview.toggle()
                     }
@@ -241,13 +226,7 @@ struct BrainView: View {
                             onViewDetails: {
                                 selectedProfileID = profile.id
                             },
-                            onActivate: profile.isDefault ? nil : {
-                                _ = controller.activateProfile(
-                                    id: profile.id,
-                                    reason: "user_switched",
-                                    announce: true
-                                )
-                            },
+                            onActivate: nil,
                             onDelete: profile.isDefault ? nil : {
                                 controller.deleteProfile(id: profile.id)
                                 if resolvedSelectedProfileID == profile.id {
@@ -721,7 +700,7 @@ private struct ProfileSummaryRowView: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 6) {
-                Button("View details", action: onViewDetails)
+                Button("Edit rules", action: onViewDetails)
                     .buttonStyle(ACSecondaryButton())
 
                 if let onActivate {

@@ -438,4 +438,156 @@ struct ProfileManagementTests {
         #expect(controller.state.chatHistory.allSatisfy { !$0.isUnread })
         #expect(controller.chatMessages.allSatisfy { !$0.isUnread })
     }
+
+    @Test
+    func activateProfileWithDurationMinutesSetsRelativeExpiry() throws {
+        let controller = AppController.shared
+        let originalState = controller.state
+        defer {
+            controller.state = originalState
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        let profile = FocusProfile(id: "coding", name: "Coding", description: "Deep repo work")
+        state.profiles.append(profile)
+        controller.state = state
+
+        let before = Date()
+        let activated = controller.activateProfile(
+            id: profile.id,
+            durationMinutes: 120,
+            reason: "manual_timer"
+        )
+        let after = Date()
+
+        #expect(activated)
+        let active = controller.state.activeProfile
+        let expiresAt = try #require(active.expiresAt)
+        #expect(expiresAt >= before.addingTimeInterval(119 * 60))
+        #expect(expiresAt <= after.addingTimeInterval(121 * 60))
+    }
+
+    @Test
+    func extendActiveProfileAddsMinutesFromExistingExpiry() throws {
+        let controller = AppController.shared
+        let originalState = controller.state
+        defer {
+            controller.state = originalState
+            controller.storageService.saveState(originalState)
+        }
+
+        let existingExpiry = Date().addingTimeInterval(45 * 60)
+        var state = ACState()
+        let profile = FocusProfile(
+            id: "writing",
+            name: "Writing",
+            description: "Docs",
+            expiresAt: existingExpiry
+        )
+        state.profiles.append(profile)
+        state.activeProfileID = profile.id
+        controller.state = state
+
+        let extended = controller.extendActiveProfile(byMinutes: 120)
+
+        #expect(extended)
+        let expiresAt = try #require(controller.state.activeProfile.expiresAt)
+        #expect(abs(expiresAt.timeIntervalSince(existingExpiry.addingTimeInterval(120 * 60))) < 2)
+    }
+
+    @Test
+    func mergeBrainStatePreservesConcurrentProfileActivationAndChatHistory() {
+        let controller = AppController.shared
+        let originalState = controller.state
+        let originalChatMessages = controller.chatMessages
+        let originalUnreadState = controller.hasUnreadChatMessages
+        defer {
+            controller.state = originalState
+            controller.chatMessages = originalChatMessages
+            controller.hasUnreadChatMessages = originalUnreadState
+            controller.storageService.saveState(originalState)
+        }
+
+        var base = ACState()
+        base.chatHistory = []
+
+        var current = base
+        let writing = FocusProfile(id: "writing", name: "Writing", description: "Essay work")
+        current.profiles.append(writing)
+        current.activeProfileID = writing.id
+        current.chatHistory = [
+            ChatMessage(role: .user, text: "Help me focus on writing."),
+            ChatMessage(role: .assistant, text: "Switching to your Writing profile.", interruptionPolicy: .deferred)
+        ]
+
+        var updated = base
+        updated.algorithmState.llmPolicy.distraction.lastAssessment = .focused
+
+        controller.state = current
+        controller.chatMessages = []
+        controller.hasUnreadChatMessages = false
+
+        controller.mergeBrainState(base: base, updated: updated)
+
+        #expect(controller.state.activeProfileID == writing.id)
+        #expect(controller.state.profiles.contains(where: { $0.id == writing.id }))
+        #expect(controller.state.chatHistory == current.chatHistory)
+        #expect(controller.state.algorithmState == updated.algorithmState)
+    }
+
+    @Test
+    func mergeBrainStateAppendsBrainExpiryNoteWithoutDroppingNewerChat() {
+        let controller = AppController.shared
+        let originalState = controller.state
+        let originalChatMessages = controller.chatMessages
+        let originalUnreadState = controller.hasUnreadChatMessages
+        defer {
+            controller.state = originalState
+            controller.chatMessages = originalChatMessages
+            controller.hasUnreadChatMessages = originalUnreadState
+            controller.storageService.saveState(originalState)
+        }
+
+        let originalNote = ChatMessage(role: .assistant, text: "Original state")
+        let newerUserMessage = ChatMessage(role: .user, text: "Wait, keep the note too.")
+        let expiryNote = ChatMessage(
+            role: .assistant,
+            text: "Writing ended. Switched back to General.",
+            interruptionPolicy: .deferred
+        )
+
+        var base = ACState()
+        let writing = FocusProfile(
+            id: "writing",
+            name: "Writing",
+            description: "Essay work",
+            expiresAt: Date().addingTimeInterval(60)
+        )
+        base.profiles.append(writing)
+        base.activeProfileID = writing.id
+        base.chatHistory = [originalNote]
+
+        var current = base
+        current.chatHistory.append(newerUserMessage)
+
+        var updated = base
+        if let index = updated.profiles.firstIndex(where: { $0.id == writing.id }) {
+            updated.profiles[index].expiresAt = nil
+            updated.profiles[index].activatedAt = nil
+        }
+        updated.activeProfileID = PolicyRule.defaultProfileID
+        updated.chatHistory.append(expiryNote)
+
+        controller.state = current
+        controller.chatMessages = []
+        controller.hasUnreadChatMessages = false
+
+        controller.mergeBrainState(base: base, updated: updated)
+
+        #expect(controller.state.activeProfileID == PolicyRule.defaultProfileID)
+        #expect(controller.state.chatHistory.count == 3)
+        #expect(controller.state.chatHistory.contains(where: { $0.id == newerUserMessage.id }))
+        #expect(controller.state.chatHistory.contains(where: { $0.id == expiryNote.id }))
+    }
 }
