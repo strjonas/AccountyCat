@@ -30,9 +30,8 @@ Key directories:
 - `AC/Services/` — LLM client, runtime setup, storage, snapshots, prompts
 - `AC/Models/` — data types and state definitions
 - `AC/UI/` — SwiftUI views
-- `ACShared/` — code shared between AC and ACInspector (model config, prompt tuning, telemetry)
-- `AC/Resources/Prompts/` — prompt text files organized by function (Chat, Memory, Monitoring)
-- `_Legacy/` — old monitoring implementations excluded from build; don't add to active targets
+- `ACShared/` — code shared between AC and ACInspector (prompts, model config, telemetry)
+- `_Legacy/` — old monitoring implementations excluded from build; always ignore this directory, never reference or modify it
 
 ## Testing
 
@@ -50,10 +49,10 @@ Key directories:
 - **Vision gate** (Phase 4): title-length heuristic in `MonitoringHeuristics.canRelyOnTitleAlone` skips screenshots for long descriptive titles. Threshold is user-configurable (default 30). One-shot escalation retries with screenshot on `unclear`.
 - **StatsView** (Phase 1): debug-only pane showing calls/hour, decision mix, skip causes, vision attach rate, per-stage cost. Wire changes through this for observability.
 - **MonitoringRequestScopeContext** (Phase 2e): payload built once per evaluation tick and reused across all LLM stages — don't re-encode fields per stage.
-- **Prompt assets** in `AC/Resources/Prompts/Monitoring/focus_default_v2/` are the active set. The system prompt lives in `ACShared/MonitoringPromptTuning.swift`.
+- **Prompt assets** — all staging prompt text lives inline in `ACShared/ACPromptSets.swift` (the single source of truth). `PromptCatalog.swift` is a thin accessor that forwards directly to `ACPromptSets.policyDefaultPromptSet`.
 
 ## Conventions
 
-- Prompt assets preferably live as separate files under `AC/Resources/Prompts/`, not inline in Swift.
+- Prompt assets live inline in `ACShared/ACPromptSets.swift`, which is the single source of truth. Use `PromptCatalog.swift` (a thin accessor) to consume them at runtime — do not read prompt files from disk.
 - When touching the setup/first-run flow: keep disk-space checks, partial-download cleanup, user-readable errors, and explicit "done" signal. Test on a clean macOS environment if possible.
 - `MonitoringConfiguration.algorithmID` exists for extensibility; historical IDs normalize to `llm_monitor_v1` on decode.

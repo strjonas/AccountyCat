@@ -826,12 +826,11 @@ final class AppController: ObservableObject {
     }
 
     func updateMonitoringPromptProfile(_ promptProfileID: String) {
-        let descriptor = PromptCatalog.monitoringDescriptor(id: promptProfileID)
-        guard state.monitoringConfiguration.promptProfileID != descriptor.id else { return }
-        state.monitoringConfiguration.promptProfileID = descriptor.id
+        guard state.monitoringConfiguration.promptProfileID != promptProfileID else { return }
+        state.monitoringConfiguration.promptProfileID = promptProfileID
         brainService?.handleMonitoringConfigurationChange()
         persistState()
-        logActivity("monitoring", "Selected prompt profile: \(descriptor.id)")
+        logActivity("monitoring", "Selected prompt profile: \(promptProfileID)")
     }
 
     func updateMonitoringPipelineProfile(_ pipelineProfileID: String) {
@@ -1855,7 +1854,7 @@ final class AppController: ObservableObject {
     }
 
     var availableMonitoringPromptProfiles: [MonitoringPromptProfileDescriptor] {
-        PromptCatalog.availableMonitoringPromptProfiles.map(\.descriptor)
+        []
     }
 
     var availablePipelineProfiles: [MonitoringPipelineProfileDescriptor] {

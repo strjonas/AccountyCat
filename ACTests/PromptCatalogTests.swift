@@ -11,23 +11,6 @@ import Testing
 struct PromptCatalogTests {
 
     @Test
-    func resolvesDefaultMonitoringPromptProfile() {
-        let profile = PromptCatalog.monitoringProfile(id: MonitoringConfiguration.defaultPromptProfileID)
-        let fallback = PromptCatalog.monitoringProfile(id: "missing-profile")
-        let prompt = PromptCatalog.loadMonitoringPrompt(
-            profileID: MonitoringConfiguration.defaultPromptProfileID,
-            variant: .visionPrimary
-        )
-
-        #expect(profile.descriptor.id == MonitoringConfiguration.defaultPromptProfileID)
-        #expect(profile.descriptor.version == "focus_default_v2")
-        #expect(fallback.descriptor.id == profile.descriptor.id)
-        #expect(prompt.asset.id == "monitoring.focus_default_v2.vision_system")
-        #expect(prompt.asset.version == "focus_default_v2")
-        #expect(prompt.contents.isEmpty == false)
-    }
-
-    @Test
     func policyDecisionPromptUsesSharedDecisionRules() {
         let systemPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .decision)
         let perceptionPrompt = PromptCatalog.loadPolicySystemPrompt(stage: .perceptionVision)
@@ -44,8 +27,8 @@ struct PromptCatalogTests {
     @Test
     func chatAndNudgePromptsReferenceCharacterVoice() {
         let chatPrompt = PromptCatalog.loadChatSystemPrompt(character: .nova)
-        let nudgePrompt = MonitoringPromptTuning.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt
-        let decisionPrompt = MonitoringPromptTuning.policyDefaultPromptSet.prompt(for: .onlineDecision).systemPrompt
+        let nudgePrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt
+        let decisionPrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .onlineDecision).systemPrompt
 
         // Chat injects the personality directly into the system prompt.
         #expect(chatPrompt.contains("Character voice:"))

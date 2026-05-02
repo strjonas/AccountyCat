@@ -99,18 +99,18 @@ struct MonitoringPermissionRequirements: Hashable, Sendable {
 
 enum LLMPolicyCatalog {
     nonisolated static let availablePipelineProfiles: [LLMPolicyPipelineProfile] =
-        MonitoringPromptTuning.pipelineDefinitions.map(makePipelineProfile)
+        ACPromptSets.pipelineDefinitions.map(makePipelineProfile)
 
     nonisolated static let defaultPipelineProfile: LLMPolicyPipelineProfile =
         availablePipelineProfiles.first(where: { $0.descriptor.id == MonitoringConfiguration.defaultPipelineProfileID })
-        ?? makePipelineProfile(from: MonitoringPromptTuning.pipelineDefinitions[0])
+        ?? makePipelineProfile(from: ACPromptSets.pipelineDefinitions[0])
 
     nonisolated static let availableRuntimeProfiles: [MonitoringRuntimeProfile] =
-        MonitoringPromptTuning.runtimeDefinitions.map(makeRuntimeProfile)
+        ACPromptSets.runtimeDefinitions.map(makeRuntimeProfile)
 
     nonisolated static let defaultRuntimeProfile: MonitoringRuntimeProfile =
         availableRuntimeProfiles.first(where: { $0.descriptor.id == MonitoringConfiguration.defaultRuntimeProfileID })
-        ?? makeRuntimeProfile(from: MonitoringPromptTuning.runtimeDefinitions[0])
+        ?? makeRuntimeProfile(from: ACPromptSets.runtimeDefinitions[0])
 
     nonisolated static func pipelineProfile(id: String) -> LLMPolicyPipelineProfile {
         availablePipelineProfiles.first(where: { $0.descriptor.id == id }) ?? defaultPipelineProfile
@@ -129,7 +129,7 @@ enum LLMPolicyCatalog {
     }
 
     nonisolated private static func makePipelineProfile(
-        from definition: MonitoringPipelineDefinition
+        from definition: ACPipelineDefinition
     ) -> LLMPolicyPipelineProfile {
         LLMPolicyPipelineProfile(
             descriptor: MonitoringPipelineProfileDescriptor(
@@ -146,7 +146,7 @@ enum LLMPolicyCatalog {
     }
 
     nonisolated private static func makeRuntimeProfile(
-        from definition: MonitoringRuntimeDefinition
+        from definition: ACRuntimeDefinition
     ) -> MonitoringRuntimeProfile {
         var optionsByStage: [LLMPolicyStage: RuntimeInferenceOptions] = [:]
         for stageDefinition in definition.optionsByStage {
@@ -177,7 +177,7 @@ enum LLMPolicyCatalog {
     }
 
     nonisolated private static func llmPolicyStage(
-        for sharedStage: MonitoringPromptTuningStage
+        for sharedStage: ACPromptStage
     ) -> LLMPolicyStage? {
         switch sharedStage {
         case .perceptionTitle:

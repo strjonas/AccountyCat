@@ -54,50 +54,7 @@ nonisolated struct VisionInterventionHistorySummary: Codable, Hashable, Sendable
     var dismissOverlayCount: Int
 }
 
-nonisolated struct VisionPromptPayload: Codable, Sendable {
-    var goals: String
-    var memory: String?
-    var frontmostApp: String
-    var windowTitle: String?
-    var timestamp: Date
-    var recentSwitches: [TelemetryAppSwitchRecord]
-    var timeByApp: [TelemetryUsageRecord]
-    var interventionHistory: VisionInterventionHistorySummary
-    var heuristics: TelemetryHeuristicSnapshot
-    var distraction: TelemetryDistractionState
-}
-
 enum MonitoringLLMClient {
-    nonisolated static func makeVisionPayload(
-        snapshot: AppSnapshot,
-        goals: String,
-        recentActions: [ActionRecord],
-        heuristics: TelemetryHeuristicSnapshot,
-        distraction: DistractionMetadata,
-        memory: String = ""
-    ) -> VisionPromptPayload {
-        let relevantActions = monitoringRelevantActions(
-            from: recentActions,
-            at: snapshot.timestamp
-        )
-        let trimmedMemory = memory.truncatedMultilineForPrompt(
-            maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
-            maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
-        )
-        return VisionPromptPayload(
-            goals: goals.cleanedSingleLine,
-            memory: trimmedMemory.isEmpty ? nil : trimmedMemory,
-            frontmostApp: snapshot.appName.truncatedForPrompt(maxLength: 80),
-            windowTitle: snapshot.windowTitle?.truncatedForPrompt(maxLength: 180),
-            timestamp: snapshot.timestamp,
-            recentSwitches: snapshot.recentSwitches.prefix(2).map(\.telemetryRecord),
-            timeByApp: snapshot.perAppDurations.prefix(4).map(\.telemetryRecord),
-            interventionHistory: makeInterventionHistorySummary(from: relevantActions),
-            heuristics: heuristics,
-            distraction: distraction.telemetryState
-        )
-    }
-
     nonisolated static func monitoringRelevantActions(
         from recentActions: [ActionRecord],
         at now: Date
@@ -146,44 +103,6 @@ enum MonitoringLLMClient {
             overlayCount: recentActions.filter { $0.kind == .overlay }.count,
             backToWorkCount: recentActions.filter { $0.kind == .backToWork }.count,
             dismissOverlayCount: recentActions.filter { $0.kind == .dismissOverlay }.count
-        )
-    }
-
-    /// Renders the user-turn prompt for a monitoring attempt by loading the `.md` template from
-    /// `PromptCatalog` and substituting `{{PAYLOAD_JSON}}` with the serialised payload.
-    nonisolated static func makeUserPrompt(
-        snapshot: AppSnapshot,
-        goals: String,
-        recentActions: [ActionRecord],
-        heuristics: TelemetryHeuristicSnapshot,
-        distraction: DistractionMetadata,
-        memory: String,
-        promptProfile: MonitoringPromptProfile = PromptCatalog.defaultMonitoringPromptProfile
-    ) -> String {
-        let payload = makeVisionPayload(
-            snapshot: snapshot,
-            goals: goals,
-            recentActions: recentActions,
-            heuristics: heuristics,
-            distraction: distraction,
-            memory: memory
-        )
-        return makeUserPrompt(
-            payloadJSON: encodePayload(payload),
-            promptProfile: promptProfile,
-            variant: .visionPrimaryUser
-        )
-    }
-
-    nonisolated static func makeUserPrompt(
-        payloadJSON: String,
-        promptProfile: MonitoringPromptProfile,
-        variant: MonitoringPromptVariant
-    ) -> String {
-        PromptCatalog.renderMonitoringUserPrompt(
-            profileID: promptProfile.descriptor.id,
-            variant: variant,
-            payloadJSON: payloadJSON
         )
     }
 

@@ -24,8 +24,8 @@ struct MonitoringEvaluationPlan: Sendable {
         reason: nil,
         visualCheckReason: nil,
         requiresScreenshot: true,
-        promptMode: MonitoringPromptVariant.visionPrimary.rawValue,
-        promptVersion: PromptCatalog.defaultMonitoringPromptProfile.descriptor.version
+        promptMode: "",
+        promptVersion: "1.0"
     )
 
     var shouldEvaluate: Bool

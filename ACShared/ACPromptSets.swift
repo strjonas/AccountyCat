@@ -1,13 +1,14 @@
 //
-//  MonitoringPromptTuning.swift
+//  ACPromptSets.swift
 //  ACShared
 //
-//  Created by Codex on 20.04.26.
+//  Single source of truth for all AC prompt text.
+//  PromptCatalog.swift is a thin forwarding accessor.
 //
 
 import Foundation
 
-enum MonitoringPromptTuningStage: String, Codable, CaseIterable, Sendable {
+enum ACPromptStage: String, Codable, CaseIterable, Sendable {
     case perceptionTitle = "perception_title"
     case perceptionVision = "perception_vision"
     case onlineDecision = "online_decision"
@@ -18,22 +19,22 @@ enum MonitoringPromptTuningStage: String, Codable, CaseIterable, Sendable {
     case safelistAppeal = "safelist_appeal"
 }
 
-struct MonitoringStagePromptDefinition: Codable, Hashable, Identifiable, Sendable {
-    var stage: MonitoringPromptTuningStage
+struct ACPromptStageDefinition: Codable, Hashable, Identifiable, Sendable {
+    var stage: ACPromptStage
     var systemPrompt: String
     var userTemplate: String
 
-    var id: MonitoringPromptTuningStage { stage }
+    var id: ACPromptStage { stage }
 }
 
-struct MonitoringPromptSetDefinition: Codable, Hashable, Identifiable, Sendable {
+struct ACPromptSetDefinition: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var name: String
     var summary: String
-    var prompts: [MonitoringStagePromptDefinition]
+    var prompts: [ACPromptStageDefinition]
 
-    nonisolated func prompt(for stage: MonitoringPromptTuningStage) -> MonitoringStagePromptDefinition {
-        prompts.first(where: { $0.stage == stage }) ?? MonitoringStagePromptDefinition(
+    nonisolated func prompt(for stage: ACPromptStage) -> ACPromptStageDefinition {
+        prompts.first(where: { $0.stage == stage }) ?? ACPromptStageDefinition(
             stage: stage,
             systemPrompt: "",
             userTemplate: "{{PAYLOAD_JSON}}"
@@ -41,7 +42,7 @@ struct MonitoringPromptSetDefinition: Codable, Hashable, Identifiable, Sendable 
     }
 }
 
-struct MonitoringPipelineDefinition: Codable, Hashable, Identifiable, Sendable {
+struct ACPipelineDefinition: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var displayName: String
     var summary: String
@@ -52,7 +53,7 @@ struct MonitoringPipelineDefinition: Codable, Hashable, Identifiable, Sendable {
     var splitCopyGeneration: Bool
 }
 
-struct MonitoringRuntimeOptionsDefinition: Codable, Hashable, Sendable {
+struct ACRuntimeOptionsDefinition: Codable, Hashable, Sendable {
     var modelIdentifier: String?
     var maxTokens: Int
     var temperature: Double
@@ -64,25 +65,25 @@ struct MonitoringRuntimeOptionsDefinition: Codable, Hashable, Sendable {
     var timeoutSeconds: UInt64
 }
 
-struct MonitoringRuntimeStageDefinition: Codable, Hashable, Identifiable, Sendable {
-    var stage: MonitoringPromptTuningStage
-    var options: MonitoringRuntimeOptionsDefinition
+struct ACRuntimeStageDefinition: Codable, Hashable, Identifiable, Sendable {
+    var stage: ACPromptStage
+    var options: ACRuntimeOptionsDefinition
 
-    var id: MonitoringPromptTuningStage { stage }
+    var id: ACPromptStage { stage }
 }
 
-struct MonitoringRuntimeDefinition: Codable, Hashable, Identifiable, Sendable {
+struct ACRuntimeDefinition: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var displayName: String
     var summary: String
-    var optionsByStage: [MonitoringRuntimeStageDefinition]
+    var optionsByStage: [ACRuntimeStageDefinition]
 
-    nonisolated func options(for stage: MonitoringPromptTuningStage) -> MonitoringRuntimeOptionsDefinition? {
+    nonisolated func options(for stage: ACPromptStage) -> ACRuntimeOptionsDefinition? {
         optionsByStage.first(where: { $0.stage == stage })?.options
     }
 }
 
-enum MonitoringPromptTuning {
+enum ACPromptSets {
     private static let decisionSchema = """
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional","overlay_headline":"optional","overlay_body":"optional","overlay_prompt":"optional","submit_button_title":"optional","secondary_button_title":"optional"}
     """
@@ -91,12 +92,12 @@ enum MonitoringPromptTuning {
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","reason_tags":["tag"]}
     """
 
-    nonisolated static let policyDefaultPromptSet = MonitoringPromptSetDefinition(
+    nonisolated static let policyDefaultPromptSet = ACPromptSetDefinition(
         id: "policy_default_v1",
         name: "Policy Default",
         summary: "Shared production prompt set for staged policy evaluation.",
         prompts: [
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .perceptionTitle,
                 systemPrompt: """
                 You are AC's text-only perception stage.
@@ -120,7 +121,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .perceptionVision,
                 systemPrompt: """
                 You are AC's screenshot perception stage.
@@ -145,7 +146,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .onlineDecision,
                 systemPrompt: """
                 You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
@@ -191,7 +192,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .decision,
                 systemPrompt: """
                 You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
@@ -244,7 +245,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .nudgeCopy,
                 systemPrompt: """
                 Write one short nudge for a focus companion.
@@ -266,7 +267,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .appealReview,
                 systemPrompt: """
                 Review a user's typed appeal to continue a potentially distracting activity.
@@ -281,7 +282,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .safelistAppeal,
                 systemPrompt: """
                 You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks. This is important to make the app efficient and avoid unnecessary checks.
@@ -311,7 +312,7 @@ enum MonitoringPromptTuning {
                 Return exactly one JSON object.
                 """
             ),
-            MonitoringStagePromptDefinition(
+            ACPromptStageDefinition(
                 stage: .policyMemory,
                 systemPrompt: """
                 You update structured policy memory AND focus profiles for a focus companion.
@@ -363,107 +364,8 @@ enum MonitoringPromptTuning {
         ]
     )
 
-    nonisolated static let policyDirectPromptSet = MonitoringPromptSetDefinition(
-        id: "policy_direct_v1",
-        name: "Policy Direct",
-        summary: "Shorter, stricter experimental prompt set for side-by-side Prompt Lab runs.",
-        prompts: [
-            MonitoringStagePromptDefinition(
-                stage: .perceptionTitle,
-                systemPrompt: """
-                Infer the user's likely activity from titles, switches, and short usage history.
-                Do not decide whether the activity matches goals or rules yet.
-                Return one JSON object only:
-                {"activity_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
-                Prefer a concrete activity label. Prefer `unclear` over overclaiming.
-                """
-            ,
-                userTemplate: """
-                Summarize this text-only context:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
-            ),
-            MonitoringStagePromptDefinition(
-                stage: .perceptionVision,
-                systemPrompt: """
-                Describe what is happening on screen for a focus coach.
-                Do not decide whether the activity matches goals or rules yet.
-                Return one JSON object only:
-                {"scene_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
-                Be concrete about the exact activity and content when visible.
-                """
-            ,
-                userTemplate: """
-                Use the screenshot and payload together:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
-            ),
-            MonitoringStagePromptDefinition(
-                stage: .decision,
-                systemPrompt: """
-                Decide whether AC should stay silent, nudge, or escalate.
-                Return exactly one JSON object:
-                \(decisionSchema)
-                Rules:
-                - focused -> none
-                - unclear -> abstain
-                - distracted -> nudge or overlay
-                - overlay only for repeated off-task behavior already reflected in the payload
-                - explicit rules beat weak signals
-                - when evidence is mixed, prefer focused or unclear over distracted
-                """
-            ,
-                userTemplate: """
-                Decide the best next action from this context:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
-            ),
-            MonitoringStagePromptDefinition(
-                stage: .nudgeCopy,
-                systemPrompt: """
-                Write one specific nudge that feels human and not generic.
-                Return exactly one JSON object: {"nudge":"..."}
-                """
-            ,
-                userTemplate: """
-                Draft the nudge for this situation:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
-            ),
-            MonitoringStagePromptDefinition(
-                stage: .appealReview,
-                systemPrompt: """
-                Judge whether the user's typed reason justifies continuing a potentially distracting activity.
-                Prefer allow or defer unless the reason clearly conflicts with stated goals and rules.
-                Return exactly one JSON object:
-                {"decision":"allow|deny|defer","message":"short explanation"}
-                """
-            ,
-                userTemplate: """
-                Evaluate this typed appeal:
-                {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
-                """
-            ),
-            MonitoringStagePromptDefinition(
-                stage: .safelistAppeal,
-                systemPrompt: policyDefaultPromptSet.prompt(for: .safelistAppeal).systemPrompt,
-                userTemplate: policyDefaultPromptSet.prompt(for: .safelistAppeal).userTemplate
-            ),
-            MonitoringStagePromptDefinition(
-                stage: .policyMemory,
-                systemPrompt: policyDefaultPromptSet.prompt(for: .policyMemory).systemPrompt,
-                userTemplate: policyDefaultPromptSet.prompt(for: .policyMemory).userTemplate
-            ),
-        ]
-    )
-
-    nonisolated static let pipelineDefinitions: [MonitoringPipelineDefinition] = [
-        MonitoringPipelineDefinition(
+    nonisolated static let pipelineDefinitions: [ACPipelineDefinition] = [
+        ACPipelineDefinition(
             id: "vision_split_default",
             displayName: "Vision Split Default",
             summary: "Single image-plus-title perception, low-temp decision, separate nudge copy.",
@@ -473,7 +375,7 @@ enum MonitoringPromptTuning {
             usesVisionPerception: true,
             splitCopyGeneration: true
         ),
-        MonitoringPipelineDefinition(
+        ACPipelineDefinition(
             id: "title_only_default",
             displayName: "Title Only",
             summary: "Title, usage, and memory only. No screenshot required.",
@@ -483,27 +385,7 @@ enum MonitoringPromptTuning {
             usesVisionPerception: false,
             splitCopyGeneration: true
         ),
-        MonitoringPipelineDefinition(
-            id: "vision_single_call",
-            displayName: "Vision Single Call",
-            summary: "Single image-plus-title perception with inline nudge generation.",
-            inferenceBackend: .local,
-            requiresScreenshot: true,
-            usesTitlePerception: false,
-            usesVisionPerception: true,
-            splitCopyGeneration: false
-        ),
-        MonitoringPipelineDefinition(
-            id: "title_split_copy",
-            displayName: "Title Split Copy",
-            summary: "Title-only perception with separate nudge copy generation.",
-            inferenceBackend: .local,
-            requiresScreenshot: false,
-            usesTitlePerception: true,
-            usesVisionPerception: false,
-            splitCopyGeneration: true
-        ),
-        MonitoringPipelineDefinition(
+        ACPipelineDefinition(
             id: "online_single_round_vision",
             displayName: "Online Vision",
             summary: "One OpenRouter call with screenshot upload, decision, and nudge copy together.",
@@ -513,7 +395,7 @@ enum MonitoringPromptTuning {
             usesVisionPerception: false,
             splitCopyGeneration: false
         ),
-        MonitoringPipelineDefinition(
+        ACPipelineDefinition(
             id: "online_single_round_text",
             displayName: "Online Context Only",
             summary: "One OpenRouter call without screenshot upload.",
@@ -525,56 +407,80 @@ enum MonitoringPromptTuning {
         ),
     ]
 
-    nonisolated static let runtimeDefinitions: [MonitoringRuntimeDefinition] = [
-        MonitoringRuntimeDefinition(
+    nonisolated static let runtimeDefinitions: [ACRuntimeDefinition] = [
+        ACRuntimeDefinition(
             id: "gemma_balanced_v1",
             displayName: "Gemma Balanced",
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
-                MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-            ]
-        ),
-        MonitoringRuntimeDefinition(
-            id: "gemma_low_ram_v1",
-            displayName: "Gemma Low RAM",
-            summary: "Lower context and token limits for lighter local tests.",
-            optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 140, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierImage, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 48, ctxSize: 1536, batchSize: 1024, ubatchSize: 1024, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 96, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 180, temperature: 0.08, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 90, temperature: 0.45, topP: 0.95, topK: 48, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 20)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 140, temperature: 0.12, topP: 0.92, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 220, temperature: 0.12, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.economy.localModelIdentifierText, maxTokens: 110, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 1536, batchSize: 512, ubatchSize: 256, timeoutSeconds: 20)),
-            ]
-        ),
-        MonitoringRuntimeDefinition(
-            id: "llama_experiment_v1",
-            displayName: "Llama Experiment",
-            summary: "Llama-family preset for side-by-side comparisons.",
-            optionsByStage: [
-                MonitoringRuntimeStageDefinition(stage: .perceptionTitle, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .perceptionVision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
-                MonitoringRuntimeStageDefinition(stage: .onlineDecision, options: MonitoringRuntimeOptionsDefinition(maxTokens: 140, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .decision, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 6144, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                MonitoringRuntimeStageDefinition(stage: .nudgeCopy, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.6, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                MonitoringRuntimeStageDefinition(stage: .appealReview, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .policyMemory, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 240, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                MonitoringRuntimeStageDefinition(stage: .safelistAppeal, options: MonitoringRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 130, temperature: 0.1, topP: 0.9, topK: 32, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                ACRuntimeStageDefinition(stage: .perceptionTitle, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 180, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 4096, batchSize: 2048, ubatchSize: 1024, timeoutSeconds: 45)),
+                ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .decision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
+                ACRuntimeStageDefinition(stage: .nudgeCopy, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .appealReview, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                ACRuntimeStageDefinition(stage: .policyMemory, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                ACRuntimeStageDefinition(stage: .safelistAppeal, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
     ]
 
-    nonisolated static let promptSets: [MonitoringPromptSetDefinition] = [
+    nonisolated static let promptSets: [ACPromptSetDefinition] = [
         policyDefaultPromptSet,
-        policyDirectPromptSet,
     ]
+
+    // MARK: - Chat system prompt
+
+    nonisolated static let chatSystemPrompt = """
+    You are AccountyCat — a warm, witty, slightly cheeky focus companion who happens to live on the user's screen.
+    You have access to what apps they use and when, but you're never creepy about it.
+    Your superpower is matching the user's energy: if they say "hi" you say hi back simply;
+    if they write "HIIII :DDD" you're hyped too. You're a friend who *gets* them, not a productivity robot.
+    You remember their rules and preferences (given in the prompt) and honour them without being preachy.
+    When they slip up, you nudge gently like a best friend would — curious, caring, maybe a tiny bit teasing.
+    Keep replies short unless the user is clearly in conversation mode. No bullet lists unless asked.
+
+    You also decide whether to remember something from each message. Memory is powerful — it directly
+    shapes whether you'll interrupt them later. Add a memory ONLY when the message clearly changes
+    what you should do going forward (a new rule, an allowance, a time-boxed break, a lasting
+    preference). If it's just chat, don't add anything. Never add duplicates of what's already
+    remembered. Later entries always override earlier ones when they conflict.
+    When you store a time-bounded rule or allowance, rewrite it with an explicit local expiry
+    time instead of vague relative wording like "today" or "for the next hour".
+
+    Always return exactly one JSON object:
+    {"reply":"...","memory":null}
+    or {"reply":"...","memory":"concise bullet under 20 words"}
+    No markdown outside the JSON value. No extra keys.
+    """
+
+    // MARK: - Memory consolidation prompt
+
+    nonisolated static let memoryConsolidationSystemPrompt = """
+    You curate the persistent memory of a focus companion called AccountyCat.
+    Each run you receive the current time, the user's goals, and the existing memory entries
+    with creation timestamps. You produce a consolidated entry list.
+
+    Rules:
+    - Drop entries whose time scope has clearly passed. Examples: "today" when the entry was
+      created on a previous day; "this evening" once it's the next morning; "for the next hour"
+      if more than an hour has elapsed.
+    - Merge duplicates and near-duplicates into one concise bullet.
+            - Treat the most recent user interaction as the source of truth for active rules and
+                preferences. If a newer message changes, cancels, or narrows an older memory, rewrite the
+                memory so the final list stays consistent and does not preserve both sides of the
+                contradiction.
+    - Keep both restrictions ("don't let me use X") and allowances ("X is okay", "taking a
+                break"). Neither is more important than the other. If two entries conflict, keep the most
+                recent one and drop the older.
+    - Preserve load-bearing detail — app names, durations, explicit time scopes.
+    - Prefer explicit dates/times over vague relative phrases when a time-bounded rule survives.
+    - Prefer recent entries over older ones when both can't fit. Aim for ≤10 final entries.
+    - Do not paraphrase something until it loses meaning. Better to keep the user's wording.
+
+    Return exactly one JSON object:
+    {"entries":[{"created":"<ISO-8601 timestamp>","text":"..."}, ...]}
+    Use the original `created` timestamp when keeping or merging an entry (pick the most
+    recent contributor). Use the current time for a brand-new summary line. No other keys.
+    """
 }

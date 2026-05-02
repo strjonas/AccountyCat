@@ -277,7 +277,6 @@ actor PromptLabRunner {
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                     ),
-                    characterPersonalityPrefix: "",
                     recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
                     policySummary: compactPolicySummary,
                     appName: compactAppName,
@@ -286,7 +285,8 @@ actor PromptLabRunner {
                     visionPerception: visionPerception?.activitySummary,
                     recentNudges: Array(
                         scenario.recentNudgeMessages.prefix(MonitoringPromptContextBudget.recentNudgeCount)
-                    )
+                    ),
+                    activeProfileName: "General"
                 ),
                 stageResults: &stageResults,
                 decoder: MonitoringNudgeEnvelope.self

@@ -82,7 +82,7 @@ struct PromptLabPromptSet: Codable, Hashable, Identifiable, Sendable {
     }
 
     nonisolated static var defaults: [PromptLabPromptSet] {
-        MonitoringPromptTuning.promptSets.map {
+        ACPromptSets.promptSets.map {
             PromptLabPromptSet(
                 id: $0.id,
                 name: $0.name,
@@ -112,7 +112,7 @@ struct PromptLabPipelineProfile: Codable, Hashable, Identifiable, Sendable {
     var splitCopyGeneration: Bool
 
     nonisolated static var defaults: [PromptLabPipelineProfile] {
-        MonitoringPromptTuning.pipelineDefinitions.map {
+        ACPromptSets.pipelineDefinitions.map {
             PromptLabPipelineProfile(
                 id: $0.id,
                 displayName: $0.displayName,
@@ -167,7 +167,7 @@ struct PromptLabRuntimeProfile: Codable, Hashable, Identifiable, Sendable {
     }
 
     nonisolated static var defaults: [PromptLabRuntimeProfile] {
-        MonitoringPromptTuning.runtimeDefinitions.map { definition -> PromptLabRuntimeProfile in
+        ACPromptSets.runtimeDefinitions.map { definition -> PromptLabRuntimeProfile in
             PromptLabRuntimeProfile(
                 id: definition.id,
                 displayName: definition.displayName,
@@ -428,7 +428,7 @@ struct PromptLabGoldenSummary: Codable, Hashable, Sendable {
 }
 
 private extension PromptLabStage {
-    nonisolated init?(sharedStage: MonitoringPromptTuningStage) {
+    nonisolated init?(sharedStage: ACPromptStage) {
         switch sharedStage {
         case .perceptionTitle:
             self = .perceptionTitle

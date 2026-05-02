@@ -785,7 +785,7 @@ final class InspectorController: ObservableObject {
                 details.append(InspectorDetailRow(label: "Context", value: contextParts.joined(separator: " • ")))
             }
 
-        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback", MonitoringPromptTuningStage.onlineDecision.rawValue:
+        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback", ACPromptStage.onlineDecision.rawValue:
             let decision = decodeDecisionRecord(from: attempt)
             summary = formattedDecisionSummary(from: decision) ?? "No parsed decision output."
             if let nudge = decision?.nudge?.cleanedSingleLine, !nudge.isEmpty {
@@ -947,7 +947,7 @@ final class InspectorController: ObservableObject {
         case .decision:
             switch stage.promptMode {
             case "decision":                                          return 10
-            case MonitoringPromptTuningStage.onlineDecision.rawValue: return 10
+            case ACPromptStage.onlineDecision.rawValue: return 10
             default:                                                  return 11
             }
         case .nudge:
@@ -961,7 +961,7 @@ final class InspectorController: ObservableObject {
         switch promptMode {
         case "perception_vision", "perception_title", "legacy_perception_vision":
             return .perception
-        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback", MonitoringPromptTuningStage.onlineDecision.rawValue:
+        case "decision", "legacy_decision", "decision_fallback", "legacy_decision_fallback", ACPromptStage.onlineDecision.rawValue:
             return .decision
         case "nudge_copy":
             return .nudge
@@ -980,7 +980,7 @@ final class InspectorController: ObservableObject {
             return "Legacy Perception"
         case "decision":
             return "Decision"
-        case MonitoringPromptTuningStage.onlineDecision.rawValue:
+        case ACPromptStage.onlineDecision.rawValue:
             return "Online Decision"
         case "legacy_decision":
             return "Legacy Decision"
