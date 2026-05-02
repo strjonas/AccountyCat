@@ -64,7 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showOverlay: { [weak self] presentation in
                 self?.windowCoordinator?.showOverlay(presentation: presentation)
             },
-            hideOverlay: { [weak self] in     self?.windowCoordinator?.hideOverlay() }
+            hideOverlay: { [weak self] in     self?.windowCoordinator?.hideOverlay() },
+            minimizeApp: { [weak self] bundleID in self?.minimizeApp(bundleIdentifier: bundleID) }
         )
         controller.attachExecutiveArm(arm)
         wc.showCompanion()
@@ -205,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch mood {
                 case .nudging:  symbol = "bubble.left.fill"
                 case .escalated: symbol = "exclamationmark.bubble.fill"
+                case .escalatedHard: symbol = "xmark.shield.fill"
                 case .paused:   symbol = "pause.circle.fill"
                 case .setup:    symbol = "gearshape.fill"
                 default:        symbol = "pawprint.fill"
@@ -387,6 +389,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let p = profilePopover, p.isShown {
             p.performClose(nil)
+        }
+    }
+
+    private func minimizeApp(bundleIdentifier: String?) {
+        guard let bundleID = bundleIdentifier else { return }
+        if let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID
+        }) {
+            app.hide()
         }
     }
 }

@@ -52,7 +52,7 @@ actor CompanionChatService {
         activeProfileContext: String = "",
         runtimeOverride: String?,
         inferenceBackend: MonitoringInferenceBackend = .local,
-        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier,
+        onlineModelIdentifier: String = AITier.balanced.byokModelIdentifierImage,
         onlineTextModelIdentifier: String? = nil,
         localTextModelIdentifier: String? = nil
     ) async -> CompanionChatResult? {

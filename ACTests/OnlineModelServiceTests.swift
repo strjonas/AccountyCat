@@ -10,7 +10,6 @@ struct OnlineModelServiceTests {
             OnlineModelService.requestFallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
             == [
                 "nvidia/nemotron-3-super-120b-a12b",
-                "google/gemini-3-flash-preview",
             ]
         )
     }
@@ -22,7 +21,7 @@ struct OnlineModelServiceTests {
             == [
                 "google/gemma-4-31b-it",
                 "nvidia/nemotron-3-super-120b-a12b",
-                "google/gemini-3-flash-preview",
+                "deepseek/deepseek-v4-flash",
             ]
         )
     }
@@ -84,7 +83,7 @@ struct OnlineModelServiceTests {
         let fallbacks = OnlineModelService.requestFallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
 
         #expect(fallbacks.first == "nvidia/nemotron-3-super-120b-a12b")
-        #expect(fallbacks.dropFirst().first == "google/gemini-3-flash-preview")
+        #expect(fallbacks.count == 1)
     }
 
     @Test

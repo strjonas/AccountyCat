@@ -191,6 +191,10 @@ enum CompanionAction: Equatable, Sendable {
     case none
     case showNudge(String)
     case showOverlay(OverlayPresentation)
+    var isHardEscalation: Bool {
+        if case .showOverlay(let p) = self { return p.isHardEscalation }
+        return false
+    }
 }
 
 enum CompanionMood: String, Sendable {
@@ -199,6 +203,7 @@ enum CompanionMood: String, Sendable {
     case watching
     case nudging
     case escalated
+    case escalatedHard
     case paused
 }
 
@@ -231,6 +236,8 @@ enum ActionKind: String, Codable, Sendable {
     case overlay
     case backToWork
     case dismissOverlay
+    case autoMinimizeApp
+    case minimizeApp
 }
 
 struct ActionRecord: Codable, Hashable, Sendable {
@@ -324,6 +331,18 @@ struct OverlayPresentation: Codable, Hashable, Equatable, Sendable {
     var evaluationID: String?
     var submitButtonTitle: String
     var secondaryButtonTitle: String
+    var isHardEscalation: Bool = false
+}
+
+struct ActiveEscalation: Codable, Hashable, Equatable, Sendable {
+    var appName: String
+    var bundleIdentifier: String?
+    var evaluationID: String
+    var startedAt: Date
+    var timesMinimized: Int = 0
+    var lastMinimizedAt: Date?
+    var lastAppealText: String?
+    var lastAppealResult: AppealReviewDecision?
 }
 
 enum AppealReviewDecision: String, Codable, Sendable {
@@ -602,6 +621,8 @@ struct ACState: Codable, Sendable {
     var activeProfileID: String = PolicyRule.defaultProfileID
     /// Timestamp of the last forced full-screen screenshot (safety net when using active-window mode).
     var lastFullScreenCheckAt: Date?
+    /// Active hard escalation: when set, the brain auto-minimizes the named app if the user re-opens it.
+    var hardEscalation: ActiveEscalation?
 
     private static func sanitizeRuntimePathOverride(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
@@ -643,6 +664,7 @@ struct ACState: Codable, Sendable {
         case profiles
         case activeProfileID
         case lastFullScreenCheckAt
+        case hardEscalation
     }
 
 
@@ -725,6 +747,7 @@ struct ACState: Codable, Sendable {
             activeProfileID = PolicyRule.defaultProfileID
         }
         lastFullScreenCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastFullScreenCheckAt)
+        hardEscalation = try container.decodeIfPresent(ActiveEscalation.self, forKey: .hardEscalation)
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -774,6 +797,7 @@ struct ACState: Codable, Sendable {
         try container.encode(profiles, forKey: .profiles)
         try container.encode(activeProfileID, forKey: .activeProfileID)
         try container.encodeIfPresent(lastFullScreenCheckAt, forKey: .lastFullScreenCheckAt)
+        try container.encodeIfPresent(hardEscalation, forKey: .hardEscalation)
     }
 
     mutating func resetAlgorithmProfile() {

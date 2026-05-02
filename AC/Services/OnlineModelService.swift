@@ -129,11 +129,6 @@ enum OnlineModelCredentialStore {
 
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
-    nonisolated static let fallbackNonFreeModelIdentifier = "google/gemma-4-31b-it"
-    nonisolated static let economyTextFallbackModelIdentifier = "nvidia/nemotron-3-super-120b-a12b"
-    nonisolated static let smartestTextFallbackModelIdentifier = "google/gemini-3-flash-preview"
-    nonisolated static let economyVisionFallbackModelIdentifier = "qwen/qwen3.5-9b"
-    nonisolated static let smartestVisionFallbackModelIdentifier = "google/gemini-3-flash-preview"
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
 
     private let session: URLSession
@@ -386,8 +381,8 @@ actor OnlineModelService: OnlineModelServing {
             chain.append(nonFree)
         }
         let tierFallbacks = includesImage
-            ? [economyVisionFallbackModelIdentifier, smartestVisionFallbackModelIdentifier]
-            : [economyTextFallbackModelIdentifier, smartestTextFallbackModelIdentifier]
+            ? [AITier.economy.byokModelIdentifierImage, AITier.smartest.byokModelIdentifierImage]
+            : [AITier.economy.byokModelIdentifierText, AITier.smartest.byokModelIdentifierText]
 
         for fallback in tierFallbacks where modelIdentifier != fallback && !chain.contains(fallback) {
             chain.append(fallback)
@@ -402,7 +397,7 @@ actor OnlineModelService: OnlineModelServing {
         }
 
         if trimmed == "google/gemma-4-31b-it:free" {
-            return fallbackNonFreeModelIdentifier
+            return AITier.balanced.byokModelIdentifierImage
         }
 
         guard trimmed.hasSuffix(":free") else {

@@ -1632,6 +1632,7 @@ final class AppController: ObservableObject {
         let overlayMessage = activeOverlay.map { "\($0.headline) — \($0.body)" }
         activeOverlay = nil
         overlayAppealDraft = ""
+        state.hardEscalation = nil
         brainService?.recordUserReaction(
             UserReactionRecord(
                 kind: .backToWorkSelected,
@@ -1658,11 +1659,16 @@ final class AppController: ObservableObject {
     }
 
     func dismissOverlay() {
+        // Don't clear hard escalation on dismiss — user must convince AC or go back to work
+        let wasHard = activeOverlay?.isHardEscalation == true
         executiveArm?.dismissOverlay()
         overlayVisible = false
         let overlayMessage = activeOverlay.map { "\($0.headline) — \($0.body)" }
         activeOverlay = nil
         overlayAppealDraft = ""
+        if !wasHard {
+            state.hardEscalation = nil
+        }
         brainService?.recordUserReaction(
             UserReactionRecord(
                 kind: .overlayDismissed,
@@ -1684,6 +1690,24 @@ final class AppController: ObservableObject {
         state.recentActions = Array(state.recentActions.prefix(12))
         logActivity("action", "Overlay dismissed")
         persistState()
+    }
+
+    func showHardEscalationOnReopen(appName: String) {
+        guard overlayVisible == false else { return }
+        let escalation = state.hardEscalation
+        activeOverlay = OverlayPresentation(
+            headline: "No.",
+            body: "I minimized \(appName) because you haven't convinced me it serves your goals. Tell me why you need it.",
+            prompt: "Explain why \(appName) is actually helping right now…",
+            appName: appName,
+            evaluationID: escalation?.evaluationID,
+            submitButtonTitle: "Submit",
+            secondaryButtonTitle: "I'll get back to work",
+            isHardEscalation: true
+        )
+        overlayVisible = true
+        companionMood = .escalatedHard
+        executiveArm?.perform(.showOverlay(activeOverlay!))
     }
 
     func clearTransientUI() {
@@ -1734,7 +1758,8 @@ final class AppController: ObservableObject {
                         appName: presentation.appName,
                         evaluationID: presentation.evaluationID,
                         submitButtonTitle: presentation.submitButtonTitle,
-                        secondaryButtonTitle: presentation.secondaryButtonTitle
+                        secondaryButtonTitle: presentation.secondaryButtonTitle,
+                        isHardEscalation: presentation.isHardEscalation
                     )
                     return
                 }
@@ -1742,15 +1767,68 @@ final class AppController: ObservableObject {
                 self.noteUsedModel(output.evaluation.lastUsedModelIdentifier)
                 self.state.policyMemory = output.updatedPolicyMemory
                 self.state.algorithmState = output.updatedAlgorithmState
-                self.activeOverlay = OverlayPresentation(
-                    headline: output.result.decision == .allow ? "Okay." : "Not convinced yet.",
-                    body: output.result.message,
-                    prompt: output.result.decision == .deferDecision ? presentation.prompt : nil,
-                    appName: presentation.appName,
-                    evaluationID: presentation.evaluationID,
-                    submitButtonTitle: output.result.decision == .deferDecision ? "Submit" : "Back to work",
-                    secondaryButtonTitle: "Dismiss"
-                )
+
+                // Hard escalation deny → minimize the app
+                if presentation.isHardEscalation, output.result.decision == .deny {
+                    self.state.hardEscalation?.lastAppealText = trimmedAppeal
+                    self.state.hardEscalation?.lastAppealResult = output.result.decision
+                    // Find and minimize the app
+                    if let escalation = self.state.hardEscalation,
+                       let bid = escalation.bundleIdentifier ?? SnapshotService.frontmostContext()?.bundleIdentifier {
+                        self.executiveArm?.hideApp(bundleIdentifier: bid)
+                        self.state.hardEscalation?.timesMinimized += 1
+                        self.state.hardEscalation?.lastMinimizedAt = Date()
+                        self.state.recentActions.insert(ActionRecord(
+                            kind: .minimizeApp,
+                            message: "Minimized \(escalation.appName) after unconvincing appeal",
+                            timestamp: Date(),
+                            appName: escalation.appName
+                        ), at: 0)
+                        self.state.recentActions = Array(self.state.recentActions.prefix(12))
+                    }
+                    // Save appeal to memory
+                    self.appendMemoryLine("• User appealed hard escalation on \(presentation.appName): \"\(trimmedAppeal)\" — denied")
+                    self.schedulePolicyMemoryUpdate(
+                        eventSummary: "User appealed hard escalation on \(presentation.appName) saying: \(trimmedAppeal). AC denied the appeal.",
+                        context: SnapshotService.frontmostContext()
+                    )
+                    self.activeOverlay = OverlayPresentation(
+                        headline: "I'm not convinced.",
+                        body: output.result.message.isEmpty
+                            ? "I've minimized \(presentation.appName). If you open it again, I'll minimize it again. Convince me."
+                            : output.result.message,
+                        prompt: "Try again — why is \(presentation.appName) actually helping right now?",
+                        appName: presentation.appName,
+                        evaluationID: presentation.evaluationID,
+                        submitButtonTitle: "Submit",
+                        secondaryButtonTitle: "I'll get back to work",
+                        isHardEscalation: true
+                    )
+                } else if presentation.isHardEscalation, output.result.decision == .allow {
+                    // User convinced AC — save to memory, clear hard escalation
+                    self.state.hardEscalation = nil
+                    self.appendMemoryLine("• User convinced AC to allow \(presentation.appName): \"\(trimmedAppeal)\"")
+                    self.schedulePolicyMemoryUpdate(
+                        eventSummary: "User convinced AC to allow \(presentation.appName): \(trimmedAppeal). Safe to let them continue.",
+                        context: SnapshotService.frontmostContext()
+                    )
+                    self.activeOverlay = nil
+                    self.overlayVisible = false
+                    self.executiveArm?.dismissOverlay()
+                    self.overlayAppealDraft = ""
+                    self.companionMood = .watching
+                } else {
+                    self.activeOverlay = OverlayPresentation(
+                        headline: output.result.decision == .allow ? "Okay." : "Not convinced yet.",
+                        body: output.result.message,
+                        prompt: output.result.decision == .deferDecision ? presentation.prompt : nil,
+                        appName: presentation.appName,
+                        evaluationID: presentation.evaluationID,
+                        submitButtonTitle: output.result.decision == .deferDecision ? "Submit" : "Back to work",
+                        secondaryButtonTitle: "Dismiss",
+                        isHardEscalation: presentation.isHardEscalation
+                    )
+                }
                 self.overlayAppealDraft = ""
                 self.persistState()
             }
@@ -2613,6 +2691,9 @@ final class AppController: ObservableObject {
             }
             brainService.modelUsageSink = { [weak self] identifier in
                 self?.noteUsedModel(identifier)
+            }
+            brainService.hardEscalationReopenSink = { [weak self] appName in
+                self?.showHardEscalationOnReopen(appName: appName)
             }
 
             self.brainService = brainService

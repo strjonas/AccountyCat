@@ -469,6 +469,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
             switch decision.suggestedAction {
             case .overlay:
+                let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
                 let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
                     appName: input.snapshot.appName,
                     evaluationID: input.evaluationID
@@ -481,18 +482,21 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     submitButtonTitle: "Explain",
                     secondaryButtonTitle: "Back to work"
                 )
+                let finalPresentation = isHard
+                    ? presentation.withHardEscalation
+                    : presentation
                 policyState.lastOverlayAt = input.now
                 policyState.lastInterventionAt = input.now
                 policyState.activeAppeal = MonitoringAppealSession(
                     evaluationID: input.evaluationID,
                     contextKey: distraction.contextKey ?? "unknown",
                     appName: input.snapshot.appName,
-                    prompt: presentation.prompt ?? "This looks a bit off-track — what's going on?",
+                    prompt: finalPresentation.prompt ?? "This looks a bit off-track — what's going on?",
                     createdAt: input.now,
                     lastSubmittedAt: nil,
                     lastResult: nil
                 )
-                action = .showOverlay(presentation)
+                action = .showOverlay(finalPresentation)
                 blockReason = nil
 
             case .nudge:
@@ -502,10 +506,14 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     distraction: distraction,
                     decision: decision
                 ) {
-                    let presentation = OverlayPresentation.defaultRepeatedDistraction(
+                    let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
+                    let basePresentation = OverlayPresentation.defaultRepeatedDistraction(
                         appName: input.snapshot.appName,
                         evaluationID: input.evaluationID
                     )
+                    let presentation = isHard
+                        ? basePresentation.withHardEscalation
+                        : basePresentation
                     policyState.lastOverlayAt = input.now
                     policyState.lastInterventionAt = input.now
                     policyState.activeAppeal = MonitoringAppealSession(
@@ -518,7 +526,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                         lastResult: nil
                     )
                     action = .showOverlay(presentation)
-                    blockReason = "repeated_nudge_escalation"
+                    blockReason = isHard ? "repeated_nudge_hard_escalation" : "repeated_nudge_escalation"
                 } else if let nudge = decision.nudge?.cleanedSingleLine,
                    !nudge.isEmpty {
                     policyState.lastNudgeAt = input.now
@@ -1178,10 +1186,14 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let baseSystemPrompt = ACPromptSets.systemPrompt(for: promptStage)
         let systemPrompt = systemPromptPrefix.isEmpty ? baseSystemPrompt : "\(systemPromptPrefix)\n\n\(baseSystemPrompt)"
         let userPrompt = ACPromptSets.renderUserPrompt(for: promptStage, payloadJSON: payloadJSON)
+        // SHA256 is only used by verbose-telemetry artifact filenames (debug builds).
+        // Skipping it saves ~0.5 ms per stage — trivial alone, but adds up across stages.
+        let templateSHA = ACBuild.isDebug ? Self.sha256Hex(systemPrompt) : stage.rawValue
+
         let template = PromptTemplateRecord(
             id: "policy.\(stage.rawValue)",
             version: descriptor.version,
-            sha256: Self.sha256Hex(systemPrompt)
+            sha256: templateSHA
         )
 
         let attemptIndex = attempts.count
@@ -1274,10 +1286,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let baseSystemPrompt = ACPromptSets.systemPrompt(for: promptStage)
         let systemPrompt = systemPromptPrefix.isEmpty ? baseSystemPrompt : "\(systemPromptPrefix)\n\n\(baseSystemPrompt)"
         let userPrompt = ACPromptSets.renderUserPrompt(for: promptStage, payloadJSON: payloadJSON)
+
+        let templateSHA = ACBuild.isDebug ? Self.sha256Hex(systemPrompt) : stage.rawValue
         let template = PromptTemplateRecord(
             id: "policy.\(stage.rawValue)",
             version: descriptor.version,
-            sha256: Self.sha256Hex(systemPrompt)
+            sha256: templateSHA
         )
 
         let attemptIndex = attempts.count
@@ -1494,6 +1508,22 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             .filter { actionMentionsCurrentContext($0, snapshot: input.snapshot) }
             .count
         return matchingRecentNudges >= 3
+    }
+
+    private func shouldTriggerHardEscalation(
+        input: MonitoringDecisionInput,
+        distraction: DistractionMetadata
+    ) -> Bool {
+        // Hard escalation fires when we'd already escalate to overlay AND:
+        // - 3+ consecutive distracted counts (user really won't stop), OR
+        // - An overlay was already shown for this context (user ignored the gentler escalation)
+        let hadPriorOverlay = input.algorithmState.llmPolicy.lastOverlayAt != nil
+
+        // Check if the user ignored the last intervention (no feedback)
+        let hasIgnoredIntervention = input.algorithmState.llmPolicy.activeAppeal == nil
+
+        return distraction.consecutiveDistractedCount >= 3
+            || (hadPriorOverlay && hasIgnoredIntervention)
     }
 
     private func actionMentionsCurrentContext(_ action: ActionRecord, snapshot: AppSnapshot) -> Bool {
@@ -2033,6 +2063,19 @@ private extension OverlayPresentation {
             evaluationID: evaluationID,
             submitButtonTitle: "Explain",
             secondaryButtonTitle: "Back to work"
+        )
+    }
+
+    var withHardEscalation: OverlayPresentation {
+        OverlayPresentation(
+            headline: "I need to ask…",
+            body: "Tell me why I should let you continue on \(appName). Does it really serve your goals?",
+            prompt: "Explain why \(appName) is actually helping right now…",
+            appName: appName,
+            evaluationID: evaluationID,
+            submitButtonTitle: "Submit",
+            secondaryButtonTitle: "Back to work",
+            isHardEscalation: true
         )
     }
 }

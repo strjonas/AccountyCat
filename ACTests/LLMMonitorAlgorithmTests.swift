@@ -488,7 +488,7 @@ struct LLMMonitorAlgorithmTests {
         let requests = await onlineService.requests()
         #expect(requests.count == 1)
         #expect(requests.first?.imagePath == "/tmp/fake-screenshot.png")
-        #expect(requests.first?.modelIdentifier == MonitoringConfiguration.defaultOnlineModelIdentifier)
+        #expect(requests.first?.modelIdentifier == AITier.balanced.byokModelIdentifierImage)
     }
 
     @Test

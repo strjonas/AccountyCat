@@ -17,6 +17,8 @@ final class BrainService: NSObject {
     var moodSink: ((CompanionMood) -> Void)?
     var statusSink: ((String) -> Void)?
     var modelUsageSink: ((String) -> Void)?
+    /// Called when a hard-escalated app is auto-minimized so the UI can re-show the overlay.
+    var hardEscalationReopenSink: ((String) -> Void)?
 
     /// Override for testing: substitute a real `SnapshotService.frontmostContext()` call.
     var contextProvider: (() -> FrontmostContext?)?
@@ -30,7 +32,7 @@ final class BrainService: NSObject {
     private let storageService: StorageService
     private let telemetryStore: TelemetryStore
     private let pollingInterval: TimeInterval = 10
-    private let contextChangeProbeInterval: TimeInterval = 2
+    private let contextChangeProbeInterval: TimeInterval = 5
 
     private var timer: Timer?
     private var contextProbeTimer: Timer?
@@ -449,6 +451,28 @@ final class BrainService: NSObject {
         guard let context = contextProvider?() ?? SnapshotService.frontmostContext() else {
             moodSink?(.idle)
             statusSink?("Could not read the active app yet.")
+            return
+        }
+
+        // Hard escalation: if the user re-opened an app that was force-minimized,
+        // minimize it again immediately before doing any evaluation.
+        if let escalation = state.hardEscalation,
+           context.bundleIdentifier == escalation.bundleIdentifier || context.appName == escalation.appName {
+            executiveArm.hideApp(bundleIdentifier: context.bundleIdentifier)
+            state.hardEscalation?.timesMinimized += 1
+            state.hardEscalation?.lastMinimizedAt = now
+            state.recentActions.insert(ActionRecord(
+                kind: .autoMinimizeApp,
+                message: "Auto-minimized \(context.appName)",
+                timestamp: now,
+                contextKey: context.contextKey,
+                appName: context.appName
+            ), at: 0)
+            state.recentActions = Array(state.recentActions.prefix(12))
+            stateSink?(baseState, state)
+            moodSink?(.escalatedHard)
+            statusSink?("\(context.appName) was minimized. Explain why it serves your goals.")
+            hardEscalationReopenSink?(context.appName)
             return
         }
 
@@ -883,9 +907,19 @@ final class BrainService: NSObject {
             ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             attachIntervention(actionID, toLatestSegmentIn: &state)
+            if presentation.isHardEscalation {
+                state.hardEscalation = ActiveEscalation(
+                    appName: context.appName,
+                    bundleIdentifier: context.bundleIdentifier,
+                    evaluationID: evaluationID,
+                    startedAt: now
+                )
+            }
             stateSink?(baseState, state)
-            moodSink?(.escalated)
-            statusSink?("Escalated after repeated distraction signals.")
+            moodSink?(presentation.isHardEscalation ? .escalatedHard : .escalated)
+            statusSink?(presentation.isHardEscalation
+                ? "Hard escalation — asking why \(context.appName) serves your goals."
+                : "Escalated after repeated distraction signals.")
             executiveArm.perform(.showOverlay(presentation))
             pendingReactionsByEvaluationID[evaluationID] = PendingReaction(
                 episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",

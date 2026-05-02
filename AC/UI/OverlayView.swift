@@ -20,7 +20,8 @@ struct OverlayView: View {
             appName: controller.state.rescueApp.displayName,
             evaluationID: nil,
             submitButtonTitle: "Back to work",
-            secondaryButtonTitle: "Not yet"
+            secondaryButtonTitle: "Not yet",
+            isHardEscalation: false
         )
 
         let character = controller.state.character

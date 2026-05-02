@@ -33,7 +33,7 @@ actor MemoryConsolidationService {
         now: Date,
         runtimeOverride: String?,
         inferenceBackend: MonitoringInferenceBackend = .local,
-        onlineModelIdentifier: String = MonitoringConfiguration.defaultOnlineModelIdentifier,
+        onlineModelIdentifier: String = AITier.balanced.byokModelIdentifierImage,
         onlineTextModelIdentifier: String? = nil,
         localTextModelIdentifier: String? = nil
     ) async -> [MemoryEntry]? {

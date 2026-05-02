@@ -28,7 +28,8 @@ struct BrainServiceConfigurationTests {
             executiveArm: ExecutiveArm(
                 showNudge: { _ in },
                 showOverlay: { _ in },
-                hideOverlay: { }
+                hideOverlay: { },
+                minimizeApp: { _ in }
             ),
             storageService: StorageService.temporary(),
             telemetryStore: TelemetryStore(

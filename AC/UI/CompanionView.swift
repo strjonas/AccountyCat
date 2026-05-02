@@ -57,7 +57,7 @@ struct CompanionView: View {
 
             // ── Cat orb ──
             ZStack {
-                if controller.companionMood == .nudging || controller.companionMood == .escalated {
+                if controller.companionMood == .nudging || controller.companionMood == .escalated || controller.companionMood == .escalatedHard {
                     PulseRing(color: ringColor)
                         .frame(width: orbDiameter, height: orbDiameter)
                 }
@@ -126,7 +126,7 @@ struct CompanionView: View {
             return LinearGradient(
                 colors: [ch.nudgingOrbTopColor, ch.nudgingOrbBottomColor],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .escalated:
+        case .escalated, .escalatedHard:
             return LinearGradient(
                 colors: [ch.nudgingOrbTopColor, ch.escalatedRingColor.opacity(0.80)],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -448,6 +448,10 @@ private struct ACMouth: Shape {
             p.move(to: CGPoint(x: rect.minX, y: rect.midY))
             p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.midY),
                            control: CGPoint(x: rect.midX, y: rect.minY - 2))
+        case .escalatedHard:
+            // Determined flat line — AC means business
+            p.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         case .nudging:
             // Big warm smile
             p.move(to: CGPoint(x: rect.minX, y: rect.midY - 2))

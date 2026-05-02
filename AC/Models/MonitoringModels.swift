@@ -94,9 +94,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static let defaultOnlineTextPipelineProfileID = "online_single_round_text"
     nonisolated static let defaultRuntimeProfileID = "gemma_balanced_v1"
     nonisolated static let defaultInferenceBackend: MonitoringInferenceBackend = .local
-    nonisolated static let defaultOnlineModelIdentifier = "google/gemma-4-31b-it"
-    nonisolated static let defaultOnlineModelIdentifierText = "nvidia/nemotron-3-nano-30b-a3b"
-    nonisolated static let defaultOnlineModelIdentifierImage = "qwen/qwen3.5-9b"
     nonisolated static let banditAlgorithmID = "bandit_focus_v1"
     nonisolated static let minTitleLengthForTextOnly = 12
     nonisolated static let maxTitleLengthForTextOnly = 120
@@ -156,7 +153,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         selectionMode: MonitoringSelectionMode = .fixed,
         cadenceMode: MonitoringCadenceMode = .balanced,
         experimentArmOverride: String? = nil,
-        onlineModelIdentifier: String = Self.defaultOnlineModelIdentifier,
+        onlineModelIdentifier: String = AITier.balanced.byokModelIdentifierImage,
         onlineModelIdentifierText: String? = nil,
         onlineModelIdentifierImage: String? = nil,
         localModelIdentifierText: String? = nil,
@@ -229,7 +226,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     nonisolated static func normalizedOnlineModelIdentifier(_ rawValue: String) -> String {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return defaultOnlineModelIdentifier
+            return AITier.balanced.byokModelIdentifierImage
         }
 
         if let url = URL(string: trimmed),
@@ -282,7 +279,7 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
             try c.decodeIfPresent(String.self, forKey: .modelOverride)
         )
         onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(
-            try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifier) ?? Self.defaultOnlineModelIdentifier
+            try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifier) ?? AITier.balanced.byokModelIdentifierImage
         )
         onlineModelIdentifierText = Self.normalizedOptionalOnlineModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifierText)
