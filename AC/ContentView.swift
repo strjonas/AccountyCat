@@ -390,7 +390,7 @@ struct ContentView: View {
         .padding(20)
     }
 
-    private struct LocalModelStorageSection: View {
+    struct LocalModelStorageSection: View {
         @EnvironmentObject private var controller: AppController
         let onDelete: () -> Void
 
@@ -732,7 +732,7 @@ struct ContentView: View {
 
 // MARK: - Status dot
 
-private struct StatusDot: View {
+struct StatusDot: View {
     let status: SetupStatus
     let isPaused: Bool
     @Environment(\.acAccent) private var accent
@@ -789,7 +789,7 @@ private struct StatusDot: View {
     }
 }
 
-private struct ModelDownloadSuccessSheet: View {
+struct ModelDownloadSuccessSheet: View {
     let modelName: String
     @Environment(\.dismiss) private var dismiss
 
@@ -818,7 +818,7 @@ private struct ModelDownloadSuccessSheet: View {
 
 /// Small character-aware logo glyph used in the popover header. Pairs the AC
 /// wordmark with a hint of the active character's accent.
-private struct HeaderMark: View {
+struct HeaderMark: View {
     let character: ACCharacter
 
     var body: some View {
@@ -849,7 +849,7 @@ private struct HeaderMark: View {
 
 /// Compact tap-to-toggle tile used on the Home tab for the primary controls.
 /// Reads at a glance and responds with a warm caramel accent when on.
-private struct ToggleTile: View {
+struct ToggleTile: View {
     let icon: String
     let title: String
     let subtitle: String
@@ -900,41 +900,58 @@ private struct ToggleTile: View {
 
 // MARK: - Stats section
 
-private struct StatsSection: View {
+struct StatsSection: View {
     let stats: AppController.TodayStats
     let accent: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Today")
-                .font(.ac(10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.6)
-
+        VStack(alignment: .leading, spacing: 14) {
+            // Timeline
             TimelineStrip(
                 segments: stats.timelineSegments,
                 accent: accent
             )
 
-            HStack(spacing: 8) {
-                StatCard(
-                    icon: "clock.fill",
+            // Metrics row
+            HStack(spacing: 0) {
+                metricCell(
                     value: formatDuration(stats.focusedSeconds),
-                    label: "Focused",
-                    accent: accent)
-                StatCard(
-                    icon: "bolt.fill",
+                    label: "Focused"
+                )
+                Divider().frame(height: 32)
+                metricCell(
                     value: formatDuration(stats.longestFocusedBlockSeconds),
-                    label: "Best block",
-                    accent: accent)
-                StatCard(
-                    icon: "flame.fill",
+                    label: "Best block"
+                )
+                Divider().frame(height: 32)
+                metricCell(
                     value: "\(stats.streakDays)d",
-                    label: "Streak",
-                    accent: accent)
+                    label: "Streak"
+                )
             }
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
         }
+    }
+
+    private func metricCell(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.ac(16, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+                .lineLimit(1)
+            Text(label)
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
@@ -947,18 +964,12 @@ private struct StatsSection: View {
     }
 }
 
-private struct TimelineStrip: View {
+struct TimelineStrip: View {
     let segments: [FocusTimelineSegment]
     let accent: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Image(systemName: "chart.bar.xaxis")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(accent)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(accent.opacity(0.12)))
-
+        VStack(alignment: .leading, spacing: 6) {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
@@ -974,14 +985,15 @@ private struct TimelineStrip: View {
                     }
                 }
             }
-            .frame(height: 9)
+            .frame(height: 8)
 
-            Text("Timeline")
-                .font(.ac(10))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                legendDot(color: accent.opacity(0.78), label: "Focused")
+                legendDot(color: Color.orange.opacity(0.78), label: "Distracted")
+                legendDot(color: Color.gray.opacity(0.42), label: "Idle")
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
@@ -993,7 +1005,18 @@ private struct TimelineStrip: View {
         )
     }
 
-    private struct RenderedSegment: Identifiable {
+    private func legendDot(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.ac(9))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    struct RenderedSegment: Identifiable {
         let id: UUID
         let assessment: FocusSegmentAssessment
         let startFraction: Double
@@ -1032,7 +1055,7 @@ private struct TimelineStrip: View {
     }
 }
 
-private struct StatCard: View {
+struct StatCard: View {
     let icon: String
     let value: String
     let label: String
@@ -1077,7 +1100,7 @@ private struct StatCard: View {
 // MARK: - Settings Section
 
 /// Standard section header + optional subtitle wrapper used across settings.
-private struct SettingsSection<Content: View>: View {
+struct SettingsSection<Content: View>: View {
     let title: String
     let icon: String
     var subtitle: String? = nil
@@ -1116,7 +1139,7 @@ private struct SettingsSection<Content: View>: View {
 /// This is deliberately NOT part of onboarding — it's a "hidden gem" feature
 /// users discover via Settings or docs. The info button on hover teaches the
 /// value prop without another onboarding dialog.
-private struct CalendarIntelligenceSection: View {
+struct CalendarIntelligenceSection: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
     @State private var hoveringInfo = false
@@ -1334,7 +1357,7 @@ private struct CalendarIntelligenceSection: View {
 
 /// Three-card character picker shown in the Settings tab.
 /// Selecting a card immediately updates the character and animates the orb palette.
-private struct CharacterPickerSection: View {
+struct CharacterPickerSection: View {
     let selected: ACCharacter
     let onSelect: (ACCharacter) -> Void
 
@@ -1380,7 +1403,7 @@ private struct CharacterPickerSection: View {
     }
 }
 
-private struct CharacterCard: View {
+struct CharacterCard: View {
     let character: ACCharacter
     let isSelected: Bool
 
@@ -1452,7 +1475,7 @@ private struct CharacterCard: View {
 }
 
 /// Simplified cat face used inside the character picker cards.
-private struct MiniCatFace: View {
+struct MiniCatFace: View {
     let accentColor: Color
 
     var body: some View {
@@ -1484,7 +1507,7 @@ private struct MiniCatFace: View {
     }
 }
 
-private struct Triangle: Shape {
+struct Triangle: Shape {
     func path(in rect: CGRect) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: rect.midX, y: rect.minY))
@@ -1498,7 +1521,7 @@ private struct Triangle: Shape {
 // MARK: - AI Settings Section (Mode + Tier)
 
 /// The AI section in Settings. Adds backend mode, API-key setup, and tier selection.
-private struct AISettingsSection: View {
+struct AISettingsSection: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
 
@@ -1624,7 +1647,7 @@ private struct AISettingsSection: View {
     }
 }
 
-private struct CadencePicker: View {
+struct CadencePicker: View {
     let selected: MonitoringCadenceMode
     let usingOnline: Bool
     let onSelect: (MonitoringCadenceMode) -> Void
@@ -1682,7 +1705,7 @@ private struct CadencePicker: View {
     }
 }
 
-private struct VisionGateSettingsCard: View {
+struct VisionGateSettingsCard: View {
     @Binding var threshold: Int
     @Environment(\.acAccent) private var accent
 
@@ -1767,7 +1790,7 @@ private struct VisionGateSettingsCard: View {
     }
 }
 
-private struct AnyButtonStyle: ButtonStyle {
+struct AnyButtonStyle: ButtonStyle {
     private let makeBodyClosure: (Configuration) -> AnyView
 
     init<S: ButtonStyle>(_ style: S) {
@@ -1782,7 +1805,7 @@ private struct AnyButtonStyle: ButtonStyle {
 }
 
 /// Compact 3-button mode row for the Settings AI section.
-private struct SettingsModeRow: View {
+struct SettingsModeRow: View {
     let current: MonitoringInferenceBackend
     let onChange: (MonitoringInferenceBackend) -> Void
     @Environment(\.acAccent) private var accent
@@ -1861,7 +1884,7 @@ private struct SettingsModeRow: View {
 
 // MARK: - About Section
 
-private struct AboutSection: View {
+struct AboutSection: View {
     @Environment(\.acAccent) private var accent
 
     private var appVersion: String {

@@ -68,6 +68,17 @@ final class AppController: ObservableObject {
     var openMainPopover: (() -> Void)?
     /// Closure set by AppDelegate so compact controls can dismiss the menu-bar quick popover.
     var dismissProfilePopover: (() -> Void)?
+    /// Closure set by AppDelegate to resize the main popover (e.g. when stats expand).
+    var resizePopover: ((NSSize) -> Void)?
+
+    /// Closure set by AppDelegate to open the rules sheet from the context bar.
+    var showRulesSheet: (() -> Void)?
+
+    /// Published state for showing the settings sheet from the chat popover header.
+    @Published var showSettingsSheet = false
+
+    /// Published state for showing the rules sheet from the context bar.
+    @Published var showRulesSheetFromContextBar = false
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 8

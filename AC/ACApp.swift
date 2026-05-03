@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.applyIcon(symbolName: symbol, to: item)
 
                 // Close the popover when a nudge fires so the speech bubble and
-                // settings panel don’t overlap. The NSPopover instance is reused,
+                // settings panel don't overlap. The NSPopover instance is reused,
                 // so SwiftUI @State (draft text, scroll position, etc.) is preserved.
                 if mood == .nudging, let p = self.popover, p.isShown {
                     p.performClose(nil)
@@ -295,15 +295,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makePopover() -> NSPopover {
         let p = NSPopover()
-        p.contentSize = NSSize(width: ACD.popoverWidth, height: 560)
+        p.contentSize = NSSize(width: ACD.popoverWidth, height: 460)
         p.behavior = .transient
         p.animates = true
         p.contentViewController = NSHostingController(
-            rootView: ContentView()
+            rootView: ChatPopoverView()
                 .environmentObject(controller)
         )
         controller.dismissPopover = { [weak p] in
             p?.performClose(nil)
+        }
+        controller.resizePopover = { [weak p] size in
+            guard let p else { return }
+            p.contentSize = size
         }
         return p
     }

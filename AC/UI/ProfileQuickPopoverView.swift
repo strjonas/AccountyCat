@@ -53,6 +53,7 @@ struct ProfileQuickPopoverView: View {
     @State private var selectedDuration: ProfileSessionDurationChoice = .ninety
     @State private var customMinutesText = ""
     @State private var nowTick = Date()
+    @State private var startingProfileID: String? = nil
 
     private var active: FocusProfile { controller.state.activeProfile }
     private var switchableProfiles: [FocusProfile] {
@@ -96,7 +97,6 @@ struct ProfileQuickPopoverView: View {
         VStack(alignment: .leading, spacing: 14) {
             headerCard
             actionRow
-            durationSection
             if !active.isDefault {
                 extendSection
             }
@@ -118,40 +118,30 @@ struct ProfileQuickPopoverView: View {
     }
 
     private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    accentSoft.opacity(colorScheme == .dark ? 0.85 : 0.95),
-                                    accent.opacity(colorScheme == .dark ? 0.75 : 0.88)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    Image(systemName: active.isDefault ? "circle.hexagongrid.fill" : "scope")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.96))
-                }
-                .frame(width: 32, height: 32)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(active.name)
-                        .font(.ac(15, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
-                    Text(currentStatusLine)
-                        .font(.ac(11))
-                        .foregroundStyle(.secondary)
-                }
-
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: active.isDefault ? "circle.hexagongrid" : "scope")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(accent)
+                Text(active.name)
+                    .font(.ac(15, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
                 Spacer(minLength: 0)
+                if !active.isDefault {
+                    Button("End") {
+                        controller.endActiveProfile(announce: true)
+                        controller.markAllChatMessagesRead()
+                    }
+                    .buttonStyle(ACDangerButton())
+                }
             }
 
+            Text(currentStatusLine)
+                .font(.ac(11))
+                .foregroundStyle(.secondary)
+
             if active.isDefault {
-                Text("Pick a saved profile and AC will start a timed session immediately.")
+                Text("Pick a profile below to start a timed session.")
                     .font(.ac(11))
                     .foregroundStyle(.secondary)
             } else if let description = active.description?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -162,81 +152,10 @@ struct ProfileQuickPopoverView: View {
                     .lineLimit(2)
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                .fill(Color.acSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                        .stroke(Color.acHairline, lineWidth: 1)
-                )
-        )
     }
 
     private var actionRow: some View {
-        HStack(spacing: 8) {
-            Button(controller.state.isPaused ? "Resume Monitoring" : "Pause Monitoring") {
-                controller.togglePause()
-                controller.markAllChatMessagesRead()
-            }
-            .buttonStyle(ACSecondaryButton())
-
-            if !active.isDefault {
-                Button("End Session") {
-                    controller.endActiveProfile(announce: true)
-                    controller.markAllChatMessagesRead()
-                }
-                .buttonStyle(ACDangerButton())
-            }
-        }
-    }
-
-    private var durationSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Session length")
-                .font(.ac(12, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 68), spacing: 8, alignment: .leading)],
-                alignment: .leading,
-                spacing: 8
-            ) {
-                ForEach(ProfileSessionDurationChoice.allCases) { option in
-                    Button {
-                        selectedDuration = option
-                    } label: {
-                        Text(option.label)
-                            .font(.ac(11, weight: .semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(selectedDuration == option ? accent.opacity(0.18) : Color.acSurface)
-                                    .overlay(
-                                        Capsule(style: .continuous)
-                                            .stroke(selectedDuration == option ? accent.opacity(0.55) : Color.acHairline, lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            if selectedDuration == .custom {
-                VStack(alignment: .leading, spacing: 6) {
-                    TextField("Custom minutes (5-720)", text: $customMinutesText)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.ac(12))
-
-                    if selectedMinutes == nil {
-                        Text("Enter a duration between 5 minutes and 12 hours.")
-                            .font(.ac(10))
-                            .foregroundStyle(Color.orange.opacity(0.88))
-                    }
-                }
-            }
-        }
+        EmptyView()
     }
 
     private var extendSection: some View {
@@ -288,45 +207,51 @@ struct ProfileQuickPopoverView: View {
 
     @ViewBuilder
     private func profileRow(for profile: FocusProfile) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.name)
-                    .font(.ac(12, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-                Text(profileRowSubtitle(for: profile))
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.name)
+                        .font(.ac(12, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Text(profileRowSubtitle(for: profile))
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 10)
+
+                if profile.isDefault {
+                    Button("Switch") {
+                        _ = controller.activateProfile(
+                            id: profile.id,
+                            reason: "user_switched",
+                            announce: true
+                        )
+                        controller.markAllChatMessagesRead()
+                    }
+                    .buttonStyle(ACSecondaryButton())
+                } else if startingProfileID == profile.id {
+                    Button("Cancel") {
+                        startingProfileID = nil
+                    }
+                    .buttonStyle(ACSecondaryButton())
+                } else {
+                    Button("Start") {
+                        startingProfileID = profile.id
+                    }
+                    .buttonStyle(ACPrimaryButton())
+                }
             }
+            .padding(12)
 
-            Spacer(minLength: 10)
-
-            if profile.isDefault {
-                Button("Switch") {
-                    _ = controller.activateProfile(
-                        id: profile.id,
-                        reason: "user_switched",
-                        announce: true
-                    )
-                    controller.markAllChatMessagesRead()
-                }
-                .buttonStyle(ACSecondaryButton())
-            } else {
-                Button("Start \(selectedDurationLabel)") {
-                    guard let minutes = selectedMinutes else { return }
-                    _ = controller.activateProfile(
-                        id: profile.id,
-                        durationMinutes: minutes,
-                        reason: "user_switched",
-                        announce: true
-                    )
-                    controller.markAllChatMessagesRead()
-                }
-                .buttonStyle(ACPrimaryButton())
-                .disabled(selectedMinutes == nil)
+            if startingProfileID == profile.id {
+                inlineDurationPicker(profileID: profile.id)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                 .fill(Color.acSurface.opacity(0.92))
@@ -335,6 +260,64 @@ struct ProfileQuickPopoverView: View {
                         .stroke(Color.acHairline, lineWidth: 1)
                 )
         )
+    }
+
+    private func inlineDurationPicker(profileID: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 60), spacing: 6, alignment: .leading)],
+                alignment: .leading,
+                spacing: 6
+            ) {
+                ForEach(ProfileSessionDurationChoice.allCases) { option in
+                    Button {
+                        selectedDuration = option
+                    } label: {
+                        Text(option.label)
+                            .font(.ac(10, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(selectedDuration == option ? accent.opacity(0.18) : Color.acSurface)
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .stroke(selectedDuration == option ? accent.opacity(0.55) : Color.acHairline, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if selectedDuration == .custom {
+                TextField("Custom minutes (5-720)", text: $customMinutesText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.ac(11))
+            }
+
+            HStack {
+                if selectedMinutes == nil {
+                    Text("Choose a duration")
+                        .font(.ac(10))
+                        .foregroundStyle(Color.orange.opacity(0.88))
+                }
+                Spacer()
+                Button("Start session") {
+                    guard let minutes = selectedMinutes else { return }
+                    _ = controller.activateProfile(
+                        id: profileID,
+                        durationMinutes: minutes,
+                        reason: "user_switched",
+                        announce: true
+                    )
+                    startingProfileID = nil
+                    controller.markAllChatMessagesRead()
+                }
+                .buttonStyle(ACPrimaryButton())
+                .disabled(selectedMinutes == nil)
+            }
+        }
     }
 
     private var footerRow: some View {

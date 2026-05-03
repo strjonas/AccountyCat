@@ -632,6 +632,15 @@
 			};
 			name = Release;
 		};
+		0097FF912FA6930200C6D011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				PRODUCT_NAME = ACInspector;
+			};
+			name = Release;
+		};
 		A100001A2F8C00010050179A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -705,6 +714,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A100001A2F8C00010050179A /* Debug */,
+				0097FF912FA6930200C6D011 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

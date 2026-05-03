@@ -773,7 +773,7 @@ private struct ProfileSummaryRowView: View {
 
 // MARK: - Rule Row
 
-private struct RuleRowView: View {
+struct RuleRowView: View {
     let rule: PolicyRule
     let onToggleLocked: () -> Void
     let onDelete: () -> Void

@@ -54,6 +54,22 @@ extension Color {
             ? NSColor(white: 1.0, alpha: 0.13)
             : NSColor(white: 0.0, alpha: 0.08)
     })
+
+    /// Elevated surface — popover and sheet backgrounds. Slightly lighter
+    /// than acSurface so layered panels feel distinct.
+    static let acSurfaceElevated = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1.0, alpha: 0.10)
+            : NSColor(white: 0.0, alpha: 0.035)
+    })
+
+    /// Inset surface — text fields, code blocks, log consoles. Slightly
+    /// recessed from the base to read as "editable" or "nested."
+    static let acSurfaceInset = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.0, alpha: 0.20)
+            : NSColor(white: 0.0, alpha: 0.04)
+    })
 }
 
 // MARK: - Typography
@@ -63,6 +79,29 @@ extension Font {
     static func ac(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight, design: .rounded)
     }
+
+    // MARK: - Semantic type tokens
+
+    /// Section headings — overline style (uppercase, tracked, secondary color).
+    static let acHeading = Font.system(size: 10, weight: .bold, design: .rounded)
+
+    /// Card and content titles.
+    static let acTitle = Font.system(size: 15, weight: .semibold, design: .rounded)
+
+    /// Primary body text.
+    static let acBody = Font.system(size: 13, weight: .regular, design: .rounded)
+
+    /// Emphasised body — button labels, inline emphasis.
+    static let acBodyStrong = Font.system(size: 13, weight: .semibold, design: .rounded)
+
+    /// Secondary captions, timestamps, detail text.
+    static let acCaption = Font.system(size: 11, weight: .regular, design: .rounded)
+
+    /// Emphasised captions — labels, section headers that aren't overlines.
+    static let acCaptionStrong = Font.system(size: 11, weight: .semibold, design: .rounded)
+
+    /// Monospace for paths, log lines, technical detail.
+    static let acMono = Font.system(size: 11, weight: .regular, design: .monospaced)
 }
 
 // MARK: - Animation
@@ -103,6 +142,8 @@ enum ACSpace {
     static let md: CGFloat = 12
     static let lg: CGFloat = 16
     static let xl: CGFloat = 22
+    static let xxl: CGFloat = 28
+    static let xxxl: CGFloat = 36
 }
 
 // MARK: - Accent environment
@@ -353,6 +394,17 @@ extension ACCharacter {
         case .mochi: return "warm"
         case .nova:  return "sharp"
         case .sage:  return "calm"
+        }
+    }
+
+    /// A subtle personality-aware tint used for section headers and accent
+    /// highlights that should feel warmer / cooler / calmer without being
+    /// as vivid as the full accent color.
+    var personalityHue: Color {
+        switch self {
+        case .mochi: return Color(red: 0.94, green: 0.78, blue: 0.52)
+        case .nova:  return Color(red: 0.58, green: 0.60, blue: 0.92)
+        case .sage:  return Color(red: 0.42, green: 0.74, blue: 0.56)
         }
     }
 }
