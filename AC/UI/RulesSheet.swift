@@ -14,10 +14,15 @@ struct RulesSheet: View {
     @Environment(\.acAccent) private var accent
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedProfileID: String? = nil
     @State private var showingAddRule = false
     @State private var newRuleSummary = ""
     @State private var newRuleKind: PolicyRuleKind = .allow
+    @State private var editingProfile = false
+    @State private var selectedProfileID: String? = nil
+    @State private var profileNameDraft = ""
+    @State private var profileDescriptionDraft = ""
+    @FocusState private var profileNameFocused: Bool
+    @FocusState private var profileDescriptionFocused: Bool
 
     private var resolvedProfileID: String {
         let candidate = selectedProfileID ?? controller.state.activeProfileID
@@ -26,10 +31,10 @@ struct RulesSheet: View {
         }
         return PolicyRule.defaultProfileID
     }
-
     private var selectedProfile: FocusProfile {
         controller.state.profile(withID: resolvedProfileID) ?? FocusProfile.makeDefault()
     }
+    private var activeProfile: FocusProfile { controller.state.activeProfile }
 
     private var rules: [PolicyRule] {
         controller.state.policyMemory.rules
@@ -46,13 +51,18 @@ struct RulesSheet: View {
         controller.state.memoryEntries
     }
 
+    private var profileDraftsChanged: Bool {
+        profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) != selectedProfile.name ||
+            profileDescriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines) != (selectedProfile.description ?? "")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    profilePicker
+                    profileSection
                     rulesSection
                     addRuleSection
                     safelistSection
@@ -63,9 +73,13 @@ struct RulesSheet: View {
         }
         .frame(width: ACD.popoverWidth)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear {
+        .onAppear { syncProfileDrafts() }
+        .onChange(of: resolvedProfileID) { _, _ in
             syncProfileDrafts()
+            profileNameFocused = false
+            profileDescriptionFocused = false
         }
+        .onChange(of: controller.state.profiles) { _, _ in syncProfileDrafts() }
     }
 
     // MARK: - Header
@@ -99,25 +113,51 @@ struct RulesSheet: View {
         )
     }
 
-    // MARK: - Profile picker
+    // MARK: - Profile section
 
-    @State private var profileNameDraft = ""
-    @State private var profileDescriptionDraft = ""
-
-    private var profilePicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "person.crop.rectangle.stack")
+                Image(systemName: activeProfile.isDefault ? "circle.hexagongrid" : "scope")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(accent)
                     .frame(width: 18, height: 18)
                     .background(Circle().fill(accent.opacity(0.13)))
-                Text("Profile rules")
+                Text(activeProfile.name)
                     .font(.ac(13, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
-
+                if !activeProfile.isDefault {
+                    Text("active")
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(accent.opacity(0.8))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule(style: .continuous).fill(accent.opacity(0.12)))
+                }
                 Spacer()
+                Button(editingProfile ? "Done" : "Edit profile") {
+                    withAnimation(.acSnap) {
+                        editingProfile.toggle()
+                    }
+                    if !editingProfile {
+                        profileNameFocused = false
+                        profileDescriptionFocused = false
+                    }
+                }
+                .buttonStyle(ACSecondaryButton())
+            }
 
+            if editingProfile {
+                profileEditor
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.acSnap, value: editingProfile)
+    }
+
+    private var profileEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
                 Picker("", selection: Binding<String>(
                     get: { resolvedProfileID },
                     set: { selectedProfileID = $0 }
@@ -143,42 +183,58 @@ struct RulesSheet: View {
 
             TextField("Profile name", text: $profileNameDraft)
                 .textFieldStyle(.roundedBorder)
-                .font(.acBody)
+                .font(.ac(12))
+                .focused($profileNameFocused)
+                .onSubmit {
+                    if !profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        saveProfile()
+                    }
+                }
 
             TextField("What belongs in this profile?", text: $profileDescriptionDraft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-                .font(.acBody)
+                .font(.ac(12))
                 .lineLimit(1...3)
+                .focused($profileDescriptionFocused)
 
             if profileDraftsChanged {
                 HStack {
                     Spacer()
-                    Button("Save profile") {
-                        controller.updateProfile(id: selectedProfile.id, name: profileNameDraft, description: profileDescriptionDraft)
-                    }
-                    .buttonStyle(ACPrimaryButton())
-                    .disabled(profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Save profile") { saveProfile() }
+                        .buttonStyle(ACPrimaryButton())
+                        .disabled(profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
 
             if !selectedProfile.isDefault && !controller.canDeleteProfile(id: selectedProfile.id) {
                 Text("This profile still has locked scoped rules. Unlock or remove them before deleting.")
-                    .font(.acCaption)
+                    .font(.ac(10))
                     .foregroundStyle(Color.orange.opacity(0.85))
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+        )
         .animation(.acSnap, value: profileDraftsChanged)
-    }
-
-    private var profileDraftsChanged: Bool {
-        profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines) != selectedProfile.name ||
-            profileDescriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines) != (selectedProfile.description ?? "")
     }
 
     private func syncProfileDrafts() {
         profileNameDraft = selectedProfile.name
         profileDescriptionDraft = selectedProfile.description ?? ""
+    }
+
+    private func saveProfile() {
+        controller.updateProfile(
+            id: selectedProfile.id,
+            name: profileNameDraft,
+            description: profileDescriptionDraft
+        )
+        profileNameFocused = false
+        profileDescriptionFocused = false
     }
 
     // MARK: - Rules section

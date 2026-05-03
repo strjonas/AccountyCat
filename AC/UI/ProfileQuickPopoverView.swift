@@ -41,7 +41,8 @@ private enum ProfileSessionDurationChoice: String, CaseIterable, Identifiable {
 }
 
 struct ProfileQuickPopoverView: View {
-    private static let tickPublisher = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    private static let tickPublisher = Timer.publish(every: 30, on: .main, in: .common)
+        .autoconnect()
 
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
@@ -69,7 +70,8 @@ struct ProfileQuickPopoverView: View {
             return preset
         }
         guard let value = Int(customMinutesText.trimmingCharacters(in: .whitespacesAndNewlines)),
-              (5...720).contains(value) else {
+            (5...720).contains(value)
+        else {
             return nil
         }
         return value
@@ -101,6 +103,7 @@ struct ProfileQuickPopoverView: View {
                 extendSection
             }
             savedProfilesSection
+            bottomActions
             if showOpenAppButton {
                 Divider()
                 footerRow
@@ -144,8 +147,10 @@ struct ProfileQuickPopoverView: View {
                 Text("Pick a profile below to start a timed session.")
                     .font(.ac(11))
                     .foregroundStyle(.secondary)
-            } else if let description = active.description?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !description.isEmpty {
+            } else if let description = active.description?.trimmingCharacters(
+                in: .whitespacesAndNewlines),
+                !description.isEmpty
+            {
                 Text(description)
                     .font(.ac(11))
                     .foregroundStyle(.secondary)
@@ -192,9 +197,11 @@ struct ProfileQuickPopoverView: View {
                 .foregroundStyle(Color.acTextPrimary)
 
             if switchableProfiles.isEmpty {
-                Text("No other saved profiles yet. Tell AC “help me focus on coding for 2 hours” to create one.")
-                    .font(.ac(11))
-                    .foregroundStyle(.secondary)
+                Text(
+                    "No other saved profiles yet. Tell AC “help me focus on coding for 2 hours” to create one."
+                )
+                .font(.ac(11))
+                .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 8) {
                     ForEach(switchableProfiles, id: \.id) { profile in
@@ -279,10 +286,16 @@ struct ProfileQuickPopoverView: View {
                             .padding(.vertical, 5)
                             .background(
                                 Capsule(style: .continuous)
-                                    .fill(selectedDuration == option ? accent.opacity(0.18) : Color.acSurface)
+                                    .fill(
+                                        selectedDuration == option
+                                            ? accent.opacity(0.18) : Color.acSurface
+                                    )
                                     .overlay(
                                         Capsule(style: .continuous)
-                                            .stroke(selectedDuration == option ? accent.opacity(0.55) : Color.acHairline, lineWidth: 1)
+                                            .stroke(
+                                                selectedDuration == option
+                                                    ? accent.opacity(0.55) : Color.acHairline,
+                                                lineWidth: 1)
                                     )
                             )
                     }
@@ -320,6 +333,32 @@ struct ProfileQuickPopoverView: View {
         }
     }
 
+    private var bottomActions: some View {
+        HStack(spacing: 8) {
+            Button {
+                controller.showRulesSheetFromContextBar = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Edit Profiles")
+                        .font(.ac(11, weight: .medium))
+                }
+                .foregroundStyle(accent.opacity(0.85))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                )
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+        }
+    }
+
     private var footerRow: some View {
         HStack(spacing: 8) {
             Button("Open AccountyCat") {
@@ -342,7 +381,8 @@ struct ProfileQuickPopoverView: View {
             return "Switch back to everyday mode."
         }
         if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !description.isEmpty {
+            !description.isEmpty
+        {
             return description
         }
         return "Reuse this profile with a fresh timer."

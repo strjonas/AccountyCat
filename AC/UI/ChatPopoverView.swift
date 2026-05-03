@@ -19,7 +19,7 @@ struct ChatPopoverView: View {
     @State private var healthPulse: CGFloat = 0
 
     #if DEBUG
-    @State private var showDebug = false
+        @State private var showDebug = false
     #endif
 
     var body: some View {
@@ -30,11 +30,15 @@ struct ChatPopoverView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
-                        if !controller.hasCompletedOnboardingWizard && controller.state.setupStatus != .ready {
+                        if !controller.hasCompletedOnboardingWizard
+                            && controller.state.setupStatus != .ready
+                        {
                             OnboardingWizardView()
                                 .environmentObject(controller)
                                 .padding(18)
-                        } else if controller.state.setupStatus != .ready || controller.showingOnboardingCompletion {
+                        } else if controller.state.setupStatus != .ready
+                            || controller.showingOnboardingCompletion
+                        {
                             OnboardingDialogView(showModeChooser: false)
                                 .environmentObject(controller)
                                 .padding(18)
@@ -79,10 +83,10 @@ struct ChatPopoverView: View {
                 .environmentObject(controller)
         }
         #if DEBUG
-        .sheet(isPresented: $showDebug) {
-            DebugSheet()
+            .sheet(isPresented: $showDebug) {
+                DebugSheet()
                 .environmentObject(controller)
-        }
+            }
         #endif
     }
 
@@ -114,7 +118,7 @@ struct ChatPopoverView: View {
                 .environmentObject(controller)
 
             #if DEBUG
-            debugButton
+                debugButton
             #endif
 
             Button {
@@ -145,7 +149,7 @@ struct ChatPopoverView: View {
     private var statusTitle: String {
         switch controller.state.setupStatus {
         case .ready:
-            return controller.state.isPaused ? "Paused" : "AC is watching"
+            return controller.state.isPaused ? "on break" : "with you"
         case .needsPermissions, .needsRuntime, .blocked, .checking, .installing, .failed:
             return "Needs setup"
         }
@@ -208,16 +212,16 @@ struct ChatPopoverView: View {
     // MARK: - Debug button (DEBUG only)
 
     #if DEBUG
-    private var debugButton: some View {
-        Button {
-            showDebug = true
-        } label: {
-            Image(systemName: "hammer.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.orange.opacity(0.7))
+        private var debugButton: some View {
+            Button {
+                showDebug = true
+            } label: {
+                Image(systemName: "hammer.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.orange.opacity(0.7))
+            }
+            .buttonStyle(ACIconButton(size: 24))
         }
-        .buttonStyle(ACIconButton(size: 24))
-    }
     #endif
 
     // MARK: - Stats inline card

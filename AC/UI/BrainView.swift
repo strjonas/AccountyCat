@@ -19,6 +19,8 @@ struct BrainView: View {
     @State private var newRuleKind: PolicyRuleKind = .allow
     @FocusState private var summaryFieldFocused: Bool
     @FocusState private var goalsEditorFocused: Bool
+    @FocusState private var profileNameFocused: Bool
+    @FocusState private var profileDescriptionFocused: Bool
     @State private var localGoalsText: String = ""
     /// Profile being inspected. Defaults to the active profile; user can switch via picker
     /// to view/edit rules of any other stored profile without activating it.
@@ -71,6 +73,8 @@ struct BrainView: View {
         }
         .onChange(of: resolvedSelectedProfileID) { _, _ in
             syncProfileDrafts()
+            profileNameFocused = false
+            profileDescriptionFocused = false
         }
         .onChange(of: controller.state.profiles) { _, _ in
             syncProfileDrafts()
@@ -123,11 +127,23 @@ struct BrainView: View {
             TextField("Profile name", text: $profileNameDraft)
                 .textFieldStyle(.roundedBorder)
                 .font(.ac(12))
+                .focused($profileNameFocused)
+                .onSubmit {
+                    if !profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        controller.updateProfile(
+                            id: selectedProfile.id,
+                            name: profileNameDraft,
+                            description: profileDescriptionDraft
+                        )
+                        profileNameFocused = false
+                    }
+                }
 
             TextField("What belongs in this profile?", text: $profileDescriptionDraft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .font(.ac(12))
                 .lineLimit(1...3)
+                .focused($profileDescriptionFocused)
 
             if profileDraftsChanged {
                 HStack {
@@ -138,6 +154,8 @@ struct BrainView: View {
                             name: profileNameDraft,
                             description: profileDescriptionDraft
                         )
+                        profileNameFocused = false
+                        profileDescriptionFocused = false
                     }
                     .buttonStyle(ACPrimaryButton())
                     .disabled(profileNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

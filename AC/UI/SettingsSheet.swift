@@ -273,10 +273,15 @@ struct SettingsSheet: View {
 
             HStack {
                 Spacer()
-                Button("Quit AccountyCat") { NSApp.terminate(nil) }
-                    .font(.ac(12, weight: .medium))
-                    .foregroundStyle(Color.red.opacity(0.78))
-                    .buttonStyle(.plain)
+                Button("Quit AccountyCat") {
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        NSApp.terminate(nil)
+                    }
+                }
+                .font(.ac(12, weight: .medium))
+                .foregroundStyle(Color.red.opacity(0.78))
+                .buttonStyle(.plain)
             }
         }
     }

@@ -398,121 +398,115 @@ struct ContentView: View {
             let installed = controller.installedManagedModels
             let selected = controller.selectedInstalledModel
 
-            SettingsSection(
-                title: "Local model storage",
-                icon: "externaldrive",
-                subtitle: "AC stores downloaded local models in its own Application Support cache."
-            ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    storageRow(
-                        title: "AC model cache",
-                        value: controller.localModelDiagnostics.managedModelCachePath
-                    )
+            VStack(alignment: .leading, spacing: 10) {
+                storageRow(
+                    title: "AC model cache",
+                    value: controller.localModelDiagnostics.managedModelCachePath
+                )
 
-                    if installed.isEmpty {
-                        Text("No AC-downloaded local models found yet.")
-                            .font(.ac(11))
+                if installed.isEmpty {
+                    Text("No AC-downloaded local models found yet.")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Installed models")
+                            .font(.ac(11, weight: .semibold))
                             .foregroundStyle(.secondary)
-                    } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Installed models")
-                                .font(.ac(11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            Picker(
-                                "Installed models",
-                                selection: Binding(
-                                    get: {
-                                        controller.selectedInstalledModel?.cachePath ?? installed
-                                            .first?.cachePath ?? ""
-                                    },
-                                    set: { controller.selectInstalledModel(cachePath: $0) }
-                                )
-                            ) {
-                                ForEach(installed) { model in
-                                    Text(AppController.shortModelName(for: model.modelIdentifier))
-                                        .tag(model.cachePath)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                        }
-
-                        if let selected {
-                            storageRow(
-                                title: "Selected model",
-                                value: AppController.shortModelName(for: selected.modelIdentifier)
+                        Picker(
+                            "Installed models",
+                            selection: Binding(
+                                get: {
+                                    controller.selectedInstalledModel?.cachePath ?? installed
+                                        .first?.cachePath ?? ""
+                                },
+                                set: { controller.selectInstalledModel(cachePath: $0) }
                             )
-
-                            storageRow(
-                                title: "Model identifier",
-                                value: selected.modelIdentifier
-                            )
-
-                            storageRow(
-                                title: "Path to model",
-                                value: selected.modelPath
-                            )
-
-                            if let projectorPath = selected.projectorPath {
-                                storageRow(title: "Projector", value: projectorPath)
+                        ) {
+                            ForEach(installed) { model in
+                                Text(AppController.shortModelName(for: model.modelIdentifier))
+                                    .tag(model.cachePath)
                             }
                         }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
                     }
 
-                    HStack(spacing: 8) {
-                        Button("Reveal") {
-                            controller.revealManagedModelLocation()
-                        }
-                        .buttonStyle(ACSecondaryButton())
-                        .disabled(selected == nil)
-
-                        Button(
-                            controller.importingModelToOllama ? "Importing…" : "Import to Ollama"
-                        ) {
-                            controller.importCurrentModelToOllama()
-                        }
-                        .buttonStyle(ACPrimaryButton())
-                        .disabled(
-                            controller.importingModelToOllama || selected == nil
+                    if let selected {
+                        storageRow(
+                            title: "Selected model",
+                            value: AppController.shortModelName(for: selected.modelIdentifier)
                         )
 
-                        Button(controller.deletingManagedModels ? "Deleting…" : "Delete Selected") {
-                            onDelete()
+                        storageRow(
+                            title: "Model identifier",
+                            value: selected.modelIdentifier
+                        )
+
+                        storageRow(
+                            title: "Path to model",
+                            value: selected.modelPath
+                        )
+
+                        if let projectorPath = selected.projectorPath {
+                            storageRow(title: "Projector", value: projectorPath)
                         }
-                        .buttonStyle(ACDangerButton())
-                        .disabled(controller.deletingManagedModels || selected == nil)
-                    }
-
-                    Text(
-                        "AC now only uses its Application Support cache for local models. Ollama import creates a separate Ollama-managed copy under an `ac-...` name; it does not reuse Ollama's folder in place."
-                    )
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    if let error = controller.localModelStorageError, !error.isEmpty {
-                        Text(error)
-                            .font(.ac(10, weight: .medium))
-                            .foregroundStyle(Color.red.opacity(0.82))
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if let message = controller.localModelStorageMessage, !message.isEmpty {
-                        Text(message)
-                            .font(.ac(10, weight: .medium))
-                            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                        .fill(Color.acSurface)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                                .stroke(Color.acHairline, lineWidth: 1)
-                        )
+
+                HStack(spacing: 8) {
+                    Button("Reveal") {
+                        controller.revealManagedModelLocation()
+                    }
+                    .buttonStyle(ACSecondaryButton())
+                    .disabled(selected == nil)
+
+                    Button(
+                        controller.importingModelToOllama ? "Importing…" : "Import to Ollama"
+                    ) {
+                        controller.importCurrentModelToOllama()
+                    }
+                    .buttonStyle(ACPrimaryButton())
+                    .disabled(
+                        controller.importingModelToOllama || selected == nil
+                    )
+
+                    Button(controller.deletingManagedModels ? "Deleting…" : "Delete Selected") {
+                        onDelete()
+                    }
+                    .buttonStyle(ACDangerButton())
+                    .disabled(controller.deletingManagedModels || selected == nil)
+                }
+
+                Text(
+                    "AC now only uses its Application Support cache for local models. Ollama import creates a separate Ollama-managed copy under an `ac-...` name; it does not reuse Ollama's folder in place."
                 )
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                if let error = controller.localModelStorageError, !error.isEmpty {
+                    Text(error)
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(Color.red.opacity(0.82))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let message = controller.localModelStorageMessage, !message.isEmpty {
+                    Text(message)
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
         }
 
         @ViewBuilder
@@ -1150,8 +1144,6 @@ struct CalendarIntelligenceSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            header
-
             Toggle(
                 isOn: Binding(
                     get: { isOn },
@@ -1159,9 +1151,25 @@ struct CalendarIntelligenceSection: View {
                 )
             ) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Use my calendar")
-                        .font(.ac(13, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary)
+                    HStack(spacing: 4) {
+                        Text("Use my calendar")
+                            .font(.ac(13, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary)
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .help(
+                                """
+                                Let AC read your current calendar event to infer what you want \
+                                to focus on — so it stays out of the way with less effort \
+                                from you. Works with any calendar already in Apple Calendar \
+                                (iCloud, Google, Exchange, Fastmail, …). Events are read \
+                                locally and never leave your Mac.
+                                """
+                            )
+                            .onHover { hoveringInfo = $0 }
+                            .opacity(hoveringInfo ? 1.0 : 0.75)
+                    }
                     Text("Read-only. Never leaves your Mac.")
                         .font(.ac(11))
                         .foregroundStyle(.secondary)
@@ -1182,35 +1190,6 @@ struct CalendarIntelligenceSection: View {
             if isOn && calendarGranted {
                 controller.refreshAvailableCalendars()
             }
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "calendar")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(accent)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(accent.opacity(0.13)))
-            Text("Calendar Intelligence")
-                .font(.ac(13, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
-
-            // Info button with hover tooltip explaining the value prop.
-            Image(systemName: "info.circle")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .help(
-                    """
-                    Let AC read your current calendar event to infer what you want \
-                    to focus on — so it stays out of the way with less effort \
-                    from you. Works with any calendar already in Apple Calendar \
-                    (iCloud, Google, Exchange, Fastmail, …). Events are read \
-                    locally and never leave your Mac.
-                    """
-                )
-                .onHover { hoveringInfo = $0 }
-                .opacity(hoveringInfo ? 1.0 : 0.75)
         }
     }
 
@@ -1713,15 +1692,10 @@ struct VisionGateSettingsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Vision gate")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text("Longer titles can stay text-only before AC attaches a screenshot.")
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("Longer titles can stay text-only before AC attaches a screenshot.")
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
@@ -1895,15 +1869,7 @@ struct AboutSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 18, height: 18)
-                    .background(Circle().fill(accent.opacity(0.13)))
-                Text("About")
-                    .font(.ac(13, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
+            HStack {
                 Spacer()
                 Text("v\(appVersion)")
                     .font(.ac(11))
