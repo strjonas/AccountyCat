@@ -18,6 +18,8 @@ final class WindowCoordinator {
 
     private(set) var companionPanel: PassivePanel?
     private var overlayWindow: NSWindow?
+
+    var isOverlayVisible: Bool { overlayWindow?.isVisible == true }
     private var nudgeBorderWindow: NSWindow?
     private var dismissNudgeWorkItem: DispatchWorkItem?
     private var nudgeRestoreFrame: NSRect?

@@ -57,7 +57,13 @@ struct ContextBar: View {
                     ))
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(
+            Color(nsColor: .windowBackgroundColor)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    NotificationCenter.default.post(name: .acUnfocusChatInput, object: nil)
+                }
+        )
     }
 
     private var contextSummary: String {
@@ -190,27 +196,33 @@ struct ContextBar: View {
             QuickTogglePill(
                 icon: controller.state.isPaused ? "play.circle.fill" : "pause.circle.fill",
                 label: controller.state.isPaused ? "Resume" : "Pause",
+                shortcut: "P",
                 isOn: !controller.state.isPaused,
                 tint: accent
             ) {
                 controller.togglePause()
             }
+            .keyboardShortcut("p", modifiers: .command)
 
             QuickTogglePill(
                 icon: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
                 label: "Sound",
+                shortcut: "M",
                 isOn: soundEnabled,
                 tint: accent
             ) { soundEnabled.toggle() }
+            .keyboardShortcut("m", modifiers: .command)
 
             QuickTogglePill(
                 icon: controller.visionEnabled ? "eye.fill" : "eye.slash.fill",
                 label: "Vision",
+                shortcut: "V",
                 isOn: controller.visionEnabled,
                 tint: accent
             ) {
                 controller.updateVisionEnabled(!controller.visionEnabled)
             }
+            .keyboardShortcut("v", modifiers: .command)
         }
     }
 }
@@ -220,6 +232,7 @@ struct ContextBar: View {
 private struct QuickTogglePill: View {
     let icon: String
     let label: String
+    var shortcut: String? = nil
     let isOn: Bool
     let tint: Color
     let action: () -> Void
@@ -233,6 +246,12 @@ private struct QuickTogglePill: View {
                 Text(label)
                     .font(.acCaptionStrong)
                     .foregroundStyle(isOn ? Color.acTextPrimary.opacity(0.9) : Color.secondary.opacity(0.7))
+
+                if let shortcut {
+                    Text("⌘\(shortcut)")
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(Color.secondary.opacity(0.45))
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)

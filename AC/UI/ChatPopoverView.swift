@@ -70,6 +70,19 @@ struct ChatPopoverView: View {
         .acAccent(for: controller.state.character)
         .animation(.acFade, value: controller.state.character)
         .onAppear { controller.refreshSystemState() }
+        .onReceive(NotificationCenter.default.publisher(for: .acOpenSettings)) { _ in
+            showSettings = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .acDismissSheet)) { _ in
+            if showSettings {
+                showSettings = false
+            } else if controller.showRulesSheetFromContextBar {
+                controller.showRulesSheetFromContextBar = false
+            }
+            #if DEBUG
+            if showDebug { showDebug = false }
+            #endif
+        }
         .onChange(of: statsExpanded) { _, expanded in
             let height: CGFloat = expanded ? 580 : 460
             controller.resizePopover?(NSSize(width: ACD.popoverWidth, height: height))
@@ -88,6 +101,24 @@ struct ChatPopoverView: View {
                 .environmentObject(controller)
             }
         #endif
+        // Keyboard shortcuts — invisible buttons that fire from the keyboard
+        .background {
+            VStack {
+                Button {
+                    NotificationCenter.default.post(name: .acFocusChatInput, object: nil)
+                } label: { EmptyView() }
+                .keyboardShortcut("k", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+
+                Button {
+                    showSettings = true
+                } label: { EmptyView() }
+                .keyboardShortcut(",", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+            }
+        }
     }
 
     // MARK: - Header (44pt)
@@ -129,6 +160,7 @@ struct ChatPopoverView: View {
                     .foregroundStyle(Color.secondary.opacity(0.75))
             }
             .buttonStyle(.plain)
+            .help("Settings (⌘,)")
 
             Button {
                 controller.dismissPopover?()
@@ -140,10 +172,17 @@ struct ChatPopoverView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("Close (Esc)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(headerBackground)
+        .background(
+            headerBackground
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    NotificationCenter.default.post(name: .acUnfocusChatInput, object: nil)
+                }
+        )
     }
 
     private var statusTitle: String {

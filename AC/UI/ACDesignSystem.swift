@@ -11,6 +11,19 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Notification Names
+
+extension Notification.Name {
+    /// Posted when the user presses Cmd+K to focus the chat input.
+    static let acFocusChatInput = Notification.Name("acFocusChatInput")
+    /// Posted when the user presses Cmd+, to open settings.
+    static let acOpenSettings = Notification.Name("acOpenSettings")
+    /// Posted when Escape is pressed while a sheet is open — dismiss the topmost sheet.
+    static let acDismissSheet = Notification.Name("acDismissSheet")
+    /// Posted when the user taps outside the chat input to unfocus it.
+    static let acUnfocusChatInput = Notification.Name("acUnfocusChatInput")
+}
+
 // MARK: - Color Palette (legacy / shared)
 
 extension Color {

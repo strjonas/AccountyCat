@@ -264,24 +264,46 @@ struct SettingsSheet: View {
     @State private var settingsSuccessMessage: String?
 
     private var dangerZone: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SettingsSection(title: "Reset monitoring profile", icon: "arrow.counterclockwise",
-                subtitle: "Clears learned memory, recent behavior context, chat history, and usage context.") {
-                Button("Reset") { pendingSettingsAction = .resetAlgorithm }
-                    .buttonStyle(ACDangerButton())
+        VStack(alignment: .leading, spacing: 10) {
+            Divider().opacity(0.3)
+
+            collapsibleSection(id: "reset", icon: "arrow.counterclockwise", title: "Reset Profile") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Clears learned memory, recent behavior context, chat history, and usage context.")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Reset monitoring profile") { pendingSettingsAction = .resetAlgorithm }
+                        .buttonStyle(ACDangerButton())
+                }
             }
 
             HStack {
                 Spacer()
-                Button("Quit AccountyCat") {
+                Button {
                     dismiss()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         NSApp.terminate(nil)
                     }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "power")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Quit")
+                            .font(.ac(11, weight: .medium))
+                    }
+                    .foregroundStyle(Color.red.opacity(0.72))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.red.opacity(0.08))
+                            .overlay(Capsule(style: .continuous).stroke(Color.red.opacity(0.20), lineWidth: 1))
+                    )
                 }
-                .font(.ac(12, weight: .medium))
-                .foregroundStyle(Color.red.opacity(0.78))
                 .buttonStyle(.plain)
+                Spacer()
             }
         }
     }

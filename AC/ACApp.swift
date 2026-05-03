@@ -29,8 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var profilePopover: NSPopover?
     private var cancellables = Set<AnyCancellable>()
-    private var terminationRequested = false
     private var chipRefreshTimer: Timer?
+    private var keyMonitor: Any?
 
     override init() {
         if NSClassFromString("XCTest") != nil {
@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bindMood()
         bindActiveProfile()
         startChipRefreshTimer()
+        setUpKeyMonitor()
 
         // Show popover on first launch if setup isn't complete
         if controller.state.setupStatus != .ready {
@@ -91,16 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !terminationRequested else {
-            return .terminateNow
-        }
-
-        terminationRequested = true
+        controller.persistState()
         Task { @MainActor [weak self] in
             await self?.controller.shutdown()
-            NSApp.reply(toApplicationShouldTerminate: true)
         }
-        return .terminateLater
+        return .terminateNow
     }
 
     // MARK: - Status item
@@ -193,6 +189,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         chipRefreshTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    // MARK: - Keyboard shortcuts
+
+    private func setUpKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let isCmd = flags == .command
+
+            // ── Escape: context-aware dismiss ──
+            if event.keyCode == 53 {
+                return self.handleEscape(event)
+            }
+
+            // ── Cmd+Q: quit ──
+            if isCmd && event.charactersIgnoringModifiers == "q" {
+                NSApp.terminate(nil)
+                return nil
+            }
+
+            // ── Cmd+P: pause/resume ──
+            if isCmd && event.charactersIgnoringModifiers == "p" {
+                self.controller.togglePause()
+                return nil
+            }
+
+            // ── Cmd+M: toggle sound ──
+            if isCmd && event.charactersIgnoringModifiers == "m" {
+                let current = UserDefaults.standard.bool(forKey: "acSoundEnabled")
+                UserDefaults.standard.set(!current, forKey: "acSoundEnabled")
+                return nil
+            }
+
+            // ── Cmd+V: toggle vision ──
+            if isCmd && event.charactersIgnoringModifiers == "v" {
+                self.controller.updateVisionEnabled(!self.controller.visionEnabled)
+                return nil
+            }
+
+            // ── Cmd+K: focus chat input ──
+            if isCmd && event.charactersIgnoringModifiers == "k" {
+                NotificationCenter.default.post(name: .acFocusChatInput, object: nil)
+                return nil
+            }
+
+            // ── Cmd+,: settings ──
+            if event.keyCode == 43 && flags == .command {
+                NotificationCenter.default.post(name: .acOpenSettings, object: nil)
+                return nil
+            }
+
+            return event
+        }
+    }
+
+    /// Context-aware Escape:  overlay → sheet → ContextBar → popover → profile popover
+    private func handleEscape(_ event: NSEvent) -> NSEvent? {
+        // 1. Overlay — highest priority
+        if let wc = windowCoordinator, wc.isOverlayVisible {
+            wc.hideOverlay()
+            return nil
+        }
+
+        // 2. Sheet — tell SwiftUI to dismiss it, then stop
+        if let p = popover, p.isShown,
+           let contentVC = p.contentViewController,
+           contentVC.presentedViewControllers?.isEmpty == false {
+            NotificationCenter.default.post(name: .acDismissSheet, object: nil)
+            return nil
+        }
+
+        // 3. ContextBar expanded — collapse it
+        if UserDefaults.standard.bool(forKey: "acContextBarExpanded") {
+            UserDefaults.standard.set(false, forKey: "acContextBarExpanded")
+            return nil
+        }
+
+        // 4. Popover
+        if let p = popover, p.isShown {
+            p.performClose(nil)
+            return nil
+        }
+
+        // 5. Profile popover
+        if let p = profilePopover, p.isShown {
+            p.performClose(nil)
+            return nil
+        }
+
+        return event
     }
 
     // MARK: - Mood-reactive icon

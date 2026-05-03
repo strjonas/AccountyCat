@@ -48,12 +48,35 @@ struct ChatView: View {
                 } else {
                     messageList
                     inputRow
+                        .background {
+                            Button {
+                                sendDraft()
+                            } label: { EmptyView() }
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .opacity(0)
+                            .frame(width: 0, height: 0)
+                        }
                 }
             }
 
             if let toast = pendingUndoToast {
                 undoToast(toast)
             }
+        }
+        .onAppear {
+            if controller.shouldPresentChatAsAvailable {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    inputFocused = true
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .acFocusChatInput)) { _ in
+            if controller.shouldPresentChatAsAvailable {
+                inputFocused = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .acUnfocusChatInput)) { _ in
+            inputFocused = false
         }
         .alert("Are you sure?", isPresented: Binding(
             get: { pendingClearAction != nil },
@@ -225,7 +248,6 @@ struct ChatView: View {
                 .textFieldStyle(.plain)
                 .focused($inputFocused)
                 .onSubmit { sendDraft() }
-                .disabled(controller.sendingChatMessage)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
 
@@ -325,6 +347,7 @@ private struct DeletedChatToast: Identifiable, Equatable {
         guard canSend else { return }
         let text = draft
         draft = ""
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
         controller.sendChatMessage(text)
     }
 }
