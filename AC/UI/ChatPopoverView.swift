@@ -125,21 +125,25 @@ struct ChatPopoverView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Status label + model
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    healthDot
+            // Character icon + Status label + model
+            HStack(spacing: 8) {
+                characterIcon
 
-                    Text(statusTitle)
-                        .font(.ac(13, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
-                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        healthDot
 
-                if let subtitle = statusSubtitle {
-                    Text(subtitle)
-                        .font(.ac(10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        Text(statusTitle)
+                            .font(.ac(13, weight: .semibold))
+                            .foregroundStyle(Color.acTextPrimary)
+                    }
+
+                    if let subtitle = statusSubtitle {
+                        Text(subtitle)
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
 
@@ -216,6 +220,29 @@ struct ChatPopoverView: View {
         case .failed:
             return "Setup failed — try again in Settings"
         }
+    }
+
+    // MARK: - Character icon
+
+    private var characterIcon: some View {
+        let ch = controller.state.character
+        let isPaused = controller.state.isPaused
+        let isSetup = controller.state.setupStatus != .ready
+        return ZStack {
+            Image(ch.smallImageName)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .saturation(isPaused ? 0.15 : 1.0)
+                .brightness(isPaused ? 0.12 : 0)
+
+            if isSetup {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+            }
+        }
+        .frame(width: 24, height: 20)
     }
 
     // MARK: - Health dot

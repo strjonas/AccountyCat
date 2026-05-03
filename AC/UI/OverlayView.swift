@@ -59,7 +59,9 @@ struct OverlayView: View {
                             Circle().stroke(Color.white.opacity(0.45), lineWidth: 1)
                         )
 
-                    CatFaceView(mood: .paused, isBlinking: false)
+                    Image(character.largeImageName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
                         .padding(16)
                 }
                 .frame(width: 128, height: 128)

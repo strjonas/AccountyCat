@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setUpStatusItem()
         bindMood()
         bindActiveProfile()
+        bindCharacter()
         startChipRefreshTimer()
         setUpKeyMonitor()
 
@@ -103,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        applyIcon(symbolName: "pawprint.fill", to: item)
+        applyCharacterIcon(mood: controller.companionMood, to: item)
         item.button?.target = self
         item.button?.action = #selector(handleStatusClick(_:))
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -122,6 +123,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         item.button?.imagePosition = .imageLeft
         applyChipTitle(to: item)
+    }
+
+    /// Apply the character's pixel-art icon to the menu bar, with mood-aware rendering.
+    /// Uses SF Symbols for nudging/escalated (clearer communication at small size)
+    /// and the character PNG for all other states.
+    private func applyCharacterIcon(mood: CompanionMood, to item: NSStatusItem) {
+        switch mood {
+        case .nudging:
+            applyIcon(symbolName: "bubble.left.fill", to: item)
+        case .escalated:
+            applyIcon(symbolName: "exclamationmark.bubble.fill", to: item)
+        case .escalatedHard:
+            applyIcon(symbolName: "xmark.shield.fill", to: item)
+        case .setup:
+            applyIcon(symbolName: "gearshape.fill", to: item)
+        default:
+            // idle, watching, paused → character pixel art
+            let ch = controller.state.character
+            guard let baseImg = NSImage(named: ch.smallImageName) else {
+                applyIcon(symbolName: "pawprint.fill", to: item)
+                return
+            }
+            let img: NSImage
+            if mood == .paused {
+                img = baseImg.copy() as! NSImage
+                img.lockFocus()
+                CIFilter(name: "CIColorControls", parameters: [
+                    kCIInputImageKey: CIImage(data: baseImg.tiffRepresentation!)!,
+                    kCIInputSaturationKey: 0.0,
+                    kCIInputBrightnessKey: 0.12
+                ])?.outputImage?.draw(in: NSRect(origin: .zero, size: img.size),
+                                      from: NSRect(origin: .zero, size: baseImg.size),
+                                      operation: .copy, fraction: 1.0)
+                img.unlockFocus()
+                img.isTemplate = false
+            } else {
+                img = baseImg
+                img.isTemplate = true
+            }
+            img.size = NSSize(width: 24, height: 20)
+            item.button?.image = img
+            item.button?.imagePosition = .imageLeft
+            applyChipTitle(to: item)
+        }
     }
 
     /// Append the active profile's name + remaining time to the menu bar button.
@@ -176,6 +221,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 guard let self, let item = self.statusItem else { return }
                 self.applyChipTitle(to: item)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Refresh the menu bar icon when the user switches character (Mochi / Nova / Sage).
+    private func bindCharacter() {
+        controller.$state
+            .map { $0.character }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let item = self.statusItem else { return }
+                self.applyCharacterIcon(mood: controller.companionMood, to: item)
             }
             .store(in: &cancellables)
     }
@@ -290,16 +348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] mood in
                 guard let self, let item = self.statusItem else { return }
-                let symbol: String
-                switch mood {
-                case .nudging:  symbol = "bubble.left.fill"
-                case .escalated: symbol = "exclamationmark.bubble.fill"
-                case .escalatedHard: symbol = "xmark.shield.fill"
-                case .paused:   symbol = "pause.circle.fill"
-                case .setup:    symbol = "gearshape.fill"
-                default:        symbol = "pawprint.fill"
-                }
-                self.applyIcon(symbolName: symbol, to: item)
+                self.applyCharacterIcon(mood: mood, to: item)
 
                 // Close the popover when a nudge fires so the speech bubble and
                 // settings panel don't overlap. The NSPopover instance is reused,

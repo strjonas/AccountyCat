@@ -420,4 +420,24 @@ extension ACCharacter {
         case .sage:  return Color(red: 0.42, green: 0.74, blue: 0.56)
         }
     }
+
+    // MARK: Character pixel-art images
+
+    /// Asset catalog name for the large character image (~600×500, used in the orb).
+    var largeImageName: String {
+        switch self {
+        case .mochi: return "mochi_l"
+        case .nova:  return "nova_l"
+        case .sage:  return "sage_l"
+        }
+    }
+
+    /// Asset catalog name for the small character image (24×20, used in menu bar / header).
+    var smallImageName: String {
+        switch self {
+        case .mochi: return "mochi_s"
+        case .nova:  return "nova_s"
+        case .sage:  return "sage_s"
+        }
+    }
 }

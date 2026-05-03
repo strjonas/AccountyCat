@@ -18,7 +18,6 @@ struct CompanionView: View {
     var onTap: (() -> Void)?
 
     // Animation state
-    @State private var isBlinking = false
     @State private var breathScale: CGFloat = 1.0
     @State private var nudgeScale: CGFloat = 1.0
     @State private var headTilt: Double = 0
@@ -62,14 +61,21 @@ struct CompanionView: View {
                         .frame(width: orbDiameter, height: orbDiameter)
                 }
 
-                Circle()
-                    .fill(orbGradient)
-                    .overlay(Circle().stroke(Color.white.opacity(0.52), lineWidth: 1))
-                    .shadow(color: orbShadow.opacity(0.22), radius: 14, y: 7)
-
-                CatFaceView(mood: controller.companionMood, isBlinking: isBlinking)
+                Image(controller.state.character.largeImageName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .saturation(controller.companionMood == .paused ? 0.15 : 1.0)
+                    .brightness(controller.companionMood == .paused ? 0.12 : 0)
                     .rotationEffect(.degrees(headTilt))
-                    .padding(10)
+                    .shadow(color: orbShadow.opacity(0.22), radius: 14, y: 7)
+                    .overlay {
+                        if controller.state.setupStatus != .ready {
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: orbDiameter * 0.28, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+                        }
+                    }
             }
             .frame(width: orbDiameter, height: orbDiameter)
             .overlay(alignment: .bottomTrailing) {
@@ -81,6 +87,22 @@ struct CompanionView: View {
             .animation(.easeInOut(duration: 0.5), value: controller.companionMood == .paused)
             // Tap opens popover — placed here so speech bubble buttons are NOT intercepted
             .onTapGesture { onTap?() }
+            .contextMenu {
+                Button {
+                    controller.togglePause()
+                } label: {
+                    Label(controller.state.isPaused ? "Resume Monitoring" : "Pause Monitoring",
+                          systemImage: controller.state.isPaused ? "play.fill" : "pause.fill")
+                }
+
+                Divider()
+
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    Label("Quit AccountyCat", systemImage: "xmark.circle")
+                }
+            }
             // Edge-peek: clip to the visible half ONLY when snapped to a border.
             // When not peeking, skip clipping entirely so the soft drop shadow
             // around the orb doesn't get sliced at the bounding-box edges
@@ -102,7 +124,6 @@ struct CompanionView: View {
         }
         .onAppear {
             startBreathing()
-            startBlinking()
             maybeShowTooltip()
         }
         .onChange(of: controller.companionMood) { _, mood in
@@ -114,29 +135,6 @@ struct CompanionView: View {
     }
 
     // MARK: - Mood helpers
-
-    private var orbGradient: LinearGradient {
-        let ch = controller.state.character
-        switch controller.companionMood {
-        case .setup, .idle, .watching:
-            return LinearGradient(
-                colors: [ch.orbTopColor, ch.orbBottomColor],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .nudging:
-            return LinearGradient(
-                colors: [ch.nudgingOrbTopColor, ch.nudgingOrbBottomColor],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .escalated, .escalatedHard:
-            return LinearGradient(
-                colors: [ch.nudgingOrbTopColor, ch.escalatedRingColor.opacity(0.80)],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .paused:
-            return LinearGradient(
-                colors: [Color(red: 0.88, green: 0.88, blue: 0.88),
-                         Color(red: 0.78, green: 0.78, blue: 0.78)],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
-    }
 
     private var orbShadow: Color {
         let ch = controller.state.character
@@ -176,28 +174,6 @@ struct CompanionView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             withAnimation(.easeInOut(duration: 3.8).repeatForever(autoreverses: true)) {
                 breathScale = 1.026
-            }
-        }
-    }
-
-    private func startBlinking() {
-        Task { @MainActor in
-            while true {
-                let delay = Double.random(in: 5...13)
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-
-                // Blink
-                withAnimation(.linear(duration: 0.07)) { isBlinking = true }
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                withAnimation(.linear(duration: 0.08)) { isBlinking = false }
-
-                // Occasional double-blink
-                if Bool.random() {
-                    try? await Task.sleep(nanoseconds: 220_000_000)
-                    withAnimation(.linear(duration: 0.07)) { isBlinking = true }
-                    try? await Task.sleep(nanoseconds: 110_000_000)
-                    withAnimation(.linear(duration: 0.08)) { isBlinking = false }
-                }
             }
         }
     }
