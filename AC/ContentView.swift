@@ -42,7 +42,7 @@ struct ContentView: View {
         }
         .frame(width: ACD.popoverWidth)
         .background(Color(nsColor: .windowBackgroundColor))
-        .acAccent(for: controller.state.character)
+        .acAccent(for: controller.state)
         .animation(.acFade, value: controller.state.character)
         .onAppear { controller.refreshSystemState() }
         .alert(

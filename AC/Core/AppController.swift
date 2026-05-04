@@ -411,6 +411,12 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+    func updateUserName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.userName = trimmed
+        persistState()
+    }
+
     // MARK: - Brain — rule management
 
     func addUserRule(
@@ -778,7 +784,15 @@ final class AppController: ObservableObject {
     }
 
     /// Update editable profile metadata from the Brain tab.
-    func updateProfile(id: String, name: String, description: String?) {
+    func updateProfile(
+        id: String,
+        name: String,
+        description: String? = nil,
+        emoji: String? = nil,
+        color: String? = nil,
+        blocklist: [String]? = nil,
+        defaultDurationMin: Int? = nil
+    ) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty,
               let index = state.profiles.firstIndex(where: { $0.id == id }) else { return }
@@ -788,6 +802,10 @@ final class AppController: ObservableObject {
         state.profiles[index].description = (trimmedDescription?.isEmpty == false)
             ? trimmedDescription
             : nil
+        if let emoji { state.profiles[index].emoji = emoji }
+        if let color { state.profiles[index].color = color }
+        if let blocklist { state.profiles[index].blocklist = blocklist }
+        if let defaultDurationMin { state.profiles[index].defaultDurationMin = defaultDurationMin }
         persistState()
         logActivity("profile", "Updated profile metadata: \(id)")
     }
@@ -880,6 +898,34 @@ final class AppController: ObservableObject {
         guard state.character != character else { return }
         state.character = character
         logActivity("app", "Selected character: \(character.displayName)")
+        persistState()
+    }
+
+    func updateSkin(_ skin: ACSkin) {
+        guard state.selectedSkin != skin else { return }
+        state.selectedSkin = skin
+        logActivity("app", "Selected skin: \(skin.rawValue)")
+        persistState()
+    }
+
+    func updateAccent(followsCharacter: Bool, customHex: String? = nil) {
+        let normalizedHex: String? = customHex.flatMap { raw in
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let digits = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
+            guard digits.count == 6, UInt(digits, radix: 16) != nil else { return nil }
+            return "#\(digits.uppercased())"
+        }
+        var changed = false
+        if state.accentFollowsCharacter != followsCharacter {
+            state.accentFollowsCharacter = followsCharacter
+            changed = true
+        }
+        if let normalizedHex, state.customAccentHex != normalizedHex {
+            state.customAccentHex = normalizedHex
+            changed = true
+        }
+        guard changed else { return }
+        logActivity("app", "Updated accent: \(state.accentFollowsCharacter ? "character" : state.customAccentHex)")
         persistState()
     }
 
@@ -1401,6 +1447,13 @@ final class AppController: ObservableObject {
     func deleteMemoryEntry(id: UUID) {
         state.memoryEntries.removeAll { $0.id == id }
         persistState()
+    }
+
+    func toggleMemoryEntryLocked(id: UUID) {
+        guard let index = state.memoryEntries.firstIndex(where: { $0.id == id }) else { return }
+        state.memoryEntries[index].isLocked.toggle()
+        persistState()
+        logActivity("memory", "Toggled lock for memory entry \(id)")
     }
 
     var canConsolidateMemory: Bool {

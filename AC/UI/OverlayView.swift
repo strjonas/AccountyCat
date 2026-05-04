@@ -2,14 +2,16 @@
 //  OverlayView.swift
 //  AC
 //
-//  Escalation overlay — rare, warm, encouraging. Soft amber vignette, sleepy cat,
-//  one gentle nudge. Not alarming; more like a cosy tap on the shoulder from a friend.
+//  Refreshed escalation overlay — visual-novel layout.
+//  Large cat portrait left, vibrancy dialog right.
+//  Reason chips, free-text appeal, snooze / back-to-work actions, quiet ×.
 //
 
 import SwiftUI
 
 struct OverlayView: View {
     @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
     @FocusState private var appealFocused: Bool
 
     var body: some View {
@@ -25,118 +27,149 @@ struct OverlayView: View {
         )
 
         let character = controller.state.character
-        let accent = character.accentColor
 
-        return GeometryReader { proxy in
-            let cardWidth = min(max(proxy.size.width - 56, 360), 460)
-
+        GeometryReader { proxy in
             ZStack {
-                Color.black.opacity(0.16)
+                // Dim + vignette
+                Color.black.opacity(0.18)
                     .ignoresSafeArea()
 
-                // Soft accent edge vignette — clear center so the user can see their work
                 RadialGradient(
-                    colors: [Color.clear, accent.opacity(0.14)],
+                    colors: [Color.clear, accent.opacity(0.12)],
                     center: .center,
-                    startRadius: 220,
-                    endRadius: 780
+                    startRadius: 240,
+                    endRadius: 900
                 )
                 .ignoresSafeArea()
 
-                VStack(spacing: 26) {
-                // Cat avatar with warm gradient halo, tinted by character
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [character.orbTopColor, character.orbBottomColor],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: accent.opacity(0.32), radius: 26, y: 10)
-                        .overlay(
-                            Circle().stroke(Color.white.opacity(0.45), lineWidth: 1)
-                        )
+                // Main card — visual-novel layout
+                HStack(spacing: 0) {
+                    // Left: large cat portrait
+                    catPortrait(character: character)
+                        .frame(width: min(proxy.size.width * 0.35, 220))
 
-                    Image(character.largeImageName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .padding(16)
+                    // Right: dialog content
+                    dialogContent(presentation: presentation, character: character)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(width: 128, height: 128)
+                .frame(maxWidth: min(proxy.size.width - 80, 720), maxHeight: min(proxy.size.height - 80, 420))
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
+                                .stroke(Color.white.opacity(0.40), lineWidth: 1)
+                        )
+                        .shadow(color: accent.opacity(0.18), radius: 36, y: 14)
+                )
 
+                // Quiet × dismiss
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button {
+                            controller.dismissOverlay()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                                .padding(10)
+                                .background(
+                                    Circle()
+                                        .fill(Color.acSurface)
+                                        .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Dismiss")
+                        .padding(.top, 20)
+                        .padding(.trailing, 28)
+                    }
+                    Spacer()
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
+            }
+        }
+        .acAccent(for: character)
+    }
+
+    // MARK: - Cat portrait (left side)
+
+    private func catPortrait(character: ACCharacter) -> some View {
+        ZStack {
+            // Warm gradient halo
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [character.orbTopColor, character.orbBottomColor],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: character.accentColor.opacity(0.30), radius: 24, y: 8)
+                .overlay(Circle().stroke(Color.white.opacity(0.40), lineWidth: 1))
+
+            CatView(
+                character: character,
+                skin: controller.state.selectedSkin,
+                expression: .concern,
+                size: 140,
+                animating: false
+            )
+            .padding(20)
+        }
+        .padding(24)
+        .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - Dialog content (right side)
+
+    private func dialogContent(presentation: OverlayPresentation, character: ACCharacter) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
                 // Headline + body
-                VStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(presentation.headline)
-                        .font(.ac(24, weight: .semibold))
+                        .font(.ac(20, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
-                        .multilineTextAlignment(.center)
 
                     Text(presentation.body)
-                        .font(.ac(14))
+                        .font(.ac(13))
                         .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                        .multilineTextAlignment(.center)
                         .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                // Optional appeal input (shown when AI asks the user to explain)
+                // Optional appeal input
                 if let prompt = presentation.prompt {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(prompt)
-                            .font(.ac(13, weight: .medium))
-                            .foregroundStyle(Color.acTextPrimary)
-
-                        ZStack(alignment: .topLeading) {
-                            // Background and border
-                            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                                .fill(Color(nsColor: .textBackgroundColor))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                                        .stroke(
-                                            appealFocused
-                                                ? accent.opacity(0.65)
-                                                : Color.acHairline.opacity(0.5),
-                                            lineWidth: 1.5
-                                        )
-                                )
-                            
-                            // TextField - no complex modifier chains
-                            TextField(
-                                "Explain why this is actually helping…",
-                                text: $controller.overlayAppealDraft,
-                                axis: .vertical
-                            )
-                            .font(.ac(13))
-                            .lineLimit(2...5)
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .focused($appealFocused)
-                            .opacity(controller.sendingOverlayAppeal ? 0.6 : 1.0)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 64)
-                        .animation(.acSnap, value: appealFocused)
-
-                        OverlayReasonChips { reason in
-                            controller.overlayAppealDraft = reason
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                controller.submitOverlayAppeal()
-                            }
-                        }
-                        .disabled(controller.sendingOverlayAppeal)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onAppear { 
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            appealFocused = true
-                        }
-                    }
+                    appealSection(prompt: prompt)
                 }
+
+                Spacer(minLength: 0)
 
                 // Actions
-                VStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    Button {
+                        // Snooze 5 min — dismiss overlay and pause for 5 min
+                        controller.dismissOverlay()
+                        // TODO: implement snooze if not already available
+                        // For now just dismisses
+                    } label: {
+                        Text("Snooze 5 min")
+                            .font(.ac(12, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.acSurface)
+                                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer(minLength: 4)
+
                     if presentation.prompt == nil {
                         Button(presentation.submitButtonTitle) {
                             controller.handleBackToWork()
@@ -149,36 +182,65 @@ struct OverlayView: View {
                         .buttonStyle(OverlayPrimaryButton())
                         .disabled(controller.sendingOverlayAppeal || controller.overlayAppealDraft.cleanedSingleLine.isEmpty)
                     }
-
-                    Button(presentation.secondaryButtonTitle) {
-                        controller.dismissOverlay()
-                    }
-                    .font(.ac(13, weight: .medium))
-                    .foregroundStyle(Color.acTextPrimary)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(36)
-            .frame(width: cardWidth)
-            .fixedSize(horizontal: false, vertical: true)
-            .background(
-                RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
-                            .stroke(Color.white.opacity(0.45), lineWidth: 1)
-                    )
-                    .shadow(color: accent.opacity(0.20), radius: 32, y: 16)
-            )
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            .padding(28)
         }
-        .acAccent(for: character)
+    }
+
+    // MARK: - Appeal section
+
+    private func appealSection(prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(prompt)
+                .font(.ac(12, weight: .medium))
+                .foregroundStyle(Color.acTextPrimary)
+
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                            .stroke(
+                                appealFocused ? accent.opacity(0.60) : Color.acHairline.opacity(0.5),
+                                lineWidth: 1.5
+                            )
+                    )
+
+                TextField(
+                    "Explain why this is actually helping…",
+                    text: $controller.overlayAppealDraft,
+                    axis: .vertical
+                )
+                .font(.ac(12))
+                .lineLimit(2...5)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .focused($appealFocused)
+                .opacity(controller.sendingOverlayAppeal ? 0.6 : 1.0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 60)
+            .animation(.acSnap, value: appealFocused)
+
+            OverlayReasonChips { reason in
+                controller.overlayAppealDraft = reason
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    controller.submitOverlayAppeal()
+                }
+            }
+            .disabled(controller.sendingOverlayAppeal)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                appealFocused = true
+            }
+        }
     }
 }
+
+// MARK: - Reason chips
 
 private struct OverlayReasonChips: View {
     let onSelect: (String) -> Void
@@ -192,9 +254,9 @@ private struct OverlayReasonChips: View {
 
     var body: some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 116), spacing: 7)],
+            columns: [GridItem(.adaptive(minimum: 110), spacing: 6)],
             alignment: .leading,
-            spacing: 7
+            spacing: 6
         ) {
             ForEach(reasons, id: \.1) { icon, label in
                 Button {
@@ -204,11 +266,11 @@ private struct OverlayReasonChips: View {
                         Image(systemName: icon)
                             .font(.system(size: 10, weight: .semibold))
                         Text(label)
-                            .font(.ac(11, weight: .medium))
+                            .font(.ac(10, weight: .medium))
                     }
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.78))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
                     .background(
                         Capsule(style: .continuous)
                             .fill(Color.acSurface)
@@ -230,10 +292,10 @@ private struct OverlayPrimaryButton: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.ac(15, weight: .semibold))
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 30)
-            .padding(.vertical, 13)
+            .font(.ac(13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 10)
             .background(
                 Capsule(style: .continuous)
                     .fill(
@@ -245,9 +307,9 @@ private struct OverlayPrimaryButton: ButtonStyle {
                     )
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.50), lineWidth: 1)
                     )
-                    .shadow(color: accent.opacity(0.35), radius: 10, y: 4)
+                    .shadow(color: accent.opacity(0.30), radius: 8, y: 3)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.acSnap, value: configuration.isPressed)

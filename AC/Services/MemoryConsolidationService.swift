@@ -187,7 +187,8 @@ actor MemoryConsolidationService {
                     createdAt: existing?.createdAt ?? created,
                     text: text,
                     profileID: existing?.profileID,
-                    profileName: existing?.profileName
+                    profileName: existing?.profileName,
+                    isLocked: existing?.isLocked ?? false
                 )
             }
 

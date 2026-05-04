@@ -11,6 +11,28 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Hex color helper
+
+extension Color {
+    init(hex: UInt, alpha: Double = 1.0) {
+        self.init(
+            red: Double((hex >> 16) & 0xFF) / 255.0,
+            green: Double((hex >> 8) & 0xFF) / 255.0,
+            blue: Double(hex & 0xFF) / 255.0,
+            opacity: alpha
+        )
+    }
+
+    init?(acHexString: String, alpha: Double = 1.0) {
+        let trimmed = acHexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
+        guard digits.count == 6, let value = UInt(digits, radix: 16) else {
+            return nil
+        }
+        self.init(hex: value, alpha: alpha)
+    }
+}
+
 // MARK: - Notification Names
 
 extension Notification.Name {
@@ -67,6 +89,21 @@ extension Color {
             ? NSColor(white: 1.0, alpha: 0.13)
             : NSColor(white: 0.0, alpha: 0.08)
     })
+
+    // MARK: - Design system colors
+
+    static let acInk1      = Color(hex: 0x1d1b16)
+    static let acOkGreen   = Color(hex: 0x34c759)
+    static let acRedEnd    = Color(hex: 0xc44d3a)
+
+    // MARK: - Profile colors
+
+    static let acProfileEveryday    = Color(hex: 0x9aa1a8)
+    static let acProfileWriting     = Color(hex: 0x7BA3D9)
+    static let acProfileDeepCoding  = Color(hex: 0xA88BFF)
+    static let acProfileSocialMgmt  = Color(hex: 0xE89B7A)
+    static let acProfileAdmin       = Color(hex: 0xA8B58E)
+    static let acProfileDesign      = Color(hex: 0xD9A8C7)
 
     /// Elevated surface — popover and sheet backgrounds. Slightly lighter
     /// than acSurface so layered panels feel distinct.
@@ -134,7 +171,7 @@ enum ACD {
     static let orbDiameter: CGFloat  = 72
     static let panelWidth: CGFloat   = 200
     static let panelHeight: CGFloat  = 240
-    static let popoverWidth: CGFloat = 472
+    static let popoverWidth: CGFloat = 400
 }
 
 /// Unified corner radii. Reach for these instead of literals so
@@ -144,8 +181,9 @@ enum ACRadius {
     static let sm: CGFloat = 10
     static let md: CGFloat = 12
     static let lg: CGFloat = 16
-    static let xl: CGFloat = 20
-    static let xxl: CGFloat = 28
+    static let xl: CGFloat = 18   // Main panel radius per design
+    static let xxl: CGFloat = 20  // Dialog radius per design
+    static let bubble: CGFloat = 13 // Chat bubble radius per design
 }
 
 /// Spacing scale.
@@ -189,14 +227,26 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// Inject the accent palette of a character into this view subtree.
-    /// Every accent-aware component re-tints automatically.
+    /// Inject the accent palette into this view subtree.
+    /// The user can either follow the character palette or override it from Look.
     func acAccent(for character: ACCharacter) -> some View {
         self
             .environment(\.acAccent, character.accentColor)
             .environment(\.acAccentLight, character.accentLight)
             .environment(\.acAccentSoft, character.accentSoft)
             .tint(character.accentColor)
+    }
+
+    func acAccent(for state: ACState) -> some View {
+        let custom = Color(acHexString: state.customAccentHex) ?? Color.acProfileWriting
+        let accent = state.accentFollowsCharacter ? state.character.accentColor : custom
+        let accentLight = state.accentFollowsCharacter ? state.character.accentLight : custom.opacity(0.58)
+        let accentSoft = state.accentFollowsCharacter ? state.character.accentSoft : custom.opacity(0.16)
+        return self
+            .environment(\.acAccent, accent)
+            .environment(\.acAccentLight, accentLight)
+            .environment(\.acAccentSoft, accentSoft)
+            .tint(accent)
     }
 }
 

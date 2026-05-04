@@ -288,14 +288,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return nil
             }
 
-            // ── Cmd+K: focus chat input ──
-            if isCmd && event.charactersIgnoringModifiers == "k" {
+            // ── Cmd+K: focus chat input (panel-only) ──
+            let panelIsOpen = self.popover?.isShown == true
+            if isCmd && event.charactersIgnoringModifiers == "k" && panelIsOpen {
                 NotificationCenter.default.post(name: .acFocusChatInput, object: nil)
                 return nil
             }
 
-            // ── Cmd+,: settings ──
-            if event.keyCode == 43 && flags == .command {
+            // ── Cmd+,: settings (panel-only) ──
+            if event.keyCode == 43 && flags == .command && panelIsOpen {
                 NotificationCenter.default.post(name: .acOpenSettings, object: nil)
                 return nil
             }
@@ -436,7 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.behavior = .transient
         p.animates = true
         p.contentViewController = NSHostingController(
-            rootView: ChatPopoverView()
+            rootView: ChatPanelView()
                 .environmentObject(controller)
         )
         controller.dismissPopover = { [weak p] in

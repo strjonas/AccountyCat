@@ -61,21 +61,25 @@ struct CompanionView: View {
                         .frame(width: orbDiameter, height: orbDiameter)
                 }
 
-                Image(controller.state.character.largeImageName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .saturation(controller.companionMood == .paused ? 0.15 : 1.0)
-                    .brightness(controller.companionMood == .paused ? 0.12 : 0)
-                    .rotationEffect(.degrees(headTilt))
-                    .shadow(color: orbShadow.opacity(0.22), radius: 14, y: 7)
-                    .overlay {
-                        if controller.state.setupStatus != .ready {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: orbDiameter * 0.28, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-                        }
+                CatView(
+                    character: controller.state.character,
+                    skin: controller.state.selectedSkin,
+                    expression: controller.companionMood.catExpression,
+                    size: orbDiameter,
+                    animating: true
+                )
+                .saturation(controller.companionMood == .paused ? 0.15 : 1.0)
+                .brightness(controller.companionMood == .paused ? 0.12 : 0)
+                .rotationEffect(.degrees(headTilt))
+                .shadow(color: orbShadow.opacity(0.22), radius: 14, y: 7)
+                .overlay {
+                    if controller.state.setupStatus != .ready {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: orbDiameter * 0.28, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
                     }
+                }
             }
             .frame(width: orbDiameter, height: orbDiameter)
             .overlay(alignment: .bottomTrailing) {
@@ -131,24 +135,45 @@ struct CompanionView: View {
         }
         .animation(.acFade, value: controller.latestNudge)
         .animation(.acFade, value: showTooltip)
-        .acAccent(for: controller.state.character)
+        .acAccent(for: controller.state)
     }
 
     // MARK: - Mood helpers
 
+    /// When a named profile is active, tint the orb glow with the profile color.
+    /// Falls back to character palette when the default profile is active.
+    private var profileTintColor: Color {
+        let profile = controller.state.activeProfile
+        if profile.isDefault { return accent }
+        return colorFromHex(profile.color)
+    }
+
+    private var profileTintEscalatedColor: Color {
+        let profile = controller.state.activeProfile
+        if profile.isDefault { return accent }
+        return colorFromHex(profile.color)
+    }
+
     private var orbShadow: Color {
         let ch = controller.state.character
         switch controller.companionMood {
-        case .nudging:   return ch.ringColor
-        case .escalated: return ch.escalatedRingColor
+        case .nudging:   return profileTintColor
+        case .escalated: return profileTintEscalatedColor
         default:         return ch.shadowColor
         }
     }
 
     private var ringColor: Color {
         controller.companionMood == .escalated
-            ? controller.state.character.escalatedRingColor
-            : controller.state.character.ringColor
+            ? profileTintEscalatedColor
+            : profileTintColor
+    }
+
+    private func colorFromHex(_ hex: String) -> Color {
+        let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = cleaned.hasPrefix("#") ? String(cleaned.dropFirst()) : cleaned
+        guard let value = UInt(digits, radix: 16) else { return Color.secondary }
+        return Color(hex: value, alpha: 1)
     }
 
     @ViewBuilder

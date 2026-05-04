@@ -89,19 +89,20 @@ struct OnboardingWizardView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 14) {
                 ZStack {
-                    Circle()
-                        .fill(LinearGradient(
-                            colors: [controller.state.character.orbTopColor,
-                                     controller.state.character.orbBottomColor],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-                        .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 1))
-                        .shadow(color: controller.state.character.shadowColor.opacity(0.22), radius: 8, y: 2)
-                        .frame(width: 54, height: 54)
-                    Image(systemName: "pawprint.fill")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(accent.opacity(0.82))
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.44))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.55), lineWidth: 0.5)
+                        )
+                        .frame(width: 58, height: 58)
+                    CatView(
+                        character: controller.state.character,
+                        skin: controller.state.selectedSkin,
+                        expression: .happy,
+                        size: 48,
+                        animating: false
+                    )
                 }
 
                 Text("Meet your focus companion.")

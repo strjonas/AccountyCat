@@ -610,6 +610,9 @@ struct ACState: Codable, Sendable {
     """
 
     var character: ACCharacter = .mochi
+    var selectedSkin: ACSkin = .bubble
+    var accentFollowsCharacter: Bool = true
+    var customAccentHex: String = "#7BA3D9"
     var aiTier: AITier = .balanced
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
@@ -617,6 +620,7 @@ struct ACState: Codable, Sendable {
     var debugMode = ACBuild.isDebug
     var minimumLogLevel = LogLevel.defaultForBuild
     var goalsText = Self.defaultGoalsText
+    var userName: String = ""
     var rescueApp = RescueAppTarget.xcode
     var runtimePathOverride: String?
     var monitoringConfiguration = MonitoringConfiguration()
@@ -673,6 +677,9 @@ struct ACState: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case character
+        case selectedSkin
+        case accentFollowsCharacter
+        case customAccentHex
         case aiTier
         case permissions
         case setupStatus
@@ -680,6 +687,7 @@ struct ACState: Codable, Sendable {
         case debugMode
         case minimumLogLevel
         case goalsText
+        case userName
         case rescueApp
         case runtimePathOverride
         case monitoringConfiguration
@@ -726,6 +734,9 @@ struct ACState: Codable, Sendable {
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
         character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
+        selectedSkin = try container.decodeIfPresent(ACSkin.self, forKey: .selectedSkin) ?? .bubble
+        accentFollowsCharacter = try container.decodeIfPresent(Bool.self, forKey: .accentFollowsCharacter) ?? true
+        customAccentHex = try container.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#7BA3D9"
         aiTier = try container.decodeIfPresent(AITier.self, forKey: .aiTier) ?? .balanced
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
@@ -733,6 +744,7 @@ struct ACState: Codable, Sendable {
         debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? ACBuild.isDebug
         minimumLogLevel = try container.decodeIfPresent(LogLevel.self, forKey: .minimumLogLevel) ?? LogLevel.defaultForBuild
         goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
+        userName = try container.decodeIfPresent(String.self, forKey: .userName) ?? ""
         rescueApp = try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
         let decodedOverride = try container.decodeIfPresent(String.self, forKey: .runtimePathOverride)
         runtimePathOverride = Self.sanitizeRuntimePathOverride(decodedOverride)
@@ -809,6 +821,9 @@ struct ACState: Codable, Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(character, forKey: .character)
+        try container.encode(selectedSkin, forKey: .selectedSkin)
+        try container.encode(accentFollowsCharacter, forKey: .accentFollowsCharacter)
+        try container.encode(customAccentHex, forKey: .customAccentHex)
         try container.encode(aiTier, forKey: .aiTier)
         try container.encode(permissions, forKey: .permissions)
         try container.encode(setupStatus, forKey: .setupStatus)
@@ -816,6 +831,7 @@ struct ACState: Codable, Sendable {
         try container.encode(debugMode, forKey: .debugMode)
         try container.encode(minimumLogLevel, forKey: .minimumLogLevel)
         try container.encode(goalsText, forKey: .goalsText)
+        try container.encode(userName, forKey: .userName)
         try container.encode(rescueApp, forKey: .rescueApp)
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
         try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
@@ -841,6 +857,10 @@ struct ACState: Codable, Sendable {
 
     mutating func resetAlgorithmProfile() {
         goalsText = Self.defaultGoalsText
+        userName = ""
+        selectedSkin = .bubble
+        accentFollowsCharacter = true
+        customAccentHex = "#7BA3D9"
         aiTier = .balanced
         recentActions = []
         recentSwitches = []
@@ -937,7 +957,7 @@ struct ACState: Codable, Sendable {
 struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Maximum number of stored profiles (default + named). The oldest unused named profile is
     /// evicted when a new one would exceed this cap.
-    static let maximumProfileCount = 8
+    static let maximumProfileCount = 7
 
     /// Display name shown in the menu bar and Brain tab when the default is active.
     /// Picked over "Default" to feel less system-y while staying neutral.
@@ -947,6 +967,15 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var name: String
     var isDefault: Bool
     var description: String?
+    /// Emoji shown in the profile bar and picker (e.g. "✎").
+    var emoji: String
+    /// Hex color for the profile (e.g. "#7BA3D9").
+    var color: String
+    /// Per-profile blocklist — app names or site domains that are always
+    /// considered distractions while this profile is active.
+    var blocklist: [String]
+    /// Default session duration in minutes. `nil` for the default profile.
+    var defaultDurationMin: Int?
     let createdAt: Date
     var lastUsedAt: Date
     var activatedAt: Date?
@@ -959,6 +988,10 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         name: String,
         isDefault: Bool = false,
         description: String? = nil,
+        emoji: String = "◎",
+        color: String = "#9aa1a8",
+        blocklist: [String] = [],
+        defaultDurationMin: Int? = nil,
         createdAt: Date = Date(),
         lastUsedAt: Date = Date(),
         activatedAt: Date? = nil,
@@ -969,11 +1002,38 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.name = name
         self.isDefault = isDefault
         self.description = description
+        self.emoji = emoji
+        self.color = color
+        self.blocklist = blocklist
+        self.defaultDurationMin = defaultDurationMin
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.activatedAt = activatedAt
         self.expiresAt = expiresAt
         self.createdReason = createdReason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, isDefault, description
+        case emoji, color, blocklist, defaultDurationMin
+        case createdAt, lastUsedAt, activatedAt, expiresAt, createdReason
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        isDefault = try c.decode(Bool.self, forKey: .isDefault)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "◎"
+        color = try c.decodeIfPresent(String.self, forKey: .color) ?? "#9aa1a8"
+        blocklist = try c.decodeIfPresent([String].self, forKey: .blocklist) ?? []
+        defaultDurationMin = try c.decodeIfPresent(Int.self, forKey: .defaultDurationMin)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        lastUsedAt = try c.decode(Date.self, forKey: .lastUsedAt)
+        activatedAt = try c.decodeIfPresent(Date.self, forKey: .activatedAt)
+        expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
+        createdReason = try c.decodeIfPresent(String.self, forKey: .createdReason)
     }
 
     static func makeDefault() -> FocusProfile {
@@ -982,6 +1042,10 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
             name: defaultDisplayName,
             isDefault: true,
             description: "Everyday baseline. Active when no named focus session is running.",
+            emoji: "◎",
+            color: "#9aa1a8",
+            blocklist: [],
+            defaultDurationMin: nil,
             createdReason: "system_default"
         )
     }

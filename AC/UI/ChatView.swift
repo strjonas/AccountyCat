@@ -34,10 +34,16 @@ struct ChatView: View {
     @State private var pendingUndoToast: DeletedChatToast?
     @FocusState private var inputFocused: Bool
 
+    /// When true, hides the "Chat" header and the input row.
+    /// Used by ChatPanelView v2, which supplies its own header and composer.
+    var embedInPanel: Bool = false
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
-                header
+                if !embedInPanel {
+                    header
+                }
 
                 if !controller.shouldPresentChatAsAvailable {
                     Text("Finish setup to start chatting.")
@@ -47,15 +53,17 @@ struct ChatView: View {
                         .padding(.vertical, 24)
                 } else {
                     messageList
-                    inputRow
-                        .background {
-                            Button {
-                                sendDraft()
-                            } label: { EmptyView() }
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .opacity(0)
-                            .frame(width: 0, height: 0)
-                        }
+                    if !embedInPanel {
+                        inputRow
+                            .background {
+                                Button {
+                                    sendDraft()
+                                } label: { EmptyView() }
+                                .keyboardShortcut(.return, modifiers: .command)
+                                .opacity(0)
+                                .frame(width: 0, height: 0)
+                            }
+                    }
                 }
             }
 

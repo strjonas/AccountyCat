@@ -333,7 +333,11 @@ final class WindowCoordinator {
     }
 
     private func makeOverlayWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: OverlayView().environmentObject(controller))
+        let hosting = NSHostingController(
+            rootView: OverlayView()
+                .environmentObject(controller)
+                .acAccent(for: controller.state)
+        )
         let window = OverlayWindow(
             contentRect: activeScreen().frame,
             styleMask: [.borderless],

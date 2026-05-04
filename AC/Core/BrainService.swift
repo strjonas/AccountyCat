@@ -532,6 +532,21 @@ final class BrainService: NSObject {
         scopedPolicyMemory.rules = scopedPolicyMemory.rules.filter {
             $0.profileID == nil || $0.profileID == activeProfileID
         }
+        // Inject active profile blocklist as temporary disallow rules for this tick.
+        if let activeProfile = state.profile(withID: activeProfileID),
+           !activeProfile.blocklist.isEmpty {
+            for entry in activeProfile.blocklist {
+                let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                scopedPolicyMemory.rules.append(PolicyRule(
+                    kind: .disallow,
+                    summary: "Block \(trimmed)",
+                    source: .system,
+                    scope: PolicyRuleScope(appName: trimmed),
+                    profileID: activeProfileID
+                ))
+            }
+        }
 
         let evaluationPlan: MonitoringEvaluationPlan
         do {

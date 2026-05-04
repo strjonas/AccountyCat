@@ -34,9 +34,11 @@ public struct MemoryEntry: Codable, Hashable, Sendable, Identifiable {
     /// Display name of the profile at capture time. Stored alongside the id so renaming a
     /// profile doesn't desync the memory prefix.
     public var profileName: String?
+    /// When true, this entry survives automatic memory consolidation cleanup.
+    public var isLocked: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case id, createdAt, text, profileID, profileName
+        case id, createdAt, text, profileID, profileName, isLocked
     }
 
     nonisolated public init(
@@ -44,13 +46,15 @@ public struct MemoryEntry: Codable, Hashable, Sendable, Identifiable {
         createdAt: Date = Date(),
         text: String,
         profileID: String? = nil,
-        profileName: String? = nil
+        profileName: String? = nil,
+        isLocked: Bool = false
     ) {
         self.id = id
         self.createdAt = createdAt
         self.text = text
         self.profileID = profileID
         self.profileName = profileName
+        self.isLocked = isLocked
     }
 
     public init(from decoder: Decoder) throws {
@@ -60,6 +64,7 @@ public struct MemoryEntry: Codable, Hashable, Sendable, Identifiable {
         text = try c.decode(String.self, forKey: .text)
         profileID = try? c.decodeIfPresent(String.self, forKey: .profileID)
         profileName = try? c.decodeIfPresent(String.self, forKey: .profileName)
+        isLocked = try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
     }
 }
 
