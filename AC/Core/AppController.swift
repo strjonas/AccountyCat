@@ -1456,6 +1456,14 @@ final class AppController: ObservableObject {
         logActivity("memory", "Toggled lock for memory entry \(id)")
     }
 
+    func addMemoryEntry(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        state.memoryEntries.insert(MemoryEntry(text: trimmed), at: 0)
+        persistState()
+        logActivity("memory", "Added memory entry")
+    }
+
     var canConsolidateMemory: Bool {
         guard !state.memoryEntries.isEmpty,
               state.setupStatus == .ready,

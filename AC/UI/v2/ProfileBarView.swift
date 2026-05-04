@@ -68,8 +68,8 @@ struct ProfileBarView: View {
     private var activeState: some View {
         HStack(spacing: 0) {
             // Left side: ring + meta
-            HStack(spacing: 10) {
-                // Countdown ring (28pt)
+            HStack(spacing: 12) {
+                // Countdown ring (28pt) with emoji inside
                 ZStack {
                     Circle()
                         .stroke(active.swiftUIColor.opacity(0.22), lineWidth: 2.5)
@@ -79,6 +79,7 @@ struct ProfileBarView: View {
                         .rotationEffect(.degrees(-90))
                     Text(active.emoji)
                         .font(.system(size: 10))
+                        .foregroundStyle(active.swiftUIColor)
                 }
                 .frame(width: 28, height: 28)
 
@@ -92,7 +93,7 @@ struct ProfileBarView: View {
                             .foregroundStyle(Color.acTextPrimary)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .black))
-                            .foregroundStyle(Color.secondary.opacity(0.5))
+                            .foregroundStyle(Color.secondary.opacity(0.4))
                     }
 
                     if let remaining = remainingText {

@@ -18,6 +18,10 @@ struct ChatScrollView: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 10) {
+            StatStripView()
+                .environmentObject(controller)
+                .padding(.top, 10)
+
             if messages.isEmpty && !controller.sendingChatMessage {
                 EmptyV2ChatState()
                     .environmentObject(controller)

@@ -83,13 +83,15 @@ struct ProfilesTab: View {
             ForEach(sortedProfiles) { profile in
                 let isEditing = profile.id == resolvedEditingID
                 let isActive = profile.id == controller.state.activeProfileID
+                let draftTrimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayName = isEditing && !draftTrimmed.isEmpty ? draftTrimmed : profile.name
                 Button {
                     withAnimation(.acSnap) { editingProfileID = profile.id }
                 } label: {
                     HStack(spacing: 5) {
                         Text(profile.emoji)
                             .font(.ac(13))
-                        Text(profile.name)
+                        Text(displayName)
                             .font(.ac(11, weight: isEditing ? .semibold : .medium))
                         if isActive {
                             Text("active")
@@ -195,9 +197,19 @@ struct ProfilesTab: View {
                     .italic()
             } else {
                 TextField("What belongs in this profile?", text: $descriptionDraft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(.ac(12))
                     .lineLimit(1...3)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                    .stroke(Color.acHairline, lineWidth: 1)
+                            )
+                    )
 
                 // Color picker (simple hex presets)
                 colorPicker
@@ -310,22 +322,49 @@ struct ProfilesTab: View {
                                 .font(.ac(11))
                                 .foregroundStyle(Color.acTextPrimary.opacity(0.8))
                             Spacer()
-                            if !rule.isAutoSafelistRule {
-                                Button {
-                                    controller.deleteRule(id: rule.id)
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(Color.secondary.opacity(0.5))
-                                }
-                                .buttonStyle(.plain)
+
+                            Button {
+                                controller.toggleRuleLocked(id: rule.id)
+                            } label: {
+                                Image(systemName: rule.isLocked ? "lock.fill" : "lock.open")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.35))
+                                    .frame(width: 22, height: 22)
+                                    .background(
+                                        Circle()
+                                            .fill(rule.isLocked ? accent.opacity(0.10) : Color.acSurface)
+                                            .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.22) : Color.acHairline, lineWidth: 1))
+                                    )
                             }
+                            .buttonStyle(.plain)
+                            .help(rule.isLocked ? "Unlock — allow cleanup to remove" : "Lock — keep on cleanup")
+
+                            Button {
+                                controller.deleteRule(id: rule.id)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Color.secondary.opacity(0.4))
+                                    .frame(width: 22, height: 22)
+                                    .background(
+                                        Circle()
+                                            .fill(Color.acSurface)
+                                            .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(rule.isLocked)
+                            .help("Delete this rule")
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                .fill(Color.acSurface)
+                                .fill(rule.isLocked ? accent.opacity(0.04) : Color.acSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                        .stroke(rule.isLocked ? accent.opacity(0.15) : Color.acHairline, lineWidth: 1)
+                                )
                         )
                     }
                 }
@@ -445,9 +484,10 @@ struct ProfilesTab: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.ac(11, weight: .semibold))
-            .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-            .textCase(.lowercase)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .tracking(0.06)
+            .foregroundStyle(Color.acTextPrimary.opacity(0.45))
+            .textCase(.uppercase)
     }
 }
 

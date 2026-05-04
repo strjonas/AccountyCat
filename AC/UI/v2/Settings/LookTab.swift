@@ -178,9 +178,10 @@ struct LookTab: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.ac(11, weight: .semibold))
-            .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-            .textCase(.lowercase)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .tracking(0.06)
+            .foregroundStyle(Color.acTextPrimary.opacity(0.45))
+            .textCase(.uppercase)
     }
 }
 

@@ -25,10 +25,13 @@ struct CompactHeaderView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        statusDot
-                        Text(statusTitle)
+                        Text(controller.state.character.displayName)
                             .font(.ac(13, weight: .semibold))
                             .foregroundStyle(Color.acTextPrimary)
+                        statusDot
+                        Text(statusTitle)
+                            .font(.ac(10, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
 
                     if let subtitle = statusSubtitle {
@@ -120,15 +123,15 @@ struct CompactHeaderView: View {
     private var statusDot: some View {
         ZStack {
             Circle()
-                .fill(healthColor.opacity(0.32))
-                .frame(width: 12, height: 12)
+                .fill(healthColor.opacity(0.28))
+                .frame(width: 10, height: 10)
                 .scaleEffect(1 + healthPulse)
                 .opacity(0.8 - healthPulse * 0.7)
             Circle()
                 .fill(healthColor)
-                .frame(width: 6, height: 6)
+                .frame(width: 5, height: 5)
         }
-        .frame(width: 12, height: 12)
+        .frame(width: 10, height: 10)
         .onAppear {
             if controller.state.setupStatus == .ready && !controller.state.isPaused {
                 withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {

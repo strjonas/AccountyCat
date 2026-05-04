@@ -46,9 +46,11 @@ struct SettingsView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("Settings")
-                .font(.acTitle)
-                .foregroundStyle(Color.acTextPrimary)
+            Text("SETTINGS")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .tracking(0.06)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.45))
+                .textCase(.uppercase)
             Spacer()
             Button {
                 dismiss()
@@ -90,8 +92,8 @@ struct SettingsView: View {
                         .overlay(
                             Rectangle()
                                 .fill(selectedTab == tab ? accent : Color.clear)
-                                .frame(height: 2)
-                                .offset(y: 14),
+                                .frame(height: 3)
+                                .offset(y: 13),
                             alignment: .bottom
                         )
                 }

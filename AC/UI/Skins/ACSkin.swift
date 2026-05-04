@@ -26,7 +26,7 @@ extension ACSkin {
     var blurb: String {
         switch self {
         case .pixel:  return "Chunky retro grid"
-        case .bubble: return "Solid sticker, rounded"
+        case .bubble: return "Soft sticker"
         case .liquid: return "Glass blob"
         }
     }

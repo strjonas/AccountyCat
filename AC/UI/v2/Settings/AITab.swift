@@ -13,15 +13,26 @@ struct AITab: View {
 
     @State private var showVisionInfo = false
     @State private var showAdvanced = false
+    @State private var showDeleteModelConfirm = false
+    @State private var modelToDelete: InstalledLocalModel?
+    @State private var advancedTextModelID = ""
+    @State private var advancedImageModelID = ""
 
     private var config: MonitoringConfiguration { controller.state.monitoringConfiguration }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            // Vision
-            HStack {
+            // Vision toggle + info
+            HStack(spacing: 8) {
                 sectionLabel("vision")
                 Spacer()
+                Toggle("", isOn: Binding(
+                    get: { controller.visionEnabled },
+                    set: { controller.updateVisionEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(accent)
                 Button {
                     withAnimation(.acSnap) { showVisionInfo.toggle() }
                 } label: {
@@ -56,10 +67,6 @@ struct AITab: View {
             // Tier
             sectionLabel("intelligence tier")
             tierPicker
-            Text("AC uses different models for vision vs text — no need to pick them yourself.")
-                .font(.acCaption)
-                .foregroundStyle(.secondary)
-                .padding(.top, -10)
 
             // Backend-specific sections
             if config.inferenceBackend == .openRouter {
@@ -73,7 +80,7 @@ struct AITab: View {
             // Advanced
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("advanced mode")
+                    Text("Advanced mode")
                         .font(.ac(12, weight: .medium))
                         .foregroundStyle(Color.acTextPrimary)
                     Text("choose specific models yourself")
@@ -86,16 +93,27 @@ struct AITab: View {
                     .controlSize(.small)
             }
             if showAdvanced {
-                Text("advanced model selection coming in a future build.")
-                    .font(.acCaption)
-                    .foregroundStyle(.secondary)
-                    .italic()
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                            .fill(Color.acSurfaceInset)
-                    )
+                advancedModelSection
             }
+        }
+        .alert("Delete model?", isPresented: $showDeleteModelConfirm) {
+            Button("Delete", role: .destructive) {
+                if let model = modelToDelete {
+                    deleteModel(model)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            if let model = modelToDelete,
+               model.cachePath == controller.selectedInstalledModel?.cachePath {
+                Text("This is your current active model. Deleting it will switch AC to the next available model.")
+            } else {
+                Text("This will free up storage space.")
+            }
+        }
+        .onAppear {
+            advancedTextModelID = config.onlineModelIdentifierText ?? config.onlineModelIdentifier
+            advancedImageModelID = config.onlineModelIdentifierImage ?? config.onlineModelIdentifier
         }
     }
 
@@ -159,6 +177,7 @@ struct AITab: View {
 
     private var modePills: some View {
         HStack(spacing: 8) {
+            managedPill
             modePill(
                 id: .local,
                 label: "Local",
@@ -171,6 +190,43 @@ struct AITab: View {
                 sub: "bring your own key",
                 disabled: false
             )
+        }
+    }
+
+    private var managedPill: some View {
+        Button { } label: {
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("Managed")
+                        .font(.ac(12, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.5))
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.secondary.opacity(0.4))
+                }
+                Text("coming soon")
+                    .font(.ac(10))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+            .opacity(0.6)
+        }
+        .buttonStyle(.plain)
+        .disabled(true)
+        .help("Managed mode is coming soon. Sign up at accountycat.com/managed-waitlist")
+        .contextMenu {
+            Button("Join waitlist…") {
+                NSWorkspace.shared.open(URL(string: "https://accountycat.com/managed-waitlist")!)
+            }
         }
     }
 
@@ -272,15 +328,161 @@ struct AITab: View {
         VStack(alignment: .leading, spacing: 10) {
             Divider().opacity(0.3)
             sectionLabel("installed models")
-            ContentView.LocalModelStorageSection(onDelete: { })
-                .environmentObject(controller)
+
+            let installed = controller.installedManagedModels
+            let selected = controller.selectedInstalledModel
+
+            if installed.isEmpty {
+                Text("No AC-downloaded local models found yet.")
+                    .font(.acCaption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(installed) { model in
+                        let isActive = model.cachePath == selected?.cachePath
+                        HStack(spacing: 10) {
+                            Text("◈")
+                                .font(.system(size: 12))
+                                .foregroundStyle(isActive ? accent : Color.acTextPrimary.opacity(0.4))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(AppController.shortModelName(for: model.modelIdentifier))
+                                        .font(.ac(12, weight: isActive ? .semibold : .medium))
+                                        .foregroundStyle(Color.acTextPrimary)
+                                    if isActive {
+                                        Text("active")
+                                            .font(.ac(9, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Capsule(style: .continuous).fill(accent))
+                                    }
+                                }
+                                Text(model.modelIdentifier)
+                                    .font(.ac(10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                modelToDelete = model
+                                showDeleteModelConfirm = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(Color.red.opacity(0.72))
+                                    .frame(width: 26, height: 26)
+                                    .background(
+                                        Circle()
+                                            .fill(Color.red.opacity(0.08))
+                                            .overlay(Circle().stroke(Color.red.opacity(0.18), lineWidth: 1))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .fill(isActive ? accent.opacity(0.06) : Color.acSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                        .stroke(isActive ? accent.opacity(0.2) : Color.acHairline, lineWidth: 1)
+                                )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func deleteModel(_ model: InstalledLocalModel) {
+        controller.selectInstalledModel(cachePath: model.cachePath)
+        controller.deleteManagedModels()
+        modelToDelete = nil
+    }
+
+    // MARK: - Advanced model selection
+
+    private var advancedModelSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Choose the models AC uses for text and image analysis.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("text model")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                TextField(
+                    config.inferenceBackend == .openRouter
+                        ? "e.g. openai/gpt-4o-mini"
+                        : "e.g. gemma-4b-it-q4_K_M",
+                    text: $advancedTextModelID
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .onSubmit { saveAdvancedModels() }
+
+                Text("image / vision model")
+                    .font(.ac(11, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                TextField(
+                    config.inferenceBackend == .openRouter
+                        ? "e.g. openai/gpt-4o"
+                        : "e.g. moondream-2b-llava-ft-mlx",
+                    text: $advancedImageModelID
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .onSubmit { saveAdvancedModels() }
+
+                Text(config.inferenceBackend == .openRouter
+                     ? "Paste the OpenRouter model ID (provider/model-name)."
+                     : "Paste the Hugging Face or llama.cpp model identifier.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if advancedTextModelID != (config.onlineModelIdentifierText ?? config.onlineModelIdentifier)
+                || advancedImageModelID != (config.onlineModelIdentifierImage ?? config.onlineModelIdentifier) {
+                HStack {
+                    Spacer()
+                    Button("Save models") { saveAdvancedModels() }
+                        .buttonStyle(ACPrimaryButton())
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurfaceInset)
+        )
+    }
+
+    private func saveAdvancedModels() {
+        let trimmedText = advancedTextModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedImage = advancedImageModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty, !trimmedImage.isEmpty else { return }
+
+        if config.inferenceBackend == .openRouter {
+            controller.updateOnlineModelIdentifierText(trimmedText)
+            controller.updateOnlineModelIdentifierImage(trimmedImage)
+        } else {
+            controller.updateLocalModelIdentifierText(trimmedText)
+            controller.updateLocalModelIdentifierImage(trimmedImage)
         }
     }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.ac(11, weight: .semibold))
-            .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-            .textCase(.lowercase)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .tracking(0.06)
+            .foregroundStyle(Color.acTextPrimary.opacity(0.45))
+            .textCase(.uppercase)
     }
 }

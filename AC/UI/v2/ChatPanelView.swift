@@ -11,6 +11,7 @@ import SwiftUI
 struct ChatPanelView: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.acAccent) private var accent
 
     @State private var showSettings = false
     @State private var showProfilePicker = false
@@ -133,10 +134,6 @@ struct ChatPanelView: View {
                             .padding(.horizontal, 14)
                             .padding(.top, 12)
                     } else {
-                        StatStripView()
-                            .environmentObject(controller)
-                            .padding(.top, 10)
-
                         ChatScrollView()
                             .environmentObject(controller)
 
@@ -148,29 +145,29 @@ struct ChatPanelView: View {
                 }
             }
             .frame(maxHeight: 520)
-            .onChange(of: controller.chatMessages.count) { _, _ in
-                withAnimation(.acFade) {
-                    proxy.scrollTo("chat-bottom-sentinel", anchor: .bottom)
-                }
-            }
-            .onChange(of: controller.sendingChatMessage) { _, _ in
-                withAnimation(.acFade) {
-                    proxy.scrollTo("chat-bottom-sentinel", anchor: .bottom)
-                }
-            }
         }
     }
 
     private var panelBackground: some View {
         ZStack {
-            Rectangle().fill(.regularMaterial)
+            Rectangle().fill(.ultraThinMaterial)
+            // Subtle ambient tint that shifts with accent
             LinearGradient(
                 colors: [
-                    Color.white.opacity(colorScheme == .dark ? 0.05 : 0.42),
-                    Color.white.opacity(colorScheme == .dark ? 0.02 : 0.18)
+                    accent.opacity(colorScheme == .dark ? 0.06 : 0.10),
+                    Color.white.opacity(colorScheme == .dark ? 0.02 : 0.28)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
+            )
+            // Second layer for depth
+            LinearGradient(
+                colors: [
+                    Color.clear,
+                    accent.opacity(colorScheme == .dark ? 0.04 : 0.06)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
             )
         }
     }

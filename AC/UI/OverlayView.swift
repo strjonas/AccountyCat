@@ -117,6 +117,10 @@ struct OverlayView: View {
                 animating: false
             )
             .padding(20)
+
+            Text(character.displayName.lowercased())
+                .font(.ac(14, weight: .semibold))
+                .foregroundStyle(character.accentColor)
         }
         .padding(24)
         .frame(maxHeight: .infinity)
@@ -150,12 +154,9 @@ struct OverlayView: View {
                 // Actions
                 HStack(spacing: 10) {
                     Button {
-                        // Snooze 5 min — dismiss overlay and pause for 5 min
                         controller.dismissOverlay()
-                        // TODO: implement snooze if not already available
-                        // For now just dismisses
                     } label: {
-                        Text("Snooze 5 min")
+                        Text("snooze 5 min")
                             .font(.ac(12, weight: .medium))
                             .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                             .padding(.horizontal, 14)
@@ -171,12 +172,13 @@ struct OverlayView: View {
                     Spacer(minLength: 4)
 
                     if presentation.prompt == nil {
-                        Button(presentation.submitButtonTitle) {
+                        Button("back to work") {
                             controller.handleBackToWork()
                         }
                         .buttonStyle(OverlayPrimaryButton())
                     } else {
-                        Button(controller.sendingOverlayAppeal ? "Thinking…" : presentation.submitButtonTitle) {
+                        let canSubmit = !controller.sendingOverlayAppeal && !controller.overlayAppealDraft.cleanedSingleLine.isEmpty
+                        Button(controller.sendingOverlayAppeal ? "thinking…" : (canSubmit ? "got it — back to work" : "back to work")) {
                             controller.submitOverlayAppeal()
                         }
                         .buttonStyle(OverlayPrimaryButton())
@@ -246,10 +248,10 @@ private struct OverlayReasonChips: View {
     let onSelect: (String) -> Void
 
     private let reasons: [(String, String)] = [
-        ("magnifyingglass", "Research"),
-        ("cup.and.saucer.fill", "Break"),
-        ("questionmark.bubble.fill", "Got stuck"),
-        ("paperclip", "Related to my task"),
+        ("magnifyingglass", "actually working — leave me"),
+        ("cup.and.saucer.fill", "research, related to my work"),
+        ("questionmark.bubble.fill", "5 minute break, on purpose"),
+        ("paperclip", "you're right, going back"),
     ]
 
     var body: some View {

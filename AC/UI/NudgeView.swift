@@ -32,7 +32,7 @@ struct SpeechBubble: View {
                     CatView(
                         character: controller.state.character,
                         skin: controller.state.selectedSkin,
-                        expression: controller.companionMood.catExpression,
+                        expression: .concern,
                         size: 24,
                         animating: false
                     )
@@ -67,7 +67,7 @@ struct SpeechBubble: View {
                         controller.rateNudge(positive: true, nudgeText: text)
                         controller.latestNudge = nil
                     } label: {
-                        Text("Got it")
+                        Text("back to work")
                             .font(.ac(11, weight: .semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12)
@@ -84,11 +84,16 @@ struct SpeechBubble: View {
                         controller.rateNudge(positive: false, nudgeText: text)
                         controller.latestNudge = nil
                     } label: {
-                        Text("Not now")
+                        Text("it's research")
                             .font(.ac(11, weight: .medium))
                             .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.acSurface)
+                                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                            )
                     }
                     .buttonStyle(.plain)
                 }

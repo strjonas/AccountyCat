@@ -60,11 +60,12 @@ struct ComposerView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: ACRadius.xl, style: .continuous)
-                .fill(Color(nsColor: .textBackgroundColor))
+                .fill(Color.acSurface)
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.xl, style: .continuous)
-                        .stroke(inputFocused ? accent.opacity(0.55) : Color.acHairline, lineWidth: 1)
+                        .stroke(inputFocused ? accent.opacity(0.50) : Color.acHairline, lineWidth: 1)
                 )
+                .shadow(color: inputFocused ? accent.opacity(0.12) : .clear, radius: 6, y: 2)
         )
         .animation(.acSnap, value: inputFocused)
         .padding(.horizontal, 14)

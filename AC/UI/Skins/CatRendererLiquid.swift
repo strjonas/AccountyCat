@@ -2,8 +2,9 @@
 //  CatRendererLiquid.swift
 //  AC
 //
-//  Liquid skin: clear macOS-glass cat with a light accent refracted through
-//  the shape. The silhouette mirrors Bubble so style changes don't change UX.
+//  Liquid skin: clear macOS-glass cat. Simplified silhouette with specular
+//  highlights and a subtle accent tint — reads as glass on both light and
+//  dark backgrounds.
 //
 
 import SwiftUI
@@ -28,48 +29,54 @@ struct CatRendererLiquid: CatRenderer {
             CGRect(x: ox + x * s, y: oy + y * s, width: w * s, height: h * s)
         }
 
-        context.fill(Path(ellipseIn: rect(14, 48, 36, 11)), with: .color(tint.opacity(0.13)))
+        // Soft shadow under the cat
+        context.fill(Path(ellipseIn: rect(16, 50, 32, 5)), with: .color(tint.opacity(0.10)))
 
+        // Glass gradient — cleaner: white → clear tint → subtle shadow
         let glass = Gradient(colors: [
-            Color.white.opacity(0.92),
+            Color.white.opacity(0.90),
+            Color.white.opacity(0.45),
             tint.opacity(0.18),
-            Color.white.opacity(0.48),
-            tint.opacity(0.32)
+            tint.opacity(0.08)
         ])
 
-        let leftEar = softTriangle(pt(14, 22), pt(20, 9), pt(27, 20))
-        let rightEar = softTriangle(pt(50, 22), pt(44, 9), pt(37, 20))
-        fillGlass(leftEar, context: context, gradient: glass, start: pt(20, 10), end: pt(20, 26), stroke: tint, scale: s)
-        fillGlass(rightEar, context: context, gradient: glass, start: pt(44, 10), end: pt(44, 26), stroke: tint, scale: s)
+        // Ears (small glassy triangles)
+        let leftEar = softTriangle(pt(16, 22), pt(20, 10), pt(26, 20))
+        let rightEar = softTriangle(pt(48, 22), pt(44, 10), pt(38, 20))
+        fillGlass(leftEar, context: context, gradient: glass, start: pt(20, 10), end: pt(20, 24), stroke: tint, scale: s)
+        fillGlass(rightEar, context: context, gradient: glass, start: pt(44, 10), end: pt(44, 24), stroke: tint, scale: s)
 
+        // Head — glassy blob, simpler shape
         var head = Path()
-        head.move(to: pt(12, 34))
-        head.addQuadCurve(to: pt(32, 18), control: pt(12, 18))
-        head.addQuadCurve(to: pt(52, 34), control: pt(52, 18))
-        head.addQuadCurve(to: pt(32, 50), control: pt(52, 50))
-        head.addQuadCurve(to: pt(12, 34), control: pt(12, 50))
+        head.move(to: pt(14, 32))
+        head.addQuadCurve(to: pt(32, 18), control: pt(14, 18))
+        head.addQuadCurve(to: pt(50, 32), control: pt(50, 18))
+        head.addQuadCurve(to: pt(32, 50), control: pt(50, 50))
+        head.addQuadCurve(to: pt(14, 32), control: pt(14, 50))
         head.closeSubpath()
         context.fill(head, with: .radialGradient(
             glass,
-            center: pt(25, 24),
-            startRadius: 2 * s,
-            endRadius: 32 * s
+            center: pt(28, 26),
+            startRadius: 4 * s,
+            endRadius: 30 * s
         ))
-        context.stroke(head, with: .color(Color.white.opacity(0.62)), lineWidth: 1.2 * s)
-        context.stroke(head, with: .color(tint.opacity(0.20)), lineWidth: 0.7 * s)
+        context.stroke(head, with: .color(Color.white.opacity(0.55)), lineWidth: 1.1 * s)
+        context.stroke(head, with: .color(tint.opacity(0.18)), lineWidth: 0.6 * s)
 
-        context.fill(Path(ellipseIn: rect(18, 23, 13, 6)), with: .color(Color.white.opacity(0.56)))
-        context.fill(Path(ellipseIn: rect(40, 21, 7, 3.5)), with: .color(Color.white.opacity(0.36)))
-        context.fill(Path(ellipseIn: rect(19, 38, 26, 8)), with: .color(Color.white.opacity(0.20)))
+        // Specular highlights (top-left)
+        context.fill(Path(ellipseIn: rect(18, 22, 14, 5.5)), with: .color(Color.white.opacity(0.58)))
+        context.fill(Path(ellipseIn: rect(40, 20, 7, 3)), with: .color(Color.white.opacity(0.38)))
+        context.fill(Path(ellipseIn: rect(20, 36, 26, 8)), with: .color(Color.white.opacity(0.14)))
 
         drawEyes(context, pt: pt, rect: rect, scale: s, color: ink, expression: expression)
 
+        // Tiny nose
         var nose = Path()
         nose.move(to: pt(31, 38))
         nose.addLine(to: pt(33, 38))
         nose.addLine(to: pt(32, 40))
         nose.closeSubpath()
-        context.fill(nose, with: .color(tint.opacity(0.58)))
+        context.fill(nose, with: .color(tint.opacity(0.55)))
 
         drawMouth(context, pt: pt, scale: s, color: ink.opacity(0.62), expression: expression)
 
@@ -91,8 +98,8 @@ private extension CatRendererLiquid {
         scale: CGFloat
     ) {
         context.fill(path, with: .linearGradient(gradient, startPoint: start, endPoint: end))
-        context.stroke(path, with: .color(Color.white.opacity(0.58)), lineWidth: 0.9 * scale)
-        context.stroke(path, with: .color(stroke.opacity(0.16)), lineWidth: 0.5 * scale)
+        context.stroke(path, with: .color(Color.white.opacity(0.50)), lineWidth: 0.8 * scale)
+        context.stroke(path, with: .color(stroke.opacity(0.14)), lineWidth: 0.4 * scale)
     }
 
     func drawEyes(

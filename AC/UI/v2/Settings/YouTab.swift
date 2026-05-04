@@ -14,35 +14,41 @@ struct YouTab: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var nameDraft = ""
+    @State private var newMemoryDraft = ""
     @State private var showingResetConfirm = false
     @State private var showingExportPanel = false
+    @FocusState private var memoryFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             sectionLabel("your name")
-            TextField("What should AC call you?", text: $nameDraft)
-                .textFieldStyle(.roundedBorder)
-                .font(.ac(13))
-                .onAppear { nameDraft = controller.state.userName }
-                .onSubmit { controller.updateUserName(nameDraft) }
-                .onChange(of: nameDraft) { _, newValue in
-                    controller.updateUserName(newValue)
-                }
+            nameField
 
             // Memory entries
             HStack {
                 sectionLabel("what \(controller.state.character.displayName.lowercased()) knows about you")
                 Spacer()
-                if controller.canConsolidateMemory {
+                HStack(spacing: 10) {
                     Button {
-                        controller.consolidateMemoryNow()
+                        withAnimation(.acSnap) { memoryFocused = true }
                     } label: {
-                        Text("clean up")
+                        Text("+ add")
                             .font(.ac(10, weight: .medium))
-                            .foregroundStyle(Color.acTextPrimary.opacity(0.5))
+                            .foregroundStyle(accent)
                     }
                     .buttonStyle(.plain)
-                    .disabled(controller.consolidatingMemory)
+
+                    if controller.canConsolidateMemory {
+                        Button {
+                            controller.consolidateMemoryNow()
+                        } label: {
+                            Text("clean up")
+                                .font(.ac(10, weight: .medium))
+                                .foregroundStyle(Color.acTextPrimary.opacity(0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(controller.consolidatingMemory)
+                    }
                 }
             }
 
@@ -51,7 +57,14 @@ struct YouTab: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
 
+            memoryInput
             memoryList
+
+            Divider().opacity(0.3)
+
+            // Calendar integration
+            CalendarIntelligenceSection()
+                .environmentObject(controller)
 
             Divider().opacity(0.3)
 
@@ -69,7 +82,7 @@ struct YouTab: View {
                 } label: {
                     Text("privacy & data →")
                         .font(.ac(11, weight: .medium))
-                        .foregroundStyle(accent.opacity(0.85))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                 }
                 .buttonStyle(.plain)
 
@@ -78,7 +91,7 @@ struct YouTab: View {
                 } label: {
                     Text("export everything…")
                         .font(.ac(11, weight: .medium))
-                        .foregroundStyle(accent.opacity(0.85))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                 }
                 .buttonStyle(.plain)
 
@@ -87,7 +100,7 @@ struct YouTab: View {
                 } label: {
                     Text("reset all data…")
                         .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.red.opacity(0.72))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.55))
                 }
                 .buttonStyle(.plain)
                 .alert("Reset all data?", isPresented: $showingResetConfirm) {
@@ -108,12 +121,84 @@ struct YouTab: View {
                 } label: {
                     Text("quit AccountyCat")
                         .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.6))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.45))
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 4)
             }
         }
+    }
+
+    // MARK: - Name field
+
+    private var nameField: some View {
+        TextField("What should AC call you?", text: $nameDraft)
+            .textFieldStyle(.plain)
+            .font(.ac(13))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
+            .onAppear { nameDraft = controller.state.userName }
+            .onSubmit { controller.updateUserName(nameDraft) }
+            .onChange(of: nameDraft) { _, newValue in
+                controller.updateUserName(newValue)
+            }
+    }
+
+    // MARK: - Memory input
+
+    private var memoryInput: some View {
+        HStack(spacing: 8) {
+            TextField("Add something AC should remember…", text: $newMemoryDraft)
+                .textFieldStyle(.plain)
+                .font(.ac(12))
+                .focused($memoryFocused)
+                .onSubmit { addMemory() }
+
+            Button(action: addMemory) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(canAddMemory ? Color.white : Color.acTextPrimary.opacity(0.4))
+                    .frame(width: 24, height: 24)
+                    .background(
+                        Circle()
+                            .fill(canAddMemory ? accent : Color.acSurface)
+                            .overlay(Circle().stroke(canAddMemory ? Color.clear : Color.acHairline, lineWidth: 1))
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canAddMemory)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(memoryFocused ? accent.opacity(0.5) : Color.acHairline, lineWidth: 1)
+                )
+        )
+        .animation(.acSnap, value: memoryFocused)
+    }
+
+    private var canAddMemory: Bool {
+        !newMemoryDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func addMemory() {
+        let trimmed = newMemoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        controller.addMemoryEntry(text: trimmed)
+        newMemoryDraft = ""
+        memoryFocused = false
     }
 
     // MARK: - Memory list
@@ -214,8 +299,9 @@ struct YouTab: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.ac(11, weight: .semibold))
-            .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-            .textCase(.lowercase)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .tracking(0.06)
+            .foregroundStyle(Color.acTextPrimary.opacity(0.45))
+            .textCase(.uppercase)
     }
 }
