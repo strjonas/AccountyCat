@@ -158,6 +158,41 @@ struct MonitoringConfigurationTests {
     }
 
     @Test
+    func decodesLegacyUnscopedPolicyRulesIntoGeneralProfile() throws {
+        let json = """
+        {
+            "policyMemory": {
+                "rules": [
+                    {
+                        "id":"legacy-allow",
+                        "kind":"allow",
+                        "summary":"Old unscoped allow",
+                        "source":"system",
+                        "createdAt":"2026-05-01T10:00:00Z",
+                        "updatedAt":"2026-05-01T10:00:00Z",
+                        "priority":30,
+                        "scope":{"appName":"Xcode","titleContains":[]},
+                        "schedule":{"startHour":null,"endHour":null,"weekdays":[],"expiresAt":null},
+                        "allowedTopics":[],
+                        "disallowedTopics":[],
+                        "maxMinutesPerDay":null,
+                        "tonePreference":null,
+                        "active":true
+                    }
+                ],
+                "tonePreference": null,
+                "lastUpdatedAt": null
+            }
+        }
+        """
+        let data = try #require(json.data(using: .utf8))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let state = try decoder.decode(ACState.self, from: data)
+        #expect(state.policyMemory.rules.first?.profileID == PolicyRule.defaultProfileID)
+    }
+
+    @Test
     func runtimeInspectionUsesTheSelectedModelCache() throws {
       let fileManager = FileManager.default
       let rootURL = fileManager.temporaryDirectory

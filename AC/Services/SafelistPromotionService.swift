@@ -188,7 +188,8 @@ enum SafelistPromotionPolicy {
         from envelope: MonitoringSafelistAppealEnvelope,
         observation: SafelistObservationContext,
         tier: SafelistPromotionTier,
-        now: Date
+        now: Date,
+        profileID: String
     ) -> PolicyRule? {
         guard envelope.approve else { return nil }
 
@@ -236,7 +237,8 @@ enum SafelistPromotionPolicy {
             priority: 30,
             scope: scope,
             schedule: schedule,
-            active: true
+            active: true,
+            profileID: profileID
         )
     }
 }
@@ -250,6 +252,7 @@ protocol SafelistAppealEvaluating: Sendable {
         distinctDays: Int,
         goals: String,
         freeFormMemory: String,
+        activeProfile: MonitoringActiveProfilePromptPayload,
         configuration: MonitoringConfiguration,
         runtimeOverride: String?,
         screenshotPath: String?
@@ -272,6 +275,7 @@ actor SafelistAppealService: SafelistAppealEvaluating {
         distinctDays: Int,
         goals: String,
         freeFormMemory: String,
+        activeProfile: MonitoringActiveProfilePromptPayload,
         configuration: MonitoringConfiguration,
         runtimeOverride: String?,
         screenshotPath: String?
@@ -282,6 +286,7 @@ actor SafelistAppealService: SafelistAppealEvaluating {
             sampleWindowTitles: sampleWindowTitles,
             goals: goals,
             freeFormMemory: freeFormMemory,
+            activeProfile: activeProfile,
             focusedCount: focusedCount,
             distinctDays: distinctDays,
             isBrowser: observation.isBrowser,

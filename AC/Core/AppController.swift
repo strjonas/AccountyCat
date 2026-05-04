@@ -437,7 +437,7 @@ final class AppController: ObservableObject {
             source: .explicitFeedback,
             priority: 75,
             scope: scope,
-            profileID: profileID
+            profileID: profileID ?? state.activeProfileID
         )
         state.policyMemory.apply(PolicyMemoryUpdateResponse(operations: [
             PolicyMemoryOperation(type: .addRule, rule: rule)
@@ -2480,13 +2480,32 @@ final class AppController: ObservableObject {
             ) else { return }
 
             await MainActor.run {
-                // Rules carry their own profile scoping (nil = global, value = profile-scoped).
-                // The LLM decides scope based on user language.
-                self.state.policyMemory.apply(response, now: request.now)
-                self.applyProfileOperations(response.operations)
+                let scopedResponse = self.scopePolicyRulesToActiveProfile(response)
+                self.state.policyMemory.apply(scopedResponse, now: request.now)
+                self.applyProfileOperations(scopedResponse.operations)
                 self.persistState()
             }
         }
+    }
+
+    private func scopePolicyRulesToActiveProfile(
+        _ response: PolicyMemoryUpdateResponse
+    ) -> PolicyMemoryUpdateResponse {
+        let activeProfileID = state.activeProfileID
+        let operations = response.operations.map { operation in
+            guard operation.type == .addRule || operation.type == .updateRule else {
+                return operation
+            }
+            var scoped = operation
+            if var rule = scoped.rule,
+               rule.kind != .tonePreference,
+               rule.profileID == nil {
+                rule.profileID = activeProfileID
+                scoped.rule = rule
+            }
+            return scoped
+        }
+        return PolicyMemoryUpdateResponse(operations: operations)
     }
 
     /// Mark every chat message read. Called when the popover opens (the user is looking)

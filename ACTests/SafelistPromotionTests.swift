@@ -56,6 +56,34 @@ struct SafelistPromotionTests {
         #expect(decoded.decisionCacheByContext.isEmpty)
     }
 
+    @Test
+    func defaultProfileRuleDecodesAsGeneralNotGlobal() throws {
+        let json = """
+        {
+            "id":"rule-general",
+            "kind":"allow",
+            "summary":"Allow this only in General",
+            "source":"user_chat",
+            "createdAt":"2026-05-01T10:00:00Z",
+            "updatedAt":"2026-05-01T10:00:00Z",
+            "priority":50,
+            "scope":{"appName":"Notes","titleContains":[]},
+            "schedule":{"startHour":null,"endHour":null,"weekdays":[],"expiresAt":null},
+            "allowedTopics":[],
+            "disallowedTopics":[],
+            "maxMinutesPerDay":null,
+            "tonePreference":null,
+            "active":true,
+            "profileID":"general"
+        }
+        """
+        let data = try #require(json.data(using: .utf8))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let rule = try decoder.decode(PolicyRule.self, from: data)
+        #expect(rule.profileID == PolicyRule.defaultProfileID)
+    }
+
     // MARK: - Eligibility tiers
 
     @Test
@@ -321,12 +349,14 @@ struct SafelistPromotionTests {
             from: envelope,
             observation: observation,
             tier: .probationary,
-            now: now
+            now: now,
+            profileID: "coding"
         )
         #expect(rule?.kind == .allow)
         #expect(rule?.scope.bundleIdentifier == "com.activitymonitor")
         #expect(rule?.schedule.expiresAt == now.addingTimeInterval(SafelistPromotionTier.probationary.ttl))
         #expect(rule?.source == .system)
+        #expect(rule?.profileID == "coding")
     }
 
     @Test
@@ -351,7 +381,8 @@ struct SafelistPromotionTests {
             from: envelope,
             observation: observation,
             tier: .probationary,
-            now: Date()
+            now: Date(),
+            profileID: "coding"
         )
         #expect(rule == nil)
     }
@@ -379,7 +410,8 @@ struct SafelistPromotionTests {
             from: envelope,
             observation: observation,
             tier: .trusted,
-            now: now
+            now: now,
+            profileID: "coding"
         )
         #expect(rule?.scope.bundleIdentifier == "com.google.Chrome")
         #expect(rule?.scope.titleContains == ["AC idea log - Google Docs"])
@@ -408,10 +440,12 @@ struct SafelistPromotionTests {
             from: envelope,
             observation: observation,
             tier: .probationary,
-            now: Date()
+            now: Date(),
+            profileID: "writing"
         )
         #expect(rule?.scope.bundleIdentifier == "com.apple.mail")
         #expect(rule?.scope.titleContains == ["Max Weigand - draft reply"])
+        #expect(rule?.profileID == "writing")
     }
 
     // MARK: - Helpers

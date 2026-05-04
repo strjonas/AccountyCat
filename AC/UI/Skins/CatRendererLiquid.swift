@@ -20,7 +20,8 @@ struct CatRendererLiquid: CatRenderer {
         let ox = size.width / 2 - 32 * s
         let oy = size.height / 2 - 32 * s
         let tint = character.accentColor
-        let ink = character == .nova ? Color(hex: 0xF4FF8B) : Color.acInk1.opacity(0.78)
+        let ink = Color(hex: 0x34445F).opacity(0.88)
+        let rim = Color(hex: 0xDCE8F7)
 
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
             CGPoint(x: ox + x * s, y: oy + y * s)
@@ -29,30 +30,50 @@ struct CatRendererLiquid: CatRenderer {
             CGRect(x: ox + x * s, y: oy + y * s, width: w * s, height: h * s)
         }
 
-        // Soft shadow under the cat
-        context.fill(Path(ellipseIn: rect(16, 50, 32, 5)), with: .color(tint.opacity(0.10)))
+        // Soft contact shadow plus a cool halo keeps the clear cat readable on
+        // both the white settings cards and darker desktop surfaces.
+        context.fill(Path(ellipseIn: rect(14, 51, 36, 5.5)), with: .color(Color(hex: 0x5B7192).opacity(0.14)))
+        context.fill(Path(ellipseIn: rect(8, 9, 48, 48)), with: .color(rim.opacity(0.12)))
 
-        // Glass gradient — cleaner: white → clear tint → subtle shadow
+        // Frosted glass: mostly white/blue with only a small accent tint.
         let glass = Gradient(colors: [
-            Color.white.opacity(0.90),
-            Color.white.opacity(0.45),
-            tint.opacity(0.18),
-            tint.opacity(0.08)
+            Color.white.opacity(0.88),
+            rim.opacity(0.54),
+            tint.opacity(0.12),
+            Color.white.opacity(0.20)
         ])
 
-        // Ears (small glassy triangles)
-        let leftEar = softTriangle(pt(16, 22), pt(20, 10), pt(26, 20))
-        let rightEar = softTriangle(pt(48, 22), pt(44, 10), pt(38, 20))
-        fillGlass(leftEar, context: context, gradient: glass, start: pt(20, 10), end: pt(20, 24), stroke: tint, scale: s)
-        fillGlass(rightEar, context: context, gradient: glass, start: pt(44, 10), end: pt(44, 24), stroke: tint, scale: s)
+        // Compact glass body behind the head, visible in larger placements but
+        // quiet enough to remain icon-like in the top bar.
+        var body = Path()
+        body.move(to: pt(20, 43))
+        body.addQuadCurve(to: pt(32, 33), control: pt(21, 34))
+        body.addQuadCurve(to: pt(44, 43), control: pt(43, 34))
+        body.addQuadCurve(to: pt(38, 54), control: pt(45, 53))
+        body.addLine(to: pt(26, 54))
+        body.addQuadCurve(to: pt(20, 43), control: pt(19, 53))
+        body.closeSubpath()
+        context.fill(body, with: .linearGradient(glass, startPoint: pt(24, 34), endPoint: pt(40, 55)))
+        context.stroke(body, with: .color(rim.opacity(0.58)), lineWidth: 1.0 * s)
+        context.stroke(body, with: .color(ink.opacity(0.18)), lineWidth: 0.5 * s)
 
-        // Head — glassy blob, simpler shape
+        // Ears: part of the same outline language, with a soft inner facet.
+        let leftEar = softTriangle(pt(15.5, 23), pt(19.5, 9.5), pt(27, 20.5))
+        let rightEar = softTriangle(pt(48.5, 23), pt(44.5, 9.5), pt(37, 20.5))
+        fillGlass(leftEar, context: context, gradient: glass, start: pt(19, 10), end: pt(22, 25), stroke: ink, scale: s)
+        fillGlass(rightEar, context: context, gradient: glass, start: pt(45, 10), end: pt(42, 25), stroke: ink, scale: s)
+        context.stroke(innerEarPath(left: true, pt: pt), with: .color(ink.opacity(0.20)), lineWidth: 0.8 * s)
+        context.stroke(innerEarPath(left: false, pt: pt), with: .color(ink.opacity(0.20)), lineWidth: 0.8 * s)
+
+        // Head — simple rounded icon silhouette.
         var head = Path()
         head.move(to: pt(14, 32))
-        head.addQuadCurve(to: pt(32, 18), control: pt(14, 18))
-        head.addQuadCurve(to: pt(50, 32), control: pt(50, 18))
-        head.addQuadCurve(to: pt(32, 50), control: pt(50, 50))
-        head.addQuadCurve(to: pt(14, 32), control: pt(14, 50))
+        head.addQuadCurve(to: pt(20, 22), control: pt(14, 24))
+        head.addQuadCurve(to: pt(32, 18.5), control: pt(25, 18))
+        head.addQuadCurve(to: pt(44, 22), control: pt(39, 18))
+        head.addQuadCurve(to: pt(50, 32), control: pt(50, 24))
+        head.addQuadCurve(to: pt(32, 49.5), control: pt(50, 50.5))
+        head.addQuadCurve(to: pt(14, 32), control: pt(14, 50.5))
         head.closeSubpath()
         context.fill(head, with: .radialGradient(
             glass,
@@ -60,13 +81,13 @@ struct CatRendererLiquid: CatRenderer {
             startRadius: 4 * s,
             endRadius: 30 * s
         ))
-        context.stroke(head, with: .color(Color.white.opacity(0.55)), lineWidth: 1.1 * s)
-        context.stroke(head, with: .color(tint.opacity(0.18)), lineWidth: 0.6 * s)
+        context.stroke(head, with: .color(Color.white.opacity(0.72)), lineWidth: 1.35 * s)
+        context.stroke(head, with: .color(ink.opacity(0.46)), lineWidth: 0.85 * s)
 
-        // Specular highlights (top-left)
-        context.fill(Path(ellipseIn: rect(18, 22, 14, 5.5)), with: .color(Color.white.opacity(0.58)))
-        context.fill(Path(ellipseIn: rect(40, 20, 7, 3)), with: .color(Color.white.opacity(0.38)))
-        context.fill(Path(ellipseIn: rect(20, 36, 26, 8)), with: .color(Color.white.opacity(0.14)))
+        // Specular highlights: crisp, not glossy-button heavy.
+        context.stroke(highlightPath(pt: pt), with: .color(Color.white.opacity(0.76)), lineWidth: 1.2 * s)
+        context.fill(Path(ellipseIn: rect(38, 21, 7, 3)), with: .color(Color.white.opacity(0.42)))
+        context.fill(Path(ellipseIn: rect(20, 37, 25, 7)), with: .color(Color.white.opacity(0.13)))
 
         drawEyes(context, pt: pt, rect: rect, scale: s, color: ink, expression: expression)
 
@@ -76,13 +97,13 @@ struct CatRendererLiquid: CatRenderer {
         nose.addLine(to: pt(33, 38))
         nose.addLine(to: pt(32, 40))
         nose.closeSubpath()
-        context.fill(nose, with: .color(tint.opacity(0.55)))
+        context.fill(nose, with: .color(ink.opacity(0.52)))
 
         drawMouth(context, pt: pt, scale: s, color: ink.opacity(0.62), expression: expression)
 
         if expression == .celebrate {
-            drawSpark(context, center: pt(8, 15), scale: s, color: tint.opacity(0.86))
-            drawSpark(context, center: pt(56, 14), scale: s * 0.72, color: tint.opacity(0.86))
+            drawSpark(context, center: pt(8, 15), scale: s, color: tint.opacity(0.78))
+            drawSpark(context, center: pt(56, 14), scale: s * 0.72, color: tint.opacity(0.78))
         }
     }
 }
@@ -98,8 +119,8 @@ private extension CatRendererLiquid {
         scale: CGFloat
     ) {
         context.fill(path, with: .linearGradient(gradient, startPoint: start, endPoint: end))
-        context.stroke(path, with: .color(Color.white.opacity(0.50)), lineWidth: 0.8 * scale)
-        context.stroke(path, with: .color(stroke.opacity(0.14)), lineWidth: 0.4 * scale)
+        context.stroke(path, with: .color(Color.white.opacity(0.66)), lineWidth: 1.0 * scale)
+        context.stroke(path, with: .color(stroke.opacity(0.40)), lineWidth: 0.55 * scale)
     }
 
     func drawEyes(
@@ -180,6 +201,27 @@ private extension CatRendererLiquid {
         path.addLine(to: CGPoint(x: center.x - 1.2 * s, y: center.y - 1.1 * s))
         path.closeSubpath()
         context.fill(path, with: .color(color))
+    }
+
+    func innerEarPath(left: Bool, pt: (CGFloat, CGFloat) -> CGPoint) -> Path {
+        var path = Path()
+        if left {
+            path.move(to: pt(19.8, 16.2))
+            path.addLine(to: pt(22.8, 21.1))
+            path.addLine(to: pt(17.7, 21.8))
+        } else {
+            path.move(to: pt(44.2, 16.2))
+            path.addLine(to: pt(41.2, 21.1))
+            path.addLine(to: pt(46.3, 21.8))
+        }
+        return path
+    }
+
+    func highlightPath(pt: (CGFloat, CGFloat) -> CGPoint) -> Path {
+        var path = Path()
+        path.move(to: pt(20, 25))
+        path.addQuadCurve(to: pt(30, 21.6), control: pt(23.5, 21.7))
+        return path
     }
 
     func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {

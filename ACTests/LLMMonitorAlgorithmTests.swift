@@ -451,6 +451,46 @@ struct LLMMonitorAlgorithmTests {
 
         #expect(plan.shouldEvaluate == false)
         #expect(plan.reason == "explicit_allow_rule")
+        #expect(state.llmPolicy.distraction.lastAssessment == .focused)
+        #expect(state.llmPolicy.distraction.nextEvaluationAt == nil)
+        #expect(state.llmPolicy.focusSignal.lastFocusedBlockStartedAt == start.addingTimeInterval(30))
+    }
+
+    @Test
+    func explicitAllowRuleFromOtherProfileDoesNotSuppressEvaluationWhenScopedOut() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Docs"
+        )
+        let start = Date(timeIntervalSince1970: 7_925)
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+
+        let writingAllow = PolicyRule(
+            kind: .allow,
+            summary: "Docs are ok only while writing.",
+            source: .userChat,
+            scope: PolicyRuleScope(appName: "Google Chrome", titleContains: ["Docs"]),
+            profileID: "writing"
+        )
+        let policyMemory = PolicyMemory(rules: [writingAllow], tonePreference: nil, lastUpdatedAt: start)
+        var scoped = policyMemory
+        scoped.rules = scoped.rules.filter { $0.profileID == nil || $0.profileID == "coding" }
+
+        let plan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: scoped,
+            configuration: MonitoringConfiguration(),
+            now: start.addingTimeInterval(30)
+        )
+
+        #expect(plan.shouldEvaluate == true)
+        #expect(plan.reason == "stable_context")
+        #expect(state.llmPolicy.distraction.lastAssessment == nil)
     }
 
     @Test

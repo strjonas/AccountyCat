@@ -28,14 +28,25 @@ struct ProfileBarView: View {
     // MARK: - Empty state
 
     private var emptyState: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
+        HStack(spacing: 12) {
+            ZStack {
                 Circle()
-                    .fill(Color.secondary.opacity(0.35))
-                    .frame(width: 6, height: 6)
-                Text("no focus active · open mode")
-                    .font(.ac(12, weight: .medium).italic())
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                    .fill(Color.acSurfaceElevated)
+                    .overlay(Circle().stroke(Color.white.opacity(0.34), lineWidth: 0.5))
+                Image(systemName: "circle.dotted")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.44))
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("OPEN MODE")
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .tracking(0.08)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.42))
+                Text("no focus active")
+                    .font(.ac(12, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.76))
             }
 
             Spacer()
@@ -43,24 +54,18 @@ struct ProfileBarView: View {
             Button {
                 onPick()
             } label: {
-                Text("pick a focus →")
-                    .font(.ac(12, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
+                HStack(spacing: 5) {
+                    Text("pick focus")
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .font(.ac(12, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ProfileBarCTAButton())
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                .fill(Color.acSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                        .stroke(Color.acHairline, lineWidth: 1)
-                )
-        )
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
+        .padding(.vertical, 9)
+        .background(emptyBandBackground)
     }
 
     // MARK: - Active state
@@ -85,11 +90,12 @@ struct ProfileBarView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text("focus:")
-                            .font(.ac(11, weight: .semibold))
+                        Text("FOCUS")
+                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                            .tracking(0.08)
                             .foregroundStyle(active.swiftUIColor)
                         Text(active.name)
-                            .font(.ac(11, weight: .semibold))
+                            .font(.ac(12, weight: .semibold))
                             .foregroundStyle(Color.acTextPrimary)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .black))
@@ -113,30 +119,55 @@ struct ProfileBarView: View {
                 Button("+15m") {
                     _ = controller.extendActiveProfile(byMinutes: 15, announce: true)
                 }
-                .buttonStyle(ACSecondaryButton())
+                .buttonStyle(ProfileBarQuietButton())
 
                 Button("end") {
                     controller.endActiveProfile(announce: true)
                     controller.markAllChatMessagesRead()
                 }
-                .buttonStyle(ACSecondaryButton())
+                .buttonStyle(ProfileBarQuietButton())
                 .foregroundStyle(Color.acRedEnd.opacity(0.85))
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                .fill(active.swiftUIColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                        .stroke(active.swiftUIColor.opacity(0.20), lineWidth: 1)
-                )
-        )
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
+        .padding(.vertical, 9)
+        .background(activeBandBackground)
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { date in
             nowTick = date
+        }
+    }
+
+    private var emptyBandBackground: some View {
+        ZStack {
+            Rectangle().fill(Color.acSurface.opacity(0.74))
+            LinearGradient(
+                colors: [Color.white.opacity(0.20), Color.clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            VStack {
+                Spacer()
+                Rectangle()
+                    .fill(Color.acHairline)
+                    .frame(height: 0.5)
+            }
+        }
+    }
+
+    private var activeBandBackground: some View {
+        ZStack {
+            Rectangle().fill(active.swiftUIColor.opacity(0.08))
+            LinearGradient(
+                colors: [Color.white.opacity(0.24), active.swiftUIColor.opacity(0.04)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            VStack {
+                Spacer()
+                Rectangle()
+                    .fill(active.swiftUIColor.opacity(0.20))
+                    .frame(height: 0.5)
+            }
         }
     }
 
@@ -162,6 +193,41 @@ struct ProfileBarView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "HH:mm"
         return "\(timeStr) · started \(formatter.string(from: active.activatedAt ?? Date()))"
+    }
+}
+
+private struct ProfileBarCTAButton: ButtonStyle {
+    @Environment(\.acAccent) private var accent
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(accent.opacity(configuration.isPressed ? 0.76 : 0.92))
+                    .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.34), lineWidth: 0.5))
+                    .shadow(color: accent.opacity(0.22), radius: 7, y: 2)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+private struct ProfileBarQuietButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(11, weight: .semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.acSurfaceElevated)
+                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.acSnap, value: configuration.isPressed)
     }
 }
 

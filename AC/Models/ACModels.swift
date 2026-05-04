@@ -675,6 +675,17 @@ struct ACState: Codable, Sendable {
         return trimmed
     }
 
+    private static func migrateUnscopedRulesToDefaultProfile(_ policyMemory: inout PolicyMemory) {
+        policyMemory.rules = policyMemory.rules.map { rule in
+            guard rule.profileID == nil, rule.kind != .tonePreference else {
+                return rule
+            }
+            var scoped = rule
+            scoped.profileID = PolicyRule.defaultProfileID
+            return scoped
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case character
         case selectedSkin
@@ -795,6 +806,7 @@ struct ACState: Codable, Sendable {
         if !profiles.contains(where: { $0.id == activeProfileID }) {
             activeProfileID = PolicyRule.defaultProfileID
         }
+        Self.migrateUnscopedRulesToDefaultProfile(&policyMemory)
         lastFullScreenCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastFullScreenCheckAt)
         hardEscalation = try container.decodeIfPresent(ActiveEscalation.self, forKey: .hardEscalation)
         scheduledActions = try container.decodeIfPresent([ScheduledAction].self, forKey: .scheduledActions) ?? []

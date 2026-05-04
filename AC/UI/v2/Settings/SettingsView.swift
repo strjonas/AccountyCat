@@ -85,22 +85,24 @@ struct SettingsView: View {
                     Text(tab.rawValue)
                         .font(.ac(11, weight: selectedTab == tab ? .semibold : .medium))
                         .foregroundStyle(selectedTab == tab ? accent : Color.acTextPrimary.opacity(0.55))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
                         .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
-                        .overlay(
-                            Rectangle()
-                                .fill(selectedTab == tab ? accent : Color.clear)
-                                .frame(height: 3)
-                                .offset(y: 13),
-                            alignment: .bottom
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(selectedTab == tab ? accent.opacity(0.11) : Color.clear)
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(selectedTab == tab ? accent.opacity(0.28) : Color.clear, lineWidth: 0.5)
+                                )
                         )
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
     }
 }
 

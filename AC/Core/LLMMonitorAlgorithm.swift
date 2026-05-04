@@ -127,6 +127,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
         if !hasRestrictiveRule,
            ((heuristics.clearlyProductive && heuristics.browser == false) || hasExplicitAllowRule) {
+            recordDeterministicFocusedSkip(in: &state, contextKey: state.llmPolicy.currentContextKey, now: now)
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
                 reason: hasExplicitAllowRule ? "explicit_allow_rule" : "obviously_productive",
@@ -147,6 +148,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
            cached.assessment == .focused,
            state.llmPolicy.distraction.lastAssessment == nil,
            now.timeIntervalSince(cached.decidedAt) < configuration.cadenceMode.focusedDecisionCacheTTL {
+            recordDeterministicFocusedSkip(in: &state, contextKey: key, now: now)
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
                 reason: "cached_focused",
@@ -185,6 +187,30 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             promptMode: profile.descriptor.id,
             promptVersion: descriptor.version
         )
+    }
+
+    private func recordDeterministicFocusedSkip(
+        in state: inout AlgorithmStateEnvelope,
+        contextKey: String?,
+        now: Date
+    ) {
+        state.llmPolicy.distraction.contextKey = contextKey
+        state.llmPolicy.distraction.lastAssessment = .focused
+        state.llmPolicy.distraction.consecutiveDistractedCount = 0
+        state.llmPolicy.activeAppeal = nil
+        state.llmPolicy.focusSignal.record(
+            assessment: .focused,
+            confidence: 1.0,
+            at: now
+        )
+        if let contextKey {
+            state.llmPolicy.decisionCacheByContext[contextKey] = CachedDecision(
+                assessment: .focused,
+                decidedAt: now,
+                contextKey: contextKey
+            )
+            evictOldestDecisionCacheEntries(from: &state.llmPolicy.decisionCacheByContext)
+        }
     }
 
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata {
@@ -578,7 +604,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             from: frontmost,
             isBrowser: isBrowser,
             now: input.now
-        )
+        ).map { context in
+            var scoped = context
+            scoped.fingerprint = "\(input.activeProfileID)::\(context.fingerprint)"
+            return scoped
+        }
 
         var policyMemoryUpdate: PolicyMemoryUpdateResponse?
 
@@ -731,6 +761,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             distinctDays: workingStat.distinctDayCount,
             goals: requestScope.goals,
             freeFormMemory: requestScope.freeFormMemory,
+            activeProfile: requestScope.activeProfile,
             configuration: input.configuration,
             runtimeOverride: input.runtimeOverride,
             screenshotPath: visionEnabled(for: input.configuration) ? input.snapshot.screenshotPath : nil
@@ -765,7 +796,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             from: envelope,
             observation: observation,
             tier: tier,
-            now: input.now
+            now: input.now,
+            profileID: input.activeProfileID
         ) else {
             workingStat.lastPromotionOutcome = .invalid
             workingStat.lastPromotionReason = Self.cleanedPromotionReason(

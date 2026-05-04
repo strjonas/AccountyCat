@@ -83,8 +83,8 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
     /// When true, AC will not autonomously modify or delete this rule.
     var isLocked: Bool
     /// Profile this rule is scoped to. `nil` means global — the rule applies across all
-    /// profiles. Non-nil scopes the rule to a single profile (e.g. "while coding, don't let
-    /// me browse HN"). Legacy rules with `"general"` decode as global.
+    /// profiles. Non-nil scopes the rule to a single profile, including the default
+    /// `"general"` profile.
     var profileID: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -146,8 +146,7 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
         tonePreference = try c.decodeIfPresent(PolicyTonePreference.self, forKey: .tonePreference)
         active = try c.decode(Bool.self, forKey: .active)
         isLocked = (try? c.decode(Bool.self, forKey: .isLocked)) ?? false
-        let raw = try? c.decode(String.self, forKey: .profileID)
-        profileID = raw.flatMap { $0 == PolicyRule.defaultProfileID ? nil : $0 }
+        profileID = try? c.decode(String.self, forKey: .profileID)
     }
 
     func isActive(at now: Date, calendar: Calendar = .current) -> Bool {

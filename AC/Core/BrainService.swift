@@ -542,7 +542,7 @@ final class BrainService: NSObject {
                     kind: .disallow,
                     summary: "Block \(trimmed)",
                     source: .system,
-                    scope: PolicyRuleScope(appName: trimmed),
+                    scope: PolicyRuleScope(appName: trimmed, titleContains: [trimmed]),
                     profileID: activeProfileID
                 ))
             }

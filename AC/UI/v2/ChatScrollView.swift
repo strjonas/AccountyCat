@@ -18,10 +18,6 @@ struct ChatScrollView: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 10) {
-            StatStripView()
-                .environmentObject(controller)
-                .padding(.top, 10)
-
             if messages.isEmpty && !controller.sendingChatMessage {
                 EmptyV2ChatState()
                     .environmentObject(controller)
@@ -161,11 +157,11 @@ private struct ChatMessageRow: View {
                 character: controller.state.character,
                 skin: controller.state.selectedSkin,
                 expression: .neutral,
-                size: 25,
+                size: 29,
                 animating: false
             )
         }
-        .frame(width: 32, height: 32)
+        .frame(width: 34, height: 34)
     }
 
     private var bubbleBackground: some View {
@@ -313,10 +309,10 @@ private struct EmptyV2ChatState: View {
                 character: controller.state.character,
                 skin: controller.state.selectedSkin,
                 expression: .neutral,
-                size: 25,
+                size: 29,
                 animating: false
             )
-            .frame(width: 32, height: 32)
+            .frame(width: 34, height: 34)
 
             Text("morning. no focus active — i'm watching but won't nudge unless you want me to. start a profile when you're ready.")
                 .font(.ac(13))

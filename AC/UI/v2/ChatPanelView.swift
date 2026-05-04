@@ -30,8 +30,6 @@ struct ChatPanelView: View {
             }
             .environmentObject(controller)
 
-            Divider().opacity(0.5)
-
             HStack(spacing: 0) {
                 CompactHeaderView(
                     onShowSettings: {
@@ -112,63 +110,128 @@ struct ChatPanelView: View {
     }
 
     private var chatContent: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 0) {
-                    if !controller.hasCompletedOnboardingWizard
-                        && controller.state.setupStatus != .ready
-                    {
-                        OnboardingWizardView()
-                            .environmentObject(controller)
-                            .padding(18)
-                            .background(v2InsetBackground)
-                            .padding(.horizontal, 14)
-                            .padding(.top, 12)
-                    } else if controller.state.setupStatus != .ready
-                        || controller.showingOnboardingCompletion
-                    {
-                        OnboardingDialogView(showModeChooser: false)
-                            .environmentObject(controller)
-                            .padding(18)
-                            .background(v2InsetBackground)
-                            .padding(.horizontal, 14)
-                            .padding(.top, 12)
-                    } else {
-                        ChatScrollView()
-                            .environmentObject(controller)
+        VStack(spacing: 0) {
+            if controller.state.setupStatus == .ready
+                && !controller.showingOnboardingCompletion
+            {
+                StatStripView()
+                    .environmentObject(controller)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+            }
 
-                        ComposerView()
-                            .environmentObject(controller)
-                            .padding(.top, 8)
-                            .padding(.bottom, 8)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if !controller.hasCompletedOnboardingWizard
+                            && controller.state.setupStatus != .ready
+                        {
+                            OnboardingWizardView()
+                                .environmentObject(controller)
+                                .padding(18)
+                                .background(v2InsetBackground)
+                                .padding(.horizontal, 14)
+                                .padding(.top, 12)
+                        } else if controller.state.setupStatus != .ready
+                            || controller.showingOnboardingCompletion
+                        {
+                            OnboardingDialogView(showModeChooser: false)
+                                .environmentObject(controller)
+                                .padding(18)
+                                .background(v2InsetBackground)
+                                .padding(.horizontal, 14)
+                                .padding(.top, 12)
+                        } else {
+                            ChatScrollView()
+                                .environmentObject(controller)
+                        }
                     }
                 }
+                .frame(maxHeight: 432)
+                .onAppear { scrollChatToBottom(proxy, animated: false) }
+                .onChange(of: chatScrollKey) { _, _ in
+                    scrollChatToBottom(proxy)
+                }
             }
-            .frame(maxHeight: 520)
+
+            if controller.state.setupStatus == .ready
+                && !controller.showingOnboardingCompletion
+            {
+                ComposerView()
+                    .environmentObject(controller)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+            }
         }
     }
 
     private var panelBackground: some View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
-            // Subtle ambient tint that shifts with accent
-            LinearGradient(
-                colors: [
-                    accent.opacity(colorScheme == .dark ? 0.06 : 0.10),
-                    Color.white.opacity(colorScheme == .dark ? 0.02 : 0.28)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            // Second layer for depth
-            LinearGradient(
-                colors: [
-                    Color.clear,
-                    accent.opacity(colorScheme == .dark ? 0.04 : 0.06)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+
+            switch controller.state.selectedSkin {
+            case .liquid:
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.62),
+                        accent.opacity(colorScheme == .dark ? 0.07 : 0.13),
+                        Color(red: 0.58, green: 0.68, blue: 0.82).opacity(colorScheme == .dark ? 0.10 : 0.16)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(colorScheme == .dark ? 0.10 : 0.44),
+                        Color.clear,
+                        Color.black.opacity(colorScheme == .dark ? 0.12 : 0.03)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            case .pixel:
+                LinearGradient(
+                    colors: [
+                        accent.opacity(colorScheme == .dark ? 0.05 : 0.08),
+                        Color.white.opacity(colorScheme == .dark ? 0.02 : 0.18)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                PixelPanelTexture()
+                    .opacity(colorScheme == .dark ? 0.12 : 0.07)
+            case .bubble:
+                LinearGradient(
+                    colors: [
+                        accent.opacity(colorScheme == .dark ? 0.05 : 0.08),
+                        Color.white.opacity(colorScheme == .dark ? 0.02 : 0.24)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
+    }
+
+    private var chatScrollKey: String {
+        let visibleMessages = controller.chatMessages.filter { $0.role != .system }
+        return [
+            visibleMessages.last?.id.uuidString ?? "none",
+            String(visibleMessages.count),
+            controller.sendingChatMessage ? "sending" : "idle"
+        ].joined(separator: ":")
+    }
+
+    private func scrollChatToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        let action = {
+            proxy.scrollTo("chat-bottom-sentinel", anchor: .bottom)
+        }
+        if animated {
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.22)) { action() }
+            }
+        } else {
+            DispatchQueue.main.async { action() }
         }
     }
 
@@ -197,6 +260,28 @@ struct ChatPanelView: View {
             .keyboardShortcut(",", modifiers: .command)
             .opacity(0)
             .frame(width: 0, height: 0)
+        }
+    }
+}
+
+private struct PixelPanelTexture: View {
+    var body: some View {
+        Canvas { context, size in
+            let step: CGFloat = 8
+            var path = Path()
+            var x: CGFloat = 0
+            while x <= size.width {
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+                x += step
+            }
+            var y: CGFloat = 0
+            while y <= size.height {
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+                y += step
+            }
+            context.stroke(path, with: .color(Color.acTextPrimary.opacity(0.35)), lineWidth: 0.5)
         }
     }
 }

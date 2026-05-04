@@ -51,12 +51,12 @@ struct BrainServiceTelemetryTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(100))
+        let events = try await waitForTelemetryEvents(in: store) { events in
+            events.contains { $0.kind == .userReaction }
+        }
+
         let sessions = await store.listSessions()
         #expect(sessions.count == 1)
-
-        let session = try #require(sessions.first)
-        let events = await store.loadEvents(sessionID: session.id)
         #expect(events.contains { $0.kind == .userReaction })
     }
 
@@ -142,6 +142,28 @@ struct BrainServiceTelemetryTests {
             rootURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("ac-brain-telemetry-tests-\(UUID().uuidString)", isDirectory: true)
         )
+    }
+
+    private func waitForTelemetryEvents(
+        in store: TelemetryStore,
+        timeout: Duration = .seconds(2),
+        matching predicate: ([TelemetryEvent]) -> Bool
+    ) async throws -> [TelemetryEvent] {
+        let deadline = ContinuousClock.now + timeout
+        var latestEvents: [TelemetryEvent] = []
+
+        repeat {
+            for session in await store.listSessions() {
+                let events = await store.loadEvents(sessionID: session.id)
+                latestEvents.append(contentsOf: events)
+            }
+            if predicate(latestEvents) {
+                return latestEvents
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        } while ContinuousClock.now < deadline
+
+        return latestEvents
     }
 
     private func makeBrainService(store: TelemetryStore) -> BrainService {

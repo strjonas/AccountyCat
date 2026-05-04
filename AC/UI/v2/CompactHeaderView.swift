@@ -100,7 +100,7 @@ struct CompactHeaderView: View {
                 character: controller.state.character,
                 skin: controller.state.selectedSkin,
                 expression: controller.companionMood.catExpression,
-                size: 24,
+                size: 29,
                 animating: false
             )
             .saturation(isPaused ? 0.15 : 1.0)
@@ -113,7 +113,7 @@ struct CompactHeaderView: View {
                     .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
             }
         }
-        .frame(width: 24, height: 20)
+        .frame(width: 30, height: 26)
     }
 
     // MARK: - Status dot
