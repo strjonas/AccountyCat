@@ -55,6 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil
         )
 
+        // Re-open the popover when returning to AC during onboarding
+        // (e.g. after granting permissions in System Settings).
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(reopenPopoverIfOnboarding),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+
         let wc = WindowCoordinator(controller: controller)
         self.windowCoordinator = wc
 
@@ -69,8 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             showCompanion: { [weak self] in self?.windowCoordinator?.showCompanion() }
         )
         controller.attachExecutiveArm(arm)
-        wc.showCompanion()
-        wc.playEntranceAnimation()
 
         // Allow the floating orb to open the popover when tapped — this is the
         // fallback entry point when the menu bar status item is hidden behind
@@ -82,13 +89,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         setUpStatusItem()
         bindMood()
         bindActiveProfile()
+        bindOnboardingState()
         startChipRefreshTimer()
         setUpKeyMonitor()
 
-        // Show popover on first launch if setup isn't complete.
-        // Delay until the entrance animation finishes so onboarding doesn't
-        // pop up on top of the stardust burst.
-        if controller.state.setupStatus != .ready {
+        wc.showCompanion()
+        wc.playEntranceAnimation()
+
+        if !controller.hasCompletedOnboardingWizard {
+            // During onboarding anchor the popover to the companion orb so it
+            // appears right beside the cat instead of far away at the menu bar.
+            togglePopoverFromOrb()
+        } else if controller.state.setupStatus != .ready {
+            // Show popover on first launch if setup isn't complete.
+            // Delay until the entrance animation finishes.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
                 self?.openPopover()
             }
@@ -280,6 +294,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
     }
 
+    // MARK: - Onboarding / popover root
+
+    private func bindOnboardingState() {
+        controller.$hasCompletedOnboardingWizard
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] completed in
+                guard let self, let p = self.popover else { return }
+                let height: CGFloat = completed ? 460 : 540
+                p.contentSize = NSSize(width: ACD.popoverWidth, height: height)
+            }
+            .store(in: &cancellables)
+    }
+
+    @objc private func reopenPopoverIfOnboarding() {
+        guard !controller.hasCompletedOnboardingWizard else { return }
+        togglePopoverFromOrb()
+    }
+
     // MARK: - Click handling
 
     @objc private func handleStatusClick(_ sender: NSStatusBarButton) {
@@ -297,6 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem?.button else { return }
         let p = popover ?? makePopover()
         popover = p
+        p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
         guard !p.isShown else { return }
         p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
@@ -309,6 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             let p = popover ?? makePopover()
             popover = p
+            p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
             controller.markAllChatMessagesRead()
@@ -326,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         let p = popover ?? makePopover()
         popover = p
+        p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
 
         if let wc = windowCoordinator,
            let placement = wc.screenPopoverPlacement(
@@ -352,12 +387,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func makePopover() -> NSPopover {
         let p = NSPopover()
-        p.contentSize = NSSize(width: ACD.popoverWidth, height: 460)
-        p.behavior = .transient
+        let isWizard = !controller.hasCompletedOnboardingWizard
+        p.contentSize = NSSize(width: ACD.popoverWidth, height: isWizard ? 540 : 460)
+        p.behavior = isWizard ? .applicationDefined : .transient
         p.animates = true
         p.delegate = self
         p.contentViewController = NSHostingController(
-            rootView: ChatPanelView()
+            rootView: PopoverRootView()
                 .environmentObject(controller)
         )
         controller.dismissPopover = { [weak p] in
@@ -441,6 +477,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func closePopoverOnResignActive() {
+        // Keep the popover open during onboarding so it stays visible
+        // when the user returns from System Settings.
+        guard controller.hasCompletedOnboardingWizard else { return }
         if let p = popover, p.isShown {
             p.performClose(nil)
         }
@@ -452,6 +491,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             $0.bundleIdentifier == bundleID
         }) {
             app.hide()
+        }
+    }
+}
+
+// MARK: - Popover root (wizard or chat)
+
+private struct PopoverRootView: View {
+    @EnvironmentObject var controller: AppController
+
+    var body: some View {
+        if controller.hasCompletedOnboardingWizard {
+            ChatPanelView()
+        } else {
+            OnboardingWizardView()
         }
     }
 }

@@ -124,9 +124,14 @@ private struct ChatMessageRow: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(isUser ? Color.white.opacity(0.8) : Color.acTextPrimary.opacity(0.55))
+                            .foregroundStyle(
+                                isUser
+                                    ? Color.white.opacity(0.8) : Color.acTextPrimary.opacity(0.55)
+                            )
                             .frame(width: 16, height: 16)
-                            .background(Circle().fill(isUser ? Color.white.opacity(0.18) : Color.acSurfaceElevated))
+                            .background(
+                                Circle().fill(
+                                    isUser ? Color.white.opacity(0.18) : Color.acSurfaceElevated))
                     }
                     .buttonStyle(.plain)
                     .padding(5)
@@ -276,7 +281,7 @@ private struct NudgeCard: View {
                                         .stroke(Color.white.opacity(0.28), lineWidth: 0.5)
                                 )
                         )
-                    Text("it's research")
+                    Text("it's fine")
                         .font(.ac(11, weight: .medium))
                         .foregroundStyle(Color.acTextPrimary.opacity(0.7))
                         .padding(.horizontal, 10)
@@ -284,7 +289,9 @@ private struct NudgeCard: View {
                         .background(
                             Capsule(style: .continuous)
                                 .fill(Color.acSurface)
-                                .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                                .overlay(
+                                    Capsule(style: .continuous).stroke(
+                                        Color.acHairline, lineWidth: 1))
                         )
                 }
             }
@@ -306,7 +313,7 @@ private struct NudgeCard: View {
                             colors: [
                                 accent.opacity(colorScheme == .dark ? 0.10 : 0.08),
                                 accent.opacity(0.02),
-                                Color.clear
+                                Color.clear,
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -365,13 +372,24 @@ private struct EmptyV2ChatState: View {
             )
             .frame(width: 34, height: 34)
 
-            Text("morning. no focus active — i'm watching but won't nudge unless you want me to. start a profile when you're ready.")
-                .font(.ac(13))
-                .lineSpacing(2)
-                .foregroundStyle(Color.acTextPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
+            Text(
+                "morning. no focus active — i'm watching but won't nudge unless you want me to. start a profile when you're ready."
+            )
+            .font(.ac(13))
+            .lineSpacing(2)
+            .foregroundStyle(Color.acTextPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 4,
+                    bottomLeadingRadius: ACRadius.bubble,
+                    bottomTrailingRadius: ACRadius.bubble,
+                    topTrailingRadius: ACRadius.bubble,
+                    style: .continuous
+                )
+                .fill(Color.acBubbleFill)
+                .overlay(
                     UnevenRoundedRectangle(
                         topLeadingRadius: 4,
                         bottomLeadingRadius: ACRadius.bubble,
@@ -379,18 +397,9 @@ private struct EmptyV2ChatState: View {
                         topTrailingRadius: ACRadius.bubble,
                         style: .continuous
                     )
-                    .fill(Color.acBubbleFill)
-                    .overlay(
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: 4,
-                            bottomLeadingRadius: ACRadius.bubble,
-                            bottomTrailingRadius: ACRadius.bubble,
-                            topTrailingRadius: ACRadius.bubble,
-                            style: .continuous
-                        )
-                        .stroke(Color.acBubbleStroke, lineWidth: 0.5)
-                    )
+                    .stroke(Color.acBubbleStroke, lineWidth: 0.5)
                 )
+            )
             Spacer(minLength: 44)
         }
     }

@@ -130,16 +130,7 @@ struct ChatPanelView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
-                        if !controller.hasCompletedOnboardingWizard
-                            && controller.state.setupStatus != .ready
-                        {
-                            OnboardingWizardView()
-                                .environmentObject(controller)
-                                .padding(18)
-                                .background(v2InsetBackground)
-                                .padding(.horizontal, 14)
-                                .padding(.top, 12)
-                        } else if controller.state.setupStatus != .ready
+                        if controller.state.setupStatus != .ready
                             || controller.showingOnboardingCompletion
                         {
                             OnboardingDialogView(showModeChooser: false)
@@ -189,8 +180,8 @@ struct ChatPanelView: View {
                 // soft edge refraction, and a subtle tint shift.
                 RadialGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55),
-                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.22),
+                        Color.white.opacity(colorScheme == .dark ? 0.28 : 0.55),
+                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.22),
                         Color.clear
                     ],
                     center: .topLeading,
@@ -199,8 +190,8 @@ struct ChatPanelView: View {
                 )
                 RadialGradient(
                     colors: [
-                        accent.opacity(colorScheme == .dark ? 0.12 : 0.14),
-                        accent.opacity(colorScheme == .dark ? 0.04 : 0.06),
+                        accent.opacity(colorScheme == .dark ? 0.18 : 0.14),
+                        accent.opacity(colorScheme == .dark ? 0.08 : 0.06),
                         Color.clear
                     ],
                     center: .bottomTrailing,
@@ -210,8 +201,8 @@ struct ChatPanelView: View {
                 // Specular top edge
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.22 : 0.48),
-                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.14),
+                        Color.white.opacity(colorScheme == .dark ? 0.32 : 0.48),
+                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.14),
                         Color.clear
                     ],
                     startPoint: .top,
@@ -221,7 +212,7 @@ struct ChatPanelView: View {
                 LinearGradient(
                     colors: [
                         Color.clear,
-                        Color.black.opacity(colorScheme == .dark ? 0.18 : 0.04)
+                        Color.black.opacity(colorScheme == .dark ? 0.28 : 0.04)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -233,8 +224,8 @@ struct ChatPanelView: View {
                 // Preserve legacy liquid-skin styling when liquid-glass toggle is off
                 RadialGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55),
-                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.22),
+                        Color.white.opacity(colorScheme == .dark ? 0.28 : 0.55),
+                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.22),
                         Color.clear
                     ],
                     center: .topLeading,
@@ -243,8 +234,8 @@ struct ChatPanelView: View {
                 )
                 RadialGradient(
                     colors: [
-                        accent.opacity(colorScheme == .dark ? 0.12 : 0.14),
-                        accent.opacity(colorScheme == .dark ? 0.04 : 0.06),
+                        accent.opacity(colorScheme == .dark ? 0.18 : 0.14),
+                        accent.opacity(colorScheme == .dark ? 0.08 : 0.06),
                         Color.clear
                     ],
                     center: .bottomTrailing,
@@ -253,8 +244,8 @@ struct ChatPanelView: View {
                 )
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.22 : 0.48),
-                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.14),
+                        Color.white.opacity(colorScheme == .dark ? 0.32 : 0.48),
+                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.14),
                         Color.clear
                     ],
                     startPoint: .top,
@@ -263,7 +254,7 @@ struct ChatPanelView: View {
                 LinearGradient(
                     colors: [
                         Color.clear,
-                        Color.black.opacity(colorScheme == .dark ? 0.18 : 0.04)
+                        Color.black.opacity(colorScheme == .dark ? 0.28 : 0.04)
                     ],
                     startPoint: .top,
                     endPoint: .bottom

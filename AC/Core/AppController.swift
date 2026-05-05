@@ -51,6 +51,8 @@ final class AppController: ObservableObject {
     @Published var onboardingDismissed = false
     @Published var telemetrySessionID: String?
     @Published var onlineAPIKeyDraft: String
+    @Published var openRouterKeyInfo: OpenRouterKeyInfo?
+    @Published var openRouterKeyInfoError: String?
     /// True once the user has completed the first-run onboarding wizard. Stored in
     /// UserDefaults (not ACState) so it survives state resets.
     @Published var hasCompletedOnboardingWizard: Bool
@@ -1065,7 +1067,7 @@ final class AppController: ObservableObject {
         case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
         case "google/gemini-2.5-flash":            return "Gemini 2.5 Flash"
         case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
-        case "google/gemini-3-flash-preview":      return "Gemini 3 Flash"
+        case "moonshotai/kimi-k2.6":               return "Kimi K2.6"
         case "qwen/qwen2.5-vl-72b-instruct":       return "Qwen 2.5 VL"
         case "qwen/qwen3.5-9b":                    return "Qwen 3.5 9B"
         case "nvidia/nemotron-3-super-120b-a12b":  return "Nemotron 3"
@@ -1097,7 +1099,7 @@ final class AppController: ObservableObject {
         case "deepseek/deepseek-v4-flash":         return "DS V4"
         case "google/gemma-4-31b-it":              return "Gema 31B"
         case "google/gemma-4-26b-a4b-it":          return "Gema 26B"
-        case "google/gemini-3-flash-preview":      return "Gem 3"
+        case "moonshotai/kimi-k2.6":               return "Kimi K2.6"
         case "google/gemini-2.0-flash-001":        return "Gem 2"
         case "nvidia/nemotron-3-super-120b-a12b":  return "Nemot 3"
         case "qwen/qwen3.5-9b":                    return "Qwen 9B"
@@ -1190,6 +1192,26 @@ final class AppController: ObservableObject {
         onlineAPIKeyDraft = value
         _ = OnlineModelCredentialStore.saveAPIKey(value)
         refreshSystemState()
+        refreshOpenRouterKeyInfo()
+    }
+
+    func refreshOpenRouterKeyInfo() {
+        guard hasOnlineAPIKeyConfigured else {
+            openRouterKeyInfo = nil
+            openRouterKeyInfoError = nil
+            return
+        }
+        let key = onlineAPIKeyDraft
+        Task { @MainActor [weak self] in
+            do {
+                let info = try await self?.onlineModelService.fetchKeyInfo(apiKey: key)
+                self?.openRouterKeyInfo = info
+                self?.openRouterKeyInfoError = nil
+            } catch {
+                self?.openRouterKeyInfo = nil
+                self?.openRouterKeyInfoError = error.localizedDescription
+            }
+        }
     }
 
     // MARK: - Onboarding wizard

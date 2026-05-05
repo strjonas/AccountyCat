@@ -127,6 +127,47 @@ enum OnlineModelCredentialStore {
     }
 }
 
+struct OpenRouterKeyInfo: Codable {
+    struct Data: Codable {
+        let label: String
+        let usage: Double
+        let usageDaily: Double
+        let usageMonthly: Double
+        let limit: Double?
+        let limitRemaining: Double?
+        let isFreeTier: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case label, usage, limit
+            case usageDaily = "usage_daily"
+            case usageMonthly = "usage_monthly"
+            case limitRemaining = "limit_remaining"
+            case isFreeTier = "is_free_tier"
+        }
+
+        nonisolated init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            label = try c.decode(String.self, forKey: .label)
+            usage = try c.decode(Double.self, forKey: .usage)
+            usageDaily = try c.decode(Double.self, forKey: .usageDaily)
+            usageMonthly = try c.decode(Double.self, forKey: .usageMonthly)
+            limit = try c.decodeIfPresent(Double.self, forKey: .limit)
+            limitRemaining = try c.decodeIfPresent(Double.self, forKey: .limitRemaining)
+            isFreeTier = try c.decode(Bool.self, forKey: .isFreeTier)
+        }
+    }
+    let data: Data
+
+    enum CodingKeys: String, CodingKey {
+        case data
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        data = try c.decode(Data.self, forKey: .data)
+    }
+}
+
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
@@ -523,5 +564,30 @@ actor OnlineModelService: OnlineModelServing {
         default:
             return "image/png"
         }
+    }
+
+    func fetchKeyInfo(apiKey: String) async throws -> OpenRouterKeyInfo {
+        guard let url = URL(string: "https://openrouter.ai/api/v1/key") else {
+            throw OnlineModelError.invalidEndpoint
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("AccountyCat", forHTTPHeaderField: "X-OpenRouter-Title")
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OnlineModelError.malformedResponse
+        }
+        guard httpResponse.statusCode == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw OnlineModelError.httpFailure(
+                statusCode: httpResponse.statusCode,
+                message: "Failed to fetch key info",
+                rawBody: body
+            )
+        }
+        return try JSONDecoder().decode(OpenRouterKeyInfo.self, from: data)
     }
 }

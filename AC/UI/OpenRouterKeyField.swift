@@ -54,13 +54,34 @@ struct OpenRouterKeyField: View {
 
             // Status / guidance
             if controller.hasOnlineAPIKeyConfigured {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.green)
-                    Text("Key saved to macOS Keychain · Model: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifier))")
-                        .font(.ac(10))
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.green)
+                        Text("Key saved to macOS Keychain · Model: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifier))")
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let info = controller.openRouterKeyInfo {
+                        HStack(spacing: 5) {
+                            Image(systemName: "creditcard.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text("Used \(String(format: "%.2f", info.data.usage)) / remaining \(info.data.limitRemaining.map { String(format: "%.2f", $0) } ?? "unlimited") USD")
+                                .font(.ac(10))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if let error = controller.openRouterKeyInfoError {
+                        HStack(spacing: 5) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.orange)
+                            Text("Usage info unavailable: \(error)")
+                                .font(.ac(10))
+                                .foregroundStyle(.orange.opacity(0.85))
+                        }
+                    }
                 }
             } else {
                 // Inline quick-start guide shown until a key is entered
@@ -92,6 +113,10 @@ struct OpenRouterKeyField: View {
                         )
                 )
             }
+        }
+        .onAppear { controller.refreshOpenRouterKeyInfo() }
+        .onChange(of: controller.onlineAPIKeyDraft) { _, _ in
+            controller.refreshOpenRouterKeyInfo()
         }
     }
 

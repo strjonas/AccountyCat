@@ -94,7 +94,7 @@ struct OnlineModelServiceTests {
                 includesImage: true
             ) == [
                 "qwen/qwen3.5-9b",
-                "google/gemini-3-flash-preview",
+                "moonshotai/kimi-k2.6",
             ]
         )
     }

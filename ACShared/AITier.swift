@@ -52,7 +52,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         case .balanced:
             return "DeepSeek V4 Flash (text), Gemma 4 31B (images). ~$0.20–$0.50/mo."
         case .smartest:
-            return "DeepSeek V4 Flash (text), Gemini 3 Flash (images). ~$0.50–$1.00/mo."
+            return "DeepSeek V4 Flash (text), Kimi K2.6 (images). ~$0.50–$1.00/mo."
         }
     }
 
@@ -62,7 +62,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         switch self {
         case .economy:  return "qwen/qwen3.5-9b"
         case .balanced: return "google/gemma-4-31b-it"
-        case .smartest: return "google/gemini-3-flash-preview"
+        case .smartest: return "moonshotai/kimi-k2.6"
         }
     }
 
@@ -80,7 +80,7 @@ enum AITier: String, Codable, CaseIterable, Sendable {
         switch self {
         case .economy:  return "qwen/qwen3.5-9b"
         case .balanced: return "google/gemma-4-31b-it"
-        case .smartest: return "google/gemini-3-flash-preview"
+        case .smartest: return "moonshotai/kimi-k2.6"
         }
     }
 

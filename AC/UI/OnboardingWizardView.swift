@@ -88,6 +88,21 @@ struct OnboardingWizardView: View {
             .animation(.acSpring, value: step)
         }
         .padding(20)
+        .overlay(alignment: .topTrailing) {
+            Button {
+                controller.dismissPopover?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.secondary.opacity(0.55))
+                    .padding(8)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close")
+            .padding(.top, 8)
+            .padding(.trailing, 8)
+        }
         .onAppear {
             selectedMode = inferredMode
             step = inferredStep
@@ -295,13 +310,12 @@ struct OnboardingWizardView: View {
                 )
             }
 
-            if controller.state.permissions.screenRecording == .denied
-                || controller.state.permissions.accessibility == .denied {
+            if controller.state.permissions.accessibility == .denied {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.system(size: 12))
-                    Text("AccountyCat can't function without these. Open System Settings → Privacy & Security to grant them.")
+                    Text("Accessibility is required so AccountyCat can read the active app name. Open System Settings → Privacy & Security to grant it.")
                         .font(.ac(11))
                         .foregroundStyle(Color.acTextPrimary.opacity(0.82))
                         .fixedSize(horizontal: false, vertical: true)
@@ -320,26 +334,48 @@ struct OnboardingWizardView: View {
                 .transition(.opacity)
             }
 
+            if controller.state.permissions.screenRecording != .granted
+                && controller.state.permissions.accessibility == .granted {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(accent)
+                        .font(.system(size: 12))
+                    Text("Screen Recording is off — AC can still run using only app names, but it will be much less accurate without screenshots.")
+                        .font(.ac(11))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(accent.opacity(0.06))
+                        .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(accent.opacity(0.22), lineWidth: 1))
+                )
+                .transition(.opacity)
+            }
+
             HStack {
                 Button("← Back") { withAnimation(.acSpring) { step = .tierSelection } }
                     .buttonStyle(ACSecondaryButton())
                 Spacer()
+                Button {
+                    controller.refreshSystemState(persist: false)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(ACIconButton())
+                .help("Refresh permission status")
                 Button("Continue →") {
                     withAnimation(.acSpring) {
                         step = selectedMode == .byok ? .apiKey : .completion
                     }
                 }
                 .buttonStyle(ACPrimaryButton())
-                .disabled(!permissionsGranted)
+                .disabled(controller.state.permissions.accessibility != .granted)
             }
         }
-        .animation(.acSnap, value: permissionsGranted)
+        .animation(.acSnap, value: controller.state.permissions.accessibility)
         .onAppear { controller.refreshSystemState(persist: false) }
-    }
-
-    private var permissionsGranted: Bool {
-        controller.state.permissions.screenRecording == .granted
-            && controller.state.permissions.accessibility == .granted
     }
 
     // MARK: - Screen 5: API key (BYOK only)
@@ -440,14 +476,6 @@ struct OnboardingWizardView: View {
                 }
             }
             .buttonStyle(ACPrimaryButton())
-
-            #if DEBUG
-            Button("[Dev] Reset onboarding") {
-                controller.resetOnboardingWizard()
-            }
-            .buttonStyle(ACSecondaryButton())
-            .padding(.top, 4)
-            #endif
         }
     }
 

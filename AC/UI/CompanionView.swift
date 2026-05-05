@@ -68,14 +68,6 @@ struct CompanionView: View {
                 .brightness(controller.companionMood == .paused ? 0.12 : 0)
                 .rotationEffect(.degrees(headTilt))
                 .shadow(color: orbShadow.opacity(0.22), radius: 14, y: 7)
-                .overlay {
-                    if controller.state.setupStatus != .ready {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: orbDiameter * 0.28, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-                    }
-                }
             }
             .frame(width: orbDiameter, height: orbDiameter)
             .overlay(alignment: .bottomTrailing) {
