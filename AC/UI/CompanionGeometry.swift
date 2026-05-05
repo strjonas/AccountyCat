@@ -16,7 +16,7 @@ struct CompanionPopoverPlacement {
 enum CompanionGeometry {
     static let orbBottomPadding: CGFloat = 14
     static let presentationMargin: CGFloat = 12
-    static let popoverGap: CGFloat = 14
+    static let popoverGap: CGFloat = 8
 
     static func orbCenter(forPanelFrame panelFrame: NSRect) -> NSPoint {
         NSPoint(

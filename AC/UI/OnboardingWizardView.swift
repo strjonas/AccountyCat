@@ -88,21 +88,6 @@ struct OnboardingWizardView: View {
             .animation(.acSpring, value: step)
         }
         .padding(20)
-        .overlay(alignment: .topTrailing) {
-            Button {
-                controller.dismissPopover?()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.secondary.opacity(0.55))
-                    .padding(8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Close")
-            .padding(.top, 8)
-            .padding(.trailing, 8)
-        }
         .onAppear {
             selectedMode = inferredMode
             step = inferredStep
@@ -124,6 +109,17 @@ struct OnboardingWizardView: View {
             Text("You can change this later in Settings.")
                 .font(.ac(10))
                 .foregroundStyle(Color.acTextPrimary.opacity(0.38))
+            Button {
+                controller.dismissPopover?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.secondary.opacity(0.45))
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close")
         }
     }
 

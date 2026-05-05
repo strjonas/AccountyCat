@@ -190,7 +190,7 @@ actor OnlineModelService: OnlineModelServing {
             for: request.modelIdentifier,
             includesImage: request.imagePath != nil
         )
-        let maxAttempts = request.source == .chat ? 2 : 1
+        let maxAttempts = Self.maxAttempts(for: request.source)
         var attempt = 0
         var lastError: Error?
         var primaryModelIdentifier = request.modelIdentifier
@@ -246,8 +246,7 @@ actor OnlineModelService: OnlineModelServing {
                 guard attempt < maxAttempts, Self.isRetryable(error: error) else {
                     throw error
                 }
-                if request.source == .chat,
-                   let promotedModel = secondaryFallbacks.first,
+                if let promotedModel = secondaryFallbacks.first,
                    promotedModel != primaryModelIdentifier {
                     primaryModelIdentifier = promotedModel
                     secondaryFallbacks.removeAll { $0 == promotedModel }
@@ -312,9 +311,11 @@ actor OnlineModelService: OnlineModelServing {
             "response_format": [
                 "type": "json_object",
             ],
-            "provider": [
-                "zdr": enforceZDR,
-            ],
+            "provider": Self.providerPreferences(
+                enforceZDR: enforceZDR,
+                includesModelFallbacks: !fallbackModelIdentifiers.isEmpty,
+                source: request.source
+            ),
         ]
         if !request.options.thinkingEnabled {
             body["reasoning"] = ["max_reasoning_tokens": 0] as [String: Any]
@@ -322,16 +323,13 @@ actor OnlineModelService: OnlineModelServing {
         if !fallbackModelIdentifiers.isEmpty {
             body["models"] = fallbackModelIdentifiers
         }
-        if var provider = body["provider"] as? [String: Any] {
-            provider["allow_fallbacks"] = true
-            body["provider"] = provider
-        }
 
         var urlRequest = URLRequest(url: endpointURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("AccountyCat", forHTTPHeaderField: "X-OpenRouter-Title")
+        urlRequest.timeoutInterval = Self.timeoutInterval(for: request.source, options: request.options)
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         let (data, response) = try await session.data(for: urlRequest)
@@ -370,7 +368,7 @@ actor OnlineModelService: OnlineModelServing {
             servedModel: usedModelIdentifier,
             source: request.source
         )
-        if usedModelIdentifier != modelIdentifier {
+        if !Self.modelIdentifiersEquivalent(usedModelIdentifier, modelIdentifier) {
             await ActivityLogService.shared.append(
                 category: "openrouter-fallback",
                 message: "[\(request.source.rawValue) \(request.requestID)] OpenRouter served \(usedModelIdentifier) instead of \(modelIdentifier) after provider/model fallback (ZDR enforced)."
@@ -429,6 +427,92 @@ actor OnlineModelService: OnlineModelServing {
             chain.append(fallback)
         }
         return chain
+    }
+
+    nonisolated static func providerPreferences(
+        enforceZDR: Bool,
+        includesModelFallbacks: Bool,
+        source: OnlineModelRequestSource
+    ) -> [String: Any] {
+        var provider: [String: Any] = [
+            "zdr": enforceZDR,
+            "allow_fallbacks": true,
+            "sort": "latency",
+            "preferred_max_latency": preferredMaxLatency(for: source),
+        ]
+
+        // For background maintenance, use the fastest healthy endpoint across the
+        // fallback chain. User-facing monitoring/chat keep primary-model grouping
+        // so a fast but weaker fallback is used only after the primary model fails.
+        if includesModelFallbacks,
+           source == .policyMemory || source == .memoryConsolidation || source == .safelistAppeal {
+            provider["sort"] = [
+                "by": "latency",
+                "partition": "none",
+            ] as [String: Any]
+        }
+
+        return provider
+    }
+
+    nonisolated static func modelIdentifiersEquivalent(_ lhs: String, _ rhs: String) -> Bool {
+        let left = normalizedComparableModelIdentifier(lhs)
+        let right = normalizedComparableModelIdentifier(rhs)
+        return left == right
+    }
+
+    nonisolated private static func normalizedComparableModelIdentifier(_ identifier: String) -> String {
+        let trimmed = identifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutFree = trimmed.hasSuffix(":free") ? String(trimmed.dropLast(5)) : trimmed
+        let parts = withoutFree.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return withoutFree }
+
+        let provider = parts[0]
+        var model = parts[1]
+        if let match = model.range(
+            of: #"-20\d{6}$"#,
+            options: .regularExpression
+        ) {
+            model.removeSubrange(match)
+        }
+        return "\(provider)/\(model)"
+    }
+
+    nonisolated private static func maxAttempts(for source: OnlineModelRequestSource) -> Int {
+        switch source {
+        case .chat, .monitoringText, .monitoringVision, .policyMemory, .memoryConsolidation, .safelistAppeal:
+            return 2
+        }
+    }
+
+    nonisolated private static func timeoutInterval(
+        for source: OnlineModelRequestSource,
+        options: RuntimeInferenceOptions
+    ) -> TimeInterval {
+        let sourceCeiling: TimeInterval
+        switch source {
+        case .monitoringText, .monitoringVision:
+            sourceCeiling = 14
+        case .chat:
+            sourceCeiling = 18
+        case .policyMemory, .memoryConsolidation, .safelistAppeal:
+            sourceCeiling = 14
+        }
+        return min(TimeInterval(options.timeoutSeconds), sourceCeiling)
+    }
+
+    nonisolated private static func preferredMaxLatency(
+        for source: OnlineModelRequestSource
+    ) -> [String: Double] {
+        switch source {
+        case .monitoringText, .monitoringVision:
+            return ["p50": 2.0, "p90": 6.0]
+        case .chat:
+            return ["p50": 2.0, "p90": 7.0]
+        case .policyMemory, .memoryConsolidation, .safelistAppeal:
+            return ["p50": 2.0, "p90": 8.0]
+        }
     }
 
     nonisolated private static func nonFreeModelIdentifier(from modelIdentifier: String) -> String? {

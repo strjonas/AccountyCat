@@ -98,4 +98,53 @@ struct OnlineModelServiceTests {
             ]
         )
     }
+
+    @Test
+    func providerPreferencesPreferLowLatencyForMonitoringWithoutGlobalModelSorting() throws {
+        let provider = OnlineModelService.providerPreferences(
+            enforceZDR: true,
+            includesModelFallbacks: true,
+            source: .monitoringVision
+        )
+
+        #expect(provider["zdr"] as? Bool == true)
+        #expect(provider["allow_fallbacks"] as? Bool == true)
+        #expect(provider["sort"] as? String == "latency")
+        #expect(provider["preferred_max_latency"] != nil)
+    }
+
+    @Test
+    func backgroundProviderPreferencesCanSortAcrossFallbackModels() throws {
+        let provider = OnlineModelService.providerPreferences(
+            enforceZDR: true,
+            includesModelFallbacks: true,
+            source: .policyMemory
+        )
+        let sort = try #require(provider["sort"] as? [String: Any])
+
+        #expect(sort["by"] as? String == "latency")
+        #expect(sort["partition"] as? String == "none")
+    }
+
+    @Test
+    func datedOpenRouterAliasesAreNotCountedAsDifferentModels() {
+        #expect(
+            OnlineModelService.modelIdentifiersEquivalent(
+                "google/gemma-4-31b-it",
+                "google/gemma-4-31b-it-20260402"
+            )
+        )
+        #expect(
+            OnlineModelService.modelIdentifiersEquivalent(
+                "deepseek/deepseek-v4-flash-20260423",
+                "deepseek/deepseek-v4-flash"
+            )
+        )
+        #expect(
+            !OnlineModelService.modelIdentifiersEquivalent(
+                "deepseek/deepseek-v4-flash",
+                "nvidia/nemotron-3-super-120b-a12b"
+            )
+        )
+    }
 }

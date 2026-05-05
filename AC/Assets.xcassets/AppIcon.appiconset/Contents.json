@@ -1,51 +1,61 @@
 {
   "images" : [
     {
+      "filename" : "ChatGPT Image May 5, 2026, 05_23_31 PM (1) (1) (1) (1).png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "16x16"
     },
     {
+      "filename" : "apple-icon (2) (1).png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "16x16"
     },
     {
+      "filename" : "apple-icon (2) (1) 1.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "32x32"
     },
     {
+      "filename" : "apple-icon (1).png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "32x32"
     },
     {
+      "filename" : "apple-icon.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "128x128"
     },
     {
+      "filename" : "ChatGPT Image May 5, 2026, 05_23_31 PM (1) (1) (1) 1.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "128x128"
     },
     {
+      "filename" : "ChatGPT Image May 5, 2026, 05_23_31 PM (1) (1) (1).png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "256x256"
     },
     {
+      "filename" : "web-app-manifest-512x512 1.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "256x256"
     },
     {
+      "filename" : "web-app-manifest-512x512.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "512x512"
     },
     {
+      "filename" : "ChatGPT Image May 5, 2026, 05_23_31 PM (1) (1).png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"

@@ -66,7 +66,7 @@ actor OpenRouterHealthStatsService {
             record.successes += 1
             record.lastSuccessAt = timestamp
             record.servedModelSuccesses[servedModel, default: 0] += 1
-            if servedModel != requestedModel {
+            if !OnlineModelService.modelIdentifiersEquivalent(servedModel, requestedModel) {
                 record.fallbackSuccesses += 1
             }
 
