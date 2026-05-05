@@ -162,11 +162,11 @@ private extension CatRendererBubble {
 
         if expression == .concern {
             var browL = Path()
-            browL.move(to: pt(23, 26))
-            browL.addLine(to: pt(28, 27.5))
+            browL.move(to: pt(22, 28))
+            browL.addQuadCurve(to: pt(29, 29), control: pt(25.5, 24))
             var browR = Path()
-            browR.move(to: pt(41, 26))
-            browR.addLine(to: pt(36, 27.5))
+            browR.move(to: pt(42, 28))
+            browR.addQuadCurve(to: pt(35, 29), control: pt(38.5, 24))
             context.stroke(browL, with: .color(p.eye), lineWidth: 1.2 * s)
             context.stroke(browR, with: .color(p.eye), lineWidth: 1.2 * s)
         }
@@ -185,8 +185,8 @@ private extension CatRendererBubble {
             mouth.move(to: pt(27, 42))
             mouth.addQuadCurve(to: pt(37, 42), control: pt(32, 47))
         case .concern:
-            mouth.move(to: pt(27, 44))
-            mouth.addQuadCurve(to: pt(37, 44), control: pt(32, 41))
+            mouth.move(to: pt(29, 43))
+            mouth.addQuadCurve(to: pt(35, 43), control: pt(32, 41.5))
         case .drift:
             mouth.move(to: pt(28.5, 43))
             mouth.addLine(to: pt(35.5, 43))

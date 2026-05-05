@@ -2,7 +2,7 @@
 //  SettingsView.swift
 //  AC
 //
-//  New 6-tab settings sheet replacing SettingsSheet.
+//  6-tab settings embedded in the main panel.
 //  Tabs: look · profiles · ai · nudges · persona · you
 //
 

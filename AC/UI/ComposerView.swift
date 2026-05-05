@@ -2,7 +2,7 @@
 //  ComposerView.swift
 //  AC
 //
-//  Pill-style composer: disabled mic + text input + accent send button.
+//  Pill-style composer: text input + accent send button.
 //
 
 import SwiftUI
@@ -15,22 +15,6 @@ struct ComposerView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Mic button (disabled placeholder)
-            Button {} label: {
-                Image(systemName: "mic")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.secondary.opacity(0.4))
-                    .frame(width: 30, height: 30)
-                    .background(
-                        Circle()
-                            .fill(Color.acSurface)
-                            .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(true)
-            .help("Voice input — coming soon")
-
             // Pill input
             TextField("tell \(controller.state.character.displayName.lowercased()) what you're working on…", text: $draft, axis: .vertical)
                 .font(.ac(13))

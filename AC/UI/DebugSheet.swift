@@ -136,6 +136,8 @@ struct DebugSheet: View {
                     .buttonStyle(ACPrimaryButton())
                 Button("Test Overlay") { controller.showTestOverlay() }
                     .buttonStyle(ACPrimaryButton())
+                Button("Reset Onboarding") { controller.resetOnboardingWizard() }
+                    .buttonStyle(ACSecondaryButton())
             }
 
             developerPicker(

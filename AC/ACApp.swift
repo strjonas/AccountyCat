@@ -2,8 +2,7 @@
 //  ACApp.swift
 //  AC
 //
-//  App entry point. Menu bar icon with two NSPopovers: a compact profile-control
-//  surface for quick session changes, plus the full app popover for chat/settings.
+//  App entry point. Menu bar text item with a single NSPopover for chat/settings.
 //  Right-click keeps a minimal context menu.
 //
 
@@ -27,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private var windowCoordinator: WindowCoordinator?
     private var popover: NSPopover?
-    private var profilePopover: NSPopover?
     private var orbPopoverAnchorWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
     private var chipRefreshTimer: Timer?
@@ -72,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         )
         controller.attachExecutiveArm(arm)
         wc.showCompanion()
+        wc.playEntranceAnimation()
 
         // Allow the floating orb to open the popover when tapped — this is the
         // fallback entry point when the menu bar status item is hidden behind
@@ -83,13 +82,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         setUpStatusItem()
         bindMood()
         bindActiveProfile()
-        bindCharacter()
         startChipRefreshTimer()
         setUpKeyMonitor()
 
-        // Show popover on first launch if setup isn't complete
+        // Show popover on first launch if setup isn't complete.
+        // Delay until the entrance animation finishes so onboarding doesn't
+        // pop up on top of the stardust burst.
         if controller.state.setupStatus != .ready {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
                 self?.openPopover()
             }
         }
@@ -107,69 +107,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        applyCharacterIcon(mood: controller.companionMood, to: item)
+        applyChipTitle(to: item)
         item.button?.target = self
         item.button?.action = #selector(handleStatusClick(_:))
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         self.statusItem = item
-    }
-
-    private func applyIcon(symbolName: String, to item: NSStatusItem) {
-        if let img = NSImage(systemSymbolName: symbolName,
-                             accessibilityDescription: "AccountyCat") {
-            img.isTemplate = true
-            let size: CGFloat = 16
-            img.size = NSSize(width: size, height: size)
-            item.button?.image = img
-        } else {
-            item.button?.image = nil
-        }
-        item.button?.imagePosition = .imageLeft
-        applyChipTitle(to: item)
-    }
-
-    /// Apply the character's pixel-art icon to the menu bar, with mood-aware rendering.
-    /// Uses SF Symbols for nudging/escalated (clearer communication at small size)
-    /// and the character PNG for all other states.
-    private func applyCharacterIcon(mood: CompanionMood, to item: NSStatusItem) {
-        switch mood {
-        case .nudging:
-            applyIcon(symbolName: "bubble.left.fill", to: item)
-        case .escalated:
-            applyIcon(symbolName: "exclamationmark.bubble.fill", to: item)
-        case .escalatedHard:
-            applyIcon(symbolName: "xmark.shield.fill", to: item)
-        case .setup:
-            applyIcon(symbolName: "gearshape.fill", to: item)
-        default:
-            // idle, watching, paused → character pixel art
-            let ch = controller.state.character
-            guard let baseImg = NSImage(named: ch.smallImageName) else {
-                applyIcon(symbolName: "pawprint.fill", to: item)
-                return
-            }
-            let img: NSImage
-            if mood == .paused {
-                img = baseImg.copy() as! NSImage
-                img.lockFocus()
-                CIFilter(name: "CIColorControls", parameters: [
-                    kCIInputImageKey: CIImage(data: baseImg.tiffRepresentation!)!,
-                    kCIInputSaturationKey: 0.0,
-                    kCIInputBrightnessKey: 0.12
-                ])?.outputImage?.draw(in: NSRect(origin: .zero, size: img.size),
-                                      from: NSRect(origin: .zero, size: baseImg.size),
-                                      operation: .copy, fraction: 1.0)
-                img.unlockFocus()
-                img.isTemplate = false
-            } else {
-                img = baseImg
-                img.isTemplate = true
-            }
-            img.size = NSSize(width: 24, height: 20)
-            item.button?.image = img
-            item.button?.imagePosition = .imageLeft
-            applyChipTitle(to: item)
-        }
     }
 
     /// Append the active profile's name + remaining time to the menu bar button.
@@ -180,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let unreadDot = controller.hasUnreadChatMessages ? " •" : ""
 
         if active.isDefault {
-            button.title = " AC · \(active.name)\(unreadDot)"
+            button.title = "\(active.name)\(unreadDot)"
             button.toolTip = controller.hasUnreadChatMessages
                 ? "Active focus profile: \(active.name) — new message"
                 : "Active focus profile: \(active.name)"
@@ -200,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             remainingSegment = ""
         }
-        button.title = " AC · \(nameSegment)\(remainingSegment)\(unreadDot)"
+        button.title = "\(nameSegment)\(remainingSegment)\(unreadDot)"
         button.toolTip = controller.hasUnreadChatMessages
             ? "Active focus profile: \(nameSegment) — new message"
             : "Active focus profile: \(nameSegment)"
@@ -224,19 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { [weak self] _ in
                 guard let self, let item = self.statusItem else { return }
                 self.applyChipTitle(to: item)
-            }
-            .store(in: &cancellables)
-    }
-
-    /// Refresh the menu bar icon when the user switches character (Mochi / Nova / Sage).
-    private func bindCharacter() {
-        controller.$state
-            .map { $0.character }
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard let self, let item = self.statusItem else { return }
-                self.applyCharacterIcon(mood: controller.companionMood, to: item)
             }
             .store(in: &cancellables)
     }
@@ -308,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    /// Context-aware Escape:  overlay → sheet → ContextBar → popover → profile popover
+    /// Context-aware Escape:  overlay → sheet → popover → profile popover
     private func handleEscape(_ event: NSEvent) -> NSEvent? {
         // 1. Overlay — highest priority
         if let wc = windowCoordinator, wc.isOverlayVisible {
@@ -324,20 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return nil
         }
 
-        // 3. ContextBar expanded — collapse it
-        if UserDefaults.standard.bool(forKey: "acContextBarExpanded") {
-            UserDefaults.standard.set(false, forKey: "acContextBarExpanded")
-            return nil
-        }
-
-        // 4. Popover
+        // 3. Popover
         if let p = popover, p.isShown {
-            p.performClose(nil)
-            return nil
-        }
-
-        // 5. Profile popover
-        if let p = profilePopover, p.isShown {
             p.performClose(nil)
             return nil
         }
@@ -351,16 +268,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         controller.$companionMood
             .receive(on: DispatchQueue.main)
             .sink { [weak self] mood in
-                guard let self, let item = self.statusItem else { return }
-                self.applyCharacterIcon(mood: mood, to: item)
+                guard let self else { return }
 
                 // Close the popover when a nudge fires so the speech bubble and
                 // settings panel don't overlap. The NSPopover instance is reused,
                 // so SwiftUI @State (draft text, scroll position, etc.) is preserved.
                 if mood == .nudging, let p = self.popover, p.isShown {
-                    p.performClose(nil)
-                }
-                if mood == .nudging, let p = self.profilePopover, p.isShown {
                     p.performClose(nil)
                 }
             }
@@ -372,10 +285,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func handleStatusClick(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
-            profilePopover?.performClose(nil)
             showContextMenu(for: sender)
         } else {
-            toggleStatusPopover(relativeTo: sender)
+            togglePopover(relativeTo: sender)
         }
     }
 
@@ -385,7 +297,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem?.button else { return }
         let p = popover ?? makePopover()
         popover = p
-        profilePopover?.performClose(nil)
         guard !p.isShown else { return }
         p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
@@ -398,7 +309,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             let p = popover ?? makePopover()
             popover = p
-            profilePopover?.performClose(nil)
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
             controller.markAllChatMessagesRead()
@@ -416,7 +326,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         let p = popover ?? makePopover()
         popover = p
-        profilePopover?.performClose(nil)
 
         if let wc = windowCoordinator,
            let placement = wc.screenPopoverPlacement(
@@ -483,46 +392,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         orbPopoverAnchorWindow?.orderOut(nil)
     }
 
-    // MARK: - Quick profile popover
-
-    private func toggleStatusPopover(relativeTo button: NSStatusBarButton) {
-        if controller.state.setupStatus != .ready {
-            togglePopover(relativeTo: button)
-            return
-        }
-
-        if let quick = profilePopover, quick.isShown {
-            quick.performClose(nil)
-            return
-        }
-
-        let quick = profilePopover ?? makeProfilePopover()
-        profilePopover = quick
-        popover?.performClose(nil)
-        quick.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        NSApp.activate(ignoringOtherApps: true)
-        controller.markAllChatMessagesRead()
-    }
-
-    private func makeProfilePopover() -> NSPopover {
-        let p = NSPopover()
-        p.contentSize = NSSize(width: 336, height: 430)
-        p.behavior = .transient
-        p.animates = true
-        p.contentViewController = NSHostingController(
-            rootView: ProfileQuickPopoverView(showOpenAppButton: true)
-                .environmentObject(controller)
-        )
-        controller.dismissProfilePopover = { [weak p] in
-            p?.performClose(nil)
-        }
-        controller.openMainPopover = { [weak self, weak p] in
-            p?.performClose(nil)
-            self?.openPopover()
-        }
-        return p
-    }
-
     // MARK: - Right-click context menu (minimal — full controls live in the popover)
 
     private func showContextMenu(for button: NSStatusBarButton) {
@@ -533,6 +402,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
+
+        let locateItem = NSMenuItem(title: "Locate AC",
+                                    action: #selector(locateAC),
+                                    keyEquivalent: "")
+        locateItem.target = self
+        menu.addItem(locateItem)
 
         let pauseTitle = controller.state.isPaused ? "Resume Monitoring" : "Pause Monitoring"
         let pauseItem = NSMenuItem(title: pauseTitle,
@@ -558,11 +433,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func openMainPopoverFromMenu() { openPopover() }
     @objc private func quitApp()      { NSApp.terminate(nil) }
 
+    @objc private func locateAC() {
+        windowCoordinator?.playEntranceAnimation()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.openPopover()
+        }
+    }
+
     @objc private func closePopoverOnResignActive() {
         if let p = popover, p.isShown {
-            p.performClose(nil)
-        }
-        if let p = profilePopover, p.isShown {
             p.performClose(nil)
         }
     }

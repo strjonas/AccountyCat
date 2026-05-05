@@ -52,9 +52,10 @@ struct ChatPanelView: View {
                 } label: {
                     Image(systemName: "hammer.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.orange.opacity(0.72))
+                        .foregroundStyle(Color.orange.opacity(0.7))
                 }
-                .buttonStyle(ACIconButton(size: 24))
+                .buttonStyle(.plain)
+                .help("Developer Tools")
                 .padding(.trailing, 10)
                 #endif
             }
@@ -153,7 +154,7 @@ struct ChatPanelView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 432)
+                .frame(maxHeight: needsOnboarding ? nil : 432)
                 .onAppear { scrollChatToBottom(proxy, animated: false) }
                 .onChange(of: chatScrollKey) { _, _ in
                     scrollChatToBottom(proxy)
@@ -169,6 +170,14 @@ struct ChatPanelView: View {
                     .padding(.bottom, 8)
             }
         }
+        .onChange(of: needsOnboarding) { _, needs in
+            let height: CGFloat = needs ? 540 : 460
+            controller.resizePopover?(NSSize(width: ACD.popoverWidth, height: height))
+        }
+    }
+
+    private var needsOnboarding: Bool {
+        controller.state.setupStatus != .ready || controller.showingOnboardingCompletion
     }
 
     private var panelBackground: some View {

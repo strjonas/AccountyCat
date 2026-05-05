@@ -2,6 +2,10 @@
 //  OnboardingDialogView.swift
 //  AC
 //
+//  Post-wizard setup dialog. Shown when the wizard is complete but setup
+//  steps (permissions, runtime, API key) are still in progress.
+//  Redesigned to match the v2 panel aesthetic.
+//
 
 import AppKit
 import SwiftUI
@@ -119,11 +123,21 @@ struct OnboardingDialogView: View {
             if controller.state.setupStatus != .ready {
                 actionButtons
             }
+
+            #if DEBUG
+            HStack {
+                Spacer()
+                Button("[Dev] Reset onboarding") {
+                    controller.resetOnboardingWizard()
+                }
+                .buttonStyle(ACSecondaryButton())
+            }
+            #endif
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.7))
+                .fill(Color.acSurface.opacity(0.92))
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
                         .stroke(Color.acHairline, lineWidth: 1)
@@ -206,6 +220,7 @@ struct OnboardingDialogView: View {
         .background(
             RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                 .fill(Color.acSurface)
+                .overlay(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
         )
     }
 
@@ -230,6 +245,7 @@ struct OnboardingDialogView: View {
         .background(
             RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                 .fill(Color.acSurface)
+                .overlay(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
         )
     }
 
@@ -269,6 +285,7 @@ struct OnboardingDialogView: View {
         .background(
             RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                 .fill(Color.acSurface)
+                .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
         )
     }
 
@@ -408,7 +425,7 @@ private struct ModeCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                    .fill(isSelected ? accent.opacity(0.10) : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                    .fill(isSelected ? accent.opacity(0.10) : Color.acSurface)
                     .overlay(
                         RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                             .stroke(isSelected ? accent.opacity(0.55) : Color.acHairline, lineWidth: 1)

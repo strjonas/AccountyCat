@@ -61,24 +61,12 @@ final class AppController: ObservableObject {
     /// Settings UI has nothing to render before the user opts in.
     @Published var availableCalendars: [ACCalendarInfo] = []
 
-    /// Closure set by AppDelegate to allow UI components (like ContentView's X button)
-    /// to close the main NSPopover.
+    /// Closure set by AppDelegate to allow UI components to close the main NSPopover.
     var dismissPopover: (() -> Void)?
     /// Closure set by AppDelegate so compact controls can open the full app popover on demand.
     var openMainPopover: (() -> Void)?
-    /// Closure set by AppDelegate so compact controls can dismiss the menu-bar quick popover.
-    var dismissProfilePopover: (() -> Void)?
     /// Closure set by AppDelegate to resize the main popover (e.g. when stats expand).
     var resizePopover: ((NSSize) -> Void)?
-
-    /// Closure set by AppDelegate to open the rules sheet from the context bar.
-    var showRulesSheet: (() -> Void)?
-
-    /// Published state for showing the settings sheet from the chat popover header.
-    @Published var showSettingsSheet = false
-
-    /// Published state for showing the rules sheet from the context bar.
-    @Published var showRulesSheetFromContextBar = false
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 8
@@ -1209,6 +1197,15 @@ final class AppController: ObservableObject {
     func completeOnboardingWizard() {
         hasCompletedOnboardingWizard = true
         UserDefaults.standard.set(true, forKey: "acOnboardingWizardCompleted")
+        UserDefaults.standard.set(true, forKey: "acOnboardingWizardEverCompleted")
+        refreshSystemState()
+    }
+
+    func resetOnboardingWizard() {
+        hasCompletedOnboardingWizard = false
+        UserDefaults.standard.set(false, forKey: "acOnboardingWizardCompleted")
+        UserDefaults.standard.set(false, forKey: "acOnboardingWizardEverCompleted")
+        showingOnboardingCompletion = false
         refreshSystemState()
     }
 
@@ -3068,6 +3065,14 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
             onboardingCompletionTask?.cancel()
             showingOnboardingCompletion = false
             onboardingDismissed = false
+
+            // If we were previously ready and now something is missing,
+            // proactively open the popover so the user sees the setup dialog.
+            if previousStatus == .ready {
+                DispatchQueue.main.async { [weak self] in
+                    self?.openMainPopover?()
+                }
+            }
         }
     }
 

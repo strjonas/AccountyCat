@@ -4,7 +4,7 @@
 //
 //  First-run onboarding wizard. Guides the user through mode selection (Offline /
 //  BYOK / Managed-waitlist), tier selection, permissions, and — for BYOK — API key
-//  entry. Replaces the inline OnboardingDialogView for brand-new users.
+//  entry. Redesigned to match the v2 panel aesthetic.
 //
 
 import AppKit
@@ -36,6 +36,37 @@ struct OnboardingWizardView: View {
     @State private var step: WizardStep = .welcome
     @State private var selectedMode: OnboardingMode = .offline
 
+    /// Whether the wizard was ever completed before (e.g. after a dev reset).
+    /// When true we skip already-configured steps and land on the first missing one.
+    private var hasBeenCompletedBefore: Bool {
+        UserDefaults.standard.bool(forKey: "acOnboardingWizardEverCompleted")
+    }
+
+    /// Inferred starting step based on current controller state.
+    private var inferredStep: WizardStep {
+        guard hasBeenCompletedBefore else { return .welcome }
+
+        let perms = LLMPolicyCatalog.permissionRequirements(for: controller.state.monitoringConfiguration)
+        if !controller.state.permissions.satisfies(perms) {
+            return .permissions
+        }
+        if controller.usingOnlineMonitoring && !controller.hasOnlineAPIKeyConfigured {
+            return .apiKey
+        }
+        if !controller.usingOnlineMonitoring && !controller.setupDiagnostics.isReady {
+            return .completion
+        }
+        return .welcome
+    }
+
+    /// Inferred mode based on the already-selected backend.
+    private var inferredMode: OnboardingMode {
+        switch controller.state.monitoringConfiguration.inferenceBackend {
+        case .openRouter: return .byok
+        default:          return .offline
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             stepDots
@@ -57,6 +88,10 @@ struct OnboardingWizardView: View {
             .animation(.acSpring, value: step)
         }
         .padding(20)
+        .onAppear {
+            selectedMode = inferredMode
+            step = inferredStep
+        }
     }
 
     // MARK: - Step indicator
@@ -90,10 +125,10 @@ struct OnboardingWizardView: View {
             VStack(alignment: .leading, spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.44))
+                        .fill(Color.acSurfaceElevated)
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.55), lineWidth: 0.5)
+                                .stroke(Color.acBubbleStroke, lineWidth: 0.5)
                         )
                         .frame(width: 58, height: 58)
                     CatView(
@@ -405,6 +440,14 @@ struct OnboardingWizardView: View {
                 }
             }
             .buttonStyle(ACPrimaryButton())
+
+            #if DEBUG
+            Button("[Dev] Reset onboarding") {
+                controller.resetOnboardingWizard()
+            }
+            .buttonStyle(ACSecondaryButton())
+            .padding(.top, 4)
+            #endif
         }
     }
 

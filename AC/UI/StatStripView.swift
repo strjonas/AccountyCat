@@ -80,7 +80,7 @@ struct StatStripView: View {
                     .padding(.leading, 2)
             }
 
-            Text(trendText)
+            Text("current streak")
                 .font(.ac(10))
                 .foregroundStyle(.secondary)
         }
@@ -117,8 +117,4 @@ struct StatStripView: View {
         return "\(pct)%"
     }
 
-    private var trendText: String {
-        // Placeholder — real trend needs historical data
-        "+2 vs last wk"
-    }
 }

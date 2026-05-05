@@ -19,6 +19,7 @@ final class WindowCoordinator {
 
     private(set) var companionPanel: PassivePanel?
     private var overlayWindow: NSWindow?
+    private var entranceWindow: NSWindow?
 
     var isOverlayVisible: Bool { overlayWindow?.isVisible == true }
     private var nudgeBorderWindow: NSWindow?
@@ -86,6 +87,57 @@ final class WindowCoordinator {
 
     func hideCompanion() {
         companionPanel?.orderOut(nil)
+    }
+
+    // MARK: - Entrance animation
+
+    func playEntranceAnimation(completion: (() -> Void)? = nil) {
+        guard let panel = companionPanel else {
+            completion?()
+            return
+        }
+
+        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: panel.frame)
+        let size: CGFloat = 300
+        let frame = NSRect(
+            x: orbCenter.x - size / 2,
+            y: orbCenter.y - size / 2,
+            width: size,
+            height: size
+        )
+
+        let accent = controller.state.character.accentColor
+
+        let hosting = NSHostingController(
+            rootView: CompanionEntranceView(accent: accent, onComplete: { [weak self] in
+                self?.entranceWindow?.orderOut(nil)
+                self?.entranceWindow = nil
+                completion?()
+            })
+        )
+
+        let window = NSWindow(
+            contentRect: frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.level = .statusBar
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.contentViewController = hosting
+
+        let hostingView = hosting.view
+        hostingView.wantsLayer = true
+        hostingView.layer?.isOpaque = false
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        entranceWindow?.orderOut(nil)
+        entranceWindow = window
+        window.orderFrontRegardless()
     }
 
     // MARK: - Native drag monitor

@@ -2,9 +2,8 @@
 //  ProfileQuickPopoverView.swift
 //  AC
 //
-//  Dedicated profile control surface used from the menu bar status item and
-//  the in-popover profile chip. Supports explicit timer selection before a
-//  switch, richer extension controls, and a direct path to the full app.
+//  Quick profile control surface — opened from the menu bar status item.
+//  Redesigned to match the v2 panel aesthetic.
 //
 
 import Combine
@@ -46,7 +45,6 @@ struct ProfileQuickPopoverView: View {
 
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
-    @Environment(\.acAccentSoft) private var accentSoft
     @Environment(\.colorScheme) private var colorScheme
 
     let showOpenAppButton: Bool
@@ -98,44 +96,66 @@ struct ProfileQuickPopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             headerCard
-            actionRow
             if !active.isDefault {
                 extendSection
             }
             savedProfilesSection
             bottomActions
             if showOpenAppButton {
-                Divider()
+                Divider().opacity(0.3)
                 footerRow
             }
         }
         .padding(16)
         .frame(width: 336)
-        .background(
-            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
+        .background(popoverBackground)
         .onReceive(Self.tickPublisher) { date in
             nowTick = date
         }
     }
+
+    // MARK: - Background
+
+    private var popoverBackground: some View {
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+            LinearGradient(
+                colors: [
+                    accent.opacity(colorScheme == .dark ? 0.06 : 0.10),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(colorScheme == .dark ? 0.06 : 0.20),
+                    Color.clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    // MARK: - Header
 
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: active.isDefault ? "circle.hexagongrid" : "scope")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(accent)
+                    .foregroundStyle(active.isDefault ? accent : active.swiftUIColor)
                 Text(active.name)
                     .font(.ac(15, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
                 Spacer(minLength: 0)
                 if !active.isDefault {
-                    Button("End") {
+                    Button("end") {
                         controller.endActiveProfile(announce: true)
                         controller.markAllChatMessagesRead()
                     }
-                    .buttonStyle(ACDangerButton())
+                    .buttonStyle(QuickPopoverDangerButton())
                 }
             }
 
@@ -157,17 +177,25 @@ struct ProfileQuickPopoverView: View {
                     .lineLimit(2)
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                .fill(active.isDefault ? Color.acSurface.opacity(0.92) : active.swiftUIColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                        .stroke(active.isDefault ? Color.acHairline : active.swiftUIColor.opacity(0.20), lineWidth: 1)
+                )
+        )
     }
 
-    private var actionRow: some View {
-        EmptyView()
-    }
+    // MARK: - Extend
 
     private var extendSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Current session")
-                .font(.ac(12, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
+            Text("CURRENT SESSION")
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .tracking(0.08)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.42))
 
             HStack(spacing: 8) {
                 Button("Add \(selectedDurationLabel)") {
@@ -178,7 +206,7 @@ struct ProfileQuickPopoverView: View {
                     )
                     controller.markAllChatMessagesRead()
                 }
-                .buttonStyle(ACPrimaryButton())
+                .buttonStyle(QuickPopoverPrimaryButton())
                 .disabled(selectedMinutes == nil)
 
                 if let expiresAt = active.expiresAt {
@@ -190,11 +218,14 @@ struct ProfileQuickPopoverView: View {
         }
     }
 
+    // MARK: - Saved profiles
+
     private var savedProfilesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Saved profiles")
-                .font(.ac(12, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary)
+            Text("SAVED PROFILES")
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .tracking(0.08)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.42))
 
             if switchableProfiles.isEmpty {
                 Text(
@@ -237,17 +268,17 @@ struct ProfileQuickPopoverView: View {
                         )
                         controller.markAllChatMessagesRead()
                     }
-                    .buttonStyle(ACSecondaryButton())
+                    .buttonStyle(QuickPopoverQuietButton())
                 } else if startingProfileID == profile.id {
                     Button("Cancel") {
                         startingProfileID = nil
                     }
-                    .buttonStyle(ACSecondaryButton())
+                    .buttonStyle(QuickPopoverQuietButton())
                 } else {
                     Button("Start") {
                         startingProfileID = profile.id
                     }
-                    .buttonStyle(ACPrimaryButton())
+                    .buttonStyle(QuickPopoverPrimaryButton())
                 }
             }
             .padding(12)
@@ -327,7 +358,7 @@ struct ProfileQuickPopoverView: View {
                     startingProfileID = nil
                     controller.markAllChatMessagesRead()
                 }
-                .buttonStyle(ACPrimaryButton())
+                .buttonStyle(QuickPopoverPrimaryButton())
                 .disabled(selectedMinutes == nil)
             }
         }
@@ -336,12 +367,13 @@ struct ProfileQuickPopoverView: View {
     private var bottomActions: some View {
         HStack(spacing: 8) {
             Button {
-                controller.showRulesSheetFromContextBar = true
+                controller.openMainPopover?()
+                NotificationCenter.default.post(name: .acOpenSettings, object: nil)
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "checklist")
+                    Image(systemName: "gearshape")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Edit Profiles")
+                    Text("Settings")
                         .font(.ac(11, weight: .medium))
                 }
                 .foregroundStyle(accent.opacity(0.85))
@@ -364,14 +396,19 @@ struct ProfileQuickPopoverView: View {
             Button("Open AccountyCat") {
                 controller.openMainPopover?()
             }
-            .buttonStyle(ACSecondaryButton())
+            .buttonStyle(QuickPopoverQuietButton())
 
             Spacer(minLength: 0)
 
             if controller.hasUnreadChatMessages {
-                Text("Chat has a new note")
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 6, height: 6)
+                    Text("New note")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -403,5 +440,67 @@ struct ProfileQuickPopoverView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Button styles
+
+private struct QuickPopoverPrimaryButton: ButtonStyle {
+    @Environment(\.acAccent) private var accent
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(12, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(accent.opacity(configuration.isPressed ? 0.76 : 0.92))
+                    .overlay(Capsule(style: .continuous).stroke(Color.acBubbleStroke, lineWidth: 0.5))
+                    .shadow(color: accent.opacity(0.22), radius: 6, y: 2)
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+private struct QuickPopoverQuietButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(12, weight: .medium))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.85))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.acSurfaceElevated)
+                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+private struct QuickPopoverDangerButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(12, weight: .semibold))
+            .foregroundStyle(Color.acRedEnd.opacity(0.85))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.red.opacity(0.08))
+                    .overlay(Capsule(style: .continuous).stroke(Color.red.opacity(0.20), lineWidth: 1))
+            )
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.acSnap, value: configuration.isPressed)
+    }
+}
+
+private extension FocusProfile {
+    var swiftUIColor: Color {
+        Color(acHexString: color) ?? Color.acProfileEveryday
     }
 }
