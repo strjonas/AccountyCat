@@ -2,7 +2,7 @@
 //  NudgeView.swift
 //  AC
 //
-//  Refreshed nudge tooltip — 240pt wide, accent top border, mini cat avatar,
+//  Refreshed nudge tooltip — 240pt wide, subtle accent indicator, mini cat avatar,
 //  persona name, message, two action buttons. Auto-dismisses after 12s.
 //
 
@@ -12,6 +12,7 @@ struct SpeechBubble: View {
     let text: String
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
+    @Environment(\.acAccentLight) private var accentLight
     @Environment(\.colorScheme) private var colorScheme
 
     /// Counts down from 12; when it hits 0 the bubble auto-dismisses.
@@ -20,15 +21,14 @@ struct SpeechBubble: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Accent top border
-            Rectangle()
-                .fill(accent)
-                .frame(height: 2)
-
             // Body
             VStack(alignment: .leading, spacing: 10) {
-                // Header: mini cat + name
+                // Header: accent indicator + mini cat + name
                 HStack(spacing: 8) {
+                    Capsule()
+                        .fill(accent)
+                        .frame(width: 7, height: 7)
+
                     CatView(
                         character: controller.state.character,
                         skin: controller.state.selectedSkin,
@@ -46,6 +46,12 @@ struct SpeechBubble: View {
                 Text(text)
                     .font(.ac(13, weight: .medium))
                     .foregroundStyle(bubbleTextColor)
+                    .shadow(
+                        color: colorScheme == .dark
+                            ? .black.opacity(0.35)
+                            : .white.opacity(0.55),
+                        radius: 1, x: 0, y: 0.5
+                    )
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel("Nudge message")
@@ -63,8 +69,19 @@ struct SpeechBubble: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(accent.opacity(0.88))
+                                Capsule(style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [accentLight, accent.opacity(0.92)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .stroke(Color.white.opacity(0.28), lineWidth: 0.5)
+                                    )
+                                    .shadow(color: accent.opacity(0.20), radius: 5, y: 1.5)
                             )
                     }
                     .buttonStyle(.plain)
@@ -80,9 +97,9 @@ struct SpeechBubble: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                Capsule(style: .continuous)
                                     .fill(Color.acSurface)
-                                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
                             )
                     }
                     .buttonStyle(.plain)
@@ -156,22 +173,40 @@ struct SpeechBubble: View {
     private var bubbleBackground: some View {
         ZStack {
             if controller.state.useLiquidGlass {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(accent.opacity(colorScheme == .dark ? 0.35 : 0.25), lineWidth: 1)
+                // Opaque backing guarantees text contrast over any wallpaper/app
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(tailColor.opacity(colorScheme == .dark ? 0.45 : 0.55))
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.thinMaterial)
+
+                // Warm top-edge glow
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(colorScheme == .dark ? 0.22 : 0.18),
+                                accent.opacity(0.04),
+                                Color.clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
+
+                // Soft edge stroke
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(accent.opacity(colorScheme == .dark ? 0.25 : 0.18), lineWidth: 0.5)
             } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(tailColor.opacity(colorScheme == .dark ? 0.95 : 0.97))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(accent.opacity(colorScheme == .dark ? 0.35 : 0.25), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(accent.opacity(colorScheme == .dark ? 0.18 : 0.12), lineWidth: 0.5)
                     )
             }
         }
-        .shadow(color: accent.opacity(colorScheme == .dark ? 0.25 : 0.12), radius: 16, y: 4)
+        .shadow(color: accent.opacity(colorScheme == .dark ? 0.18 : 0.10), radius: 20, y: 6)
     }
 }
 

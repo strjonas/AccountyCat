@@ -618,6 +618,7 @@ struct ACState: Codable, Sendable {
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
     var isPaused = false
+    var autoQuietOnCalls = true
     var debugMode = ACBuild.isDebug
     var minimumLogLevel = LogLevel.defaultForBuild
     var goalsText = Self.defaultGoalsText
@@ -697,6 +698,7 @@ struct ACState: Codable, Sendable {
         case permissions
         case setupStatus
         case isPaused
+        case autoQuietOnCalls
         case debugMode
         case minimumLogLevel
         case goalsText
@@ -755,6 +757,7 @@ struct ACState: Codable, Sendable {
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
+        autoQuietOnCalls = try container.decodeIfPresent(Bool.self, forKey: .autoQuietOnCalls) ?? true
         debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? ACBuild.isDebug
         minimumLogLevel = try container.decodeIfPresent(LogLevel.self, forKey: .minimumLogLevel) ?? LogLevel.defaultForBuild
         goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
@@ -844,6 +847,7 @@ struct ACState: Codable, Sendable {
         try container.encode(permissions, forKey: .permissions)
         try container.encode(setupStatus, forKey: .setupStatus)
         try container.encode(isPaused, forKey: .isPaused)
+        try container.encode(autoQuietOnCalls, forKey: .autoQuietOnCalls)
         try container.encode(debugMode, forKey: .debugMode)
         try container.encode(minimumLogLevel, forKey: .minimumLogLevel)
         try container.encode(goalsText, forKey: .goalsText)

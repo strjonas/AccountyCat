@@ -48,6 +48,7 @@ final class BrainService: NSObject {
     private var lastPersistAt = Date.distantPast
     private var activeEpisode: EpisodeRecord?
     private var pendingReactionsByEvaluationID: [String: PendingReaction] = [:]
+    private var wasInCallLastTick = false
 
     private struct PendingReaction: Sendable {
         var episodeID: String
@@ -515,6 +516,22 @@ final class BrainService: NSObject {
         maybePersist(base: baseState, updated: state, at: now)
 
         await resolvePendingReactionIfNeeded(now: now, context: context)
+
+        // Auto-quiet on calls: skip evaluations and hide UI while in a call.
+        let inCall = state.autoQuietOnCalls && CallDetectionService.isInCall()
+        if inCall {
+            if !wasInCallLastTick {
+                executiveArm.dismissOverlay()
+                executiveArm.hideCompanionPanel()
+            }
+            moodSink?(.watching)
+            statusSink?("In a call — AC is quiet.")
+            wasInCallLastTick = true
+            return
+        } else if wasInCallLastTick {
+            executiveArm.showCompanionPanel()
+            wasInCallLastTick = false
+        }
 
         let heuristics = MonitoringHeuristics.telemetrySnapshot(for: context)
 

@@ -125,6 +125,7 @@ struct OverlayView: View {
                         Text(presentation.headline)
                             .font(.ac(18, weight: .semibold))
                             .foregroundStyle(Color.acTextPrimary)
+                            .shadow(color: colorScheme == .dark ? .black.opacity(0.45) : .white.opacity(0.55), radius: 1, x: 0, y: 0.5)
                     }
 
                     Text(character.displayName.lowercased())
@@ -136,6 +137,7 @@ struct OverlayView: View {
                         .foregroundStyle(Color.acTextPrimary.opacity(0.90))
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
+                        .shadow(color: colorScheme == .dark ? .black.opacity(0.45) : .white.opacity(0.55), radius: 1, x: 0, y: 0.5)
 
                     if let prompt = presentation.prompt {
                         Text(prompt)
@@ -143,6 +145,7 @@ struct OverlayView: View {
                             .foregroundStyle(Color.acTextPrimary.opacity(0.60))
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
+                            .shadow(color: colorScheme == .dark ? .black.opacity(0.45) : .white.opacity(0.55), radius: 1, x: 0, y: 0.5)
                     }
                 }
 
@@ -160,12 +163,15 @@ struct OverlayView: View {
                     } label: {
                         Text("snooze 5 min")
                             .font(.ac(12, weight: .medium))
-                            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.82))
                             .padding(.horizontal, 14)
                             .padding(.vertical, 9)
                             .background(
                                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(Color.acSurface)
+                                    .fill(colorScheme == .dark
+                                        ? Color(white: 1.0, opacity: 0.10)
+                                        : Color(white: 0.0, opacity: 0.06)
+                                    )
                             )
                     }
                     .buttonStyle(.plain)
@@ -196,19 +202,18 @@ struct OverlayView: View {
 
     private var dialogBackground: some View {
         ZStack {
+            // Solid backing guarantees contrast over any wallpaper colour
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(dialogSolidBacking)
+
             if controller.state.useLiquidGlass {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
-                    )
-                    .shadow(color: accent.opacity(0.15), radius: 36, y: 14)
+                    .fill(.thinMaterial)
 
                 // Specular highlights
                 VStack {
                     LinearGradient(
-                        colors: [Color.white.opacity(0.35), Color.clear],
+                        colors: [Color.white.opacity(0.30), Color.clear],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -218,14 +223,20 @@ struct OverlayView: View {
                 }
             } else {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.acSurface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
-                    )
-                    .shadow(color: accent.opacity(0.15), radius: 36, y: 14)
+                    .fill(Color.acSurface.opacity(colorScheme == .dark ? 0.55 : 0.45))
             }
+
+            // Hairline rim light
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.25), lineWidth: 0.5)
         }
+        .shadow(color: accent.opacity(0.15), radius: 36, y: 14)
+    }
+
+    private var dialogSolidBacking: Color {
+        colorScheme == .dark
+            ? Color(white: 0.08, opacity: 0.82)
+            : Color(white: 0.96, opacity: 0.82)
     }
 
     // MARK: - Appeal section
@@ -234,7 +245,7 @@ struct OverlayView: View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.92))
                     .overlay(
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .stroke(

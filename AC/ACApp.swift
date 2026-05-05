@@ -22,12 +22,13 @@ struct ACApp: App {
 
 // MARK: - App Delegate
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let controller: AppController
     private var statusItem: NSStatusItem?
     private var windowCoordinator: WindowCoordinator?
     private var popover: NSPopover?
     private var profilePopover: NSPopover?
+    private var orbPopoverAnchorWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
     private var chipRefreshTimer: Timer?
     private var keyMonitor: Any?
@@ -65,7 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.windowCoordinator?.showOverlay(presentation: presentation)
             },
             hideOverlay: { [weak self] in     self?.windowCoordinator?.hideOverlay() },
-            minimizeApp: { [weak self] bundleID in self?.minimizeApp(bundleIdentifier: bundleID) }
+            minimizeApp: { [weak self] bundleID in self?.minimizeApp(bundleIdentifier: bundleID) },
+            hideCompanion: { [weak self] in self?.windowCoordinator?.hideCompanion() },
+            showCompanion: { [weak self] in self?.windowCoordinator?.showCompanion() }
         )
         controller.attachExecutiveArm(arm)
         wc.showCompanion()
@@ -416,11 +419,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         profilePopover?.performClose(nil)
 
         if let wc = windowCoordinator,
-           let panel = wc.companionPanel,
-           let contentView = panel.contentView {
-            let anchorRect = wc.safeOrbAnchorRect(for: ACD.popoverWidth, in: contentView)
-            let edge: NSRectEdge = wc.orbIsInBottomHalf ? .maxY : .minY
-            p.show(relativeTo: anchorRect, of: contentView, preferredEdge: edge)
+           let placement = wc.screenPopoverPlacement(
+                for: NSSize(width: ACD.popoverWidth, height: p.contentSize.height)
+           ) {
+            let anchorWindow = orbPopoverAnchorWindow ?? makeOrbPopoverAnchorWindow()
+            orbPopoverAnchorWindow = anchorWindow
+            anchorWindow.setFrame(placement.adjustedAnchorRect, display: false)
+            anchorWindow.orderFrontRegardless()
+
+            if let anchorView = anchorWindow.contentView {
+                p.show(
+                    relativeTo: anchorView.bounds,
+                    of: anchorView,
+                    preferredEdge: placement.preferredEdge
+                )
+            }
         } else if let button = statusItem?.button {
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
@@ -433,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.contentSize = NSSize(width: ACD.popoverWidth, height: 460)
         p.behavior = .transient
         p.animates = true
+        p.delegate = self
         p.contentViewController = NSHostingController(
             rootView: ChatPanelView()
                 .environmentObject(controller)
@@ -445,6 +459,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             p.contentSize = size
         }
         return p
+    }
+
+    private func makeOrbPopoverAnchorWindow() -> NSWindow {
+        let anchorView = NSView(frame: NSRect(x: 0, y: 0, width: ACD.orbDiameter, height: ACD.orbDiameter))
+        let window = NSWindow(
+            contentRect: anchorView.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.level = .statusBar
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.contentView = anchorView
+        return window
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        orbPopoverAnchorWindow?.orderOut(nil)
     }
 
     // MARK: - Quick profile popover

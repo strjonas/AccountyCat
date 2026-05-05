@@ -62,10 +62,16 @@ struct ChatPanelView: View {
             if showSettings {
                 SettingsView(embeddedInPanel: true)
                     .environmentObject(controller)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(x: 24)),
+                        removal: .opacity.combined(with: .offset(x: -24))
+                    ))
             } else {
                 chatContent
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(x: -24)),
+                        removal: .opacity.combined(with: .offset(x: 24))
+                    ))
             }
 
             Divider().opacity(0.5)

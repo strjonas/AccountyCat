@@ -26,12 +26,8 @@ struct CompanionView: View {
     @AppStorage("acOrbTooltipShown") private var tooltipShown = false
     @State private var showTooltip = false
 
-    /// Orb diameter scaled to the current screen size so it feels proportional
-    /// on everything from a 14" MacBook to a large external display.
     private var orbDiameter: CGFloat {
-        let h = NSScreen.main?.frame.height ?? 900
-        // ~7 % of screen height, clamped to a comfortable range
-        return min(max((h * 0.070).rounded(), 58), 84)
+        ACD.orbDiameter
     }
 
     /// Give nudges room to breathe while still capping width on very large displays.

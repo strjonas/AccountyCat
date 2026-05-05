@@ -227,52 +227,103 @@ private struct WinCard: View {
 }
 
 private struct NudgeCard: View {
+    @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
+    @Environment(\.acAccentLight) private var accentLight
+    @Environment(\.colorScheme) private var colorScheme
     let message: ChatMessage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                Circle()
-                    .fill(Color.acNudgeStroke)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 4)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("drift detected")
-                        .font(.ac(11.5, weight: .semibold))
-                        .foregroundStyle(Color.acNudgeText)
-                    Text(message.text)
-                        .font(.ac(11))
-                        .foregroundStyle(Color.acNudgeText.opacity(0.80))
-                        .lineLimit(3)
+        HStack(alignment: .top, spacing: 0) {
+            // Left accent bar
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(accent)
+                .frame(width: 3)
+                .padding(.vertical, 12)
+                .padding(.leading, 12)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("drift detected")
+                            .font(.ac(11.5, weight: .semibold))
+                            .foregroundStyle(accent)
+                        Text(message.text)
+                            .font(.ac(11))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.80))
+                            .lineLimit(3)
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 6) {
+                    Text("back to work")
+                        .font(.ac(11, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [accentLight, accent.opacity(0.92)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(Color.white.opacity(0.28), lineWidth: 0.5)
+                                )
+                        )
+                    Text("it's research")
+                        .font(.ac(11, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.acSurface)
+                                .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                        )
                 }
             }
-
-            HStack(spacing: 6) {
-                Text("back to work")
-                    .font(.ac(11, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule(style: .continuous).fill(Color.acNudgeText.opacity(0.86)))
-                Text("it's research")
-                    .font(.ac(11, weight: .medium))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule(style: .continuous).fill(Color.acSurface))
-            }
-            .padding(.leading, 18)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color.acNudgeSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(Color.acNudgeStroke, lineWidth: 0.5)
-                )
-        )
+        .background(nudgeCardBackground)
+    }
+
+    private var nudgeCardBackground: some View {
+        ZStack {
+            if controller.state.useLiquidGlass {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(colorScheme == .dark ? 0.10 : 0.08),
+                                accent.opacity(0.02),
+                                Color.clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(accent.opacity(colorScheme == .dark ? 0.18 : 0.12), lineWidth: 0.5)
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.acNudgeSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.acNudgeStroke, lineWidth: 0.5)
+                    )
+            }
+        }
     }
 }
 

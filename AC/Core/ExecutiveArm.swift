@@ -14,17 +14,23 @@ final class ExecutiveArm {
     private let showOverlay: (OverlayPresentation) -> Void
     private let hideOverlay: () -> Void
     private let minimizeApp: (String?) -> Void
+    private let hideCompanion: () -> Void
+    private let showCompanion: () -> Void
 
     init(
         showNudge: @escaping (String) -> Void,
         showOverlay: @escaping (OverlayPresentation) -> Void,
         hideOverlay: @escaping () -> Void,
-        minimizeApp: @escaping (String?) -> Void
+        minimizeApp: @escaping (String?) -> Void,
+        hideCompanion: @escaping () -> Void = {},
+        showCompanion: @escaping () -> Void = {}
     ) {
         self.showNudge = showNudge
         self.showOverlay = showOverlay
         self.hideOverlay = hideOverlay
         self.minimizeApp = minimizeApp
+        self.hideCompanion = hideCompanion
+        self.showCompanion = showCompanion
     }
 
     func perform(_ action: CompanionAction) {
@@ -44,6 +50,14 @@ final class ExecutiveArm {
 
     func hideApp(bundleIdentifier: String?) {
         minimizeApp(bundleIdentifier)
+    }
+
+    func hideCompanionPanel() {
+        hideCompanion()
+    }
+
+    func showCompanionPanel() {
+        showCompanion()
     }
 
     func openRescueApp(_ target: RescueAppTarget) {

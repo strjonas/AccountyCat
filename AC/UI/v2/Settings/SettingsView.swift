@@ -78,7 +78,7 @@ struct SettingsView: View {
     // MARK: - Tab bar
 
     private var tabBar: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 8) {
             ForEach(SettingsTab.allCases, id: \.self) { tab in
                 Button {
                     withAnimation(.acSnap) { selectedTab = tab }
@@ -86,9 +86,8 @@ struct SettingsView: View {
                     Text(tab.rawValue)
                         .font(.ac(11, weight: selectedTab == tab ? .semibold : .medium))
                         .foregroundStyle(selectedTab == tab ? accent : Color.acTextPrimary.opacity(0.55))
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
                         .background(
                             Capsule(style: .continuous)
@@ -101,6 +100,8 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)

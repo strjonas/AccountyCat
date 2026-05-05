@@ -14,7 +14,6 @@ struct NudgesTab: View {
     // TODO: wire these to persisted settings when nudge/sound toggles are implemented
     @State private var firstNudgeOn = true
     @State private var escalationOverlayOn = true
-    @State private var autoQuietOnCalls = true
     @State private var nudgeChimeOn = true
     @State private var celebrationSoundOn = true
 
@@ -23,7 +22,14 @@ struct NudgesTab: View {
             sectionLabel("when AC intervenes")
             ToggleRow(label: "first nudge", hint: "inline chat message + tooltip near cat", isOn: $firstNudgeOn)
             ToggleRow(label: "escalation overlay", hint: "visual-novel screen if nudge is ignored ~3 min", isOn: $escalationOverlayOn)
-            ToggleRow(label: "auto-quiet on calls", hint: "zoom, facetime, meet, teams", isOn: $autoQuietOnCalls)
+            ToggleRow(
+                label: "auto-quiet on calls",
+                hint: "zoom, facetime, meet, teams",
+                isOn: Binding(
+                    get: { controller.state.autoQuietOnCalls },
+                    set: { controller.updateAutoQuietOnCalls($0) }
+                )
+            )
 
             Divider().opacity(0.3)
 

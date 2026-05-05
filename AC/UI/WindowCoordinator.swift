@@ -15,6 +15,7 @@ import SwiftUI
 @MainActor
 final class WindowCoordinator {
     private let controller: AppController
+    private let nudgeScreenInset: CGFloat = 12
 
     private(set) var companionPanel: PassivePanel?
     private var overlayWindow: NSWindow?
@@ -61,28 +62,30 @@ final class WindowCoordinator {
     func showCompanion() {
         let panel = companionPanel ?? makeCompanionPanel()
         companionPanel = panel
-        panel.setFrame(savedCompanionFrame(), display: true)
+        let frame = savedCompanionFrame()
+        panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
+        recomputePeekingEdge(for: frame)
+    }
 
-        // Save position whenever the panel moves
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didMoveNotification,
-            object: panel,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.saveCompanionPosition() }
+    private func recomputePeekingEdge(for frame: NSRect) {
+        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: frame)
+        let screen = screenContaining(point: orbCenter) ?? activeScreen()
+        let vf = screen.visibleFrame
+        let threshold: CGFloat = 4
+        if abs(orbCenter.x - vf.minX) < threshold {
+            peekingEdge = .minX
+        } else if abs(orbCenter.x - vf.maxX) < threshold {
+            peekingEdge = .maxX
+        } else if abs(orbCenter.y - vf.minY) < threshold {
+            peekingEdge = .minY
+        } else {
+            peekingEdge = nil
         }
+    }
 
-        // Recover the orb if a monitor is disconnected while the app is running
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.recoverCompanionIfOffScreen() }
-        }
-
-        setupDragMonitor(for: panel)
+    func hideCompanion() {
+        companionPanel?.orderOut(nil)
     }
 
     // MARK: - Native drag monitor
@@ -121,47 +124,45 @@ final class WindowCoordinator {
                 }
 
                 if self.isDraggingPanel {
-                    let screen = self.screenContaining(panel) ?? self.activeScreen()
-                    let sf = screen.frame           // full display bounds
-                    let vf = screen.visibleFrame    // excludes dock & menu bar
-                    let pw  = panel.frame.width
+                    let pw = panel.frame.width
                     let halfOrb = ACD.orbDiameter / 2
-                    let orbBottomPad: CGFloat = 14
+                    let orbBottomPad = CompanionGeometry.orbBottomPadding
+                    let startOrbX = startFrame.origin.x + pw / 2
+                    let startOrbY = startFrame.origin.y + orbBottomPad + halfOrb
+                    let desiredOrbCenter = NSPoint(x: startOrbX + dx, y: startOrbY + dy)
+                    let screen = self.screenContaining(point: desiredOrbCenter) ?? self.activeScreen()
+                    let clampFrame = screen.visibleFrame
 
                     // ── Orb-centre-based clamping ────────────────────────────
                     // Track the ORB CENTRE rather than the panel origin so the
-                    // orb can reach every pixel of the screen (panel may go
-                    // partially off-screen on sides / bottom, which is fine since
-                    // the panel is fully transparent outside the orb).
+                    // orb can reach every pixel of the active display while the
+                    // transparent panel itself remains free to extend beyond it.
                     //
                     // Screen-coord note: AppKit Y increases upward.
                     //   orbCentreY = panelOriginY + orbBottomPad + halfOrb
 
-                    let startOrbX = startFrame.origin.x + pw / 2
-                    let startOrbY = startFrame.origin.y + orbBottomPad + halfOrb
-
                     // Orb can go anywhere horizontally; vertically it stops just
                     // below the menu bar and can reach the screen bottom.
-                    var orbX = (startOrbX + dx)
-                        .acClamped(to: sf.minX ... sf.maxX)
-                    var orbY = (startOrbY + dy)
-                        .acClamped(to: sf.minY ... vf.maxY - 8)
+                    var orbX = desiredOrbCenter.x
+                        .acClamped(to: clampFrame.minX ... clampFrame.maxX)
+                    var orbY = desiredOrbCenter.y
+                        .acClamped(to: clampFrame.minY ... max(clampFrame.minY, clampFrame.maxY - 8))
 
                     // ── Edge-peek snapping ────────────────────────────────────
                     // When the orb centre comes within peekThreshold of a side
                     // or bottom edge, snap flush so exactly half the orb peeks.
                     var newPeek: NSRectEdge? = nil
 
-                    if orbX - sf.minX < self.peekThreshold {
-                        orbX   = sf.minX                // orb centre AT left edge
+                    if orbX - clampFrame.minX < self.peekThreshold {
+                        orbX   = clampFrame.minX
                         newPeek = .minX
-                    } else if sf.maxX - orbX < self.peekThreshold {
-                        orbX   = sf.maxX                // orb centre AT right edge
+                    } else if clampFrame.maxX - orbX < self.peekThreshold {
+                        orbX   = clampFrame.maxX
                         newPeek = .maxX
                     }
 
-                    if orbY - sf.minY < self.peekThreshold {
-                        orbY   = sf.minY                // orb centre AT bottom edge
+                    if orbY - clampFrame.minY < self.peekThreshold {
+                        orbY   = clampFrame.minY
                         newPeek = .minY
                     }
 
@@ -197,7 +198,8 @@ final class WindowCoordinator {
 
     private func recoverCompanionIfOffScreen() {
         guard let panel = companionPanel else { return }
-        let isOnScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(panel.frame) }
+        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: panel.frame)
+        let isOnScreen = NSScreen.screens.contains { $0.visibleFrame.contains(orbCenter) }
         guard !isOnScreen else { return }
         let target = defaultCompanionFrame()
         NSAnimationContext.runAnimationGroup { ctx in
@@ -233,7 +235,7 @@ final class WindowCoordinator {
 
     private func expandPanelForNudge() {
         guard let panel = companionPanel, !nudgePanelExpanded else { return }
-        let screen = screenContaining(panel) ?? activeScreen()
+        let screen = screenContainingOrb(for: panel) ?? activeScreen()
         var f = panel.frame
         let bonus: CGFloat = 360
         let topCap = screen.visibleFrame.maxY - 8
@@ -278,7 +280,7 @@ final class WindowCoordinator {
     /// so the orb near the visual bottom has a high Y value in view-coords.
     func orbAnchorRect(in contentView: NSView) -> NSRect {
         let orbD = ACD.orbDiameter
-        let bottomPad: CGFloat = 14
+        let bottomPad = CompanionGeometry.orbBottomPadding
         let viewH = contentView.bounds.height
         // Flipped-coord Y: measure from the top of the view
         let orbCentreY = viewH - bottomPad - orbD / 2
@@ -294,10 +296,27 @@ final class WindowCoordinator {
     /// Uses the actual orb position (not panel midY) for accuracy.
     var orbIsInBottomHalf: Bool {
         guard let panel = companionPanel else { return true }
-        let screen = screenContaining(panel) ?? activeScreen()
-        // Orb centre in screen coords (AppKit, Y up)
-        let orbCentreY = panel.frame.minY + 14 + ACD.orbDiameter / 2
+        let screen = screenContainingOrb(for: panel) ?? activeScreen()
+        let orbCentreY = CompanionGeometry.orbCenter(forPanelFrame: panel.frame).y
         return orbCentreY < screen.frame.midY
+    }
+
+    func screenPopoverPlacement(for popoverSize: NSSize) -> CompanionPopoverPlacement? {
+        guard let panel = companionPanel else { return nil }
+        let screen = screenContainingOrb(for: panel) ?? activeScreen()
+        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: panel.frame)
+        let anchorRect = NSRect(
+            x: orbCenter.x - ACD.orbDiameter / 2,
+            y: orbCenter.y - ACD.orbDiameter / 2,
+            width: ACD.orbDiameter,
+            height: ACD.orbDiameter
+        )
+
+        return CompanionGeometry.popoverPlacement(
+            for: anchorRect,
+            in: screen.visibleFrame,
+            popoverSize: popoverSize
+        )
     }
 
     // MARK: - Factories
@@ -329,6 +348,26 @@ final class WindowCoordinator {
         hosting.view.wantsLayer = true
         hosting.view.layer?.isOpaque = false
         hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
+
+        // Save position whenever the panel moves
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.saveCompanionPosition() }
+        }
+
+        // Recover the orb if a monitor is disconnected while the app is running
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.recoverCompanionIfOffScreen() }
+        }
+
+        setupDragMonitor(for: panel)
         return panel
     }
 
@@ -382,7 +421,14 @@ final class WindowCoordinator {
         let x = defaults.double(forKey: posXKey)
         let y = defaults.double(forKey: posYKey)
         let frame = NSRect(x: x, y: y, width: ACD.panelWidth, height: ACD.panelHeight)
-        let isOnScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(frame) }
+        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: frame)
+        let isOnScreen = NSScreen.screens.contains { screen in
+            let vf = screen.visibleFrame
+            // Allow a 4-point tolerance so edge-peeking orbs (whose centre sits
+            // exactly on the visible-frame boundary) are not treated as off-screen.
+            return orbCenter.x >= vf.minX - 4 && orbCenter.x <= vf.maxX + 4
+                && orbCenter.y >= vf.minY - 4 && orbCenter.y <= vf.maxY + 4
+        }
         return isOnScreen ? frame : defaultCompanionFrame()
     }
 
@@ -396,7 +442,7 @@ final class WindowCoordinator {
     // MARK: - Nudge border
 
     private func showNudgeBorder() {
-        let screen = activeScreen()
+        let screen = currentOrbScreen() ?? activeScreen()
         let window = nudgeBorderWindow ?? makeNudgeBorderWindow(screen: screen)
         nudgeBorderWindow = window
         window.setFrame(screen.frame, display: false)
@@ -457,51 +503,19 @@ final class WindowCoordinator {
     private func adjustCompanionForVisibleNudgeIfNeeded() {
         guard let panel = companionPanel else { return }
 
-        let screen = screenContaining(panel) ?? activeScreen()
+        let screen = screenContainingOrb(for: panel) ?? activeScreen()
         let visible = screen.visibleFrame
-        let frame = panel.frame
-        let inset: CGFloat = 8
-        let orbCentreX = frame.midX
-        let leftDistance = orbCentreX - screen.frame.minX
-        let rightDistance = screen.frame.maxX - orbCentreX
-        let nearestSideDistance = min(leftDistance, rightDistance)
-        let nearSideThreshold = peekThreshold + 26
-        let isPartiallyOffscreen =
-            frame.minX < screen.frame.minX + inset
-            || frame.maxX > screen.frame.maxX - inset
-        let sidePeek = peekingEdge == .minX || peekingEdge == .maxX
-        let topOverflow = frame.maxY > visible.maxY - inset
-        let bottomOverflow = frame.minY < screen.frame.minY + inset
-        let needsVerticalAdjust = topOverflow || bottomOverflow
-
-        guard sidePeek
-            || isPartiallyOffscreen
-            || nearestSideDistance < nearSideThreshold
-            || needsVerticalAdjust else {
-            return
-        }
-
-        var target = panel.frame
-        let moveTowardLeft = leftDistance <= rightDistance
-
-        if moveTowardLeft {
-            target.origin.x = screen.frame.minX + inset
-        } else {
-            target.origin.x = screen.frame.maxX - target.width - inset
-        }
-
-        // Keep full nudge panel visible vertically. This covers cases where
-        // AC is near the menu bar and the bubble would otherwise be clipped.
-        if target.maxY > visible.maxY - inset {
-            target.origin.y = visible.maxY - target.height - inset
-        }
-        if target.minY < screen.frame.minY + inset {
-            target.origin.y = screen.frame.minY + inset
-        }
+        let target = CompanionGeometry.clampedPanelFrame(
+            panel.frame,
+            within: visible,
+            margin: nudgeScreenInset
+        )
 
         let movedX = abs(target.origin.x - panel.frame.origin.x)
         let movedY = abs(target.origin.y - panel.frame.origin.y)
-        guard movedX > 0.5 || movedY > 0.5 else { return }
+        guard movedX > 0.5 || movedY > 0.5 else {
+            return
+        }
 
         nudgeRestoreFrame = panel.frame
         nudgeRestorePeekingEdge = peekingEdge
@@ -554,32 +568,6 @@ final class WindowCoordinator {
 
     // MARK: - Screen edge safety
 
-    /// Returns an anchor rect (in `contentView` coordinates) that is shifted
-    /// horizontally so a popover of the given width stays fully on-screen.
-    func safeOrbAnchorRect(for popoverWidth: CGFloat, in contentView: NSView) -> NSRect {
-        var anchor = orbAnchorRect(in: contentView)
-        guard let panel = companionPanel else { return anchor }
-        let screen = screenContaining(panel) ?? activeScreen()
-        let vf = screen.visibleFrame
-        let margin: CGFloat = 8
-
-        // Convert anchor center to screen coordinates
-        let windowAnchor = contentView.convert(anchor, to: nil)
-        let screenAnchor = panel.convertToScreen(windowAnchor)
-        let anchorScreenX = screenAnchor.midX
-
-        let minAllowed = vf.minX + margin + popoverWidth / 2
-        let maxAllowed = vf.maxX - margin - popoverWidth / 2
-
-        if anchorScreenX < minAllowed {
-            anchor.origin.x += (minAllowed - anchorScreenX)
-        } else if anchorScreenX > maxAllowed {
-            anchor.origin.x -= (anchorScreenX - maxAllowed)
-        }
-
-        return anchor
-    }
-
     // MARK: - Helpers
 
     private func triggerHaptic() {
@@ -591,13 +579,51 @@ final class WindowCoordinator {
 
     private func activeScreen() -> NSScreen {
         let mouse = NSEvent.mouseLocation
-        return NSScreen.screens.first { $0.frame.contains(mouse) }
+        return screenContaining(point: mouse)
             ?? NSScreen.main
             ?? NSScreen.screens[0]
     }
 
-    private func screenContaining(_ panel: NSWindow) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.intersects(panel.frame) }
+    private func currentOrbScreen() -> NSScreen? {
+        guard let panel = companionPanel else { return nil }
+        return screenContainingOrb(for: panel)
+    }
+
+    private func screenContainingOrb(for panel: NSWindow) -> NSScreen? {
+        screenContaining(point: CompanionGeometry.orbCenter(forPanelFrame: panel.frame))
+    }
+
+    private func screenContaining(point: NSPoint) -> NSScreen? {
+        NSScreen.screens.first { $0.frame.contains(point) }
+            ?? nearestScreen(to: point)
+    }
+
+    private func nearestScreen(to point: NSPoint) -> NSScreen? {
+        NSScreen.screens.min { lhs, rhs in
+            distance(from: point, to: lhs.frame) < distance(from: point, to: rhs.frame)
+        }
+    }
+
+    private func distance(from point: NSPoint, to rect: NSRect) -> CGFloat {
+        let dx: CGFloat
+        if point.x < rect.minX {
+            dx = rect.minX - point.x
+        } else if point.x > rect.maxX {
+            dx = point.x - rect.maxX
+        } else {
+            dx = 0
+        }
+
+        let dy: CGFloat
+        if point.y < rect.minY {
+            dy = rect.minY - point.y
+        } else if point.y > rect.maxY {
+            dy = point.y - rect.maxY
+        } else {
+            dy = 0
+        }
+
+        return hypot(dx, dy)
     }
 }
 
@@ -615,7 +641,7 @@ final class OverlayWindow: NSWindow {
 
 // MARK: - CGFloat clamping helper
 
-private extension CGFloat {
+extension CGFloat {
     func acClamped(to range: ClosedRange<CGFloat>) -> CGFloat {
         Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }

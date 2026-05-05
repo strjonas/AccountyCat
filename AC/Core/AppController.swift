@@ -915,6 +915,13 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+    func updateAutoQuietOnCalls(_ enabled: Bool) {
+        guard state.autoQuietOnCalls != enabled else { return }
+        state.autoQuietOnCalls = enabled
+        logActivity("app", "Auto-quiet on calls: \(enabled)")
+        persistState()
+    }
+
     func updateAccent(followsCharacter: Bool, customHex: String? = nil) {
         let normalizedHex: String? = customHex.flatMap { raw in
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)

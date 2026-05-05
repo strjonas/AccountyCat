@@ -70,7 +70,7 @@ struct LookTab: View {
                             character: controller.state.character,
                             skin: skin,
                             expression: previewExpression,
-                            size: 64,
+                            size: 52,
                             animating: false
                         )
 
@@ -85,8 +85,8 @@ struct LookTab: View {
                                 .lineLimit(2)
                         }
                     }
-                    .padding(.vertical, 14)
-                    .padding(.horizontal, 10)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
@@ -153,7 +153,7 @@ struct LookTab: View {
                     )
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(accentSwatches, id: \.self) { hex in
                     let color = Color(acHexString: hex) ?? accent
                     let selected = !controller.state.accentFollowsCharacter
@@ -163,12 +163,12 @@ struct LookTab: View {
                     } label: {
                         Circle()
                             .fill(color)
-                            .frame(width: 24, height: 24)
+                            .frame(width: 20, height: 20)
                             .overlay(
                                 Circle()
                                     .stroke(selected ? Color.acTextPrimary.opacity(0.62) : Color.acBubbleStroke, lineWidth: selected ? 2 : 0.5)
                             )
-                            .shadow(color: selected ? color.opacity(0.26) : .clear, radius: 5, y: 2)
+                            .shadow(color: selected ? color.opacity(0.26) : .clear, radius: 4, y: 2)
                     }
                     .buttonStyle(.plain)
                     .help("Use \(hex)")
@@ -220,7 +220,7 @@ struct ACFlowLayout: Layout {
     var spacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = FlowResult(in: proposal.width ?? 0, subviews: subviews, spacing: spacing)
+        let result = FlowResult(in: proposal.replacingUnspecifiedDimensions().width, subviews: subviews, spacing: spacing)
         return result.size
     }
 
