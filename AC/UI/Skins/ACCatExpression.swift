@@ -40,7 +40,7 @@ extension CompanionMood {
         switch self {
         case .setup:         return .neutral
         case .idle:          return .sleep
-        case .watching:      return .neutral
+        case .watching:      return .alert
         case .nudging:       return .drift
         case .escalated:     return .concern
         case .escalatedHard: return .concern

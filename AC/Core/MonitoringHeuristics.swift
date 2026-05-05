@@ -22,7 +22,7 @@ enum BrowserTitleSignature {
 enum MonitoringHeuristics {
     nonisolated static let periodicVisualCheckInterval: TimeInterval = 120
 
-    nonisolated private static let clearlyProductiveBundleIdentifiers: Set<String> = [
+    nonisolated static let clearlyProductiveBundleIdentifiers: Set<String> = [
         "com.apple.dt.Xcode",
         "com.microsoft.VSCode",
         "com.jetbrains.intellij",

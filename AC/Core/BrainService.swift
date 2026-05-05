@@ -19,6 +19,8 @@ final class BrainService: NSObject {
     var modelUsageSink: ((String) -> Void)?
     /// Called when a hard-escalated app is auto-minimized so the UI can re-show the overlay.
     var hardEscalationReopenSink: ((String) -> Void)?
+    /// Called on every tick that reaches evaluation (or skip) so the UI can show "last check" ago.
+    var lastCheckSink: ((Date) -> Void)?
 
     /// Override for testing: substitute a real `SnapshotService.frontmostContext()` call.
     var contextProvider: (() -> FrontmostContext?)?
@@ -446,6 +448,7 @@ final class BrainService: NSObject {
             moodSink?(.idle)
             statusSink?("You look idle, so AC backed off.")
             lastObservedAt = now
+            lastCheckSink?(now)
             return
         }
 
@@ -587,9 +590,15 @@ final class BrainService: NSObject {
                 state: state,
                 detail: context.appName
             )
+            await ActivityLogService.shared.append(
+                level: .verbose,
+                category: "monitoring",
+                message: "skip: \(evaluationPlan.reason ?? "not_due") · \(context.appName)"
+            )
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")
             stateSink?(baseState, state)
+            lastCheckSink?(now)
             return
         }
 
@@ -598,6 +607,7 @@ final class BrainService: NSObject {
         defer {
             isEvaluating = false
             evaluationStartedAt = nil
+            lastCheckSink?(now)
         }
 
         if let visualCheckReason = evaluationPlan.visualCheckReason {
@@ -959,6 +969,12 @@ final class BrainService: NSObject {
             statusSink?("No action needed in \(context.appName).")
             stateSink?(baseState, state)
         }
+
+        await ActivityLogService.shared.append(
+            level: .verbose,
+            category: "monitoring",
+            message: "eval: \(decisionResult.decision.assessment.rawValue) · \(context.appName) · action: \(decisionResult.policy.action.telemetryLabel)"
+        )
 
         await appendActionExecutedEvent(
             sessionID: session?.id,

@@ -54,9 +54,11 @@ struct CatRendererBubble: CatRenderer {
 
         drawEyes(context, pt: pt, rect: rect, scale: s, palette: p, expression: expression)
 
-        if expression == .happy || expression == .celebrate || expression == .neutral {
-            context.fill(Path(ellipseIn: rect(17.4, 36.6, 5.2, 2.8)), with: .color(p.accent.opacity(0.68)))
-            context.fill(Path(ellipseIn: rect(41.4, 36.6, 5.2, 2.8)), with: .color(p.accent.opacity(0.68)))
+        if expression == .happy || expression == .celebrate || expression == .neutral || expression == .alert {
+            // Cheek blush — slightly larger and warmer than the previous pass
+            // so the cat reads as expressive even at small sizes.
+            context.fill(Path(ellipseIn: rect(16.8, 36.4, 6.0, 3.2)), with: .color(p.accent.opacity(0.78)))
+            context.fill(Path(ellipseIn: rect(41.2, 36.4, 6.0, 3.2)), with: .color(p.accent.opacity(0.78)))
         }
 
         var nose = Path()
@@ -155,10 +157,12 @@ private extension CatRendererBubble {
 
         let y: CGFloat = expression == .concern ? 31.5 : 33
         let offset: CGFloat = expression == .drift ? 1.4 : 0
-        context.fill(Path(ellipseIn: rect(23.4 + offset, y - 2.6, 5.2, 5.2)), with: .color(p.eye))
-        context.fill(Path(ellipseIn: rect(35.4 + offset, y - 2.6, 5.2, 5.2)), with: .color(p.eye))
-        context.fill(Path(ellipseIn: rect(26.2 + offset, y - 1.0, 1.8, 1.8)), with: .color(Color.white.opacity(0.88)))
-        context.fill(Path(ellipseIn: rect(38.2 + offset, y - 1.0, 1.8, 1.8)), with: .color(Color.white.opacity(0.88)))
+        // Slightly smaller, rounder eyes — looks like a friendly buddy, not surprised.
+        context.fill(Path(ellipseIn: rect(23.6 + offset, y - 2.4, 4.8, 4.8)), with: .color(p.eye))
+        context.fill(Path(ellipseIn: rect(35.6 + offset, y - 2.4, 4.8, 4.8)), with: .color(p.eye))
+        // Single soft catch-light per eye — adds life without making the cat look wide-eyed.
+        context.fill(Path(ellipseIn: rect(25.6 + offset, y - 1.6, 1.8, 1.8)), with: .color(Color.white.opacity(0.92)))
+        context.fill(Path(ellipseIn: rect(37.6 + offset, y - 1.6, 1.8, 1.8)), with: .color(Color.white.opacity(0.92)))
 
         if expression == .concern {
             var browL = Path()
@@ -182,8 +186,8 @@ private extension CatRendererBubble {
         var mouth = Path()
         switch expression {
         case .happy, .celebrate:
-            mouth.move(to: pt(27, 42))
-            mouth.addQuadCurve(to: pt(37, 42), control: pt(32, 47))
+            mouth.move(to: pt(26, 42))
+            mouth.addQuadCurve(to: pt(38, 42), control: pt(32, 47.5))
         case .concern:
             mouth.move(to: pt(29, 43))
             mouth.addQuadCurve(to: pt(35, 43), control: pt(32, 41.5))
@@ -191,8 +195,9 @@ private extension CatRendererBubble {
             mouth.move(to: pt(28.5, 43))
             mouth.addLine(to: pt(35.5, 43))
         default:
-            mouth.move(to: pt(30, 42))
-            mouth.addQuadCurve(to: pt(34, 42), control: pt(32, 44))
+            // Gentle "buddy" smile — wider and a touch curlier than the old hairline.
+            mouth.move(to: pt(28.5, 42))
+            mouth.addQuadCurve(to: pt(35.5, 42), control: pt(32, 45.2))
         }
         context.stroke(mouth, with: .color(p.nose), lineWidth: 1.55 * s)
     }

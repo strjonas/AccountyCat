@@ -42,6 +42,9 @@ actor ActivityLogService {
         _minimumLogLevel = level
     }
 
+    /// Maximum size before rotation kicks in (~512 KB).
+    private static let maxLogSizeBytes: UInt64 = 524_288
+
     func append(level: LogLevel = .standard, category: String, message: String) async {
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else { return }
@@ -67,11 +70,37 @@ actor ActivityLogService {
                 try Data(entry.utf8).write(to: logURL, options: .atomic)
             }
 
+            await enforceLogSizeLimit()
+
             await MainActor.run {
                 NotificationCenter.default.post(name: .acActivityLogDidChange, object: nil)
             }
         } catch {
             Self.log.error("failed to append activity log: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func enforceLogSizeLimit() async {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: logURL.path),
+              let size = attributes[.size] as? UInt64,
+              size > Self.maxLogSizeBytes else {
+            return
+        }
+
+        do {
+            let data = try Data(contentsOf: logURL)
+            let targetSize = Int(Self.maxLogSizeBytes / 2)
+            let trimmed = Data(data.suffix(targetSize))
+            // Drop until the first newline so we don't start mid-line.
+            if let firstNewline = trimmed.firstIndex(of: UInt8(ascii: "\n")) {
+                let cleanStart = trimmed.index(after: firstNewline)
+                let clean = trimmed[cleanStart...]
+                try clean.write(to: logURL, options: .atomic)
+            } else {
+                try trimmed.write(to: logURL, options: .atomic)
+            }
+        } catch {
+            Self.log.error("failed to rotate activity log: \(error.localizedDescription, privacy: .public)")
         }
     }
 

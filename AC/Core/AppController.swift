@@ -62,6 +62,8 @@ final class AppController: ObservableObject {
     /// enabled and permission is granted. Empty while the feature is off so the
     /// Settings UI has nothing to render before the user opts in.
     @Published var availableCalendars: [ACCalendarInfo] = []
+    /// Timestamp of the last BrainService tick that reached evaluation (or skip).
+    @Published var lastMonitoringCheckAt: Date?
 
     /// Closure set by AppDelegate to allow UI components to close the main NSPopover.
     var dismissPopover: (() -> Void)?
@@ -119,17 +121,19 @@ final class AppController: ObservableObject {
             policyMemoryService: policyMemoryService
         )
         let loadedState = storageService.loadState()
-        self.state = loadedState
+        var state = loadedState
+        Self.seedDefaultSafelistIfNeeded(into: &state)
+        self.state = state
         self.onlineAPIKeyDraft = OnlineModelCredentialStore.loadAPIKey() ?? ""
         self.setupDiagnostics = RuntimeSetupService.inspect(
-            runtimeOverride: loadedState.runtimePathOverride,
-            modelIdentifier: Self.effectiveSetupModelIdentifier(for: loadedState.monitoringConfiguration)
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
-        self.chatMessages = Self.makeChatMessages(from: loadedState.chatHistory)
+        self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
         Task { @MainActor [weak self] in
-            await ActivityLogService.shared.setMinimumLogLevel(loadedState.minimumLogLevel)
+            await ActivityLogService.shared.setMinimumLogLevel(state.minimumLogLevel)
             self?.activityLog = await ActivityLogService.shared.loadRecentContents()
         }
     }
@@ -168,17 +172,19 @@ final class AppController: ObservableObject {
             policyMemoryService: policyMemoryService
         )
         let loadedState = storageService.loadState()
-        self.state = loadedState
+        var state = loadedState
+        Self.seedDefaultSafelistIfNeeded(into: &state)
+        self.state = state
         self.onlineAPIKeyDraft = OnlineModelCredentialStore.loadAPIKey() ?? ""
         self.setupDiagnostics = RuntimeSetupService.inspect(
-            runtimeOverride: loadedState.runtimePathOverride,
-            modelIdentifier: Self.effectiveSetupModelIdentifier(for: loadedState.monitoringConfiguration)
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
-        self.chatMessages = Self.makeChatMessages(from: loadedState.chatHistory)
+        self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
         Task { @MainActor [weak self] in
-            await ActivityLogService.shared.setMinimumLogLevel(loadedState.minimumLogLevel)
+            await ActivityLogService.shared.setMinimumLogLevel(state.minimumLogLevel)
             self?.activityLog = await ActivityLogService.shared.loadRecentContents()
         }
     }
@@ -1378,23 +1384,6 @@ final class AppController: ObservableObject {
         logActivity("app", state.isPaused ? "Monitoring paused" : "Monitoring resumed")
         persistState()
         refreshSystemState()
-    }
-
-    func setDebugMode(_ enabled: Bool) {
-        state.debugMode = enabled
-        logActivity("app", enabled ? "Debug mode enabled" : "Debug mode disabled")
-        persistState()
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: enabled) else {
-                await self.telemetryStore.endCurrentSession(reason: "debug_mode_disabled")
-                self.telemetrySessionID = nil
-                return
-            }
-            if let session = try? await self.telemetryStore.ensureCurrentSession(reason: "debug_mode_enabled") {
-                self.telemetrySessionID = session.id
-            }
-        }
     }
 
     func sendTestNudge() {
@@ -2881,6 +2870,9 @@ final class AppController: ObservableObject {
             brainService.hardEscalationReopenSink = { [weak self] appName in
                 self?.showHardEscalationOnReopen(appName: appName)
             }
+            brainService.lastCheckSink = { [weak self] date in
+                self?.lastMonitoringCheckAt = date
+            }
 
             self.brainService = brainService
             brainService.start()
@@ -3126,6 +3118,38 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
             installingRuntime: installingRuntime,
             installingDependencies: installingDependencies
         )
+    }
+
+    /// Seeds the General profile with default allow-rules for apps that were previously
+    /// hardcoded as "clearly productive". Users can see and delete these in Settings.
+    private static func seedDefaultSafelistIfNeeded(into state: inout ACState) {
+        let defaultProfileID = PolicyRule.defaultProfileID
+        let alreadyHasDefaultSafelist = state.policyMemory.rules.contains {
+            $0.kind == .allow && $0.source == .system && $0.profileID == defaultProfileID
+        }
+        guard !alreadyHasDefaultSafelist else { return }
+
+        let defaults: [(bundleID: String, appName: String)] = [
+            ("com.apple.dt.Xcode", "Xcode"),
+            ("com.microsoft.VSCode", "Visual Studio Code"),
+            ("com.jetbrains.intellij", "IntelliJ IDEA"),
+            ("com.jetbrains.PyCharm", "PyCharm"),
+            ("com.jetbrains.WebStorm", "WebStorm"),
+            ("com.jetbrains.CLion", "CLion"),
+            ("com.jetbrains.rubymine", "RubyMine"),
+        ]
+
+        for entry in defaults {
+            let rule = PolicyRule(
+                kind: .allow,
+                summary: "Allow \(entry.appName) (default safelist)",
+                source: .system,
+                priority: 50,
+                scope: PolicyRuleScope(bundleIdentifier: entry.bundleID, appName: entry.appName),
+                profileID: defaultProfileID
+            )
+            state.policyMemory.rules.append(rule)
+        }
     }
 
     private func logActivity(_ category: String, _ message: String, level: LogLevel = .standard) {

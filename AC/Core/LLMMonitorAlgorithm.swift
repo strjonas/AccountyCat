@@ -125,12 +125,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             $0.kind == .disallow || $0.kind == .discourage || $0.kind == .limit
         }
 
-        if !hasRestrictiveRule,
-           ((heuristics.clearlyProductive && heuristics.browser == false) || hasExplicitAllowRule) {
+        if !hasRestrictiveRule, hasExplicitAllowRule {
             recordDeterministicFocusedSkip(in: &state, contextKey: state.llmPolicy.currentContextKey, now: now)
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
-                reason: hasExplicitAllowRule ? "explicit_allow_rule" : "obviously_productive",
+                reason: "explicit_allow_rule",
                 visualCheckReason: nil,
                 requiresScreenshot: requiresScreenshot,
                 promptMode: profile.descriptor.id,

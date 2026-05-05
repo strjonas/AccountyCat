@@ -46,9 +46,20 @@ struct PanelFooterView: View {
     }
 
     private var statusLine: String {
-        let state = controller.state.isPaused ? "paused" : "watching"
         let model = controller.activeModelShortName
-        // Placeholder for "38s ago" — we don't track last check timestamp in UI currently
-        return "\(state) · \(model)"
+        let assessment = controller.state.algorithmState.llmPolicy.distraction.lastAssessment?.rawValue ?? "observing"
+        let lastCheck = controller.lastMonitoringCheckAt.map { timeAgo($0) } ?? "—"
+        return "\(assessment) · \(model) · last check: \(lastCheck)"
+    }
+
+    private func timeAgo(_ date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "\(Int(interval))s"
+        } else if interval < 3600 {
+            return "\(Int(interval / 60))m"
+        } else {
+            return "\(Int(interval / 3600))h"
+        }
     }
 }

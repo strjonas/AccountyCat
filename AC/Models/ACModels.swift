@@ -89,7 +89,7 @@ enum LogLevel: String, CaseIterable, Codable {
 
 enum TelemetryPersistencePolicy {
     static func storesVerboseTelemetry(debugMode: Bool) -> Bool {
-        ACBuild.isDebug && debugMode
+        ACBuild.isDebug
     }
 }
 
@@ -194,6 +194,14 @@ enum CompanionAction: Equatable, Sendable {
     var isHardEscalation: Bool {
         if case .showOverlay(let p) = self { return p.isHardEscalation }
         return false
+    }
+
+    var telemetryLabel: String {
+        switch self {
+        case .none: return "none"
+        case .showNudge: return "nudge"
+        case .showOverlay(let p): return p.isHardEscalation ? "hard_escalation" : "escalation"
+        }
     }
 }
 

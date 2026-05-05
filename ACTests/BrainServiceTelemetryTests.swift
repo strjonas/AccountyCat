@@ -13,33 +13,10 @@ import Testing
 struct BrainServiceTelemetryTests {
 
     @Test
-    func userReactionDoesNotCreateTelemetrySessionWhenDebugModeIsOff() async throws {
+    func userReactionCreatesTelemetrySession() async throws {
         let store = makeStore()
         let brainService = makeBrainService(store: store)
         var state = ACState()
-        state.debugMode = false
-        brainService.stateProvider = { state }
-
-        brainService.recordUserReaction(
-            UserReactionRecord(
-                kind: .nudgeRatedPositive,
-                relatedAction: nil,
-                positive: true,
-                details: "helpful"
-            )
-        )
-
-        try await Task.sleep(for: .milliseconds(100))
-        let sessions = await store.listSessions()
-        #expect(sessions.isEmpty)
-    }
-
-    @Test
-    func userReactionCreatesTelemetrySessionWhenDebugModeIsOn() async throws {
-        let store = makeStore()
-        let brainService = makeBrainService(store: store)
-        var state = ACState()
-        state.debugMode = true
         brainService.stateProvider = { state }
 
         brainService.recordUserReaction(
@@ -113,7 +90,6 @@ struct BrainServiceTelemetryTests {
 
         var state = ACState()
         state.setupStatus = .ready
-        state.debugMode = true
         state.permissions = PermissionsSnapshot(screenRecording: .granted, accessibility: .granted)
         state.monitoringConfiguration.pipelineProfileID = "vision_split_default"
         state.runtimePathOverride = runtimeFixture.runtimePath

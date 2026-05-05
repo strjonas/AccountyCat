@@ -57,6 +57,24 @@ struct CompanionView: View {
                         .frame(width: orbDiameter, height: orbDiameter)
                 }
 
+                // Soft circular halo just under the cat — kills the square
+                // shadow artifact without adding a visible disc behind it.
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                orbShadow.opacity(0.18),
+                                orbShadow.opacity(0.06),
+                                Color.clear
+                            ],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: orbDiameter * 0.55
+                        )
+                    )
+                    .frame(width: orbDiameter * 1.25, height: orbDiameter * 1.25)
+                    .blur(radius: 6)
+
                 CatView(
                     character: controller.state.character,
                     skin: controller.state.selectedSkin,
@@ -67,7 +85,6 @@ struct CompanionView: View {
                 .saturation(controller.companionMood == .paused ? 0.15 : 1.0)
                 .brightness(controller.companionMood == .paused ? 0.12 : 0)
                 .rotationEffect(.degrees(headTilt))
-                .shadow(color: orbShadow.opacity(0.22), radius: 14, y: 7)
             }
             .frame(width: orbDiameter, height: orbDiameter)
             .overlay(alignment: .bottomTrailing) {
