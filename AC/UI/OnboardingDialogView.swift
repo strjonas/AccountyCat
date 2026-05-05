@@ -187,6 +187,18 @@ struct OnboardingDialogView: View {
 
             HStack(alignment: .top, spacing: 8) {
                 ModeCard(
+                    title: "Online",
+                    tagline: "★ Recommended — smarter, lighter",
+                    bullets: [
+                        "Better models understand your context more accurately",
+                        "No download — just an API key",
+                        "Low cost: typically under $1/month"
+                    ],
+                    isSelected: controller.usingOnlineMonitoring,
+                    accent: accent,
+                    onSelect: { controller.updateMonitoringInferenceBackend(.openRouter) }
+                )
+                ModeCard(
                     title: "Local",
                     tagline: "Fully private",
                     bullets: [
@@ -197,18 +209,6 @@ struct OnboardingDialogView: View {
                     isSelected: !controller.usingOnlineMonitoring,
                     accent: accent,
                     onSelect: { controller.updateMonitoringInferenceBackend(.local) }
-                )
-                ModeCard(
-                    title: "Online",
-                    tagline: "Smarter, lighter",
-                    bullets: [
-                        "Low-cost models like Gemma available",
-                        "No download — just an API key",
-                        "Open source: only sends what AI tools usually see"
-                    ],
-                    isSelected: controller.usingOnlineMonitoring,
-                    accent: accent,
-                    onSelect: { controller.updateMonitoringInferenceBackend(.openRouter) }
                 )
             }
 

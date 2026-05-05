@@ -34,7 +34,7 @@ struct OnboardingWizardView: View {
     @Environment(\.acAccent) private var accent
 
     @State private var step: WizardStep = .welcome
-    @State private var selectedMode: OnboardingMode = .offline
+    @State private var selectedMode: OnboardingMode = .byok
 
     /// Whether the wizard was ever completed before (e.g. after a dev reset).
     /// When true we skip already-configured steps and land on the first missing one.
@@ -61,7 +61,9 @@ struct OnboardingWizardView: View {
     }
 
     /// Inferred mode based on the already-selected backend.
+    /// For first-time users we default to BYOK (online) since it provides the best experience.
     private var inferredMode: OnboardingMode {
+        guard hasBeenCompletedBefore else { return .byok }
         switch controller.state.monitoringConfiguration.inferenceBackend {
         case .openRouter: return .byok
         default: return .offline
@@ -183,6 +185,17 @@ struct OnboardingWizardView: View {
 
             VStack(spacing: 8) {
                 WizardModeCard(
+                    icon: "key.fill",
+                    title: "Bring Your Own Key",
+                    badge: "Recommended",
+                    description:
+                        "Connect your OpenRouter account for the best experience. You pay only for what you use — typically under $1/month. Smarter models understand your context better, with fewer false nudges.",
+                    isSelected: selectedMode == .byok,
+                    isDisabled: false,
+                    onSelect: { selectedMode = .byok }
+                )
+
+                WizardModeCard(
                     icon: "lock.fill",
                     title: "Fully Private",
                     description:
@@ -190,16 +203,6 @@ struct OnboardingWizardView: View {
                     isSelected: selectedMode == .offline,
                     isDisabled: false,
                     onSelect: { selectedMode = .offline }
-                )
-
-                WizardModeCard(
-                    icon: "key.fill",
-                    title: "Bring Your Own Key",
-                    description:
-                        "Connect your OpenRouter account. You pay only for what you use — typically under $1/month. Zero Data Retention is enforced on all requests.",
-                    isSelected: selectedMode == .byok,
-                    isDisabled: false,
-                    onSelect: { selectedMode = .byok }
                 )
 
                 WizardModeCard(

@@ -177,19 +177,20 @@ struct AITab: View {
 
     private var modePills: some View {
         HStack(spacing: 8) {
-            managedPill
-            modePill(
-                id: .local,
-                label: "Local",
-                sub: "private · free",
-                disabled: false
-            )
             modePill(
                 id: .openRouter,
                 label: "OpenRouter",
                 sub: "bring your own key",
+                badge: "★ Recommended",
                 disabled: false
             )
+            modePill(
+                id: .local,
+                label: "Local",
+                sub: "private · offline",
+                disabled: false
+            )
+            managedPill
         }
     }
 
@@ -230,7 +231,7 @@ struct AITab: View {
         }
     }
 
-    private func modePill(id: MonitoringInferenceBackend, label: String, sub: String, disabled: Bool) -> some View {
+    private func modePill(id: MonitoringInferenceBackend, label: String, sub: String, badge: String? = nil, disabled: Bool) -> some View {
         let isSelected = config.inferenceBackend == id
         return Button {
             guard !disabled else { return }
@@ -240,6 +241,11 @@ struct AITab: View {
                 Text(label)
                     .font(.ac(12, weight: isSelected ? .semibold : .medium))
                     .foregroundStyle(disabled ? Color.secondary.opacity(0.5) : (isSelected ? accent : Color.acTextPrimary))
+                if let badge, !isSelected {
+                    Text(badge)
+                        .font(.ac(9, weight: .semibold))
+                        .foregroundStyle(accent)
+                }
                 Text(sub)
                     .font(.ac(10))
                     .foregroundStyle(disabled ? Color.secondary.opacity(0.35) : .secondary)
