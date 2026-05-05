@@ -2309,17 +2309,29 @@ final class AppController: ObservableObject {
                     self.scheduleActionTimer(action)
                     self.logActivity("schedule", "Scheduled \(schedule.kind) in \(schedule.delayMinutes)m")
                 }
+
+                // Fast-path common profile lifecycle commands so small local models don't
+                // silently fail when the downstream policy-memory LLM can't produce valid JSON.
+                if let profileAction = result.profileAction?.cleanedSingleLine, !profileAction.isEmpty {
+                    self.logActivity("chat", "Profile action: \(profileAction)")
+                    if let ops = ProfileActionParser.parse(
+                        action: profileAction,
+                        availableProfiles: self.state.profiles,
+                        activeProfileID: self.state.activeProfileID
+                    ), !ops.isEmpty {
+                        self.applyProfileOperations(ops)
+                        self.logActivity("chat", "Profile fast-path applied: \(ops.map(\.type.rawValue).joined(separator: ", "))")
+                    }
+                }
+
                 self.persistState()
                 self.sendingChatMessage = false
             }
             self.logActivity("chat", "Assistant: \(result.reply)")
 
-            // Only call policyMemory when there's meaningful work.
-            // Profile actions + memory additions go through the designed policy_memory pipeline
-            // (per V1 Phase 5: LLM converts chat intent to structured profile/rule operations).
-            // No longer fires after every chat message.
+            // Still run the policy-memory pipeline for rule side-effects and as a
+            // fallback when the fast-path parser couldn't handle the phrase.
             if let profileAction = result.profileAction?.cleanedSingleLine, !profileAction.isEmpty {
-                self.logActivity("chat", "Profile action: \(profileAction)")
                 self.schedulePolicyMemoryUpdate(
                     eventSummary: "Profile action: \(profileAction)",
                     context: SnapshotService.frontmostContext()
@@ -2738,8 +2750,8 @@ final class AppController: ObservableObject {
         let message: String
         if active.isDefault {
             message = trimmedReason.isEmpty
-                ? "Switched back to your General profile."
-                : "Switched back to General — \(trimmedReason)"
+                ? "Switched back to your Everyday profile."
+                : "Switched back to Everyday — \(trimmedReason)"
         } else {
             let untilText: String
             if let exp = active.expiresAt {
@@ -3120,7 +3132,7 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
         )
     }
 
-    /// Seeds the General profile with default allow-rules for apps that were previously
+    /// Seeds the Everyday profile with default allow-rules for apps that were previously
     /// hardcoded as "clearly productive". Users can see and delete these in Settings.
     private static func seedDefaultSafelistIfNeeded(into state: inout ACState) {
         let defaultProfileID = PolicyRule.defaultProfileID
@@ -3129,14 +3141,12 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
         }
         guard !alreadyHasDefaultSafelist else { return }
 
+        let appName = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "AccountyCat"
+        let appBundleID = Bundle.main.bundleIdentifier ?? "unknown"
         let defaults: [(bundleID: String, appName: String)] = [
-            ("com.apple.dt.Xcode", "Xcode"),
-            ("com.microsoft.VSCode", "Visual Studio Code"),
-            ("com.jetbrains.intellij", "IntelliJ IDEA"),
-            ("com.jetbrains.PyCharm", "PyCharm"),
-            ("com.jetbrains.WebStorm", "WebStorm"),
-            ("com.jetbrains.CLion", "CLion"),
-            ("com.jetbrains.rubymine", "RubyMine"),
+            ("com.apple.calculator", "Calculator"),
+            ("com.apple.finder", "Finder"),
+            (appBundleID, appName),
         ]
 
         for entry in defaults {
@@ -3213,7 +3223,7 @@ private enum AppControllerSetupSupport {
 }
 
 private enum AppControllerChatSupport {
-    private static let systemMessage = "Ask me what I am watching, why I nudged, or what to improve."
+    private static let systemMessage = "I'm AC, your calm focus companion. I watch what you're doing and gently nudge you when you drift. You can chat with me anytime — tell me your goals, start a focus session, or ask why I nudged."
     static let maxChatMessageLength = 1000
     static let maxChatContextCharacters = 4000
 

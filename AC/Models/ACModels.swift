@@ -990,7 +990,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
 
     /// Display name shown in the menu bar and Brain tab when the default is active.
     /// Picked over "Default" to feel less system-y while staying neutral.
-    static let defaultDisplayName = "General"
+    static let defaultDisplayName = "Everyday"
 
     let id: String
     var name: String

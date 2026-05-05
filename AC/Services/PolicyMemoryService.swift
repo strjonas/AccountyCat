@@ -120,7 +120,15 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             return nil
         }
 
-        return Self.parseUpdate(from: output.stdout + "\n" + output.stderr)
+        let combined = output.stdout + "\n" + output.stderr
+        let parsed = Self.parseUpdate(from: combined)
+        if parsed == nil {
+            await ActivityLogService.shared.append(
+                category: "policy-memory-parse-error",
+                message: "Could not parse policy-memory JSON from \(request.inferenceBackend == .openRouter ? "online" : "local") model. Raw output: \(combined.cleanedSingleLine.truncatedForPrompt(maxLength: 900))"
+            )
+        }
+        return parsed
     }
 
     nonisolated private static func makePayloadJSON(request: PolicyMemoryUpdateRequest) -> String {

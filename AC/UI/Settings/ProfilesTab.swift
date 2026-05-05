@@ -191,7 +191,7 @@ struct ProfilesTab: View {
             }
 
             if editingProfile.isDefault {
-                Text("everyday mode — AC watches passively. it will only intervene if you've asked it to help with something specific in chat. no safelist, no timer.")
+                Text("everyday baseline — no specific focus. AC watches passively and only nudges for things you've asked it to help with. you can still manage a safelist and blocklist below.")
                     .font(.acCaption)
                     .foregroundStyle(.secondary)
                     .italic()
@@ -216,21 +216,21 @@ struct ProfilesTab: View {
 
                 // Default duration
                 durationPicker
+            }
 
-                // Safelist
-                safelistSection
+            // Safelist
+            safelistSection
 
-                // Blocklist
-                blocklistSection
+            // Blocklist
+            blocklistSection
 
-                if draftsChanged {
-                    HStack {
-                        Spacer()
-                        Button("Save profile") { saveProfile() }
-                            .buttonStyle(ACPrimaryButton())
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+            if !editingProfile.isDefault && draftsChanged {
+                HStack {
+                    Spacer()
+                    Button("Save profile") { saveProfile() }
+                        .buttonStyle(ACPrimaryButton())
                 }
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
         }
         .animation(.acSnap, value: draftsChanged)

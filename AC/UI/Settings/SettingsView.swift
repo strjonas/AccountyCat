@@ -41,6 +41,12 @@ struct SettingsView: View {
         }
         .frame(width: embeddedInPanel ? nil : ACD.popoverWidth)
         .background(embeddedInPanel ? Color.clear : Color(nsColor: .windowBackgroundColor))
+        .onReceive(NotificationCenter.default.publisher(for: .acSelectSettingsTab)) { notification in
+            if let raw = notification.object as? String,
+               let tab = SettingsTab(rawValue: raw) {
+                withAnimation(.acSnap) { selectedTab = tab }
+            }
+        }
     }
 
     // MARK: - Header
@@ -110,7 +116,7 @@ struct SettingsView: View {
 
 // MARK: - Tabs
 
-private enum SettingsTab: String, CaseIterable {
+enum SettingsTab: String, CaseIterable {
     case look     = "look"
     case profiles = "profiles"
     case ai       = "ai"

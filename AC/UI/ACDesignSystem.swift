@@ -44,6 +44,8 @@ extension Notification.Name {
     static let acDismissSheet = Notification.Name("acDismissSheet")
     /// Posted when the user taps outside the chat input to unfocus it.
     static let acUnfocusChatInput = Notification.Name("acUnfocusChatInput")
+    /// Posted with a `SettingsTab.rawValue` as `object` to switch the settings tab.
+    static let acSelectSettingsTab = Notification.Name("acSelectSettingsTab")
 }
 
 // MARK: - Color Palette (legacy / shared)

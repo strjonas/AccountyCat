@@ -590,4 +590,84 @@ struct ProfileManagementTests {
         #expect(controller.state.chatHistory.contains(where: { $0.id == newerUserMessage.id }))
         #expect(controller.state.chatHistory.contains(where: { $0.id == expiryNote.id }))
     }
+
+    // MARK: - ProfileActionParser
+
+    @Test
+    func parserReturnsNilForNonProfileAction() throws {
+        let available = [FocusProfile(id: "coding", name: "Coding")]
+        let result = ProfileActionParser.parse(
+            action: "What's the weather like?",
+            availableProfiles: available,
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        #expect(result == nil)
+    }
+
+    @Test
+    func parserActivatesExistingProfileByName() throws {
+        let coding = FocusProfile(id: "coding-id", name: "Coding")
+        let available = [coding]
+        let result = ProfileActionParser.parse(
+            action: "activate Coding profile for 60 min",
+            availableProfiles: available,
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        let ops = try #require(result)
+        #expect(ops.count == 1)
+        #expect(ops[0].type == .activateProfile)
+        #expect(ops[0].profileID == "coding-id")
+        #expect(ops[0].profileDurationMinutes == 60)
+    }
+
+    @Test
+    func parserCreatesProfileWhenNoMatch() throws {
+        let result = ProfileActionParser.parse(
+            action: "create and activate Writing profile for 120 min",
+            availableProfiles: [],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        let ops = try #require(result)
+        #expect(ops.count == 1)
+        #expect(ops[0].type == .createAndActivateProfile)
+        #expect(ops[0].profileName == "Writing")
+        #expect(ops[0].profileDurationMinutes == 120)
+    }
+
+    @Test
+    func parserFallsBackToActivateOnSubstringMatch() throws {
+        let deepWork = FocusProfile(id: "dw", name: "Deep Work")
+        let result = ProfileActionParser.parse(
+            action: "activate Work profile",
+            availableProfiles: [deepWork],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        let ops = try #require(result)
+        #expect(ops[0].type == .activateProfile)
+        #expect(ops[0].profileID == "dw")
+    }
+
+    @Test
+    func parserEndsActiveProfile() throws {
+        let result = ProfileActionParser.parse(
+            action: "end active profile",
+            availableProfiles: [],
+            activeProfileID: "some-profile"
+        )
+        let ops = try #require(result)
+        #expect(ops.count == 1)
+        #expect(ops[0].type == .endActiveProfile)
+    }
+
+    @Test
+    func parserHandlesHourDuration() throws {
+        let coding = FocusProfile(id: "c", name: "Coding")
+        let result = ProfileActionParser.parse(
+            action: "start Coding profile for 2 hours",
+            availableProfiles: [coding],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        let ops = try #require(result)
+        #expect(ops[0].profileDurationMinutes == 120)
+    }
 }

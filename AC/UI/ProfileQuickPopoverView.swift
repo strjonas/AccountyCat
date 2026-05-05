@@ -85,7 +85,7 @@ struct ProfileQuickPopoverView: View {
     }
     private var currentStatusLine: String {
         if active.isDefault {
-            return "General mode is active."
+            return "Everyday mode is active."
         }
         if let expiresAt = active.expiresAt {
             return "Ends at \(timeLabel(expiresAt)) · \(remainingText(until: expiresAt)) left"

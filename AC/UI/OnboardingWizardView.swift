@@ -13,12 +13,12 @@ import SwiftUI
 // MARK: - Wizard step
 
 private enum WizardStep: Int, CaseIterable {
-    case welcome       = 0
+    case welcome = 0
     case modeSelection = 1
     case tierSelection = 2
-    case permissions   = 3
-    case apiKey        = 4  // BYOK path only
-    case completion    = 5
+    case permissions = 3
+    case apiKey = 4  // BYOK path only
+    case completion = 5
 }
 
 // MARK: - Onboarding mode (wizard-local — maps to MonitoringInferenceBackend)
@@ -46,7 +46,8 @@ struct OnboardingWizardView: View {
     private var inferredStep: WizardStep {
         guard hasBeenCompletedBefore else { return .welcome }
 
-        let perms = LLMPolicyCatalog.permissionRequirements(for: controller.state.monitoringConfiguration)
+        let perms = LLMPolicyCatalog.permissionRequirements(
+            for: controller.state.monitoringConfiguration)
         if !controller.state.permissions.satisfies(perms) {
             return .permissions
         }
@@ -63,7 +64,7 @@ struct OnboardingWizardView: View {
     private var inferredMode: OnboardingMode {
         switch controller.state.monitoringConfiguration.inferenceBackend {
         case .openRouter: return .byok
-        default:          return .offline
+        default: return .offline
         }
     }
 
@@ -73,18 +74,20 @@ struct OnboardingWizardView: View {
 
             Group {
                 switch step {
-                case .welcome:       welcomeScreen
+                case .welcome: welcomeScreen
                 case .modeSelection: modeScreen
                 case .tierSelection: tierScreen
-                case .permissions:   permissionsScreen
-                case .apiKey:        apiKeyScreen
-                case .completion:    completionScreen
+                case .permissions: permissionsScreen
+                case .apiKey: apiKeyScreen
+                case .completion: completionScreen
                 }
             }
-            .transition(.asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal:   .move(edge: .leading).combined(with: .opacity)
-            ))
+            .transition(
+                .asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .leading).combined(with: .opacity)
+                )
+            )
             .animation(.acSpring, value: step)
         }
         .padding(20)
@@ -155,10 +158,12 @@ struct OnboardingWizardView: View {
                     .font(.ac(22, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary)
 
-                Text("AccountyCat watches what you're doing and nudges you when you drift — not by blocking anything, just a quiet word from a cat in your menu bar.")
-                    .font(.ac(13))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.75))
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "AccountyCat watches looks over your shoulder and nudges you when you drift — not by blocking anything, just a quiet word from a cat in your menu bar."
+                )
+                .font(.ac(13))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             Button("Get started →") {
@@ -180,7 +185,8 @@ struct OnboardingWizardView: View {
                 WizardModeCard(
                     icon: "lock.fill",
                     title: "Fully Private",
-                    description: "Runs entirely on your Mac. No internet, no account, no data ever leaves your machine. Uses a local AI model via llama.cpp.",
+                    description:
+                        "Runs entirely on your Mac. No internet, no account, no data ever leaves your machine. Uses a local AI model via llama.cpp.",
                     isSelected: selectedMode == .offline,
                     isDisabled: false,
                     onSelect: { selectedMode = .offline }
@@ -189,7 +195,8 @@ struct OnboardingWizardView: View {
                 WizardModeCard(
                     icon: "key.fill",
                     title: "Bring Your Own Key",
-                    description: "Connect your OpenRouter account. You pay only for what you use — typically under $1/month. Zero Data Retention is enforced on all requests.",
+                    description:
+                        "Connect your OpenRouter account. You pay only for what you use — typically under $1/month. Zero Data Retention is enforced on all requests.",
                     isSelected: selectedMode == .byok,
                     isDisabled: false,
                     onSelect: { selectedMode = .byok }
@@ -199,7 +206,8 @@ struct OnboardingWizardView: View {
                     icon: "sparkles",
                     title: "Effortless",
                     badge: "Coming soon",
-                    description: "Pay a flat monthly fee. We handle everything — no API key, no configuration. Just works.",
+                    description:
+                        "Pay a flat monthly fee. We handle everything — no API key, no configuration. Just works.",
                     isSelected: selectedMode == .managed,
                     isDisabled: true,
                     onSelect: { selectedMode = .managed }
@@ -220,7 +228,9 @@ struct OnboardingWizardView: View {
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .fill(Color.acSurface)
-                        .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                                Color.acHairline, lineWidth: 1))
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -248,9 +258,9 @@ struct OnboardingWizardView: View {
 
     private func applyModeSelection() {
         switch selectedMode {
-        case .offline:  controller.updateMonitoringInferenceBackend(.local)
-        case .byok:     controller.updateMonitoringInferenceBackend(.openRouter)
-        case .managed:  break
+        case .offline: controller.updateMonitoringInferenceBackend(.local)
+        case .byok: controller.updateMonitoringInferenceBackend(.openRouter)
+        case .managed: break
         }
     }
 
@@ -292,7 +302,8 @@ struct OnboardingWizardView: View {
                 WizardPermissionRow(
                     icon: "camera.viewfinder",
                     title: "Screen Recording",
-                    description: "Takes a screenshot every few minutes to understand what you're working on. Analyzed and immediately discarded — nothing is stored or sent except to the AI you configured.",
+                    description:
+                        "Takes a screenshot every few minutes to understand what you're working on. Analyzed and immediately discarded — nothing is stored or sent except to the AI you configured.",
                     state: controller.state.permissions.screenRecording,
                     onRequest: { controller.requestScreenRecordingPermission() }
                 )
@@ -300,7 +311,8 @@ struct OnboardingWizardView: View {
                 WizardPermissionRow(
                     icon: "accessibility",
                     title: "Accessibility",
-                    description: "Used only to read the name of the active app. Never logs keystrokes or input.",
+                    description:
+                        "Used only to read the name of the active app. Never logs keystrokes or input.",
                     state: controller.state.permissions.accessibility,
                     onRequest: { controller.requestAccessibilityPermission() }
                 )
@@ -311,13 +323,19 @@ struct OnboardingWizardView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.system(size: 12))
-                    Text("Accessibility is required so AccountyCat can read the active app name. Open System Settings → Privacy & Security to grant it.")
-                        .font(.ac(11))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.82))
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Accessibility is required so AccountyCat can read the active app name. Open System Settings → Privacy & Security to grant it."
+                    )
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Open") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy")!)
+                        NSWorkspace.shared.open(
+                            URL(
+                                string:
+                                    "x-apple.systempreferences:com.apple.preference.security?Privacy"
+                            )!)
                     }
                     .buttonStyle(ACSecondaryButton())
                 }
@@ -325,27 +343,34 @@ struct OnboardingWizardView: View {
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .fill(Color.orange.opacity(0.08))
-                        .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.orange.opacity(0.25), lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                                Color.orange.opacity(0.25), lineWidth: 1))
                 )
                 .transition(.opacity)
             }
 
             if controller.state.permissions.screenRecording != .granted
-                && controller.state.permissions.accessibility == .granted {
+                && controller.state.permissions.accessibility == .granted
+            {
                 HStack(spacing: 8) {
                     Image(systemName: "info.circle.fill")
                         .foregroundStyle(accent)
                         .font(.system(size: 12))
-                    Text("Screen Recording is off — AC can still run using only app names, but it will be much less accurate without screenshots.")
-                        .font(.ac(11))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.82))
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Screen Recording is off — AC can still run using only app names, but it will be much less accurate without screenshots."
+                    )
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .fill(accent.opacity(0.06))
-                        .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(accent.opacity(0.22), lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                                accent.opacity(0.22), lineWidth: 1))
                 )
                 .transition(.opacity)
             }
@@ -383,10 +408,12 @@ struct OnboardingWizardView: View {
                 .foregroundStyle(Color.acTextPrimary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("OpenRouter provides access to models like Gemma, Llama, Gemini, and more. Creating an account and getting a key takes about 2 minutes.")
-                    .font(.ac(12))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.75))
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    "OpenRouter provides access to models like Gemma, Llama, Gemini, and more. Creating an account and getting a key takes about 2 minutes."
+                )
+                .font(.ac(12))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
 
                 Button("Get a key at openrouter.ai →") {
                     NSWorkspace.shared.open(URL(string: "https://openrouter.ai/keys")!)
@@ -426,7 +453,8 @@ struct OnboardingWizardView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     completionSummaryRow(
                         icon: selectedMode == .offline ? "lock.fill" : "key.fill",
-                        label: selectedMode == .offline ? "Fully Private — local AI" : "Bring Your Own Key — OpenRouter"
+                        label: selectedMode == .offline
+                            ? "Fully Private — local AI" : "Bring Your Own Key — OpenRouter"
                     )
                     completionSummaryRow(
                         icon: "brain",
@@ -438,7 +466,9 @@ struct OnboardingWizardView: View {
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
                         .fill(Color.acSurface)
-                        .overlay(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous).stroke(
+                                Color.acHairline, lineWidth: 1))
                 )
 
                 Text("You can adjust any of this in Settings → AI.")
@@ -452,16 +482,20 @@ struct OnboardingWizardView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.top, 1)
-                    Text("Local mode requires a one-time download (~2–5 GB depending on tier). It will start in the background and you'll see progress in the Home tab.")
-                        .font(.ac(11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Local mode requires a one-time download (~2–5 GB depending on tier). It will start in the background and you'll see progress in the Home tab."
+                    )
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(10)
                 .background(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .fill(Color.acSurface)
-                        .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                                Color.acHairline, lineWidth: 1))
                 )
             }
 
@@ -490,9 +524,9 @@ struct OnboardingWizardView: View {
     private var tierDetailLabel: String {
         let tier = controller.currentAITier
         switch selectedMode {
-        case .offline:  return tier.localModelDisplayName
-        case .byok:     return AppController.shortModelName(for: tier.byokModelIdentifier)
-        case .managed:  return ""
+        case .offline: return tier.localModelDisplayName
+        case .byok: return AppController.shortModelName(for: tier.byokModelIdentifier)
+        case .managed: return ""
         }
     }
 }
@@ -514,14 +548,21 @@ private struct WizardModeCard: View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isDisabled ? Color.secondary.opacity(0.35)
-                                     : isSelected ? accent
-                                     : Color.secondary.opacity(0.65))
+                    .foregroundStyle(
+                        isDisabled
+                            ? Color.secondary.opacity(0.35)
+                            : isSelected
+                                ? accent
+                                : Color.secondary.opacity(0.65)
+                    )
                     .frame(width: 22, height: 22)
                     .background(
-                        Circle().fill((isDisabled ? Color.secondary
-                                       : isSelected ? accent
-                                       : Color.secondary).opacity(0.10))
+                        Circle().fill(
+                            (isDisabled
+                                ? Color.secondary
+                                : isSelected
+                                    ? accent
+                                    : Color.secondary).opacity(0.10))
                     )
                     .padding(.top, 1)
 
@@ -529,7 +570,8 @@ private struct WizardModeCard: View {
                     HStack(spacing: 6) {
                         Text(title)
                             .font(.ac(13, weight: .semibold))
-                            .foregroundStyle(isDisabled ? Color.secondary.opacity(0.5) : Color.acTextPrimary)
+                            .foregroundStyle(
+                                isDisabled ? Color.secondary.opacity(0.5) : Color.acTextPrimary)
                         if let badge {
                             Text(badge)
                                 .font(.ac(9, weight: .semibold))
@@ -539,14 +581,19 @@ private struct WizardModeCard: View {
                                 .background(
                                     Capsule(style: .continuous)
                                         .fill(Color.acSurface)
-                                        .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                                        .overlay(
+                                            Capsule(style: .continuous).stroke(
+                                                Color.acHairline, lineWidth: 1))
                                 )
                         }
                     }
                     Text(description)
                         .font(.ac(11))
-                        .foregroundStyle(isDisabled ? Color.secondary.opacity(0.42)
-                                         : Color.acTextPrimary.opacity(0.72))
+                        .foregroundStyle(
+                            isDisabled
+                                ? Color.secondary.opacity(0.42)
+                                : Color.acTextPrimary.opacity(0.72)
+                        )
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -565,8 +612,9 @@ private struct WizardModeCard: View {
                     .fill(isSelected && !isDisabled ? accent.opacity(0.08) : Color.acSurface)
                     .overlay(
                         RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(isSelected && !isDisabled ? accent.opacity(0.45) : Color.acHairline,
-                                    lineWidth: isSelected && !isDisabled ? 1.5 : 1)
+                            .stroke(
+                                isSelected && !isDisabled ? accent.opacity(0.45) : Color.acHairline,
+                                lineWidth: isSelected && !isDisabled ? 1.5 : 1)
                     )
             )
         }
@@ -640,17 +688,21 @@ struct WizardTierPicker: View {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                Text("Offline: \(selectedTier.localModelDisplayName) · \(selectedTier.localRAMEstimate)")
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Offline: \(selectedTier.localModelDisplayName) · \(selectedTier.localRAMEstimate)"
+                )
+                .font(.ac(10))
+                .foregroundStyle(.secondary)
             }
         case .byok:
             HStack(spacing: 5) {
                 Image(systemName: "key.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                let textShort = AppController.shortModelName(for: selectedTier.byokModelIdentifierText)
-                let imageShort = AppController.shortModelName(for: selectedTier.byokModelIdentifierImage)
+                let textShort = AppController.shortModelName(
+                    for: selectedTier.byokModelIdentifierText)
+                let imageShort = AppController.shortModelName(
+                    for: selectedTier.byokModelIdentifierImage)
                 Text("BYOK: \(textShort) · \(imageShort) · \(selectedTier.byokCostEstimate)")
                     .font(.ac(10))
                     .foregroundStyle(.secondary)
@@ -677,13 +729,15 @@ private struct TierSegment: View {
                     if tier == .balanced {
                         Text("★")
                             .font(.ac(10))
-                            .foregroundStyle(isSelected ? accent.opacity(0.9) : Color.secondary.opacity(0.5))
+                            .foregroundStyle(
+                                isSelected ? accent.opacity(0.9) : Color.secondary.opacity(0.5))
                     }
                 }
                 if tier == .balanced {
                     Text("Our pick")
                         .font(.ac(9))
-                        .foregroundStyle(isSelected ? accent.opacity(0.8) : Color.secondary.opacity(0.5))
+                        .foregroundStyle(
+                            isSelected ? accent.opacity(0.8) : Color.secondary.opacity(0.5))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -749,8 +803,9 @@ private struct WizardPermissionRow: View {
                 .fill(state == .granted ? Color.green.opacity(0.06) : Color.acSurface)
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                        .stroke(state == .granted ? Color.green.opacity(0.22) : Color.acHairline,
-                                lineWidth: 1)
+                        .stroke(
+                            state == .granted ? Color.green.opacity(0.22) : Color.acHairline,
+                            lineWidth: 1)
                 )
         )
         .animation(.acSnap, value: state)

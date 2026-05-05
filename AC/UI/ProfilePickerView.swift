@@ -60,6 +60,31 @@ struct ProfilePickerView: View {
                 }
             }
 
+            HStack(spacing: 6) {
+                Spacer()
+                Button {
+                    NotificationCenter.default.post(name: .acOpenSettings, object: nil)
+                    NotificationCenter.default.post(name: .acSelectSettingsTab, object: SettingsTab.profiles.rawValue)
+                    withAnimation(.acSnap) { isPresented = false }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("add profile")
+                            .font(.ac(11, weight: .medium))
+                    }
+                    .foregroundStyle(accent.opacity(0.85))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
             Button {
                 startSelectedProfile()
             } label: {
@@ -147,7 +172,7 @@ struct ProfilePickerView: View {
         return Button {
             withAnimation(.acSnap) { selectedDuration = minutes }
         } label: {
-            Text(minutes < 60 ? "\(minutes)m" : minutes == 60 ? "1h" : "\(minutes / 60)h")
+            Text(chipLabel(for: minutes))
                 .font(.ac(11, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? Color.white : Color.acTextPrimary.opacity(0.72))
                 .padding(.horizontal, 10)
@@ -161,7 +186,20 @@ struct ProfilePickerView: View {
         .buttonStyle(.plain)
     }
 
+    private func chipLabel(for minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)m" }
+        if minutes == 60 { return "1h" }
+        let hours = minutes / 60
+        let mins = minutes % 60
+        if mins == 0 { return "\(hours)h" }
+        return "\(hours)h \(mins)m"
+    }
+
     private func startSelectedProfile() {
+        guard controller.state.activeProfileID != selectedProfile.id else {
+            withAnimation(.acSnap) { isPresented = false }
+            return
+        }
         if selectedProfile.isDefault {
             _ = controller.activateProfile(id: selectedProfile.id, announce: true)
         } else {

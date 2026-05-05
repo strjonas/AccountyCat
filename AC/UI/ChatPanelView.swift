@@ -99,6 +99,12 @@ struct ChatPanelView: View {
         .onReceive(NotificationCenter.default.publisher(for: .acOpenSettings)) { _ in
             withAnimation(.acSnap) { showSettings = true }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .acSelectSettingsTab)) { _ in
+            withAnimation(.acSnap) {
+                showSettings = true
+                showProfilePicker = false
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .acDismissSheet)) { _ in
             if showSettings {
                 withAnimation(.acSnap) { showSettings = false }

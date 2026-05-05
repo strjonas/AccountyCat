@@ -164,7 +164,60 @@ enum SnapshotService {
             return nil
         }
 
-        let application = AXUIElementCreateApplication(app.processIdentifier)
+        // 1. Prefer CGWindowList — it returns bounds in display-space coordinates
+        //    (top-left origin), the same space SCScreenshotManager expects.
+        if let rect = cgFrontmostWindowRect(for: app.processIdentifier) {
+            return rect
+        }
+
+        // 2. Fallback to Accessibility API, converting from bottom-left origin
+        //    to top-left origin display space.
+        return accessibilityWindowRect(for: app.processIdentifier)
+    }
+
+    /// Returns the on-screen rect of the frontmost window for the given PID using
+    /// `CGWindowListCopyWindowInfo`. This coordinate space matches what
+    /// `SCScreenshotManager.captureImage(in:)` expects.
+    private static func cgFrontmostWindowRect(for pid: pid_t) -> CGRect? {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else {
+            return nil
+        }
+
+        // CGWindowListCopyWindowInfo returns windows front-to-back, so the first
+        // match for this PID is the app's frontmost on-screen window.
+        for window in windowList {
+            guard let windowPID = window[kCGWindowOwnerPID] as? pid_t,
+                  windowPID == pid,
+                  let boundsAny = window[kCGWindowBounds] else {
+                continue
+            }
+
+            let boundsDict = boundsAny as! CFDictionary
+            var rect = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else {
+                continue
+            }
+
+            // Reject degenerate rects (fully offscreen, zero-area, or implausibly huge)
+            guard rect.width > 40, rect.height > 40,
+                  rect.width < 8000, rect.height < 8000 else {
+                continue
+            }
+
+            return rect
+        }
+
+        return nil
+    }
+
+    /// Returns the focused-window rect via Accessibility APIs.
+    /// Accessibility uses a bottom-left origin; SCScreenshotManager uses a top-left
+    /// origin, so we flip the Y coordinate relative to the main screen height.
+    private static func accessibilityWindowRect(for pid: pid_t) -> CGRect? {
+        let application = AXUIElementCreateApplication(pid)
         var focusedWindowValue: CFTypeRef?
 
         guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedWindowValue) == .success,
@@ -188,14 +241,20 @@ enum SnapshotService {
             return nil
         }
 
-        // Reject degenerate rects (fully offscreen, zero-area, or implausibly huge)
         let rect = CGRect(origin: position, size: size)
         guard rect.width > 40, rect.height > 40,
               rect.width < 8000, rect.height < 8000 else {
             return nil
         }
 
-        return rect
+        // Convert from bottom-left origin (Accessibility) to top-left origin (Display space)
+        let mainScreenHeight = NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0
+        return CGRect(
+            x: rect.origin.x,
+            y: mainScreenHeight - (rect.origin.y + rect.height),
+            width: rect.width,
+            height: rect.height
+        )
     }
 
     private static func cgWindowTitle(for pid: pid_t) -> String? {

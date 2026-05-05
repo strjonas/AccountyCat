@@ -406,7 +406,7 @@ final class BrainService: NSObject {
             state.activeProfileID = PolicyRule.defaultProfileID
             state.chatHistory.append(ChatMessage(
                 role: .assistant,
-                text: "\(activeProfile.name) ended. Switched back to General.",
+                text: "\(activeProfile.name) ended. Switched back to Everyday.",
                 timestamp: now,
                 interruptionPolicy: .deferred
             ))

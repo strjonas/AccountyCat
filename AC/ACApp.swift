@@ -229,7 +229,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
 
             // ── Cmd+V: toggle vision ──
+            // Let paste work when a text field is focused (chat composer, settings, etc.)
             if isCmd && event.charactersIgnoringModifiers == "v" {
+                if self.keyWindowHasTextInputFocus() {
+                    return event
+                }
                 self.controller.updateVisionEnabled(!self.controller.visionEnabled)
                 return nil
             }
@@ -249,6 +253,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
             return event
         }
+    }
+
+    private func keyWindowHasTextInputFocus() -> Bool {
+        guard let keyWindow = NSApp.keyWindow else { return false }
+        let responder = keyWindow.firstResponder
+        return responder is NSTextView || responder is NSTextField
     }
 
     /// Context-aware Escape:  overlay → sheet → popover → profile popover

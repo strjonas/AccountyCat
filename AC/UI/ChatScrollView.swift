@@ -234,7 +234,6 @@ private struct WinCard: View {
 private struct NudgeCard: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
-    @Environment(\.acAccentLight) private var accentLight
     @Environment(\.colorScheme) private var colorScheme
     let message: ChatMessage
 
@@ -261,39 +260,7 @@ private struct NudgeCard: View {
                     Spacer()
                 }
 
-                HStack(spacing: 6) {
-                    Text("back to work")
-                        .font(.ac(11, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [accentLight, accent.opacity(0.92)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                                .overlay(
-                                    Capsule(style: .continuous)
-                                        .stroke(Color.white.opacity(0.28), lineWidth: 0.5)
-                                )
-                        )
-                    Text("it's fine")
-                        .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.acSurface)
-                                .overlay(
-                                    Capsule(style: .continuous).stroke(
-                                        Color.acHairline, lineWidth: 1))
-                        )
-                }
+
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -360,36 +327,35 @@ private struct ContextCard: View {
 
 private struct EmptyV2ChatState: View {
     @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
+
+    private let suggestions = [
+        "I want to focus on coding for an hour",
+        "Don't let me scroll Instagram today",
+        "Help me stay off social media this afternoon",
+    ]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            CatView(
-                character: controller.state.character,
-                skin: controller.state.selectedSkin,
-                expression: .neutral,
-                size: 29,
-                animating: false
-            )
-            .frame(width: 34, height: 34)
-
-            Text(
-                "morning. no focus active — i'm watching but won't nudge unless you want me to. start a profile when you're ready."
-            )
-            .font(.ac(13))
-            .lineSpacing(2)
-            .foregroundStyle(Color.acTextPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 4,
-                    bottomLeadingRadius: ACRadius.bubble,
-                    bottomTrailingRadius: ACRadius.bubble,
-                    topTrailingRadius: ACRadius.bubble,
-                    style: .continuous
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                CatView(
+                    character: controller.state.character,
+                    skin: controller.state.selectedSkin,
+                    expression: .happy,
+                    size: 29,
+                    animating: false
                 )
-                .fill(Color.acBubbleFill)
-                .overlay(
+                .frame(width: 34, height: 34)
+
+                Text(
+                    "Hey — I'm AC. I look over your shoulder and gently nudge you when you drift. Tell me what you're focusing on, what you want to avoid, or just say hi."
+                )
+                .font(.ac(13))
+                .lineSpacing(2)
+                .foregroundStyle(Color.acTextPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
                     UnevenRoundedRectangle(
                         topLeadingRadius: 4,
                         bottomLeadingRadius: ACRadius.bubble,
@@ -397,10 +363,64 @@ private struct EmptyV2ChatState: View {
                         topTrailingRadius: ACRadius.bubble,
                         style: .continuous
                     )
-                    .stroke(Color.acBubbleStroke, lineWidth: 0.5)
+                    .fill(Color.acBubbleFill)
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 4,
+                            bottomLeadingRadius: ACRadius.bubble,
+                            bottomTrailingRadius: ACRadius.bubble,
+                            topTrailingRadius: ACRadius.bubble,
+                            style: .continuous
+                        )
+                        .stroke(Color.acBubbleStroke, lineWidth: 0.5)
+                    )
                 )
-            )
-            Spacer(minLength: 44)
+                Spacer(minLength: 44)
+            }
+
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(suggestions, id: \.self) { text in
+                    Button {
+                        controller.sendChatMessage(text)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(text)
+                                .font(.ac(12, weight: .medium))
+                                .lineSpacing(2)
+                                .multilineTextAlignment(.trailing)
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(accent.opacity(0.85))
+                        }
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.85))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: ACRadius.bubble,
+                                bottomLeadingRadius: ACRadius.bubble,
+                                bottomTrailingRadius: 4,
+                                topTrailingRadius: ACRadius.bubble,
+                                style: .continuous
+                            )
+                            .fill(Color.acSurface)
+                            .overlay(
+                                UnevenRoundedRectangle(
+                                    topLeadingRadius: ACRadius.bubble,
+                                    bottomLeadingRadius: ACRadius.bubble,
+                                    bottomTrailingRadius: 4,
+                                    topTrailingRadius: ACRadius.bubble,
+                                    style: .continuous
+                                )
+                                .stroke(accent.opacity(0.22), lineWidth: 0.5)
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 44)
         }
     }
 }

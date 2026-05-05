@@ -167,7 +167,7 @@ struct CompactHeaderView: View {
             if controller.state.isPaused {
                 return "Monitoring is paused · \(model)"
             }
-            return profile == "General" ? model : "\(profile) · \(model)"
+            return profile == FocusProfile.defaultDisplayName ? model : "\(profile) · \(model)"
         case .checking:
             return "Checking system setup…"
         case .needsPermissions:
