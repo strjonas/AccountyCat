@@ -156,7 +156,9 @@ actor CompanionChatService {
         let combined = [output.stdout, output.stderr]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        if let parsed = LLMOutputParsing.extractChatResult(from: combined) {
+        let modelText = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parseText = modelText.isEmpty ? combined : modelText
+        if let parsed = LLMOutputParsing.extractChatResult(from: parseText) {
             return CompanionChatResult(
                 reply: parsed.reply,
                 memoryUpdate: parsed.memoryUpdate,
@@ -170,8 +172,14 @@ actor CompanionChatService {
                     )
             )
         }
+
+        await ActivityLogService.shared.append(
+            category: "chat-parse-error",
+            message: "Could not parse chat JSON from \(output.usedModelIdentifier ?? "unknown model"). stdout: \(modelText.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
+        )
+
         // Legacy/fallback: pull a plain reply, no memory update.
-        let reply = LLMOutputParsing.cleanChatOutput(combined)
+        let reply = LLMOutputParsing.cleanChatOutput(parseText)
         return reply.isEmpty
             ? nil
             : CompanionChatResult(

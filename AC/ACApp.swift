@@ -404,8 +404,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opens (or closes) the popover anchored directly beside the companion orb.
     /// Detects which half of the screen the orb is in and opens on the near side
-    /// so the popover never jumps far from the cat. Falls back to the status bar
-    /// button when the panel is unavailable (e.g. before first show).
+    /// so the popover never jumps far from the cat. The anchor rect is shifted
+    /// horizontally if needed to keep the popover fully on-screen.
     func togglePopoverFromOrb() {
         if let p = popover, p.isShown {
             p.performClose(nil)
@@ -418,10 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let wc = windowCoordinator,
            let panel = wc.companionPanel,
            let contentView = panel.contentView {
-            // Anchor to a rect near the orb (bottom of the panel content view)
-            // and choose the edge based on whether the orb is in the upper or
-            // lower half of the screen, so the popover always opens toward centre.
-            let anchorRect = wc.orbAnchorRect(in: contentView)
+            let anchorRect = wc.safeOrbAnchorRect(for: ACD.popoverWidth, in: contentView)
             let edge: NSRectEdge = wc.orbIsInBottomHalf ? .maxY : .minY
             p.show(relativeTo: anchorRect, of: contentView, preferredEdge: edge)
         } else if let button = statusItem?.button {

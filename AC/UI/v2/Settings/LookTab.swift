@@ -31,6 +31,21 @@ struct LookTab: View {
 
             Divider().opacity(0.3)
 
+            sectionLabel("glass")
+            Text("liquid glass makes panels and overlays translucent with specular highlights.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+                .padding(.top, -12)
+
+            Toggle("liquid glass", isOn: Binding(
+                get: { controller.state.useLiquidGlass },
+                set: { controller.updateLiquidGlass($0) }
+            ))
+            .toggleStyle(.switch)
+            .font(.ac(12, weight: .medium))
+
+            Divider().opacity(0.3)
+
             sectionLabel("accent")
             Text("follow the character palette, or pin the whole UI to a custom accent.")
                 .font(.acCaption)
@@ -38,6 +53,7 @@ struct LookTab: View {
                 .padding(.top, -12)
             accentControls
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Skin grid
@@ -133,7 +149,7 @@ struct LookTab: View {
                     .frame(width: 30, height: 20)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.white.opacity(0.5), lineWidth: 0.5)
+                            .stroke(Color.acBubbleStroke, lineWidth: 0.5)
                     )
             }
 
@@ -150,7 +166,7 @@ struct LookTab: View {
                             .frame(width: 24, height: 24)
                             .overlay(
                                 Circle()
-                                    .stroke(selected ? Color.acTextPrimary.opacity(0.62) : Color.white.opacity(0.56), lineWidth: selected ? 2 : 0.5)
+                                    .stroke(selected ? Color.acTextPrimary.opacity(0.62) : Color.acBubbleStroke, lineWidth: selected ? 2 : 0.5)
                             )
                             .shadow(color: selected ? color.opacity(0.26) : .clear, radius: 5, y: 2)
                     }
@@ -173,7 +189,20 @@ struct LookTab: View {
     }
 
     private var accentSwatches: [String] {
-        ["#7BA3D9", "#A88BFF", "#E89B7A", "#A8B58E", "#D9A8C7", "#111827"]
+        [
+            "#7BA3D9", // calm blue
+            "#5B8DB8", // slate blue
+            "#A88BFF", // lavender
+            "#C7B6FF", // soft lilac (nova)
+            "#E89B7A", // warm coral (mochi)
+            "#D9C48E", // warm gold (sage)
+            "#A8B58E", // sage green
+            "#8BB5A0", // seafoam
+            "#D9A8C7", // dusty rose
+            "#B8A8D9", // muted violet
+            "#9AA1A8", // neutral gray
+            "#C9B8A0", // warm sand
+        ]
     }
 
     private func sectionLabel(_ text: String) -> some View {

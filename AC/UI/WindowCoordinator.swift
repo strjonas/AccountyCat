@@ -552,6 +552,34 @@ final class WindowCoordinator {
         collapsePanelAfterNudge()
     }
 
+    // MARK: - Screen edge safety
+
+    /// Returns an anchor rect (in `contentView` coordinates) that is shifted
+    /// horizontally so a popover of the given width stays fully on-screen.
+    func safeOrbAnchorRect(for popoverWidth: CGFloat, in contentView: NSView) -> NSRect {
+        var anchor = orbAnchorRect(in: contentView)
+        guard let panel = companionPanel else { return anchor }
+        let screen = screenContaining(panel) ?? activeScreen()
+        let vf = screen.visibleFrame
+        let margin: CGFloat = 8
+
+        // Convert anchor center to screen coordinates
+        let windowAnchor = contentView.convert(anchor, to: nil)
+        let screenAnchor = panel.convertToScreen(windowAnchor)
+        let anchorScreenX = screenAnchor.midX
+
+        let minAllowed = vf.minX + margin + popoverWidth / 2
+        let maxAllowed = vf.maxX - margin - popoverWidth / 2
+
+        if anchorScreenX < minAllowed {
+            anchor.origin.x += (minAllowed - anchorScreenX)
+        } else if anchorScreenX > maxAllowed {
+            anchor.origin.x -= (anchorScreenX - maxAllowed)
+        }
+
+        return anchor
+    }
+
     // MARK: - Helpers
 
     private func triggerHaptic() {

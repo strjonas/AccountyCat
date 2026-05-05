@@ -35,6 +35,7 @@ struct SettingsView: View {
                     case .you:      YouTab()
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
         }

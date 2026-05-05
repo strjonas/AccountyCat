@@ -908,6 +908,13 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+    func updateLiquidGlass(_ enabled: Bool) {
+        guard state.useLiquidGlass != enabled else { return }
+        state.useLiquidGlass = enabled
+        logActivity("app", "Liquid glass: \(enabled)")
+        persistState()
+    }
+
     func updateAccent(followsCharacter: Bool, customHex: String? = nil) {
         let normalizedHex: String? = customHex.flatMap { raw in
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2270,11 +2277,8 @@ final class AppController: ObservableObject {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
                 self.noteUsedModel(result.usedModelIdentifier)
                 if let update = result.memoryUpdate?.cleanedSingleLine, !update.isEmpty {
-                    let activeProfile = self.state.activeProfile
                     self.state.memoryEntries.append(MemoryEntry(
-                        text: update,
-                        profileID: activeProfile.id,
-                        profileName: activeProfile.name
+                        text: update
                     ))
                     self.logActivity("memory", "Remembered: \(update)")
                 }
@@ -2405,11 +2409,8 @@ final class AppController: ObservableObject {
         if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(trimmed) == .orderedSame }) {
             return
         }
-        let activeProfile = state.activeProfile
         state.memoryEntries.append(MemoryEntry(
-            text: trimmed,
-            profileID: activeProfile.id,
-            profileName: activeProfile.name
+            text: trimmed
         ))
         persistState()
         maybeConsolidateMemory()
@@ -3184,11 +3185,33 @@ private enum AppControllerChatSupport {
 
     static func makeChatMessages(from persistedHistory: [ChatMessage]) -> [ChatMessage] {
         [ChatMessage(role: .system, text: systemMessage)]
-            + persistedHistory.filter { $0.role != .system }
+            + persistedHistory
+                .filter { $0.role != .system }
+                .map(sanitizedPersistedChatMessage)
     }
 
     static func persistedChatHistory(from messages: [ChatMessage]) -> [ChatMessage] {
-        messages.filter { $0.role != .system }
+        messages
+            .filter { $0.role != .system }
+            .map(sanitizedPersistedChatMessage)
+    }
+
+    nonisolated private static func sanitizedPersistedChatMessage(_ message: ChatMessage) -> ChatMessage {
+        guard message.role == .assistant else { return message }
+        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = trimmed.lowercased()
+        let looksLikeLeakedRuntimeOutput = lowercased.contains("prompt_tokens=") ||
+            lowercased.contains("completion_tokens=") ||
+            lowercased.hasPrefix("reply:") ||
+            lowercased.hasPrefix("reply\":") ||
+            lowercased.hasPrefix("\"reply\":")
+        guard looksLikeLeakedRuntimeOutput else { return message }
+
+        let cleaned = LLMOutputParsing.cleanChatOutput(trimmed)
+        guard !cleaned.isEmpty else { return message }
+        var sanitized = message
+        sanitized.text = cleaned
+        return sanitized
     }
 
     // `immediateMemoryLine` and `appendingMemoryLine` are gone. Chat messages now flow

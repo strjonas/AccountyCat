@@ -131,6 +131,10 @@ enum LLMOutputParsing {
             return "I had trouble understanding that. Could you rephrase?"
         }
 
+        if let partialReply = extractPartialChatReply(from: output) {
+            return partialReply
+        }
+
         let normalized = output
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -158,7 +162,8 @@ enum LLMOutputParsing {
             }
             if lowercasedLine.contains("prompt eval") ||
                 lowercasedLine.contains("eval time") ||
-                lowercasedLine.contains("generation:") {
+                lowercasedLine.contains("generation:") ||
+                lowercasedLine.hasPrefix("usage prompt_tokens=") {
                 return false
             }
 
@@ -190,7 +195,69 @@ enum LLMOutputParsing {
             return String(normalizedLeading.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        let lowercasedLeading = normalizedLeading.lowercased()
+        if lowercasedLeading.localizedCaseInsensitiveContains("prompt_tokens=") ||
+            lowercasedLeading.localizedCaseInsensitiveContains("completion_tokens=") {
+            return "I had trouble formatting that reply. Send it again and I'll keep it short."
+        }
+        if lowercasedLeading.hasPrefix("reply:") ||
+            lowercasedLeading.hasPrefix("reply\":") ||
+            lowercasedLeading.hasPrefix("\"reply\":") {
+            return "I had trouble formatting that reply. Send it again and I'll keep it short."
+        }
+
         return normalizedLeading
+    }
+
+    nonisolated private static func extractPartialChatReply(from output: String) -> String? {
+        let normalized = output
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        guard let keyRange = normalized.range(of: #""?reply"?\s*:\s*""#, options: .regularExpression) else {
+            return nil
+        }
+
+        let valueStart = keyRange.upperBound
+        var current = valueStart
+        var result = ""
+        var escaping = false
+
+        while current < normalized.endIndex {
+            let character = normalized[current]
+            if escaping {
+                switch character {
+                case "n": result.append("\n")
+                case "r": result.append("\r")
+                case "t": result.append("\t")
+                case "\"": result.append("\"")
+                case "\\": result.append("\\")
+                default: result.append(character)
+                }
+                escaping = false
+            } else if character == "\\" {
+                escaping = true
+            } else if character == "\"" {
+                break
+            } else {
+                result.append(character)
+            }
+            current = normalized.index(after: current)
+        }
+
+        let cleaned = result
+            .components(separatedBy: .newlines)
+            .filter {
+                let line = $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return !line.hasPrefix("usage prompt_tokens=")
+            }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty,
+              !cleaned.localizedCaseInsensitiveContains("prompt_tokens="),
+              !cleaned.localizedCaseInsensitiveContains("completion_tokens=") else {
+            return nil
+        }
+        return cleaned
     }
 
     nonisolated private static func inferredSuggestedAction(

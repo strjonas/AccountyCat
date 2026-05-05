@@ -40,16 +40,6 @@ struct SpeechBubble: View {
                         .font(.ac(11, weight: .semibold))
                         .foregroundStyle(accent)
                     Spacer()
-                    // Auto-dismiss countdown pill
-                    Text("\(secondsRemaining)s")
-                        .font(.ac(9, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.45))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.acSurfaceInset)
-                        )
                 }
 
                 // Message
@@ -73,7 +63,7 @@ struct SpeechBubble: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule(style: .continuous)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .fill(accent.opacity(0.88))
                             )
                     }
@@ -84,15 +74,15 @@ struct SpeechBubble: View {
                         controller.rateNudge(positive: false, nudgeText: text)
                         controller.latestNudge = nil
                     } label: {
-                        Text("it's research")
+                        Text("it's fine")
                             .font(.ac(11, weight: .medium))
                             .foregroundStyle(Color.acTextPrimary.opacity(0.72))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
-                                Capsule(style: .continuous)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .fill(Color.acSurface)
-                                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
                             )
                     }
                     .buttonStyle(.plain)
@@ -102,11 +92,19 @@ struct SpeechBubble: View {
             .padding(.vertical, 10)
             .background(bubbleBackground)
 
-            // Downward tail
-            BubbleTailShape()
+            // Downward tail — rotated square for a clean diamond point
+            DiamondTail()
                 .fill(tailColor)
-                .frame(width: 14, height: 8)
-                .offset(y: -1)
+                .frame(width: 12, height: 12)
+                .rotationEffect(.degrees(45))
+                .offset(y: -6)
+                .overlay(
+                    DiamondTail()
+                        .stroke(Color.acHairline.opacity(0.4), lineWidth: 0.5)
+                        .frame(width: 12, height: 12)
+                        .rotationEffect(.degrees(45))
+                        .offset(y: -6)
+                )
         }
         .frame(maxWidth: 240)
         .onAppear { startAutoDismiss() }
@@ -157,24 +155,31 @@ struct SpeechBubble: View {
 
     private var bubbleBackground: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                .fill(tailColor.opacity(colorScheme == .dark ? 0.95 : 0.97))
-            RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
-                .stroke(accent.opacity(colorScheme == .dark ? 0.45 : 0.35), lineWidth: 1)
+            if controller.state.useLiquidGlass {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(accent.opacity(colorScheme == .dark ? 0.35 : 0.25), lineWidth: 1)
+                    )
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(tailColor.opacity(colorScheme == .dark ? 0.95 : 0.97))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(accent.opacity(colorScheme == .dark ? 0.35 : 0.25), lineWidth: 1)
+                    )
+            }
         }
-        .shadow(color: accent.opacity(colorScheme == .dark ? 0.30 : 0.15), radius: 10, y: 3)
+        .shadow(color: accent.opacity(colorScheme == .dark ? 0.25 : 0.12), radius: 16, y: 4)
     }
 }
 
-// MARK: - Tail Shape
+// MARK: - Diamond Tail
 
-struct BubbleTailShape: Shape {
+/// A square shape that, when rotated 45°, creates a diamond arrow point.
+struct DiamondTail: Shape {
     func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX - 7, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX + 7, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        path.closeSubpath()
-        return path
+        Path(rect)
     }
 }

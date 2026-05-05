@@ -36,7 +36,13 @@ struct PanelFooterView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(
+            Color(nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(white: 0.12, alpha: 0.45)
+                    : NSColor(white: 1.0, alpha: 0.35)
+            })
+        )
     }
 
     private var statusLine: String {

@@ -611,6 +611,7 @@ struct ACState: Codable, Sendable {
 
     var character: ACCharacter = .mochi
     var selectedSkin: ACSkin = .bubble
+    var useLiquidGlass: Bool = false
     var accentFollowsCharacter: Bool = true
     var customAccentHex: String = "#7BA3D9"
     var aiTier: AITier = .balanced
@@ -689,6 +690,7 @@ struct ACState: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case character
         case selectedSkin
+        case useLiquidGlass
         case accentFollowsCharacter
         case customAccentHex
         case aiTier
@@ -746,6 +748,7 @@ struct ACState: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
         selectedSkin = try container.decodeIfPresent(ACSkin.self, forKey: .selectedSkin) ?? .bubble
+        useLiquidGlass = try container.decodeIfPresent(Bool.self, forKey: .useLiquidGlass) ?? false
         accentFollowsCharacter = try container.decodeIfPresent(Bool.self, forKey: .accentFollowsCharacter) ?? true
         customAccentHex = try container.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#7BA3D9"
         aiTier = try container.decodeIfPresent(AITier.self, forKey: .aiTier) ?? .balanced
@@ -834,6 +837,7 @@ struct ACState: Codable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(character, forKey: .character)
         try container.encode(selectedSkin, forKey: .selectedSkin)
+        try container.encode(useLiquidGlass, forKey: .useLiquidGlass)
         try container.encode(accentFollowsCharacter, forKey: .accentFollowsCharacter)
         try container.encode(customAccentHex, forKey: .customAccentHex)
         try container.encode(aiTier, forKey: .aiTier)
@@ -871,6 +875,7 @@ struct ACState: Codable, Sendable {
         goalsText = Self.defaultGoalsText
         userName = ""
         selectedSkin = .bubble
+        useLiquidGlass = false
         accentFollowsCharacter = true
         customAccentHex = "#7BA3D9"
         aiTier = .balanced

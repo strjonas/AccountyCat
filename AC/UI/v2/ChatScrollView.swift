@@ -126,7 +126,7 @@ private struct ChatMessageRow: View {
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(isUser ? Color.white.opacity(0.8) : Color.acTextPrimary.opacity(0.55))
                             .frame(width: 16, height: 16)
-                            .background(Circle().fill(isUser ? Color.white.opacity(0.18) : Color.acSurface))
+                            .background(Circle().fill(isUser ? Color.white.opacity(0.18) : Color.acSurfaceElevated))
                     }
                     .buttonStyle(.plain)
                     .padding(5)
@@ -148,10 +148,10 @@ private struct ChatMessageRow: View {
     private var avatar: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.42))
+                .fill(Color.acBubbleFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.white.opacity(0.46), lineWidth: 0.5)
+                        .stroke(Color.acBubbleStroke, lineWidth: 0.5)
                 )
             CatView(
                 character: controller.state.character,
@@ -172,7 +172,7 @@ private struct ChatMessageRow: View {
             topTrailingRadius: isUser ? 4 : ACRadius.bubble,
             style: .continuous
         )
-        .fill(isUser ? accent.opacity(0.58) : Color.white.opacity(0.56))
+        .fill(isUser ? accent.opacity(0.58) : Color.acBubbleFill)
         .overlay(
             UnevenRoundedRectangle(
                 topLeadingRadius: isUser ? ACRadius.bubble : 4,
@@ -181,7 +181,7 @@ private struct ChatMessageRow: View {
                 topTrailingRadius: isUser ? 4 : ACRadius.bubble,
                 style: .continuous
             )
-            .stroke(isUser ? accent.opacity(0.28) : Color.white.opacity(0.42), lineWidth: 0.5)
+            .stroke(isUser ? accent.opacity(0.28) : Color.acBubbleStroke, lineWidth: 0.5)
         )
     }
 
@@ -233,16 +233,16 @@ private struct NudgeCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Circle()
-                    .fill(Color(red: 0.91, green: 0.61, blue: 0.48))
+                    .fill(Color.acNudgeStroke)
                     .frame(width: 8, height: 8)
                     .padding(.top, 4)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("drift detected")
                         .font(.ac(11.5, weight: .semibold))
-                        .foregroundStyle(Color(red: 0.55, green: 0.35, blue: 0.23))
+                        .foregroundStyle(Color.acNudgeText)
                     Text(message.text)
                         .font(.ac(11))
-                        .foregroundStyle(Color(red: 0.55, green: 0.35, blue: 0.23).opacity(0.72))
+                        .foregroundStyle(Color.acNudgeText.opacity(0.80))
                         .lineLimit(3)
                 }
             }
@@ -253,13 +253,13 @@ private struct NudgeCard: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Capsule(style: .continuous).fill(Color(red: 0.55, green: 0.35, blue: 0.23).opacity(0.86)))
+                    .background(Capsule(style: .continuous).fill(Color.acNudgeText.opacity(0.86)))
                 Text("it's research")
                     .font(.ac(11, weight: .medium))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.7))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Capsule(style: .continuous).fill(Color.black.opacity(0.05)))
+                    .background(Capsule(style: .continuous).fill(Color.acSurface))
             }
             .padding(.leading, 18)
         }
@@ -267,10 +267,10 @@ private struct NudgeCard: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color(red: 1.0, green: 0.94, blue: 0.86).opacity(0.55))
+                .fill(Color.acNudgeSurface)
                 .overlay(
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(Color(red: 0.91, green: 0.61, blue: 0.48).opacity(0.35), lineWidth: 0.5)
+                        .stroke(Color.acNudgeStroke, lineWidth: 0.5)
                 )
         )
     }
@@ -295,7 +295,7 @@ private struct ContextCard: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.black.opacity(0.04))
+                .fill(Color.acContextSurface)
         )
     }
 }
@@ -328,7 +328,17 @@ private struct EmptyV2ChatState: View {
                         topTrailingRadius: ACRadius.bubble,
                         style: .continuous
                     )
-                    .fill(Color.white.opacity(0.56))
+                    .fill(Color.acBubbleFill)
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 4,
+                            bottomLeadingRadius: ACRadius.bubble,
+                            bottomTrailingRadius: ACRadius.bubble,
+                            topTrailingRadius: ACRadius.bubble,
+                            style: .continuous
+                        )
+                        .stroke(Color.acBubbleStroke, lineWidth: 0.5)
+                    )
                 )
             Spacer(minLength: 44)
         }
@@ -351,7 +361,11 @@ private struct TypingRow: View {
             .padding(.vertical, 9)
             .background(
                 RoundedRectangle(cornerRadius: ACRadius.bubble, style: .continuous)
-                    .fill(Color.white.opacity(0.56))
+                    .fill(Color.acBubbleFill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.bubble, style: .continuous)
+                            .stroke(Color.acBubbleStroke, lineWidth: 0.5)
+                    )
             )
             Spacer(minLength: 44)
         }

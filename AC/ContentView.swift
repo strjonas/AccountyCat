@@ -1137,7 +1137,7 @@ struct CalendarIntelligenceSection: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
     @State private var hoveringInfo = false
-    @State private var calendarListExpanded = true
+    @State private var calendarListExpanded = false
 
     private var isOn: Bool { controller.state.calendarIntelligenceEnabled }
     private var calendarGranted: Bool { controller.state.permissions.calendar == .granted }
@@ -1220,14 +1220,14 @@ struct CalendarIntelligenceSection: View {
                 .buttonStyle(ACSecondaryButton())
             }
         }
-        .padding(12)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                .fill(Color.acSurface)
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface.opacity(0.65))
                 .overlay(
-                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                        .stroke(Color.acHairline, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(Color.acHairline.opacity(0.65), lineWidth: 0.5)
                 )
         )
     }
@@ -1243,14 +1243,14 @@ struct CalendarIntelligenceSection: View {
                 Button("Refresh") { controller.refreshAvailableCalendars() }
                     .buttonStyle(ACSecondaryButton())
             }
-            .padding(12)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                    .fill(Color.acSurface)
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface.opacity(0.65))
                     .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(Color.acHairline, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(Color.acHairline.opacity(0.65), lineWidth: 0.5)
                     )
             )
         } else {
@@ -1263,25 +1263,25 @@ struct CalendarIntelligenceSection: View {
                 } label: {
                     HStack(spacing: 8) {
                         Text("Calendars")
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .font(.ac(11, weight: .semibold))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.55))
                         Spacer()
                         Text("\(enabledCount) of \(controller.availableCalendars.count) active")
-                            .font(.ac(11))
+                            .font(.ac(10))
                             .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.secondary.opacity(0.6))
+                            .foregroundStyle(Color.secondary.opacity(0.4))
                             .rotationEffect(.degrees(calendarListExpanded ? 90 : 0))
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
                 if calendarListExpanded {
-                    Divider().opacity(0.4)
+                    Divider().opacity(0.25)
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(
@@ -1295,7 +1295,7 @@ struct CalendarIntelligenceSection: View {
                                 ) {
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(cal.title)
-                                            .font(.ac(12, weight: .medium))
+                                            .font(.ac(11, weight: .medium))
                                             .foregroundStyle(Color.acTextPrimary)
                                             .lineLimit(1)
                                         Text(cal.sourceTitle)
@@ -1305,29 +1305,30 @@ struct CalendarIntelligenceSection: View {
                                     }
                                 }
                                 .toggleStyle(.switch)
+                                .controlSize(.small)
                                 .tint(accent)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 9)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
 
                                 if index < controller.availableCalendars.count - 1 {
-                                    Divider().opacity(0.3).padding(.leading, 12)
+                                    Divider().opacity(0.2).padding(.leading, 10)
                                 }
                             }
                         }
                     }
-                    .frame(maxHeight: 180)
+                    .frame(maxHeight: 160)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .background(
-                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                    .fill(Color.acSurface)
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface.opacity(0.65))
                     .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(Color.acHairline, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(Color.acHairline.opacity(0.65), lineWidth: 0.5)
                     )
             )
-            .clipShape(RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous))
         }
     }
 }

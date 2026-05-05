@@ -169,22 +169,86 @@ struct ChatPanelView: View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
 
-            switch controller.state.selectedSkin {
-            case .liquid:
+            if controller.state.useLiquidGlass {
+                // Liquid glass: pronounced specular highlights, radial glow,
+                // soft edge refraction, and a subtle tint shift.
+                RadialGradient(
+                    colors: [
+                        Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55),
+                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.22),
+                        Color.clear
+                    ],
+                    center: .topLeading,
+                    startRadius: 0,
+                    endRadius: 380
+                )
+                RadialGradient(
+                    colors: [
+                        accent.opacity(colorScheme == .dark ? 0.12 : 0.14),
+                        accent.opacity(colorScheme == .dark ? 0.04 : 0.06),
+                        Color.clear
+                    ],
+                    center: .bottomTrailing,
+                    startRadius: 20,
+                    endRadius: 360
+                )
+                // Specular top edge
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.62),
-                        accent.opacity(colorScheme == .dark ? 0.07 : 0.13),
-                        Color(red: 0.58, green: 0.68, blue: 0.82).opacity(colorScheme == .dark ? 0.10 : 0.16)
+                        Color.white.opacity(colorScheme == .dark ? 0.22 : 0.48),
+                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.14),
+                        Color.clear
                     ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                // Soft bottom depth
+                LinearGradient(
+                    colors: [
+                        Color.clear,
+                        Color.black.opacity(colorScheme == .dark ? 0.18 : 0.04)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+
+            switch controller.state.selectedSkin {
+            case .liquid where !controller.state.useLiquidGlass:
+                // Preserve legacy liquid-skin styling when liquid-glass toggle is off
+                RadialGradient(
+                    colors: [
+                        Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55),
+                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.22),
+                        Color.clear
+                    ],
+                    center: .topLeading,
+                    startRadius: 0,
+                    endRadius: 380
+                )
+                RadialGradient(
+                    colors: [
+                        accent.opacity(colorScheme == .dark ? 0.12 : 0.14),
+                        accent.opacity(colorScheme == .dark ? 0.04 : 0.06),
+                        Color.clear
+                    ],
+                    center: .bottomTrailing,
+                    startRadius: 20,
+                    endRadius: 360
                 )
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.10 : 0.44),
+                        Color.white.opacity(colorScheme == .dark ? 0.22 : 0.48),
+                        Color.white.opacity(colorScheme == .dark ? 0.06 : 0.14),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                LinearGradient(
+                    colors: [
                         Color.clear,
-                        Color.black.opacity(colorScheme == .dark ? 0.12 : 0.03)
+                        Color.black.opacity(colorScheme == .dark ? 0.18 : 0.04)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -192,7 +256,7 @@ struct ChatPanelView: View {
             case .pixel:
                 LinearGradient(
                     colors: [
-                        accent.opacity(colorScheme == .dark ? 0.05 : 0.08),
+                        accent.opacity(colorScheme == .dark ? 0.06 : 0.08),
                         Color.white.opacity(colorScheme == .dark ? 0.02 : 0.18)
                     ],
                     startPoint: .topLeading,
@@ -201,14 +265,15 @@ struct ChatPanelView: View {
                 PixelPanelTexture()
                     .opacity(colorScheme == .dark ? 0.12 : 0.07)
             case .bubble:
-                LinearGradient(
-                    colors: [
-                        accent.opacity(colorScheme == .dark ? 0.05 : 0.08),
-                        Color.white.opacity(colorScheme == .dark ? 0.02 : 0.24)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                // Flat modern: minimal, mature, clean. No tint gradients.
+                // Just a whisper of warmth so it doesn't feel sterile.
+                Color(nsColor: NSColor(name: nil) { appearance in
+                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                        ? NSColor(white: 0.16, alpha: 0.35)
+                        : NSColor(white: 1.0, alpha: 0.18)
+                })
+            default:
+                EmptyView()
             }
         }
     }
@@ -237,10 +302,14 @@ struct ChatPanelView: View {
 
     private var v2InsetBackground: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.38))
+            .fill(Color(nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(white: 0.18, alpha: 0.55)
+                    : NSColor(white: 1.0, alpha: 0.42)
+            }))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.32), lineWidth: 0.5)
+                    .stroke(Color.acBubbleStroke, lineWidth: 0.5)
             )
     }
 

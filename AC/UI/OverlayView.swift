@@ -12,6 +12,7 @@ import SwiftUI
 struct OverlayView: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
     @FocusState private var appealFocused: Bool
 
     var body: some View {
@@ -30,38 +31,33 @@ struct OverlayView: View {
 
         GeometryReader { proxy in
             ZStack {
-                // Dim + vignette
-                Color.black.opacity(0.18)
+                // Warm vignette + dim
+                Color.black.opacity(0.55)
                     .ignoresSafeArea()
 
                 RadialGradient(
-                    colors: [Color.clear, accent.opacity(0.12)],
-                    center: .center,
-                    startRadius: 240,
-                    endRadius: 900
+                    colors: [
+                        Color.orange.opacity(colorScheme == .dark ? 0.12 : 0.18),
+                        Color.clear
+                    ],
+                    center: .init(x: 0.30, y: 0.50),
+                    startRadius: 120,
+                    endRadius: 700
                 )
                 .ignoresSafeArea()
 
-                // Main card — visual-novel layout
+                // Main stage — visual-novel layout
                 HStack(spacing: 0) {
-                    // Left: large cat portrait
+                    // Left: large cat portrait with soft glow
                     catPortrait(character: character)
-                        .frame(width: min(proxy.size.width * 0.35, 220))
+                        .frame(width: min(proxy.size.width * 0.38, 260))
 
-                    // Right: dialog content
+                    // Right: dialog content (overlaps portrait slightly)
                     dialogContent(presentation: presentation, character: character)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.leading, -30)
                 }
-                .frame(maxWidth: min(proxy.size.width - 80, 720), maxHeight: min(proxy.size.height - 80, 420))
-                .background(
-                    RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: ACRadius.xxl, style: .continuous)
-                                .stroke(Color.white.opacity(0.40), lineWidth: 1)
-                        )
-                        .shadow(color: accent.opacity(0.18), radius: 36, y: 14)
-                )
+                .frame(maxWidth: min(proxy.size.width - 80, 820), maxHeight: min(proxy.size.height - 80, 420))
 
                 // Quiet × dismiss
                 VStack {
@@ -70,20 +66,16 @@ struct OverlayView: View {
                         Button {
                             controller.dismissOverlay()
                         } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(Color.acTextPrimary.opacity(0.55))
-                                .padding(10)
-                                .background(
-                                    Circle()
-                                        .fill(Color.acSurface)
-                                        .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
-                                )
+                            Text("×")
+                                .font(.system(size: 18, weight: .light))
+                                .foregroundStyle(Color.white.opacity(0.45))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
                         .help("Dismiss")
-                        .padding(.top, 20)
-                        .padding(.trailing, 28)
+                        .padding(.top, 28)
+                        .padding(.trailing, 32)
                     }
                     Spacer()
                 }
@@ -97,32 +89,28 @@ struct OverlayView: View {
 
     private func catPortrait(character: ACCharacter) -> some View {
         ZStack {
-            // Warm gradient halo
+            // Soft circular shadow / glow
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [character.orbTopColor, character.orbBottomColor],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .shadow(color: character.accentColor.opacity(0.30), radius: 24, y: 8)
-                .overlay(Circle().stroke(Color.white.opacity(0.40), lineWidth: 1))
+                .fill(character.accentColor.opacity(0.18))
+                .frame(width: 200, height: 200)
+                .blur(radius: 40)
 
             CatView(
                 character: character,
                 skin: controller.state.selectedSkin,
                 expression: .concern,
-                size: 140,
+                size: 160,
                 animating: false
             )
-            .padding(20)
+            .padding(16)
 
+            // Name below cat, serif-style
             Text(character.displayName.lowercased())
-                .font(.ac(14, weight: .semibold))
+                .font(.system(size: 14, weight: .medium, design: .serif))
                 .foregroundStyle(character.accentColor)
+                .offset(y: 100)
         }
-        .padding(24)
+        .padding(20)
         .frame(maxHeight: .infinity)
     }
 
@@ -130,23 +118,37 @@ struct OverlayView: View {
 
     private func dialogContent(presentation: OverlayPresentation, character: ACCharacter) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // Headline + body
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(presentation.headline)
-                        .font(.ac(20, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
+            VStack(alignment: .leading, spacing: 16) {
+                // Name + text
+                VStack(alignment: .leading, spacing: 8) {
+                    if !presentation.headline.isEmpty {
+                        Text(presentation.headline)
+                            .font(.ac(18, weight: .semibold))
+                            .foregroundStyle(Color.acTextPrimary)
+                    }
+
+                    Text(character.displayName.lowercased())
+                        .font(.system(size: 16, weight: .semibold, design: .serif))
+                        .foregroundStyle(accent)
 
                     Text(presentation.body)
-                        .font(.ac(13))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                        .lineSpacing(2)
+                        .font(.ac(15))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.90))
+                        .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if let prompt = presentation.prompt {
+                        Text(prompt)
+                            .font(.ac(12.5))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.60))
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 // Optional appeal input
-                if let prompt = presentation.prompt {
-                    appealSection(prompt: prompt)
+                if presentation.prompt != nil {
+                    appealSection()
                 }
 
                 Spacer(minLength: 0)
@@ -162,9 +164,8 @@ struct OverlayView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 9)
                             .background(
-                                Capsule(style: .continuous)
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
                                     .fill(Color.acSurface)
-                                    .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
                             )
                     }
                     .buttonStyle(.plain)
@@ -186,23 +187,56 @@ struct OverlayView: View {
                     }
                 }
             }
-            .padding(28)
+            .padding(26)
+            .background(dialogBackground)
+        }
+    }
+
+    // MARK: - Dialog background
+
+    private var dialogBackground: some View {
+        ZStack {
+            if controller.state.useLiquidGlass {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                    )
+                    .shadow(color: accent.opacity(0.15), radius: 36, y: 14)
+
+                // Specular highlights
+                VStack {
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.35), Color.clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    Spacer()
+                }
+            } else {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                    )
+                    .shadow(color: accent.opacity(0.15), radius: 36, y: 14)
+            }
         }
     }
 
     // MARK: - Appeal section
 
-    private func appealSection(prompt: String) -> some View {
+    private func appealSection() -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(prompt)
-                .font(.ac(12, weight: .medium))
-                .foregroundStyle(Color.acTextPrimary)
-
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
                     .overlay(
-                        RoundedRectangle(cornerRadius: ACRadius.lg, style: .continuous)
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .stroke(
                                 appealFocused ? accent.opacity(0.60) : Color.acHairline.opacity(0.5),
                                 lineWidth: 1.5
@@ -271,7 +305,7 @@ private struct OverlayReasonChips: View {
                             .font(.ac(10, weight: .medium))
                     }
                     .foregroundStyle(Color.acTextPrimary.opacity(0.78))
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
                         Capsule(style: .continuous)
@@ -294,12 +328,12 @@ private struct OverlayPrimaryButton: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.ac(13, weight: .semibold))
+            .font(.ac(12.5, weight: .semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 9)
             .background(
-                Capsule(style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: [accentLight, accent.opacity(0.90)],
@@ -308,10 +342,10 @@ private struct OverlayPrimaryButton: ButtonStyle {
                         )
                     )
                     .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(Color.white.opacity(0.50), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(Color.white.opacity(0.45), lineWidth: 0.5)
                     )
-                    .shadow(color: accent.opacity(0.30), radius: 8, y: 3)
+                    .shadow(color: accent.opacity(0.28), radius: 10, y: 3)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.acSnap, value: configuration.isPressed)

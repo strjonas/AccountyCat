@@ -74,10 +74,14 @@ struct ProfilePickerView: View {
         .frame(width: 342)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+                .fill(Color(nsColor: NSColor(name: nil) { appearance in
+                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                        ? NSColor(white: 0.16, alpha: 0.92)
+                        : NSColor(white: 1.0, alpha: 0.92)
+                }))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.55), lineWidth: 0.5)
+                        .stroke(Color.acBubbleStroke, lineWidth: 0.5)
                 )
                 .shadow(color: Color.black.opacity(0.18), radius: 22, y: 12)
         )

@@ -120,6 +120,49 @@ extension Color {
             ? NSColor(white: 0.0, alpha: 0.20)
             : NSColor(white: 0.0, alpha: 0.04)
     })
+
+    /// Chat bubble fill for cat / system messages. Solid on both appearances
+    /// so text always reads cleanly.
+    static let acBubbleFill = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.22, alpha: 1.0)
+            : NSColor(white: 1.0, alpha: 0.78)
+    })
+
+    /// Card / inset bubble stroke — subtle but present on both modes.
+    static let acBubbleStroke = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1.0, alpha: 0.10)
+            : NSColor(white: 0.0, alpha: 0.06)
+    })
+
+    /// Nudge card background — warm tint that adapts.
+    static let acNudgeSurface = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.28, green: 0.20, blue: 0.14, alpha: 0.65)
+            : NSColor(red: 1.0, green: 0.94, blue: 0.86, alpha: 0.70)
+    })
+
+    /// Nudge card stroke — warm accent line.
+    static let acNudgeStroke = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.91, green: 0.61, blue: 0.48, alpha: 0.45)
+            : NSColor(red: 0.91, green: 0.61, blue: 0.48, alpha: 0.40)
+    })
+
+    /// Nudge text tint — warm readable brown/orange.
+    static let acNudgeText = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.95, green: 0.78, blue: 0.68, alpha: 1.0)
+            : NSColor(red: 0.55, green: 0.35, blue: 0.23, alpha: 1.0)
+    })
+
+    /// Context card background — neutral low-emphasis surface.
+    static let acContextSurface = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.18, alpha: 0.55)
+            : NSColor(white: 0.0, alpha: 0.04)
+    })
 }
 
 // MARK: - Typography

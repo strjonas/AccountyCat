@@ -70,4 +70,51 @@ struct StructuredOutputJSONTests {
         #expect(envelope?.focusGuess == .focused)
         #expect(envelope?.notes == ["Working in a development environment."])
     }
+
+    @Test
+    func chatFallbackRecoversPartialReplyWithoutUsageMetadata() {
+        let output = """
+        reply": "Time to hit the hay,
+        usage prompt_tokens=2056 completion_tokens=320 total_tokens=2376 cost=0.000361944
+        """
+
+        let cleaned = LLMOutputParsing.cleanChatOutput(output)
+
+        #expect(cleaned == "Time to hit the hay,")
+    }
+
+    @Test
+    func chatFallbackDropsRuntimeUsageLineFromPlainReply() {
+        let output = """
+        Go to bed. No more work tonight.
+        usage prompt_tokens=2056 completion_tokens=320 total_tokens=2376 cost=0.000361944
+        """
+
+        let cleaned = LLMOutputParsing.cleanChatOutput(output)
+
+        #expect(cleaned == "Go to bed. No more work tonight.")
+    }
+
+    @Test
+    func memoryRenderingDoesNotScopeLegacyProfileEntries() {
+        let createdAt = Date(timeIntervalSince1970: 1_745_423_400)
+        let entries = [
+            MemoryEntry(
+                createdAt: createdAt,
+                text: "No work after 22:00",
+                profileID: "coding",
+                profileName: "Coding"
+            )
+        ]
+
+        let prompt = MemoryRendering.renderForPrompt(
+            entries: entries,
+            now: Date(timeIntervalSince1970: 1_745_423_700),
+            maxLines: 5,
+            maxCharacters: 400
+        )
+
+        #expect(prompt.contains("[Coding]") == false)
+        #expect(prompt.contains("No work after 22:00"))
+    }
 }

@@ -60,13 +60,9 @@ struct YouTab: View {
             memoryInput
             memoryList
 
-            Divider().opacity(0.3)
-
             // Calendar integration
             CalendarIntelligenceSection()
                 .environmentObject(controller)
-
-            Divider().opacity(0.3)
 
             // Version & actions
             sectionLabel("version")
@@ -74,35 +70,33 @@ struct YouTab: View {
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    if let url = URL(string: "https://accountycat.com/privacy") {
-                        NSWorkspace.shared.open(url)
+            VStack(alignment: .leading, spacing: 0) {
+                settingsLinkRow(
+                    icon: "lock.shield",
+                    label: "privacy & data",
+                    action: {
+                        if let url = URL(string: "https://accountycat.com/privacy") {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
-                } label: {
-                    Text("privacy & data →")
-                        .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                }
-                .buttonStyle(.plain)
+                )
 
-                Button {
-                    exportState()
-                } label: {
-                    Text("export everything…")
-                        .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                }
-                .buttonStyle(.plain)
+                Divider().opacity(0.15).padding(.leading, 36)
 
-                Button {
-                    showingResetConfirm = true
-                } label: {
-                    Text("reset all data…")
-                        .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.55))
-                }
-                .buttonStyle(.plain)
+                settingsLinkRow(
+                    icon: "square.and.arrow.up",
+                    label: "export everything",
+                    action: { exportState() }
+                )
+
+                Divider().opacity(0.15).padding(.leading, 36)
+
+                settingsLinkRow(
+                    icon: "arrow.counterclockwise",
+                    label: "reset all data",
+                    isDestructive: true,
+                    action: { showingResetConfirm = true }
+                )
                 .alert("Reset all data?", isPresented: $showingResetConfirm) {
                     Button("Reset", role: .destructive) {
                         controller.resetAlgorithmProfile()
@@ -113,20 +107,70 @@ struct YouTab: View {
                     Text("This clears learned memory, recent behavior context, chat history, and usage context. Your profiles and settings will also reset to defaults.")
                 }
 
-                Button {
-                    dismiss()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        NSApp.terminate(nil)
+                Divider().opacity(0.15).padding(.leading, 36)
+
+                settingsLinkRow(
+                    icon: "power",
+                    label: "quit AccountyCat",
+                    isMuted: true,
+                    action: {
+                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            NSApp.terminate(nil)
+                        }
                     }
-                } label: {
-                    Text("quit AccountyCat")
-                        .font(.ac(11, weight: .medium))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.45))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
+                )
             }
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
         }
+    }
+
+    // MARK: - Settings link row
+
+    private func settingsLinkRow(
+        icon: String,
+        label: String,
+        isDestructive: Bool = false,
+        isMuted: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(
+                        isDestructive ? Color.acRedEnd.opacity(0.85)
+                            : isMuted ? Color.secondary.opacity(0.45)
+                            : Color.acTextPrimary.opacity(0.55)
+                    )
+                    .frame(width: 20, height: 20)
+
+                Text(label)
+                    .font(.ac(12, weight: .medium))
+                    .foregroundStyle(
+                        isDestructive ? Color.acRedEnd.opacity(0.85)
+                            : isMuted ? Color.acTextPrimary.opacity(0.45)
+                            : Color.acTextPrimary.opacity(0.72)
+                    )
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Name field

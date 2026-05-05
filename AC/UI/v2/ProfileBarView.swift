@@ -32,7 +32,7 @@ struct ProfileBarView: View {
             ZStack {
                 Circle()
                     .fill(Color.acSurfaceElevated)
-                    .overlay(Circle().stroke(Color.white.opacity(0.34), lineWidth: 0.5))
+                    .overlay(Circle().stroke(Color.acHairline, lineWidth: 0.5))
                 Image(systemName: "circle.dotted")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.44))
@@ -141,7 +141,14 @@ struct ProfileBarView: View {
         ZStack {
             Rectangle().fill(Color.acSurface.opacity(0.74))
             LinearGradient(
-                colors: [Color.white.opacity(0.20), Color.clear],
+                colors: [
+                    Color(nsColor: NSColor(name: nil) { appearance in
+                        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                            ? NSColor(white: 1.0, alpha: 0.06)
+                            : NSColor(white: 1.0, alpha: 0.20)
+                    }),
+                    Color.clear
+                ],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -158,7 +165,14 @@ struct ProfileBarView: View {
         ZStack {
             Rectangle().fill(active.swiftUIColor.opacity(0.08))
             LinearGradient(
-                colors: [Color.white.opacity(0.24), active.swiftUIColor.opacity(0.04)],
+                colors: [
+                    Color(nsColor: NSColor(name: nil) { appearance in
+                        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                            ? NSColor(white: 1.0, alpha: 0.08)
+                            : NSColor(white: 1.0, alpha: 0.24)
+                    }),
+                    active.swiftUIColor.opacity(0.04)
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -207,7 +221,7 @@ private struct ProfileBarCTAButton: ButtonStyle {
             .background(
                 Capsule(style: .continuous)
                     .fill(accent.opacity(configuration.isPressed ? 0.76 : 0.92))
-                    .overlay(Capsule(style: .continuous).stroke(Color.white.opacity(0.34), lineWidth: 0.5))
+                    .overlay(Capsule(style: .continuous).stroke(Color.acBubbleStroke, lineWidth: 0.5))
                     .shadow(color: accent.opacity(0.22), radius: 7, y: 2)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
