@@ -17,6 +17,8 @@ final class BrainService: NSObject {
     var moodSink: ((CompanionMood) -> Void)?
     var statusSink: ((String) -> Void)?
     var modelUsageSink: ((String) -> Void)?
+    /// Called when repeated API failures suggest a provider-side issue. Pass nil to clear.
+    var connectionProblemSink: ((String?) -> Void)?
     /// Called when a hard-escalated app is auto-minimized so the UI can re-show the overlay.
     var hardEscalationReopenSink: ((String) -> Void)?
     /// Called on every tick that reaches evaluation (or skip) so the UI can show "last check" ago.
@@ -51,6 +53,7 @@ final class BrainService: NSObject {
     private var activeEpisode: EpisodeRecord?
     private var pendingReactionsByEvaluationID: [String: PendingReaction] = [:]
     private var wasInCallLastTick = false
+    private var consecutiveAPIFailures = 0
 
     private struct PendingReaction: Sendable {
         var episodeID: String
@@ -83,6 +86,17 @@ final class BrainService: NSObject {
             .suffix(limit)
             .compactMap(\.promptStampedLine)
         return Array(userMessages)
+    }
+
+    nonisolated static func shouldUsePeriodicFullScreenCapture(
+        lastFullScreenCheckAt: Date?,
+        interval: TimeInterval,
+        now: Date
+    ) -> Bool {
+        guard let lastFullScreenCheckAt else {
+            return false
+        }
+        return now.timeIntervalSince(lastFullScreenCheckAt) >= interval
     }
 
     init(
@@ -778,12 +792,110 @@ final class BrainService: NSObject {
             return
         }
 
-        // One-shot vision escalation: if text-only returned `unclear` and the pipeline supports
-        // a screenshot, capture one and retry. Bound to a single retry per tick.
         let pipelineSupportsScreenshot = LLMPolicyCatalog
             .pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
             .descriptor
             .requiresScreenshot
+
+        // Online text-path outages are often model/provider-specific. If this
+        // tick can support vision, try the configured image model once before
+        // backing off globally.
+        if decisionResult.evaluation.failureMessage == "all_attempts_failed",
+           state.monitoringConfiguration.usesOnlineInference,
+           snapshot.screenshotPath == nil,
+           pipelineSupportsScreenshot {
+            do {
+                let escalatedSnapshot = try await buildSnapshot(
+                    from: context,
+                    state: &state,
+                    idle: false,
+                    now: now,
+                    sessionID: session?.id,
+                    evaluationID: evaluationID,
+                    requiresScreenshot: true
+                )
+                defer {
+                    cleanupEphemeralScreenshotIfNeeded(escalatedSnapshot)
+                }
+                if escalatedSnapshot.screenshotPath != nil {
+                    let retryInput = MonitoringDecisionInput(
+                        now: Date(),
+                        evaluationID: evaluationID,
+                        snapshot: escalatedSnapshot,
+                        goals: state.goalsText,
+                        recentActions: state.recentActions,
+                        heuristics: heuristics,
+                        memory: state.memoryForPrompt(now: now),
+                        recentUserMessages: Self.recentUserMessages(
+                            chatHistory: state.chatHistory,
+                            limit: MonitoringPromptContextBudget.recentUserChatCount
+                        ),
+                        policyMemory: scopedPolicyMemory,
+                        runtimeOverride: state.runtimePathOverride,
+                        configuration: state.monitoringConfiguration,
+                        algorithmState: state.algorithmState,
+                        characterPersonalityPrefix: state.character.personalityPrefix,
+                        character: state.character,
+                        calendarContext: calendarContext,
+                        activeProfileID: currentProfile.id,
+                        activeProfileName: currentProfile.name,
+                        activeProfileDescription: currentProfile.description,
+                        activeProfileExpiresAt: currentProfile.expiresAt
+                    )
+                    let retried = try await monitoringAlgorithmRegistry.evaluate(input: retryInput)
+                    decisionResult = retried
+                    await ActivityLogService.shared.append(
+                        category: "vision-retry",
+                        message: "Text-path API failed; retried with screenshot. New verdict: \(retried.decision.assessment.rawValue)"
+                    )
+                    await appendMonitoringMetric(
+                        kind: .visionRetried,
+                        reason: "api_failure:\(retried.decision.assessment.rawValue)",
+                        state: state,
+                        detail: context.appName
+                    )
+                }
+            } catch is CancellationError {
+                moodSink?(.watching)
+                statusSink?("Context changed during retry — cancelled.")
+                stateSink?(baseState, state)
+                return
+            } catch {
+                await ActivityLogService.shared.append(
+                    category: "vision-retry-error",
+                    message: error.localizedDescription
+                )
+            }
+        }
+
+        // If every attempt failed at the infrastructure level, apply exponential backoff and
+        // surface a gentle banner once the streak becomes persistent.
+        if decisionResult.evaluation.failureMessage == "all_attempts_failed" {
+            consecutiveAPIFailures += 1
+            let backoff = min(10 * pow(2.0, Double(consecutiveAPIFailures - 1)), 300)
+            state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(backoff)
+            moodSink?(.watching)
+            if consecutiveAPIFailures >= 3 {
+                let banner = "AC is having trouble reaching the model provider. Retrying with backup models…"
+                statusSink?(banner)
+                connectionProblemSink?(banner)
+            } else {
+                statusSink?("AC check-in hiccup — retrying…")
+            }
+            stateSink?(baseState, state)
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "api_failure",
+                state: state,
+                detail: context.appName
+            )
+            return
+        }
+        consecutiveAPIFailures = 0
+        connectionProblemSink?(nil)
+
+        // One-shot vision escalation: if text-only returned `unclear` and the pipeline supports
+        // a screenshot, capture one and retry. Bound to a single retry per tick.
         if decisionResult.decision.assessment == .unclear,
            snapshot.screenshotPath == nil,
            pipelineSupportsScreenshot {
@@ -1004,18 +1116,18 @@ final class BrainService: NSObject {
             } else {
                 switch state.monitoringConfiguration.screenshotCaptureMode {
                 case .activeWindow:
-                    let interval = state.monitoringConfiguration.periodicFullScreenInterval
-                    let needsFullScreen: Bool
-                    if let lastCheck = state.lastFullScreenCheckAt {
-                        needsFullScreen = now.timeIntervalSince(lastCheck) >= interval
-                    } else {
-                        needsFullScreen = true // first check should be full screen
-                    }
-                    if needsFullScreen {
+                    if Self.shouldUsePeriodicFullScreenCapture(
+                        lastFullScreenCheckAt: state.lastFullScreenCheckAt,
+                        interval: state.monitoringConfiguration.periodicFullScreenInterval,
+                        now: now
+                    ) {
                         screenshotURL = try await SnapshotService.captureScreenshot()
                         state.lastFullScreenCheckAt = now
                     } else {
                         screenshotURL = try await SnapshotService.captureActiveWindowScreenshot()
+                        if state.lastFullScreenCheckAt == nil {
+                            state.lastFullScreenCheckAt = now
+                        }
                     }
                 case .fullScreen:
                     screenshotURL = try await SnapshotService.captureScreenshot()

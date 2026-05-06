@@ -74,4 +74,26 @@ struct BrainServiceConfigurationTests {
             _ = try registry.descriptor(for: "corrupted_algorithm_id")
         }
     }
+
+    @Test
+    func activeWindowModeSkipsInitialFullScreenButUsesPeriodicSafetyNet() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let interval: TimeInterval = 1_800
+
+        #expect(BrainService.shouldUsePeriodicFullScreenCapture(
+            lastFullScreenCheckAt: nil,
+            interval: interval,
+            now: now
+        ) == false)
+        #expect(BrainService.shouldUsePeriodicFullScreenCapture(
+            lastFullScreenCheckAt: now.addingTimeInterval(-interval + 1),
+            interval: interval,
+            now: now
+        ) == false)
+        #expect(BrainService.shouldUsePeriodicFullScreenCapture(
+            lastFullScreenCheckAt: now.addingTimeInterval(-interval),
+            interval: interval,
+            now: now
+        ) == true)
+    }
 }

@@ -124,6 +124,21 @@ struct ChatPanelView: View {
 
     private var chatContent: some View {
         VStack(spacing: 0) {
+            if let problem = controller.connectionProblemNotice {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text(problem)
+                        .font(.ac(11, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.9))
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.08))
+            }
+
             if controller.state.setupStatus == .ready
                 && !controller.showingOnboardingCompletion
             {

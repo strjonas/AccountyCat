@@ -459,7 +459,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             promptProfileVersion: descriptor.version,
             attempts: attempts,
             finalDecision: decision,
-            failureMessage: decision == .unclear ? "no_usable_decision" : nil
+            failureMessage: Self.failureMessage(from: attempts, decision: decision)
         )
 
         var updatedState = input.algorithmState
@@ -1293,6 +1293,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return Self.decodeJSON(decoder, from: output.stdout + "\n" + output.stderr)
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            attempts[attemptIndex].isAPIFailure = true
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
                 message: "✗ \(configuration.usesOnlineInference ? "openrouter" : "llama.cpp") · \(elapsedMs)ms · error: \(error.localizedDescription)"
             )
@@ -1392,6 +1393,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return Self.decodeJSON(decoder, from: output.stdout + "\n" + output.stderr)
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            attempts[attemptIndex].isAPIFailure = true
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
                 message: "✗ \(configuration.usesOnlineInference ? "openrouter" : "llama.cpp") · \(elapsedMs)ms · error: \(error.localizedDescription)"
             )
@@ -1404,6 +1406,16 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         from output: String
     ) -> T? {
         StructuredOutputJSON.decode(type, from: output)
+    }
+
+    private static func failureMessage(from attempts: [LLMEvaluationAttempt], decision: LLMDecision) -> String? {
+        if !attempts.isEmpty, attempts.allSatisfy({ $0.isAPIFailure }) {
+            return "all_attempts_failed"
+        }
+        if decision == .unclear {
+            return "no_usable_decision"
+        }
+        return nil
     }
 
     private func selectedModelIdentifier(

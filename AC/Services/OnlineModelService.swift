@@ -45,15 +45,18 @@ struct OnlineModelRequest: Sendable {
 
 protocol OnlineModelServing: Sendable {
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput
+    func runFirstSuccessfulInference(from requests: [OnlineModelRequest]) async throws -> RuntimeProcessOutput
+    func hasHadSuccessfulChat() async -> Bool
 }
 
-enum OnlineModelError: LocalizedError, Equatable {
+enum OnlineModelError: LocalizedError, Equatable, Sendable {
     case missingAPIKey
     case invalidEndpoint
     case invalidImageData(String)
     case httpFailure(statusCode: Int, message: String, rawBody: String)
     case emptyResponse
     case malformedResponse
+    case allRequestsFailed([String])
 
     var errorDescription: String? {
         switch self {
@@ -69,6 +72,11 @@ enum OnlineModelError: LocalizedError, Equatable {
             return "OpenRouter returned no message content."
         case .malformedResponse:
             return "OpenRouter returned an unexpected response."
+        case let .allRequestsFailed(messages):
+            let detail = messages.suffix(3).joined(separator: " | ")
+            return detail.isEmpty
+                ? "All OpenRouter backup requests failed."
+                : "All OpenRouter backup requests failed: \(detail)"
         }
     }
 }
@@ -168,11 +176,22 @@ struct OpenRouterKeyInfo: Codable {
     }
 }
 
+
+
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
+    nonisolated static let premiumFallbackModelIdentifier = "google/gemini-3-flash-preview"
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
+    nonisolated private static let premiumMaxSuccessCount = 5
 
     private let session: URLSession
+    private var premiumSuccessCount: Int = 0
+    private var hasSuccessfulChat: Bool = false
+
+    private enum ParallelInferenceResult: Sendable {
+        case success(RuntimeProcessOutput)
+        case failure(String)
+    }
 
     init(session: URLSession? = nil) {
         if let session {
@@ -185,16 +204,47 @@ actor OnlineModelService: OnlineModelServing {
         }
     }
 
+    // MARK: - Premium Path
+
+    private func isPremiumPath(for source: OnlineModelRequestSource) -> Bool {
+        guard source == .monitoringText || source == .monitoringVision || source == .chat || source == .policyMemory else {
+            return false
+        }
+        return premiumSuccessCount < Self.premiumMaxSuccessCount
+    }
+
+    private func recordSuccessIfNeeded(for source: OnlineModelRequestSource) {
+        if source == .monitoringText || source == .monitoringVision || source == .chat || source == .policyMemory {
+            premiumSuccessCount = min(premiumSuccessCount + 1, Self.premiumMaxSuccessCount)
+        }
+        if source == .chat {
+            hasSuccessfulChat = true
+        }
+    }
+
+    func hasHadSuccessfulChat() async -> Bool {
+        hasSuccessfulChat
+    }
+
+    // MARK: - Inference
+
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput {
-        let fallbackModelIdentifiers = Self.requestFallbackModelIdentifiers(
+        let isPremium = isPremiumPath(for: request.source)
+        let fallbackModelIdentifiers = await Self.requestFallbackModelIdentifiers(
             for: request.modelIdentifier,
-            includesImage: request.imagePath != nil
+            includesImage: request.imagePath != nil,
+            isPremium: isPremium
         )
-        let maxAttempts = Self.maxAttempts(for: request.source)
+        let maxAttempts = Self.maxAttempts(for: request.source, isPremium: isPremium)
         var attempt = 0
         var lastError: Error?
         var primaryModelIdentifier = request.modelIdentifier
         var secondaryFallbacks = fallbackModelIdentifiers
+        if await OpenRouterHealthStatsService.shared.isModelBanned(primaryModelIdentifier),
+           let promotedModel = secondaryFallbacks.first {
+            primaryModelIdentifier = promotedModel
+            secondaryFallbacks.removeAll { $0 == promotedModel }
+        }
 
         let startTime = Date()
 
@@ -203,6 +253,7 @@ actor OnlineModelService: OnlineModelServing {
             message: "─── Calling OpenRouter \(request.requestID) ───\n"
                 + "model: \(request.modelIdentifier) | source: \(request.source.rawValue)"
                 + (fallbackModelIdentifiers.isEmpty ? "" : " | fallbacks: \(fallbackModelIdentifiers.joined(separator: ", "))")
+                + (isPremium ? " | premium-path" : "")
         )
 
         while attempt < maxAttempts {
@@ -219,25 +270,39 @@ actor OnlineModelService: OnlineModelServing {
                     )
                     await ActivityLogService.shared.append(level: .verbose,
                         category: "api:\(request.source.rawValue)",
-                        message: "retry attempt \(attempt)/\(maxAttempts) → \(primaryModelIdentifier) | 650ms backoff"
+                        message: "retry attempt \(attempt)/\(maxAttempts) → \(primaryModelIdentifier) | \(Self.backoffMilliseconds(for: attempt))ms backoff"
                     )
                 }
-                return try await runInference(
+                let result = try await runInference(
                     request,
                     modelIdentifier: primaryModelIdentifier,
                     fallbackModelIdentifiers: secondaryFallbacks,
                     enforceZDR: true,
                     startTime: startTime
                 )
+                recordSuccessIfNeeded(for: request.source)
+                return result
             } catch {
                 lastError = error
+                if Self.isCancellation(error) {
+                    let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                    await ActivityLogService.shared.append(level: .verbose,
+                        category: "api:\(request.source.rawValue)",
+                        message: "cancelled → \(primaryModelIdentifier) · \(elapsedMs)ms"
+                    )
+                    throw error
+                }
                 let onlineError = error as? OnlineModelError
-                await OpenRouterHealthStatsService.shared.recordFailure(
-                    requestedModel: request.modelIdentifier,
-                    source: request.source,
-                    statusCode: Self.statusCode(from: onlineError),
-                    providerName: Self.providerName(from: onlineError)
-                )
+                let retryAfter = Self.retryAfterSeconds(from: onlineError)
+                if Self.shouldRecordHealthFailure(error) {
+                    await OpenRouterHealthStatsService.shared.recordFailure(
+                        requestedModel: request.modelIdentifier,
+                        source: request.source,
+                        statusCode: Self.statusCode(from: onlineError),
+                        providerName: Self.providerName(from: onlineError),
+                        countsTowardBan: Self.countsTowardModelBan(error)
+                    )
+                }
                 let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
                 await ActivityLogService.shared.append(level: .verbose,
                     category: "api:\(request.source.rawValue)",
@@ -251,13 +316,44 @@ actor OnlineModelService: OnlineModelServing {
                     primaryModelIdentifier = promotedModel
                     secondaryFallbacks.removeAll { $0 == promotedModel }
                 }
-                try? await Task.sleep(for: .milliseconds(650))
+                let backoffMs = retryAfter.map { UInt64($0 * 1000) } ?? Self.backoffMilliseconds(for: attempt)
+                try? await Task.sleep(for: .milliseconds(backoffMs))
             }
         }
 
         throw lastError ?? OnlineModelError.malformedResponse
     }
 
+    /// Fire multiple requests in parallel and return the first successful result.
+    /// Failed children are collected; a fast failure must not mask a slower success.
+    /// Cancelled losers are ignored by model health recording inside `runInference`.
+    func runFirstSuccessfulInference(from requests: [OnlineModelRequest]) async throws -> RuntimeProcessOutput {
+        guard !requests.isEmpty else {
+            throw OnlineModelError.malformedResponse
+        }
+        return try await withThrowingTaskGroup(of: ParallelInferenceResult.self) { group in
+            for request in requests {
+                group.addTask {
+                    do {
+                        return .success(try await self.runInference(request))
+                    } catch {
+                        return .failure(error.localizedDescription)
+                    }
+                }
+            }
+            var failures: [String] = []
+            for try await result in group {
+                switch result {
+                case let .success(output):
+                    group.cancelAll()
+                    return output
+                case let .failure(message):
+                    failures.append(message)
+                }
+            }
+            throw OnlineModelError.allRequestsFailed(failures)
+        }
+    }
     private func runInference(
         _ request: OnlineModelRequest,
         modelIdentifier: String,
@@ -324,12 +420,13 @@ actor OnlineModelService: OnlineModelServing {
             body["models"] = fallbackModelIdentifiers
         }
 
+        let isPremium = isPremiumPath(for: request.source)
         var urlRequest = URLRequest(url: endpointURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("AccountyCat", forHTTPHeaderField: "X-OpenRouter-Title")
-        urlRequest.timeoutInterval = Self.timeoutInterval(for: request.source, options: request.options)
+        urlRequest.timeoutInterval = Self.timeoutInterval(for: request.source, options: request.options, isPremium: isPremium)
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         let (data, response) = try await session.data(for: urlRequest)
@@ -390,6 +487,8 @@ actor OnlineModelService: OnlineModelServing {
         )
     }
 
+    // MARK: - Helpers
+
     nonisolated private static func tokenUsage(from json: [String: Any]) -> TokenUsage? {
         guard let usage = json["usage"] as? [String: Any] else { return nil }
         let prompt = usage["prompt_tokens"] as? Int ?? 0
@@ -410,23 +509,40 @@ actor OnlineModelService: OnlineModelServing {
         )
     }
 
-    nonisolated static func requestFallbackModelIdentifiers(
+    static func requestFallbackModelIdentifiers(
         for modelIdentifier: String,
-        includesImage: Bool = false
-    ) -> [String] {
+        includesImage: Bool = false,
+        isPremium: Bool = false,
+        healthStats: OpenRouterHealthStatsService = .shared
+    ) async -> [String] {
         var chain: [String] = []
+
+        // 1) Non-free variant of primary
         if let nonFree = nonFreeModelIdentifier(from: modelIdentifier),
            nonFree != modelIdentifier {
             chain.append(nonFree)
         }
+
+        // 2) Tier fallbacks
         let tierFallbacks = includesImage
             ? [AITier.economy.byokModelIdentifierImage, AITier.smartest.byokModelIdentifierImage]
             : [AITier.economy.byokModelIdentifierText, AITier.smartest.byokModelIdentifierText]
-
         for fallback in tierFallbacks where modelIdentifier != fallback && !chain.contains(fallback) {
             chain.append(fallback)
         }
-        return chain
+
+        // 3) Premium reliable fallback. Keep this last: cheap configured backups
+        // should absorb routine instability; Gemini is for first impressions and
+        // true last-resort rescue.
+        if isPremium,
+           Self.premiumFallbackModelIdentifier != modelIdentifier,
+           !chain.contains(Self.premiumFallbackModelIdentifier) {
+            chain.append(Self.premiumFallbackModelIdentifier)
+        }
+
+        // 4) Health-aware filtering: deprioritize banned or high-failure models
+        let healthy = await healthStats.sortedHealthyModels(chain)
+        return healthy
     }
 
     nonisolated static func providerPreferences(
@@ -437,6 +553,7 @@ actor OnlineModelService: OnlineModelServing {
         var provider: [String: Any] = [
             "zdr": enforceZDR,
             "allow_fallbacks": true,
+            "require_parameters": true,
             "sort": "latency",
             "preferred_max_latency": preferredMaxLatency(for: source),
         ]
@@ -479,23 +596,35 @@ actor OnlineModelService: OnlineModelServing {
         return "\(provider)/\(model)"
     }
 
-    nonisolated private static func maxAttempts(for source: OnlineModelRequestSource) -> Int {
+    nonisolated private static func maxAttempts(for source: OnlineModelRequestSource, isPremium: Bool) -> Int {
         switch source {
-        case .chat, .monitoringText, .monitoringVision, .policyMemory, .memoryConsolidation, .safelistAppeal:
+        case .chat, .monitoringText, .monitoringVision:
+            return isPremium ? 4 : 3
+        case .policyMemory, .memoryConsolidation, .safelistAppeal:
             return 2
+        }
+    }
+
+    nonisolated private static func backoffMilliseconds(for attempt: Int) -> UInt64 {
+        switch attempt {
+        case 1: return 500
+        case 2: return 1500
+        case 3: return 4000
+        default: return 4000
         }
     }
 
     nonisolated private static func timeoutInterval(
         for source: OnlineModelRequestSource,
-        options: RuntimeInferenceOptions
+        options: RuntimeInferenceOptions,
+        isPremium: Bool
     ) -> TimeInterval {
         let sourceCeiling: TimeInterval
         switch source {
         case .monitoringText, .monitoringVision:
-            sourceCeiling = 14
+            sourceCeiling = isPremium ? 20 : 14
         case .chat:
-            sourceCeiling = 18
+            sourceCeiling = isPremium ? 25 : 18
         case .policyMemory, .memoryConsolidation, .safelistAppeal:
             sourceCeiling = 14
         }
@@ -540,7 +669,52 @@ actor OnlineModelService: OnlineModelServing {
         return nil
     }
 
+    nonisolated private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    nonisolated private static func shouldRecordHealthFailure(_ error: Error) -> Bool {
+        guard !isCancellation(error) else {
+            return false
+        }
+        if let onlineError = error as? OnlineModelError {
+            switch onlineError {
+            case let .httpFailure(statusCode, _, _):
+                return retryableStatusCodes.contains(statusCode)
+            case .emptyResponse, .malformedResponse:
+                return true
+            case .missingAPIKey, .invalidEndpoint, .invalidImageData, .allRequestsFailed:
+                return false
+            }
+        }
+        return false
+    }
+
+    nonisolated private static func countsTowardModelBan(_ error: Error) -> Bool {
+        guard !isCancellation(error) else {
+            return false
+        }
+        if let onlineError = error as? OnlineModelError {
+            switch onlineError {
+            case let .httpFailure(statusCode, _, _):
+                return retryableStatusCodes.contains(statusCode)
+            case .emptyResponse, .malformedResponse:
+                return true
+            case .missingAPIKey, .invalidEndpoint, .invalidImageData, .allRequestsFailed:
+                return false
+            }
+        }
+        return false
+    }
+
     nonisolated static func isRetryable(error: Error) -> Bool {
+        if isCancellation(error) {
+            return false
+        }
         if let onlineError = error as? OnlineModelError {
             switch onlineError {
             case let .httpFailure(statusCode, _, _):
@@ -562,6 +736,20 @@ actor OnlineModelService: OnlineModelServing {
             NSURLErrorDNSLookupFailed,
             NSURLErrorNotConnectedToInternet,
         ].contains(nsError.code)
+    }
+
+    /// Extracts a server-suggested retry delay from the raw error body if present.
+    nonisolated private static func retryAfterSeconds(from error: OnlineModelError?) -> TimeInterval? {
+        guard case let .httpFailure(statusCode, _, rawBody) = error,
+              retryableStatusCodes.contains(statusCode) else { return nil }
+        guard let data = rawBody.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errorObj = json["error"] as? [String: Any],
+              let metadata = errorObj["metadata"] as? [String: Any],
+              let retryAfter = metadata["retry_after"] as? TimeInterval ?? metadata["retry_after"] as? Double else {
+            return nil
+        }
+        return retryAfter > 0 ? retryAfter : nil
     }
 
     nonisolated static func responseModelIdentifier(from json: [String: Any]) -> String? {

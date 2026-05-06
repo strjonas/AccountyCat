@@ -5,9 +5,10 @@ import Testing
 struct OnlineModelServiceTests {
 
     @Test
-    func paidModelStillGetsCrossModelFallback() {
+    func paidModelStillGetsCrossModelFallback() async {
+        let fallbacks = await fallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
         #expect(
-            OnlineModelService.requestFallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
+            fallbacks
             == [
                 "nvidia/nemotron-3-super-120b-a12b",
             ]
@@ -15,9 +16,10 @@ struct OnlineModelServiceTests {
     }
 
     @Test
-    func freeModelPrefersPaidVariantBeforeCrossModelFallback() {
+    func freeModelPrefersPaidVariantBeforeCrossModelFallback() async {
+        let fallbacks = await fallbackModelIdentifiers(for: "google/gemma-4-31b-it:free")
         #expect(
-            OnlineModelService.requestFallbackModelIdentifiers(for: "google/gemma-4-31b-it:free")
+            fallbacks
             == [
                 "google/gemma-4-31b-it",
                 "nvidia/nemotron-3-super-120b-a12b",
@@ -79,20 +81,21 @@ struct OnlineModelServiceTests {
     }
 
     @Test
-    func deepseekPrimaryFallsBackToTierAlternativesOnRetry() {
-        let fallbacks = OnlineModelService.requestFallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
+    func deepseekPrimaryFallsBackToTierAlternativesOnRetry() async {
+        let fallbacks = await fallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
 
         #expect(fallbacks.first == "nvidia/nemotron-3-super-120b-a12b")
         #expect(fallbacks.count == 1)
     }
 
     @Test
-    func visionRequestsFallBackToVisionCapableTierAlternatives() {
+    func visionRequestsFallBackToVisionCapableTierAlternatives() async {
+        let fallbacks = await fallbackModelIdentifiers(
+            for: "google/gemma-4-31b-it",
+            includesImage: true
+        )
         #expect(
-            OnlineModelService.requestFallbackModelIdentifiers(
-                for: "google/gemma-4-31b-it",
-                includesImage: true
-            ) == [
+            fallbacks == [
                 "qwen/qwen3.5-9b",
                 "moonshotai/kimi-k2.6",
             ]
@@ -109,6 +112,7 @@ struct OnlineModelServiceTests {
 
         #expect(provider["zdr"] as? Bool == true)
         #expect(provider["allow_fallbacks"] as? Bool == true)
+        #expect(provider["require_parameters"] as? Bool == true)
         #expect(provider["sort"] as? String == "latency")
         #expect(provider["preferred_max_latency"] != nil)
     }
@@ -147,4 +151,66 @@ struct OnlineModelServiceTests {
             )
         )
     }
+
+    @Test
+    func premiumPathPrependsReliableFallbackModel() async {
+        let fallbacks = await fallbackModelIdentifiers(
+            for: "deepseek/deepseek-v4-flash",
+            isPremium: true
+        )
+        #expect(fallbacks.contains("google/gemini-3-flash-preview"))
+    }
+
+    @Test
+    func nonPremiumPathOmitsPremiumFallbackModel() async {
+        let fallbacks = await fallbackModelIdentifiers(
+            for: "deepseek/deepseek-v4-flash",
+            isPremium: false
+        )
+        #expect(!fallbacks.contains("google/gemini-3-flash-preview"))
+    }
+
+    @Test
+    func classifiesEmptyResponseAsRetryable() {
+        #expect(
+            OnlineModelService.isRetryable(error: OnlineModelError.emptyResponse)
+        )
+    }
+
+    @Test
+    func classifiesMalformedResponseAsRetryable() {
+        #expect(
+            OnlineModelService.isRetryable(error: OnlineModelError.malformedResponse)
+        )
+    }
+
+    @Test
+    func classifies401AsNotRetryable() {
+        #expect(
+            !OnlineModelService.isRetryable(
+                error: OnlineModelError.httpFailure(statusCode: 401, message: "Unauthorized", rawBody: "")
+            )
+        )
+    }
+}
+
+private func fallbackModelIdentifiers(
+    for modelIdentifier: String,
+    includesImage: Bool = false,
+    isPremium: Bool = false
+) async -> [String] {
+    await OnlineModelService.requestFallbackModelIdentifiers(
+        for: modelIdentifier,
+        includesImage: includesImage,
+        isPremium: isPremium,
+        healthStats: makeTemporaryOnlineModelHealthStatsService()
+    )
+}
+
+private func makeTemporaryOnlineModelHealthStatsService() -> OpenRouterHealthStatsService {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ac-online-model-health-tests-\(UUID().uuidString)", isDirectory: true)
+    return OpenRouterHealthStatsService(
+        fileURL: directory.appendingPathComponent("openrouter-health.json")
+    )
 }

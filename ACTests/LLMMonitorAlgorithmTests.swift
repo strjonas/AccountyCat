@@ -780,6 +780,17 @@ private actor StubOnlineModelService: OnlineModelServing {
         return output
     }
 
+    func runFirstSuccessfulInference(from requests: [OnlineModelRequest]) async throws -> RuntimeProcessOutput {
+        for request in requests {
+            recordedRequests.append(request)
+        }
+        return output
+    }
+
+    func hasHadSuccessfulChat() async -> Bool {
+        false
+    }
+
     func requests() -> [OnlineModelRequest] {
         recordedRequests
     }

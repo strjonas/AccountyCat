@@ -10,7 +10,7 @@ import Foundation
 /// User-facing intelligence tier. Stored in ACState and mapped to concrete model
 /// identifiers in AppController.updateAITier(_:). Economy/Default/Smartest are shown
 /// in onboarding and Settings → AI; the underlying model IDs are an implementation detail.
-enum AITier: String, Codable, CaseIterable, Sendable {
+nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     case economy
     case balanced   // displayed as "Default"
     case smartest

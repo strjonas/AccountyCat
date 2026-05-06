@@ -53,6 +53,9 @@ final class AppController: ObservableObject {
     @Published var onlineAPIKeyDraft: String
     @Published var openRouterKeyInfo: OpenRouterKeyInfo?
     @Published var openRouterKeyInfoError: String?
+    /// Set by BrainService when repeated API failures suggest a provider-side issue.
+    /// Displayed as a gentle banner in the main UI.
+    @Published var connectionProblemNotice: String?
     /// True once the user has completed the first-run onboarding wizard. Stored in
     /// UserDefaults (not ACState) so it survives state resets.
     @Published var hasCompletedOnboardingWizard: Bool
@@ -1199,6 +1202,27 @@ final class AppController: ObservableObject {
         _ = OnlineModelCredentialStore.saveAPIKey(value)
         refreshSystemState()
         refreshOpenRouterKeyInfo()
+    }
+
+    /// Non-nil when the most recently served model differs from the one currently
+    /// selected in Settings. Used to show a transparent notice in the AI tab.
+    var modelMismatchNotice: String? {
+        guard let lastUsed = lastUsedModelIdentifier else { return nil }
+        let config = state.monitoringConfiguration
+        let configured: String
+        if config.usesOnlineInference {
+            configured = config.onlineModelIdentifierText
+                ?? config.onlineModelIdentifierImage
+                ?? config.onlineModelIdentifier
+        } else {
+            configured = config.localModelIdentifierText
+                ?? config.localModelIdentifierImage
+                ?? AITier.balanced.localModelIdentifierText
+        }
+        guard !OnlineModelService.modelIdentifiersEquivalent(lastUsed, configured) else { return nil }
+        let usedShort = Self.shortModelName(for: lastUsed)
+        let configShort = Self.shortModelName(for: configured)
+        return "Using \(usedShort) while \(configShort) is temporarily unavailable."
     }
 
     func refreshOpenRouterKeyInfo() {
@@ -2884,6 +2908,9 @@ final class AppController: ObservableObject {
             }
             brainService.lastCheckSink = { [weak self] date in
                 self?.lastMonitoringCheckAt = date
+            }
+            brainService.connectionProblemSink = { [weak self] notice in
+                self?.connectionProblemNotice = notice
             }
 
             self.brainService = brainService

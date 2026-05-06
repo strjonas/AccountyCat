@@ -54,20 +54,19 @@ struct SnapshotServiceTests {
     }
 
     @Test
-    func accessibilityToDisplaySpaceConversion() {
-        // Accessibility APIs return rects with a bottom-left origin.
-        // SCScreenshotManager expects top-left origin display space.
-        // This test documents the conversion math used in SnapshotService.
-        let mainHeight: CGFloat = 1080
+    func accessibilityCoordinatesUseTopLeftOrigin() {
+        // kAXPositionAttribute is already the global screen coordinate of the
+        // window's top-left corner, so SnapshotService must not flip Y.
+        let accessibilityRect = CGRect(x: 100, y: 80, width: 500, height: 400)
+        let screenCaptureRect = accessibilityRect
+        #expect(screenCaptureRect.origin.y == 80)
+        #expect(screenCaptureRect == accessibilityRect)
+    }
 
-        // Window sitting at the bottom of the screen (Accessibility y = 0)
-        let bottomRect = CGRect(x: 100, y: 0, width: 500, height: 400)
-        let convertedBottomY = mainHeight - (bottomRect.origin.y + bottomRect.height)
-        #expect(convertedBottomY == 680) // 1080 - 400 = 680
-
-        // Window touching the top of the screen (Accessibility y = 680)
-        let topRect = CGRect(x: 100, y: 680, width: 500, height: 400)
-        let convertedTopY = mainHeight - (topRect.origin.y + topRect.height)
-        #expect(convertedTopY == 0) // 1080 - 1080 = 0
+    @Test
+    func screenCapturePointSizeRoundsUpToPixels() {
+        #expect(SnapshotService.pixelLength(points: 100, scale: 2) == 200)
+        #expect(SnapshotService.pixelLength(points: 100.25, scale: 2) == 201)
+        #expect(SnapshotService.pixelLength(points: 0, scale: 2) == 1)
     }
 }

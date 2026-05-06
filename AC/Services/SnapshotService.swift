@@ -90,6 +90,10 @@ enum SnapshotService {
     }
 
     static func captureActiveWindowScreenshot() async throws -> URL {
+        if let window = try await activeShareableWindow() {
+            return try await captureScreenshot(of: window)
+        }
+
         if let windowRect = activeWindowRect() {
             return try await captureScreenshot(in: windowRect)
         }
@@ -98,7 +102,17 @@ enum SnapshotService {
 
     private static func captureScreenshot(in rect: CGRect) async throws -> URL {
         let image = try await captureImage(in: rect)
+        return try writePNG(image)
+    }
 
+    private static func captureScreenshot(of window: SCWindow) async throws -> URL {
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let configuration = windowCaptureConfiguration(for: filter)
+        let image = try await captureImage(contentFilter: filter, configuration: configuration)
+        return try writePNG(image)
+    }
+
+    private static func writePNG(_ image: CGImage) throws -> URL {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ac-screenshot-\(UUID().uuidString).png")
 
@@ -115,10 +129,50 @@ enum SnapshotService {
         return tempURL
     }
 
+    private static func windowCaptureConfiguration(for filter: SCContentFilter) -> SCStreamConfiguration {
+        let configuration = SCStreamConfiguration()
+        configuration.showsCursor = false
+        configuration.capturesAudio = false
+        configuration.excludesCurrentProcessAudio = true
+        configuration.scalesToFit = false
+        configuration.preservesAspectRatio = true
+        configuration.ignoreShadowsSingleWindow = false
+        configuration.includeChildWindows = true
+
+        let width = Self.pixelLength(points: filter.contentRect.width, scale: filter.pointPixelScale)
+        let height = Self.pixelLength(points: filter.contentRect.height, scale: filter.pointPixelScale)
+        configuration.width = width
+        configuration.height = height
+        return configuration
+    }
+
+    static func pixelLength(points: CGFloat, scale: Float) -> Int {
+        max(1, Int(ceil(points * CGFloat(scale))))
+    }
+
     private static func captureImage(in rect: CGRect) async throws -> CGImage {
         try await withThrowingTaskGroup(of: CGImage.self) { group in
             group.addTask {
                 try await captureImageWithoutTimeout(in: rect)
+            }
+
+            group.addTask {
+                try await Task.sleep(nanoseconds: captureTimeoutSeconds * NSEC_PER_SEC)
+                throw SnapshotError.captureTimedOut
+            }
+
+            guard let result = try await group.next() else {
+                throw SnapshotError.captureTimedOut
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private static func captureImage(contentFilter: SCContentFilter, configuration: SCStreamConfiguration) async throws -> CGImage {
+        try await withThrowingTaskGroup(of: CGImage.self) { group in
+            group.addTask {
+                try await captureImageWithoutTimeout(contentFilter: contentFilter, configuration: configuration)
             }
 
             group.addTask {
@@ -148,6 +202,20 @@ enum SnapshotService {
         }
     }
 
+    private static func captureImageWithoutTimeout(contentFilter: SCContentFilter, configuration: SCStreamConfiguration) async throws -> CGImage {
+        try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(contentFilter: contentFilter, configuration: configuration) { image, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let image {
+                    continuation.resume(returning: image)
+                } else {
+                    continuation.resume(throwing: SnapshotError.captureReturnedNoImage)
+                }
+            }
+        }
+    }
+
     private static func captureRect() -> CGRect {
         let frames = NSScreen.screens.map(\.frame)
         guard let first = frames.first else {
@@ -164,21 +232,47 @@ enum SnapshotService {
             return nil
         }
 
-        // 1. Prefer CGWindowList — it returns bounds in display-space coordinates
-        //    (top-left origin), the same space SCScreenshotManager expects.
-        if let rect = cgFrontmostWindowRect(for: app.processIdentifier) {
-            return rect
+        if let target = cgFrontmostWindowTarget(for: app.processIdentifier) {
+            return target.rect
         }
 
-        // 2. Fallback to Accessibility API, converting from bottom-left origin
-        //    to top-left origin display space.
         return accessibilityWindowRect(for: app.processIdentifier)
     }
 
-    /// Returns the on-screen rect of the frontmost window for the given PID using
-    /// `CGWindowListCopyWindowInfo`. This coordinate space matches what
-    /// `SCScreenshotManager.captureImage(in:)` expects.
-    private static func cgFrontmostWindowRect(for pid: pid_t) -> CGRect? {
+    private struct WindowCaptureTarget {
+        var windowID: CGWindowID
+        var rect: CGRect
+    }
+
+    private static func activeShareableWindow() async throws -> SCWindow? {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        let pid = app.processIdentifier
+        let cgTarget = cgFrontmostWindowTarget(for: pid)
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        let windows = content.windows.filter { window in
+            guard window.owningApplication?.processID == pid,
+                  window.windowLayer == 0,
+                  window.isOnScreen,
+                  isPlausibleCaptureRect(window.frame) else {
+                return false
+            }
+            return true
+        }
+
+        if let cgTarget,
+           let exact = windows.first(where: { $0.windowID == cgTarget.windowID }) {
+            return exact
+        }
+
+        return windows.first
+    }
+
+    /// Returns the frontmost normal on-screen window for the given PID. CoreGraphics
+    /// returns bounds in display-space coordinates, matching `captureImage(in:)`.
+    private static func cgFrontmostWindowTarget(for pid: pid_t) -> WindowCaptureTarget? {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
@@ -191,6 +285,11 @@ enum SnapshotService {
         for window in windowList {
             guard let windowPID = window[kCGWindowOwnerPID] as? pid_t,
                   windowPID == pid,
+                  (window[kCGWindowLayer] as? Int ?? 0) == 0,
+                  (window[kCGWindowAlpha] as? Double ?? 1) > 0,
+                  (window[kCGWindowIsOnscreen] as? Bool ?? true),
+                  (window[kCGWindowSharingState] as? Int ?? 1) != 0,
+                  let windowNumber = window[kCGWindowNumber] as? CGWindowID,
                   let boundsAny = window[kCGWindowBounds] else {
                 continue
             }
@@ -201,21 +300,19 @@ enum SnapshotService {
                 continue
             }
 
-            // Reject degenerate rects (fully offscreen, zero-area, or implausibly huge)
-            guard rect.width > 40, rect.height > 40,
-                  rect.width < 8000, rect.height < 8000 else {
+            guard isPlausibleCaptureRect(rect) else {
                 continue
             }
 
-            return rect
+            return WindowCaptureTarget(windowID: windowNumber, rect: rect)
         }
 
         return nil
     }
 
     /// Returns the focused-window rect via Accessibility APIs.
-    /// Accessibility uses a bottom-left origin; SCScreenshotManager uses a top-left
-    /// origin, so we flip the Y coordinate relative to the main screen height.
+    /// Accessibility reports the global screen coordinates of the top-left corner,
+    /// which is the same logical screen space used by ScreenCaptureKit rect capture.
     private static func accessibilityWindowRect(for pid: pid_t) -> CGRect? {
         let application = AXUIElementCreateApplication(pid)
         var focusedWindowValue: CFTypeRef?
@@ -242,19 +339,11 @@ enum SnapshotService {
         }
 
         let rect = CGRect(origin: position, size: size)
-        guard rect.width > 40, rect.height > 40,
-              rect.width < 8000, rect.height < 8000 else {
-            return nil
-        }
+        return isPlausibleCaptureRect(rect) ? rect : nil
+    }
 
-        // Convert from bottom-left origin (Accessibility) to top-left origin (Display space)
-        let mainScreenHeight = NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0
-        return CGRect(
-            x: rect.origin.x,
-            y: mainScreenHeight - (rect.origin.y + rect.height),
-            width: rect.width,
-            height: rect.height
-        )
+    private static func isPlausibleCaptureRect(_ rect: CGRect) -> Bool {
+        rect.width > 40 && rect.height > 40 && rect.width < 8000 && rect.height < 8000
     }
 
     private static func cgWindowTitle(for pid: pid_t) -> String? {

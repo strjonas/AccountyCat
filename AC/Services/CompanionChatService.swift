@@ -88,22 +88,49 @@ actor CompanionChatService {
         do {
             if inferenceBackend == .openRouter {
                 let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
-                await ActivityLogService.shared.append(level: .verbose,
-                    category: "llm:chat",
-                    message: "─── Request → openrouter/\(resolvedOnlineModelIdentifier) ───\n"
-                        + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
-                        + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
-                )
-                output = try await onlineModelService.runInference(
-                    OnlineModelRequest(
-                        source: .chat,
-                        modelIdentifier: resolvedOnlineModelIdentifier,
-                        systemPrompt: systemPrompt,
-                        userPrompt: prompt,
-                        imagePath: nil,
-                        options: Self.onlineChatOptions()
+                let hadSuccessfulChat = await onlineModelService.hasHadSuccessfulChat()
+                if !hadSuccessfulChat {
+                    // Parallel safety net for the very first chat message
+                    var seen: Set<String> = []
+                    let parallelModels = [resolvedOnlineModelIdentifier, OnlineModelService.premiumFallbackModelIdentifier, AITier.smartest.byokModelIdentifierText]
+                        .filter { seen.insert($0).inserted }
+                        .prefix(3)
+                        .map { $0 }
+                    let parallelRequests = parallelModels.map { model in
+                        OnlineModelRequest(
+                            source: .chat,
+                            modelIdentifier: model,
+                            systemPrompt: systemPrompt,
+                            userPrompt: prompt,
+                            imagePath: nil,
+                            options: Self.onlineChatOptions()
+                        )
+                    }
+                    await ActivityLogService.shared.append(level: .verbose,
+                        category: "llm:chat",
+                        message: "─── Parallel safety net → \(parallelModels.joined(separator: ", ")) ───\n"
+                            + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
+                            + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
                     )
-                )
+                    output = try await onlineModelService.runFirstSuccessfulInference(from: parallelRequests)
+                } else {
+                    await ActivityLogService.shared.append(level: .verbose,
+                        category: "llm:chat",
+                        message: "─── Request → openrouter/\(resolvedOnlineModelIdentifier) ───\n"
+                            + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
+                            + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
+                    )
+                    output = try await onlineModelService.runInference(
+                        OnlineModelRequest(
+                            source: .chat,
+                            modelIdentifier: resolvedOnlineModelIdentifier,
+                            systemPrompt: systemPrompt,
+                            userPrompt: prompt,
+                            imagePath: nil,
+                            options: Self.onlineChatOptions()
+                        )
+                    )
+                }
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
                 guard FileManager.default.isExecutableFile(atPath: runtimePath) else {

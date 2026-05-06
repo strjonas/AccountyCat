@@ -17,6 +17,9 @@ struct LLMEvaluationAttempt: Sendable {
     var runtimeOptions: TelemetryRuntimeOptions?
     var runtimeOutput: RuntimeProcessOutput?
     var parsedDecision: LLMDecision?
+    /// True when the runtime (online or local) threw an error, distinguishing
+    /// infrastructure failure from a parsed-but-unclear semantic decision.
+    var isAPIFailure: Bool = false
 }
 
 struct LLMEvaluationResult: Sendable {

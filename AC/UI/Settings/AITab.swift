@@ -68,6 +68,26 @@ struct AITab: View {
             sectionLabel("intelligence tier")
             tierPicker
 
+            if let notice = controller.modelMismatchNotice {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(accent)
+                    Text(notice)
+                        .font(.acCaption)
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.85))
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(accent.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .stroke(accent.opacity(0.25), lineWidth: 1)
+                        )
+                )
+            }
+
             // Backend-specific sections
             if config.inferenceBackend == .openRouter {
                 orKeySection
