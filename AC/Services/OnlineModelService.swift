@@ -524,20 +524,32 @@ actor OnlineModelService: OnlineModelServing {
         }
 
         // 2) Tier fallbacks
+        // Text requests interleave the balanced image model as first fallback:
+        // it handles text well and avoids degrading to economy-quality text alone.
         let tierFallbacks = includesImage
             ? [AITier.economy.byokModelIdentifierImage, AITier.smartest.byokModelIdentifierImage]
-            : [AITier.economy.byokModelIdentifierText, AITier.smartest.byokModelIdentifierText]
+            : [
+                AITier.balanced.byokModelIdentifierImage,
+                AITier.economy.byokModelIdentifierText,
+                AITier.smartest.byokModelIdentifierText,
+            ]
         for fallback in tierFallbacks where modelIdentifier != fallback && !chain.contains(fallback) {
             chain.append(fallback)
         }
 
-        // 3) Premium reliable fallback. Keep this last: cheap configured backups
-        // should absorb routine instability; Gemini is for first impressions and
-        // true last-resort rescue.
-        if isPremium,
-           Self.premiumFallbackModelIdentifier != modelIdentifier,
-           !chain.contains(Self.premiumFallbackModelIdentifier) {
-            chain.append(Self.premiumFallbackModelIdentifier)
+        // 3) Premium fallback. Intermediate image-quality models absorb routine
+        // instability before the last-resort Gemini rescue — the user expects a
+        // comparable experience even when the primary model is unavailable.
+        if isPremium {
+            let premiumExtras: [String] = [
+                AITier.balanced.byokModelIdentifierImage,
+                AITier.smartest.byokModelIdentifierImage,
+                Self.premiumFallbackModelIdentifier,
+            ]
+            for fallback in premiumExtras
+            where modelIdentifier != fallback && !chain.contains(fallback) {
+                chain.append(fallback)
+            }
         }
 
         // 4) Health-aware filtering: deprioritize banned or high-failure models

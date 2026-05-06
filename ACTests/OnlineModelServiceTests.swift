@@ -10,6 +10,7 @@ struct OnlineModelServiceTests {
         #expect(
             fallbacks
             == [
+                "google/gemma-4-31b-it",
                 "nvidia/nemotron-3-super-120b-a12b",
             ]
         )
@@ -84,8 +85,8 @@ struct OnlineModelServiceTests {
     func deepseekPrimaryFallsBackToTierAlternativesOnRetry() async {
         let fallbacks = await fallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
 
-        #expect(fallbacks.first == "nvidia/nemotron-3-super-120b-a12b")
-        #expect(fallbacks.count == 1)
+        #expect(fallbacks.first == "google/gemma-4-31b-it")
+        #expect(fallbacks.count == 2)
     }
 
     @Test
@@ -158,6 +159,8 @@ struct OnlineModelServiceTests {
             for: "deepseek/deepseek-v4-flash",
             isPremium: true
         )
+        #expect(fallbacks.contains("google/gemma-4-31b-it"))
+        #expect(fallbacks.contains("moonshotai/kimi-k2.6"))
         #expect(fallbacks.contains("google/gemini-3-flash-preview"))
     }
 
@@ -168,6 +171,7 @@ struct OnlineModelServiceTests {
             isPremium: false
         )
         #expect(!fallbacks.contains("google/gemini-3-flash-preview"))
+        #expect(!fallbacks.contains("moonshotai/kimi-k2.6"))
     }
 
     @Test
