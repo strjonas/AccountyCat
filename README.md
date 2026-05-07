@@ -64,7 +64,7 @@ AccountyCat intelligently selects the right model based on what you're doing:
 
 Cost range reflects normal to heavy usage. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
 
-> **Managed mode (waitlist):** A fully hosted option is in planning — pay a flat monthly fee, no OpenRouter account needed, just works out of the box. [Join the waitlist](#) to signal demand and get early access.
+> **Managed mode (waitlist):** A fully hosted option is in planning — pay a flat monthly fee, no OpenRouter account needed, just works out of the box. [Join the waitlist](https://www.accountycat.com/#waitlist) to signal demand and get early access.
 
 ---
 
