@@ -104,13 +104,53 @@ actor PolicyMemoryService: PolicyMemoryServicing {
                     await ActivityLogService.shared.append(category: "policy-memory-error", message: "No local text model configured.")
                     return nil
                 }
-                output = try await runtime.runTextInference(
-                    runtimePath: runtimePath,
-                    modelIdentifier: localModelIdentifier,
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    options: options
-                )
+                let pmStartedAt = Date()
+                do {
+                    var localOutput = try await runtime.runTextInference(
+                        runtimePath: runtimePath,
+                        modelIdentifier: localModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        options: options
+                    )
+                    let id = await LLMTelemetryRecorder.shared.record(
+                        LLMTelemetryCall(
+                            kind: .policyMemory,
+                            runtime: .llamaCpp,
+                            modelIdentifier: localOutput.usedModelIdentifier ?? localModelIdentifier,
+                            promptMode: "policy-memory",
+                            systemPrompt: systemPrompt,
+                            userPrompt: userPrompt,
+                            startedAt: pmStartedAt,
+                            endedAt: Date(),
+                            rawStdout: localOutput.stdout,
+                            rawStderr: localOutput.stderr,
+                            tokenUsage: localOutput.tokenUsage
+                        )
+                    )
+                    localOutput.interactionID = id
+                    output = localOutput
+                } catch {
+                    await LLMTelemetryRecorder.shared.record(
+                        LLMTelemetryCall(
+                            kind: .policyMemory,
+                            runtime: .llamaCpp,
+                            modelIdentifier: localModelIdentifier,
+                            promptMode: "policy-memory",
+                            systemPrompt: systemPrompt,
+                            userPrompt: userPrompt,
+                            startedAt: pmStartedAt,
+                            endedAt: Date(),
+                            rawStdout: nil,
+                            rawStderr: nil,
+                            failure: LLMInteractionFailure(
+                                domain: String(describing: type(of: error)),
+                                message: error.localizedDescription
+                            )
+                        )
+                    )
+                    throw error
+                }
             }
         } catch {
             await ActivityLogService.shared.append(
@@ -128,7 +168,52 @@ actor PolicyMemoryService: PolicyMemoryServicing {
                 message: "Could not parse policy-memory JSON from \(request.inferenceBackend == .openRouter ? "online" : "local") model. Raw output: \(combined.cleanedSingleLine.truncatedForPrompt(maxLength: 900))"
             )
         }
+        if let interactionID = output.interactionID {
+            await Self.annotatePolicyMemory(
+                interactionID: interactionID,
+                request: request,
+                parsed: parsed
+            )
+        }
         return parsed
+    }
+
+    private static func annotatePolicyMemory(
+        interactionID: String,
+        request: PolicyMemoryUpdateRequest,
+        parsed: PolicyMemoryUpdateResponse?
+    ) async {
+        var fields: [String: String] = [
+            "triggerSummary": request.eventSummary.cleanedSingleLine.truncatedForPrompt(maxLength: 300),
+        ]
+        if let parsed {
+            fields["operationsCount"] = String(parsed.operations.count)
+            let kinds = parsed.operations.map { String(describing: $0) }.joined(separator: ", ")
+            if !kinds.isEmpty {
+                fields["operationKinds"] = kinds.truncatedForPrompt(maxLength: 400)
+            }
+        } else {
+            fields["parseFailed"] = "true"
+        }
+        var parsedJSON: String? = nil
+        if let parsed {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(parsed),
+               let str = String(data: data, encoding: .utf8) {
+                parsedJSON = str
+            }
+        }
+        await LLMTelemetryRecorder.shared.annotate(
+            LLMTelemetryAnnotation(
+                interactionID: interactionID,
+                kind: .policyMemory,
+                parsedOutputJSON: parsedJSON,
+                summary: parsed.map { "\($0.operations.count) op(s)" } ?? "no parse",
+                extractedFields: fields
+            )
+        )
     }
 
     nonisolated private static func makePayloadJSON(request: PolicyMemoryUpdateRequest) -> String {

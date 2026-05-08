@@ -13,6 +13,7 @@ struct AITab: View {
 
     @State private var showVisionInfo = false
     @State private var showAdvanced = false
+    @State private var showEconomyInfo = false
     @State private var showDeleteModelConfirm = false
     @State private var modelToDelete: InstalledLocalModel?
     @State private var advancedTextModelID = ""
@@ -63,6 +64,8 @@ struct AITab: View {
             // Mode
             sectionLabel("how AC thinks")
             modePills
+
+            ramBanner
 
             // Tier
             sectionLabel("intelligence tier")
@@ -201,7 +204,7 @@ struct AITab: View {
                 id: .openRouter,
                 label: "OpenRouter",
                 sub: "bring your own key",
-                badge: "★ Recommended",
+                badge: AITier.byokRecommendedOverLocal ? "★ Recommended" : nil,
                 disabled: false
             )
             modePill(
@@ -286,12 +289,46 @@ struct AITab: View {
         .disabled(disabled)
     }
 
+    // MARK: - Hardware recommendation
+
+    @ViewBuilder
+    private var ramBanner: some View {
+        if config.inferenceBackend == .local, AITier.byokRecommendedOverLocal {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10))
+                    .foregroundStyle(accent)
+                Text("On this Mac we recommend OpenRouter — smarter models, less RAM pressure. You can ignore this, it's your call.")
+                    .font(.ac(10))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(accent.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(accent.opacity(0.15), lineWidth: 1)
+                    )
+            )
+        }
+    }
+
     // MARK: - Tier picker
 
     private var tierPicker: some View {
         VStack(spacing: 6) {
             ForEach(AITier.allCases, id: \.self) { tier in
                 let isSelected = controller.currentAITier == tier
+                let isRecommended: Bool = {
+                    if controller.state.monitoringConfiguration.inferenceBackend == .openRouter {
+                        return tier == .balanced
+                    } else {
+                        return tier == AITier.recommendedLocalTier()
+                    }
+                }()
                 Button {
                     controller.updateAITier(tier)
                 } label: {
@@ -307,9 +344,39 @@ struct AITab: View {
                             }
                         }
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(tier.displayName)
-                                .font(.ac(12, weight: isSelected ? .semibold : .medium))
-                                .foregroundStyle(Color.acTextPrimary)
+                            HStack(spacing: 4) {
+                                Text(tier.displayName)
+                                    .font(.ac(12, weight: isSelected ? .semibold : .medium))
+                                    .foregroundStyle(Color.acTextPrimary)
+                                if tier == .economy {
+                                    Image(systemName: "info.circle")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(Color.secondary.opacity(0.5))
+                                        .onTapGesture { showEconomyInfo = true }
+                                        .popover(isPresented: $showEconomyInfo, arrowEdge: .top) {
+                                            Text(AITier.economyTierQualityNote)
+                                                .font(.ac(11))
+                                                .foregroundStyle(Color.acTextPrimary)
+                                                .padding(12)
+                                                .frame(width: 220)
+                                        }
+                                }
+                                if isRecommended {
+                                    Text("recommended")
+                                        .font(.ac(8, weight: .semibold))
+                                        .foregroundStyle(accent.opacity(0.7))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(
+                                            Capsule(style: .continuous)
+                                                .fill(accent.opacity(0.10))
+                                                .overlay(
+                                                    Capsule(style: .continuous)
+                                                        .stroke(accent.opacity(0.2), lineWidth: 0.5)
+                                                )
+                                        )
+                                }
+                            }
                             Text(tier.description)
                                 .font(.ac(10))
                                 .foregroundStyle(.secondary)
@@ -354,6 +421,35 @@ struct AITab: View {
         VStack(alignment: .leading, spacing: 10) {
             Divider().opacity(0.3)
             sectionLabel("installed models")
+
+            // Download progress
+            if controller.installingRuntime,
+               let progress = controller.setupProgressValue {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                    let percent = max(0, min(100, Int((progress * 100).rounded())))
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(controller.setupProgressMessage ?? "Downloading model…")
+                            .lineLimit(2)
+                        Spacer(minLength: 6)
+                        Text("\(percent)%")
+                    }
+                    .font(.ac(10))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                }
+                .padding(.vertical, 4)
+            } else if controller.installingRuntime {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                    Text(controller.setupProgressMessage ?? "Downloading model…")
+                        .font(.ac(10))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                        .lineLimit(2)
+                }
+                .padding(.vertical, 4)
+            }
 
             let installed = controller.installedManagedModels
             let selected = controller.selectedInstalledModel

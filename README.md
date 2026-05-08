@@ -42,8 +42,8 @@ No account, no API key, no internet. Everything runs locally via `llama.cpp` usi
 
 | Tier | Model | RAM footprint | Notes |
 |------|-------|---------------|-------|
-| Economy | Qwen 3.5 4B | ~2–3 GB | Safe for 8GB machines |
-| Default | Qwen 3.5 9B | ~5–7 GB | Better reasoning, recommended |
+| Economy | Qwen 3.5 4B | ~2–3 GB | Fits 8 GB Macs · reduced accuracy |
+| Default | Qwen 3.5 9B | ~5–7 GB | Recommended for most users |
 | Smartest | Qwen 3.6 27B | ~15–18 GB | Best local reasoning |
 
 The app detects your available memory and suggests the right tier automatically.

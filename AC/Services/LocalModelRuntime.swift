@@ -13,17 +13,25 @@ struct RuntimeProcessOutput: Sendable {
     var stderr: String
     var usedModelIdentifier: String?
     var tokenUsage: TokenUsage?
+    /// Set by `OnlineModelService` (and the local-chat path) when a telemetry
+    /// `.llmInteraction` event was emitted for this call. Callers should pass
+    /// this id back to `LLMTelemetryRecorder.annotate(...)` once the raw text
+    /// has been parsed into a domain object so the inspector can show the
+    /// extracted fields alongside the raw I/O.
+    var interactionID: String?
 
     nonisolated init(
         stdout: String,
         stderr: String,
         usedModelIdentifier: String? = nil,
-        tokenUsage: TokenUsage? = nil
+        tokenUsage: TokenUsage? = nil,
+        interactionID: String? = nil
     ) {
         self.stdout = stdout
         self.stderr = stderr
         self.usedModelIdentifier = usedModelIdentifier
         self.tokenUsage = tokenUsage
+        self.interactionID = interactionID
     }
 }
 

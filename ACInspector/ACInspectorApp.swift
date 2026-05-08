@@ -48,32 +48,48 @@ private struct EpisodesRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding(
-                get: { controller.selectedEpisodeID },
-                set: { id in
-                    guard controller.selectedEpisodeID != id else { return }
-                    controller.selectedEpisodeID = id
-                }
-            )) {
-                ForEach(controller.episodes) { episode in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(episode.appName)
-                            .font(.headline)
-                        Text(episode.title)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                        Text(episode.startedAt.formatted(date: .abbreviated, time: .standard))
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                        if let strategySummary = episode.strategySummary, !strategySummary.isEmpty {
-                            Text(strategySummary)
+            VStack(spacing: 0) {
+                KindFilterBar()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+                List(selection: Binding(
+                    get: { controller.selectedEpisodeID },
+                    set: { id in
+                        guard controller.selectedEpisodeID != id else { return }
+                        controller.selectedEpisodeID = id
+                    }
+                )) {
+                    ForEach(controller.filteredEpisodes) { episode in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                KindBadge(kind: episode.kind)
+                                Text(episode.appName)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                            }
+                            Text(episode.title)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            Text(episode.startedAt.formatted(date: .abbreviated, time: .standard))
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            if let strategySummary = episode.strategySummary, !strategySummary.isEmpty {
+                                Text(strategySummary)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            if let parent = episode.parentEpisodeID, !parent.isEmpty {
+                                Text("↳ child of \(parent.prefix(8))…")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
                         }
+                        .tag(episode.id)
                     }
-                    .tag(episode.id)
                 }
             }
             .navigationTitle("Episodes")
@@ -755,6 +771,79 @@ private struct PromptLabCodeBlock: View {
     }
 }
 
+private struct KindBadge: View {
+    let kind: IndexedEpisodeKind
+
+    var body: some View {
+        Text(kind.displayName)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.18), in: Capsule())
+            .foregroundStyle(color)
+            .overlay(Capsule().stroke(color.opacity(0.35), lineWidth: 0.5))
+    }
+
+    private var color: Color {
+        switch kind {
+        case .focusDecision: return .blue
+        case .chat, .localChat: return .green
+        case .chatAction: return .orange
+        case .policyMemory: return .purple
+        case .memoryConsolidation: return .pink
+        case .monitoringText, .monitoringVision: return .cyan
+        case .safelistAppeal: return .yellow
+        }
+    }
+}
+
+private struct KindFilterBar: View {
+    @EnvironmentObject private var controller: InspectorController
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                FilterChip(
+                    label: "All",
+                    isSelected: controller.kindFilter.isEmpty,
+                    action: { controller.kindFilter.removeAll() }
+                )
+                ForEach(IndexedEpisodeKind.allCases, id: \.self) { kind in
+                    FilterChip(
+                        label: kind.displayName,
+                        isSelected: controller.kindFilter.contains(kind),
+                        action: {
+                            if controller.kindFilter.contains(kind) {
+                                controller.kindFilter.remove(kind)
+                            } else {
+                                controller.kindFilter.insert(kind)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private struct FilterChip: View {
+        let label: String
+        let isSelected: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                Text(label)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(isSelected ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 private struct InspectorDetailView: View {
     @EnvironmentObject private var controller: InspectorController
     let episode: IndexedEpisode
@@ -763,21 +852,131 @@ private struct InspectorDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                screenshotSection
-                if controller.selectedEvaluationRuns.isEmpty, controller.selectedEpisodeAttempts.isEmpty {
-                    promptSection
-                    modelSection
-                } else if controller.selectedEvaluationRuns.isEmpty {
-                    modelAttemptsSection
+                if episode.kind != .focusDecision {
+                    extractedFieldsSection
+                    llmRawIOSection
+                    if let parent = episode.parentEpisodeID, !parent.isEmpty {
+                        parentLinkSection(parent: parent)
+                    }
                 } else {
-                    evaluationRunsSection
+                    screenshotSection
+                    if controller.selectedEvaluationRuns.isEmpty, controller.selectedEpisodeAttempts.isEmpty {
+                        promptSection
+                        modelSection
+                    } else if controller.selectedEvaluationRuns.isEmpty {
+                        modelAttemptsSection
+                    } else {
+                        evaluationRunsSection
+                    }
+                    annotationSection
                 }
-                annotationSection
                 timelineSection
             }
             .padding(24)
         }
         .navigationTitle(episode.appName)
+    }
+
+    private var extractedFieldsSection: some View {
+        GroupBox(label: HStack(spacing: 6) {
+            KindBadge(kind: episode.kind)
+            Text(episode.kind.displayName).font(.headline)
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !episode.summary.isEmpty {
+                    Text(episode.summary)
+                        .font(.callout)
+                }
+                if let model = episode.modelIdentifier, !model.isEmpty {
+                    HStack(spacing: 6) {
+                        Text("Model").font(.caption.monospaced()).foregroundStyle(.secondary)
+                        Text(model).font(.caption.monospaced())
+                    }
+                }
+                if let failure = episode.failureMessage, !failure.isEmpty {
+                    Text("Failure: \(failure)")
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                }
+                Divider().padding(.vertical, 4)
+                if episode.extractedFields.isEmpty {
+                    Text("(no extracted fields)").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(episode.extractedFields.keys.sorted(), id: \.self) { key in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(key)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 160, alignment: .leading)
+                            Text(episode.extractedFields[key] ?? "")
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+    }
+
+    private var llmRawIOSection: some View {
+        GroupBox("Raw I/O") {
+            VStack(alignment: .leading, spacing: 12) {
+                rawFileRow(label: "System prompt", path: episode.systemPromptPath)
+                rawFileRow(label: "User prompt", path: episode.renderedPromptPath)
+                rawFileRow(label: "Request payload", path: episode.promptPayloadPath)
+                rawFileRow(label: "Raw stdout", path: episode.rawStdoutPath)
+                rawFileRow(label: "Raw stderr", path: episode.rawStderrPath)
+                if let parsed = episode.modelOutputJSON, !parsed.isEmpty {
+                    Divider()
+                    Text("Parsed output JSON")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        Text(parsed)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 280)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+    }
+
+    @ViewBuilder
+    private func rawFileRow(label: String, path: String?) -> some View {
+        if let path, !path.isEmpty {
+            HStack(spacing: 12) {
+                Text(label).font(.caption.monospaced()).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
+                Text((path as NSString).lastPathComponent)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button("Open") { controller.openFile(path) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func parentLinkSection(parent: String) -> some View {
+        GroupBox("Parent") {
+            HStack {
+                Text("Triggered by chat \(parent.prefix(8))…")
+                    .font(.caption.monospaced())
+                Spacer()
+                Button("View parent chat") {
+                    controller.selectEpisode(parent)
+                }
+            }
+            .padding(8)
+        }
     }
 
     private var header: some View {

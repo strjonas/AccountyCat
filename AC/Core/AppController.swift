@@ -2352,7 +2352,8 @@ final class AppController: ObservableObject {
                 workflow: chatWorkflow,
                 latestUserMessage: trimmedDraft,
                 recentMessages: boundedHistory,
-                context: SnapshotService.frontmostContext()
+                context: SnapshotService.frontmostContext(),
+                parentInteractionID: result.interactionID
             )
             // Run consolidation lazily so the chat reply never waits for it.
             self.maybeConsolidateMemory()
@@ -2533,7 +2534,8 @@ final class AppController: ObservableObject {
         workflow: CompanionChatWorkflow,
         latestUserMessage: String,
         recentMessages: [ChatMessage],
-        context: FrontmostContext?
+        context: FrontmostContext?,
+        parentInteractionID: String?
     ) {
         guard !actions.isEmpty else { return }
 
@@ -2552,7 +2554,8 @@ final class AppController: ObservableObject {
                 action,
                 latestUserMessage: latestUserMessage,
                 recentUserMessages: recentUserMessages,
-                context: context
+                context: context,
+                parentInteractionID: parentInteractionID
             )
         }
     }
@@ -2561,7 +2564,8 @@ final class AppController: ObservableObject {
         _ action: CompanionChatAction,
         latestUserMessage: String,
         recentUserMessages: [String],
-        context: FrontmostContext?
+        context: FrontmostContext?,
+        parentInteractionID: String?
     ) {
         let now = Date()
         let request = ChatActionResolutionRequest(
@@ -2580,7 +2584,8 @@ final class AppController: ObservableObject {
             inferenceBackend: state.monitoringConfiguration.inferenceBackend,
             onlineModelIdentifier: state.monitoringConfiguration.onlineModelIdentifier,
             onlineTextModelIdentifier: state.monitoringConfiguration.onlineModelIdentifierText,
-            localTextModelIdentifier: state.monitoringConfiguration.localModelIdentifierText
+            localTextModelIdentifier: state.monitoringConfiguration.localModelIdentifierText,
+            parentInteractionID: parentInteractionID
         )
 
         Task { [weak self, companionChatService] in

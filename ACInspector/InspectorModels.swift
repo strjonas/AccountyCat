@@ -7,6 +7,32 @@
 
 import Foundation
 
+nonisolated enum IndexedEpisodeKind: String, Hashable, Sendable, CaseIterable, Codable {
+    case focusDecision = "focus_decision"
+    case chat
+    case chatAction = "chat_action"
+    case policyMemory = "policy_memory"
+    case memoryConsolidation = "memory_consolidation"
+    case monitoringText = "monitoring_text"
+    case monitoringVision = "monitoring_vision"
+    case safelistAppeal = "safelist_appeal"
+    case localChat = "local_chat"
+
+    var displayName: String {
+        switch self {
+        case .focusDecision: return "Focus Decision"
+        case .chat: return "Chat"
+        case .chatAction: return "Chat Action"
+        case .policyMemory: return "Policy Memory"
+        case .memoryConsolidation: return "Memory Consolidation"
+        case .monitoringText: return "Monitoring (Text)"
+        case .monitoringVision: return "Monitoring (Vision)"
+        case .safelistAppeal: return "Safelist Appeal"
+        case .localChat: return "Local Chat"
+        }
+    }
+}
+
 struct IndexedEpisode: Identifiable, Hashable, Sendable {
     var id: String
     var sessionID: String
@@ -28,6 +54,17 @@ struct IndexedEpisode: Identifiable, Hashable, Sendable {
     var algorithmVersion: String?
     var promptProfileID: String?
     var experimentArm: String?
+    var kind: IndexedEpisodeKind = .focusDecision
+    var parentEpisodeID: String? = nil
+    /// Stable kind-specific extracted fields shown in the inspector detail.
+    var extractedFields: [String: String] = [:]
+    /// Extra raw paths for non-monitoring kinds.
+    var systemPromptPath: String? = nil
+    var rawStdoutPath: String? = nil
+    var rawStderrPath: String? = nil
+    var summary: String = ""
+    var modelIdentifier: String? = nil
+    var failureMessage: String? = nil
 
     var title: String {
         if let windowTitle, !windowTitle.isEmpty {

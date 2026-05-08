@@ -13,7 +13,19 @@ import Foundation
 final class InspectorController: ObservableObject {
     @Published var selectedTab: InspectorTab = .episodes
     @Published var episodes: [IndexedEpisode] = []
+    /// Active kind filter chips. Empty = show all kinds.
+    @Published var kindFilter: Set<IndexedEpisodeKind> = []
     @Published var selectedEpisodeID: String?
+
+    /// Episodes filtered by `kindFilter` (empty filter = no filtering).
+    var filteredEpisodes: [IndexedEpisode] {
+        guard !kindFilter.isEmpty else { return episodes }
+        return episodes.filter { kindFilter.contains($0.kind) }
+    }
+
+    func selectEpisode(_ id: String) {
+        selectedEpisodeID = id
+    }
     @Published var selectedEpisodeEvents: [IndexedEvent] = []
     @Published var selectedEpisodeAttempts: [IndexedModelAttempt] = []
     @Published var selectedEvaluationRuns: [IndexedEvaluationRun] = []

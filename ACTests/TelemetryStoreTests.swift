@@ -47,6 +47,67 @@ struct TelemetryStoreTests {
     }
 
     @Test
+    func llmInteractionEventRoundTrips() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ac-telemetry-tests-\(UUID().uuidString)", isDirectory: true)
+        let store = TelemetryStore(rootURL: rootURL)
+        let session = try await store.startSession(reason: "test")
+
+        let record = LLMInteractionRecord(
+            interactionID: "interaction-1",
+            kind: .chat,
+            parentInteractionID: nil,
+            runtime: .openrouter,
+            modelIdentifier: "google/test",
+            promptMode: "chat",
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 101),
+            latencyMs: 1000,
+            tokenUsage: nil,
+            requestArtifacts: LLMInteractionRequestArtifacts(systemPrompt: nil, userPrompt: nil, payload: nil),
+            responseArtifacts: LLMInteractionResponseArtifacts(rawStdout: nil, rawStderr: nil),
+            stdoutPreview: "hi",
+            stderrPreview: nil,
+            parsedOutputJSON: nil,
+            summary: "hello",
+            extractedFields: ["userMessage": "ping"],
+            failure: nil,
+            isAnnotation: false
+        )
+        try await store.appendEvent(
+            TelemetryEvent(
+                id: "ev-1",
+                kind: .llmInteraction,
+                timestamp: Date(timeIntervalSince1970: 101),
+                sessionID: session.id,
+                episodeID: record.interactionID,
+                episode: nil,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                reaction: nil,
+                annotation: nil,
+                failure: nil,
+                llmInteraction: record
+            ),
+            sessionID: session.id
+        )
+
+        let events = await store.loadEvents(sessionID: session.id)
+        let llm = events.first(where: { $0.kind == .llmInteraction })?.llmInteraction
+        #expect(llm?.interactionID == "interaction-1")
+        #expect(llm?.kind == .chat)
+        #expect(llm?.summary == "hello")
+        #expect(llm?.extractedFields["userMessage"] == "ping")
+        #expect(llm?.isAnnotation == false)
+    }
+
+    @Test
     func pinnedSessionsSurviveCleanup() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ac-telemetry-tests-\(UUID().uuidString)", isDirectory: true)

@@ -8,6 +8,25 @@
 import Foundation
 import SQLite3
 
+private struct LLMInteractionStorage: Sendable {
+    var interactionID: String
+    var sessionID: String
+    var kind: IndexedEpisodeKind
+    var parentInteractionID: String?
+    var startedAt: Date
+    var endedAt: Date
+    var modelIdentifier: String
+    var systemPromptPath: String?
+    var renderedPromptPath: String?
+    var promptPayloadPath: String?
+    var rawStdoutPath: String?
+    var rawStderrPath: String?
+    var parsedOutputJSON: String?
+    var summary: String
+    var extractedFields: [String: String]
+    var failureMessage: String?
+}
+
 actor TelemetryIndexStore {
     private struct SessionSourceState: Equatable {
         var descriptorSignature: String
@@ -76,7 +95,7 @@ actor TelemetryIndexStore {
         try prepareSchema(in: db)
 
         let sql = """
-        SELECT id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm
+        SELECT id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm, kind, parent_episode_id, extracted_fields_json, system_prompt_path, raw_stdout_path, raw_stderr_path, summary, model_identifier, failure_message
         FROM episodes
         ORDER BY started_at DESC;
         """
@@ -100,6 +119,12 @@ actor TelemetryIndexStore {
             let status = EpisodeStatus(rawValue: string(at: 6, statement: statement) ?? "active") ?? .active
             let endReason = EpisodeEndReason(rawValue: string(at: 7, statement: statement) ?? "")
 
+            let kindRaw = string(at: 20, statement: statement) ?? IndexedEpisodeKind.focusDecision.rawValue
+            let kind = IndexedEpisodeKind(rawValue: kindRaw) ?? .focusDecision
+            let extractedJSON = string(at: 22, statement: statement) ?? "{}"
+            let extractedData = Data(extractedJSON.utf8)
+            let extractedFields = (try? decoder.decode([String: String].self, from: extractedData)) ?? [:]
+
             results.append(
                 IndexedEpisode(
                     id: string(at: 0, statement: statement) ?? UUID().uuidString,
@@ -121,7 +146,16 @@ actor TelemetryIndexStore {
                     algorithmID: string(at: 16, statement: statement),
                     algorithmVersion: string(at: 17, statement: statement),
                     promptProfileID: string(at: 18, statement: statement),
-                    experimentArm: string(at: 19, statement: statement)
+                    experimentArm: string(at: 19, statement: statement),
+                    kind: kind,
+                    parentEpisodeID: string(at: 21, statement: statement),
+                    extractedFields: extractedFields,
+                    systemPromptPath: string(at: 23, statement: statement),
+                    rawStdoutPath: string(at: 24, statement: statement),
+                    rawStderrPath: string(at: 25, statement: statement),
+                    summary: string(at: 26, statement: statement) ?? "",
+                    modelIdentifier: string(at: 27, statement: statement),
+                    failureMessage: string(at: 28, statement: statement)
                 )
             )
         }
@@ -182,9 +216,32 @@ actor TelemetryIndexStore {
         }
 
         var accumulators: [String: EpisodeAccumulator] = [:]
+        var llmAccumulators: [String: LLMInteractionStorage] = [:]
         var evaluationEpisodeIDs: [String: String] = [:]
 
         for event in events {
+            if event.kind == .llmInteraction, let record = event.llmInteraction {
+                await ingest(
+                    llm: record,
+                    event: event,
+                    sessionID: sessionID,
+                    accumulators: &llmAccumulators
+                )
+                let rawJSON = (try? await prettyJSONString(for: event)) ?? "{}"
+                try insertEvent(
+                    IndexedEvent(
+                        id: event.id,
+                        sessionID: sessionID,
+                        episodeID: record.interactionID,
+                        kind: event.kind.rawValue,
+                        timestamp: event.timestamp,
+                        summary: record.summary.isEmpty ? indexedKind(for: record).displayName : record.summary,
+                        rawJSON: rawJSON
+                    ),
+                    db: db
+                )
+                continue
+            }
             let resolvedEpisodeID = resolveEpisodeID(for: event, evaluationEpisodeIDs: evaluationEpisodeIDs)
             if let evaluationID = event.evaluation?.evaluationID,
                let resolvedEpisodeID {
@@ -316,10 +373,143 @@ actor TelemetryIndexStore {
                     algorithmID: accumulator.strategy?.algorithmID,
                     algorithmVersion: accumulator.strategy?.algorithmVersion,
                     promptProfileID: accumulator.strategy?.promptProfileID,
-                    experimentArm: accumulator.strategy?.experimentArm
+                    experimentArm: accumulator.strategy?.experimentArm,
+                    kind: .focusDecision
                 ),
                 db: db
             )
+        }
+
+        for acc in llmAccumulators.values {
+            try insertEpisode(
+                IndexedEpisode(
+                    id: acc.interactionID,
+                    sessionID: acc.sessionID,
+                    appName: acc.kind.displayName,
+                    windowTitle: acc.summary.isEmpty ? nil : acc.summary,
+                    startedAt: acc.startedAt,
+                    endedAt: acc.endedAt,
+                    status: .ended,
+                    endReason: nil,
+                    pinned: false,
+                    labels: [],
+                    note: "",
+                    screenshotPath: nil,
+                    renderedPromptPath: acc.renderedPromptPath,
+                    promptPayloadPath: acc.promptPayloadPath,
+                    modelOutputJSON: acc.parsedOutputJSON,
+                    reactionSummary: nil,
+                    algorithmID: nil,
+                    algorithmVersion: nil,
+                    promptProfileID: nil,
+                    experimentArm: nil,
+                    kind: acc.kind,
+                    parentEpisodeID: acc.parentInteractionID,
+                    extractedFields: acc.extractedFields,
+                    systemPromptPath: acc.systemPromptPath,
+                    rawStdoutPath: acc.rawStdoutPath,
+                    rawStderrPath: acc.rawStderrPath,
+                    summary: acc.summary,
+                    modelIdentifier: acc.modelIdentifier,
+                    failureMessage: acc.failureMessage
+                ),
+                db: db
+            )
+        }
+    }
+
+    private func indexedKind(for record: LLMInteractionRecord) -> IndexedEpisodeKind {
+        switch record.kind {
+        case .chat: return .chat
+        case .chatAction: return .chatAction
+        case .policyMemory: return .policyMemory
+        case .memoryConsolidation: return .memoryConsolidation
+        case .monitoringText: return .monitoringText
+        case .monitoringVision: return .monitoringVision
+        case .safelistAppeal: return .safelistAppeal
+        case .localChat: return .localChat
+        }
+    }
+
+    private func ingest(
+        llm record: LLMInteractionRecord,
+        event: TelemetryEvent,
+        sessionID: String,
+        accumulators: inout [String: LLMInteractionStorage]
+    ) async {
+        // Resolve absolute path helper
+        func absolutePath(for ref: ArtifactRef?) async -> String? {
+            guard let ref else { return nil }
+            return await telemetryStore.absoluteArtifactURL(for: ref, sessionID: sessionID).path
+        }
+
+        let kind = indexedKind(for: record)
+        let systemPath = await absolutePath(for: record.requestArtifacts.systemPrompt)
+        let userPath = await absolutePath(for: record.requestArtifacts.userPrompt)
+        let payloadPath = await absolutePath(for: record.requestArtifacts.payload)
+        let stdoutPath = await absolutePath(for: record.responseArtifacts.rawStdout)
+        let stderrPath = await absolutePath(for: record.responseArtifacts.rawStderr)
+
+        if record.isAnnotation {
+            // Merge with existing accumulator if present.
+            if var existing = accumulators[record.interactionID] {
+                if let parsed = record.parsedOutputJSON { existing.parsedOutputJSON = parsed }
+                if !record.summary.isEmpty { existing.summary = record.summary }
+                if !record.extractedFields.isEmpty { existing.extractedFields = record.extractedFields }
+                if let parent = record.parentInteractionID { existing.parentInteractionID = parent }
+                accumulators[record.interactionID] = existing
+            } else {
+                // Annotation without prior record (out-of-order). Create stub.
+                accumulators[record.interactionID] = LLMInteractionStorage(
+                    interactionID: record.interactionID,
+                    sessionID: sessionID,
+                    kind: kind,
+                    parentInteractionID: record.parentInteractionID,
+                    startedAt: record.startedAt,
+                    endedAt: record.endedAt,
+                    modelIdentifier: record.modelIdentifier,
+                    systemPromptPath: nil,
+                    renderedPromptPath: nil,
+                    promptPayloadPath: nil,
+                    rawStdoutPath: nil,
+                    rawStderrPath: nil,
+                    parsedOutputJSON: record.parsedOutputJSON,
+                    summary: record.summary,
+                    extractedFields: record.extractedFields,
+                    failureMessage: nil
+                )
+            }
+        } else {
+            var storage = accumulators[record.interactionID] ?? LLMInteractionStorage(
+                interactionID: record.interactionID,
+                sessionID: sessionID,
+                kind: kind,
+                parentInteractionID: record.parentInteractionID,
+                startedAt: record.startedAt,
+                endedAt: record.endedAt,
+                modelIdentifier: record.modelIdentifier,
+                systemPromptPath: systemPath,
+                renderedPromptPath: userPath,
+                promptPayloadPath: payloadPath,
+                rawStdoutPath: stdoutPath,
+                rawStderrPath: stderrPath,
+                parsedOutputJSON: record.parsedOutputJSON,
+                summary: record.summary,
+                extractedFields: record.extractedFields,
+                failureMessage: record.failure?.message
+            )
+            // First-write fields (in case annotation arrived first as a stub):
+            storage.startedAt = record.startedAt
+            storage.endedAt = record.endedAt
+            storage.modelIdentifier = record.modelIdentifier
+            storage.systemPromptPath = systemPath ?? storage.systemPromptPath
+            storage.renderedPromptPath = userPath ?? storage.renderedPromptPath
+            storage.promptPayloadPath = payloadPath ?? storage.promptPayloadPath
+            storage.rawStdoutPath = stdoutPath ?? storage.rawStdoutPath
+            storage.rawStderrPath = stderrPath ?? storage.rawStderrPath
+            storage.failureMessage = record.failure?.message ?? storage.failureMessage
+            if !record.summary.isEmpty { storage.summary = record.summary }
+            accumulators[record.interactionID] = storage
         }
     }
 
@@ -418,6 +608,8 @@ actor TelemetryIndexStore {
             return "Monitoring metric"
         case .failure:
             return event.failure?.message ?? "Failure"
+        case .llmInteraction:
+            return event.llmInteraction?.summary ?? "LLM call"
         }
     }
 
@@ -508,6 +700,15 @@ actor TelemetryIndexStore {
                 ("algorithm_version", "TEXT"),
                 ("prompt_profile_id", "TEXT"),
                 ("experiment_arm", "TEXT"),
+                ("kind", "TEXT"),
+                ("parent_episode_id", "TEXT"),
+                ("extracted_fields_json", "TEXT"),
+                ("system_prompt_path", "TEXT"),
+                ("raw_stdout_path", "TEXT"),
+                ("raw_stderr_path", "TEXT"),
+                ("summary", "TEXT"),
+                ("model_identifier", "TEXT"),
+                ("failure_message", "TEXT"),
             ]
         )
     }
@@ -642,8 +843,8 @@ actor TelemetryIndexStore {
 
     private func insertEpisode(_ episode: IndexedEpisode, db: OpaquePointer?) throws {
         let sql = """
-        INSERT INTO episodes (id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO episodes (id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm, kind, parent_episode_id, extracted_fields_json, system_prompt_path, raw_stdout_path, raw_stderr_path, summary, model_identifier, failure_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
         var statement: OpaquePointer?
@@ -691,6 +892,23 @@ actor TelemetryIndexStore {
         sqlite3_bind_text(statement, 18, episode.algorithmVersion ?? "", -1, sqliteTransient())
         sqlite3_bind_text(statement, 19, episode.promptProfileID ?? "", -1, sqliteTransient())
         sqlite3_bind_text(statement, 20, episode.experimentArm ?? "", -1, sqliteTransient())
+        sqlite3_bind_text(statement, 21, episode.kind.rawValue, -1, sqliteTransient())
+        if let parent = episode.parentEpisodeID {
+            sqlite3_bind_text(statement, 22, parent, -1, sqliteTransient())
+        } else {
+            sqlite3_bind_null(statement, 22)
+        }
+        let extractedJSON = String(
+            decoding: (try? JSONEncoder().encode(episode.extractedFields)) ?? Data("{}".utf8),
+            as: UTF8.self
+        )
+        sqlite3_bind_text(statement, 23, extractedJSON, -1, sqliteTransient())
+        if let p = episode.systemPromptPath { sqlite3_bind_text(statement, 24, p, -1, sqliteTransient()) } else { sqlite3_bind_null(statement, 24) }
+        if let p = episode.rawStdoutPath { sqlite3_bind_text(statement, 25, p, -1, sqliteTransient()) } else { sqlite3_bind_null(statement, 25) }
+        if let p = episode.rawStderrPath { sqlite3_bind_text(statement, 26, p, -1, sqliteTransient()) } else { sqlite3_bind_null(statement, 26) }
+        sqlite3_bind_text(statement, 27, episode.summary, -1, sqliteTransient())
+        if let m = episode.modelIdentifier { sqlite3_bind_text(statement, 28, m, -1, sqliteTransient()) } else { sqlite3_bind_null(statement, 28) }
+        if let f = episode.failureMessage { sqlite3_bind_text(statement, 29, f, -1, sqliteTransient()) } else { sqlite3_bind_null(statement, 29) }
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw SQLiteError.stepFailed(message: currentErrorMessage(db))

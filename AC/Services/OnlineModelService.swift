@@ -46,8 +46,15 @@ nonisolated struct OnlineModelRequest: Sendable {
 
 nonisolated protocol OnlineModelServing: Sendable {
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput
+    func runInference(_ request: OnlineModelRequest, parentInteractionID: String?) async throws -> RuntimeProcessOutput
     func runFirstSuccessfulInference(from requests: [OnlineModelRequest]) async throws -> RuntimeProcessOutput
     func hasHadSuccessfulChat() async -> Bool
+}
+
+extension OnlineModelServing {
+    func runInference(_ request: OnlineModelRequest, parentInteractionID: String?) async throws -> RuntimeProcessOutput {
+        try await runInference(request)
+    }
 }
 
 enum OnlineModelError: LocalizedError, Equatable, Sendable {
@@ -231,6 +238,20 @@ actor OnlineModelService: OnlineModelServing {
     // MARK: - Inference
 
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput {
+        try await runInferenceRecorded(request, parentInteractionID: nil)
+    }
+
+    /// Like `runInference`, but stamps `parentInteractionID` on the emitted
+    /// `.llmInteraction` telemetry event so the inspector can group e.g.
+    /// chat-action resolutions under their originating chat call.
+    func runInference(_ request: OnlineModelRequest, parentInteractionID: String?) async throws -> RuntimeProcessOutput {
+        try await runInferenceRecorded(request, parentInteractionID: parentInteractionID)
+    }
+
+    private func runInferenceRecorded(
+        _ request: OnlineModelRequest,
+        parentInteractionID: String?
+    ) async throws -> RuntimeProcessOutput {
         let isPremium = isPremiumPath(for: request.source)
         let fallbackModelIdentifiers = await Self.requestFallbackModelIdentifiers(
             for: request.modelIdentifier,
@@ -275,7 +296,7 @@ actor OnlineModelService: OnlineModelServing {
                         message: "retry attempt \(attempt)/\(maxAttempts) → \(primaryModelIdentifier) | \(Self.backoffMilliseconds(for: attempt))ms backoff"
                     )
                 }
-                let result = try await runInference(
+                var result = try await runInference(
                     request,
                     modelIdentifier: primaryModelIdentifier,
                     fallbackModelIdentifiers: Self.openRouterModelsArray(from: secondaryFallbacks),
@@ -283,6 +304,32 @@ actor OnlineModelService: OnlineModelServing {
                     startTime: startTime
                 )
                 recordSuccessIfNeeded(for: request.source)
+                let interactionID = await LLMTelemetryRecorder.shared.record(
+                    LLMTelemetryCall(
+                        kind: LLMInteractionKind(request.source),
+                        parentInteractionID: parentInteractionID,
+                        runtime: .openrouter,
+                        modelIdentifier: result.usedModelIdentifier ?? primaryModelIdentifier,
+                        promptMode: request.source.rawValue,
+                        systemPrompt: request.systemPrompt,
+                        userPrompt: request.userPrompt,
+                        requestPayloadJSON: Self.makeRequestPayloadJSON(
+                            request: request,
+                            modelIdentifier: primaryModelIdentifier,
+                            fallbacks: secondaryFallbacks,
+                            attempt: attempt
+                        ),
+                        imagePath: request.imagePath,
+                        startedAt: startTime,
+                        endedAt: Date(),
+                        rawStdout: result.stdout,
+                        rawStderr: result.stderr,
+                        tokenUsage: result.tokenUsage,
+                        failure: nil,
+                        summary: ""
+                    )
+                )
+                result.interactionID = interactionID
                 return result
             } catch {
                 lastError = error
@@ -323,7 +370,66 @@ actor OnlineModelService: OnlineModelServing {
             }
         }
 
-        throw lastError ?? OnlineModelError.malformedResponse
+        let terminal = lastError ?? OnlineModelError.malformedResponse
+        await LLMTelemetryRecorder.shared.record(
+            LLMTelemetryCall(
+                kind: LLMInteractionKind(request.source),
+                parentInteractionID: parentInteractionID,
+                runtime: .openrouter,
+                modelIdentifier: primaryModelIdentifier,
+                promptMode: request.source.rawValue,
+                systemPrompt: request.systemPrompt,
+                userPrompt: request.userPrompt,
+                requestPayloadJSON: Self.makeRequestPayloadJSON(
+                    request: request,
+                    modelIdentifier: primaryModelIdentifier,
+                    fallbacks: secondaryFallbacks,
+                    attempt: attempt
+                ),
+                imagePath: request.imagePath,
+                startedAt: startTime,
+                endedAt: Date(),
+                rawStdout: nil,
+                rawStderr: nil,
+                tokenUsage: nil,
+                failure: LLMInteractionFailure(
+                    domain: String(describing: type(of: terminal)),
+                    message: terminal.localizedDescription
+                ),
+                summary: "failed after \(attempt) attempt(s)"
+            )
+        )
+        throw terminal
+    }
+
+    nonisolated private static func makeRequestPayloadJSON(
+        request: OnlineModelRequest,
+        modelIdentifier: String,
+        fallbacks: [String],
+        attempt: Int
+    ) -> String? {
+        let payload: [String: Any] = [
+            "source": request.source.rawValue,
+            "requestID": request.requestID,
+            "model": modelIdentifier,
+            "fallbacks": fallbacks,
+            "attempt": attempt,
+            "imagePath": request.imagePath ?? NSNull(),
+            "options": [
+                "maxTokens": request.options.maxTokens,
+                "temperature": request.options.temperature,
+                "topP": request.options.topP,
+                "topK": request.options.topK,
+                "thinkingEnabled": request.options.thinkingEnabled,
+                "timeoutSeconds": request.options.timeoutSeconds,
+            ],
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return str
     }
 
     /// Fire multiple requests in parallel and return the first successful result.

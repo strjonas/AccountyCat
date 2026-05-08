@@ -177,6 +177,12 @@ struct OnboardingDialogView: View {
         }
     }
 
+    private var onlineModeTagline: String {
+        AITier.byokRecommendedOverLocal
+            ? "★ Recommended — smarter, lighter"
+            : "Smarter, lighter"
+    }
+
     // MARK: - Mode chooser
 
     private var modeChooser: some View {
@@ -188,7 +194,7 @@ struct OnboardingDialogView: View {
             HStack(alignment: .top, spacing: 8) {
                 ModeCard(
                     title: "Online",
-                    tagline: "★ Recommended — smarter, lighter",
+                    tagline: onlineModeTagline,
                     bullets: [
                         "Better models understand your context more accurately",
                         "No download — just an API key",

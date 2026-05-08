@@ -21,6 +21,66 @@ nonisolated enum TelemetryEventKind: String, Codable, CaseIterable, Sendable {
     case annotationSaved = "annotation_saved"
     case sessionEnded = "session_ended"
     case failure
+    case llmInteraction = "llm_interaction"
+}
+
+nonisolated enum LLMInteractionKind: String, Codable, CaseIterable, Sendable {
+    case chat
+    case chatAction = "chat_action"
+    case policyMemory = "policy_memory"
+    case memoryConsolidation = "memory_consolidation"
+    case monitoringText = "monitoring_text"
+    case monitoringVision = "monitoring_vision"
+    case safelistAppeal = "safelist_appeal"
+    case localChat = "local_chat"
+}
+
+nonisolated enum LLMInteractionRuntime: String, Codable, Sendable {
+    case openrouter
+    case llamaCpp = "llama_cpp"
+}
+
+nonisolated struct LLMInteractionFailure: Codable, Hashable, Sendable {
+    var domain: String
+    var message: String
+}
+
+nonisolated struct LLMInteractionRequestArtifacts: Codable, Hashable, Sendable {
+    var systemPrompt: ArtifactRef?
+    var userPrompt: ArtifactRef?
+    var payload: ArtifactRef?
+}
+
+nonisolated struct LLMInteractionResponseArtifacts: Codable, Hashable, Sendable {
+    var rawStdout: ArtifactRef?
+    var rawStderr: ArtifactRef?
+}
+
+/// One LLM call (request + response). Emitted by `LLMTelemetryRecorder`.
+/// Annotation events with the same `interactionID` enrich the original record
+/// (last-write-wins on `parsedOutputJSON`, `summary`, and `extractedFields`).
+nonisolated struct LLMInteractionRecord: Codable, Hashable, Sendable {
+    var interactionID: String
+    var kind: LLMInteractionKind
+    var parentInteractionID: String?
+    var runtime: LLMInteractionRuntime
+    var modelIdentifier: String
+    var promptMode: String?
+    var startedAt: Date
+    var endedAt: Date
+    var latencyMs: Double
+    var tokenUsage: TokenUsageRecord?
+    var requestArtifacts: LLMInteractionRequestArtifacts
+    var responseArtifacts: LLMInteractionResponseArtifacts
+    var stdoutPreview: String?
+    var stderrPreview: String?
+    var parsedOutputJSON: String?
+    var summary: String
+    var extractedFields: [String: String]
+    var failure: LLMInteractionFailure?
+    /// True when this event annotates a previously emitted interaction with
+    /// parsed-domain-object fields (set by `LLMTelemetryRecorder.annotate`).
+    var isAnnotation: Bool
 }
 
 nonisolated enum ArtifactKind: String, Codable, Sendable {
@@ -74,6 +134,7 @@ nonisolated struct TelemetryEvent: Codable, Hashable, Identifiable, Sendable {
     var reaction: UserReactionRecord?
     var annotation: EpisodeAnnotation?
     var failure: FailureRecord?
+    var llmInteraction: LLMInteractionRecord? = nil
 }
 
 nonisolated enum EpisodeStatus: String, Codable, Sendable {

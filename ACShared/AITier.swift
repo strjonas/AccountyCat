@@ -26,7 +26,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     var description: String {
         switch self {
         case .economy:
-            return "Fast and lightweight. Less compute offline or API usage with BYOK. Best for minimal overhead or limited resources."
+            return "Lightweight and kind to resources, but less accurate than higher tiers."
         case .balanced:
             return "Balanced. Recommended for most users. Strong enough to understand context well, efficient enough to run all day."
         case .smartest:
@@ -37,7 +37,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     var offlineDescription: String {
         switch self {
         case .economy:
-            return "Qwen 3.5 4B. ~2–3 GB RAM. Safe for 8GB machines."
+            return "Qwen 3.5 4B. ~2–3 GB RAM. Fits 8 GB Macs — reduced accuracy."
         case .balanced:
             return "Qwen 3.5 9B. ~5–7 GB RAM. Better reasoning, recommended for most."
         case .smartest:
@@ -134,5 +134,32 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
         case .balanced: return "~5-7 GB RAM"
         case .smartest: return "~15-18 GB RAM"
         }
+    }
+
+    // MARK: - Hardware-aware recommendations
+
+    /// Total physical memory in GB, rounded down.
+    static var totalPhysicalMemoryGB: Int {
+        Int(ProcessInfo.processInfo.physicalMemory / 1_073_741_824)
+    }
+
+    /// Recommends a local tier based on total physical memory.
+    /// ≤12 GB → Basic, ≤24 GB → Balanced, >24 GB → Smartest.
+    static func recommendedLocalTier() -> AITier {
+        let gb = totalPhysicalMemoryGB
+        if gb <= 12 { return .economy }
+        if gb <= 24 { return .balanced }
+        return .smartest
+    }
+
+    /// Whether BYOK is strongly recommended over local for this hardware
+    /// (8–16 GB machines benefit more from cloud models).
+    static var byokRecommendedOverLocal: Bool {
+        totalPhysicalMemoryGB <= 16
+    }
+
+    /// A short quality note for the Economy tier, used in tooltips.
+    static var economyTierQualityNote: String {
+        "Works but smartness is reduced. Default or higher recommended for best results."
     }
 }

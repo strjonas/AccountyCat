@@ -187,7 +187,7 @@ struct OnboardingWizardView: View {
                 WizardModeCard(
                     icon: "key.fill",
                     title: "Bring Your Own Key",
-                    badge: "Recommended",
+                    badge: AITier.byokRecommendedOverLocal ? "Recommended" : nil,
                     description:
                         "Connect your OpenRouter account for the best experience. You pay only for what you use — typically under $1/month. Smarter models understand your context better, with fewer false nudges.",
                     isSelected: selectedMode == .byok,
@@ -634,12 +634,21 @@ struct WizardTierPicker: View {
     let mode: OnboardingMode
     @Environment(\.acAccent) private var accent
 
+    private var recommendedTier: AITier {
+        mode == .offline ? AITier.recommendedLocalTier() : .balanced
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // 3-way segmented control
             HStack(spacing: 0) {
                 ForEach(AITier.allCases, id: \.self) { tier in
-                    TierSegment(tier: tier, isSelected: selectedTier == tier, accent: accent) {
+                    TierSegment(
+                        tier: tier,
+                        isSelected: selectedTier == tier,
+                        isRecommended: tier == recommendedTier,
+                        accent: accent
+                    ) {
                         withAnimation(.acSnap) { selectedTier = tier }
                     }
                     if tier != .smartest {
@@ -680,6 +689,28 @@ struct WizardTierPicker: View {
                     )
             )
             .animation(.acFade, value: selectedTier)
+
+            // RAM-based note for low-memory local setups
+            if mode == .offline, AITier.byokRecommendedOverLocal {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text("Your Mac has \(AITier.totalPhysicalMemoryGB) GB RAM. \(AITier.recommendedLocalTier().displayName) is the best fit for local — for smarter results, try BYOK.")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .stroke(Color.acHairline, lineWidth: 1)
+                        )
+                )
+            }
         }
     }
 
@@ -719,6 +750,7 @@ struct WizardTierPicker: View {
 private struct TierSegment: View {
     let tier: AITier
     let isSelected: Bool
+    let isRecommended: Bool
     let accent: Color
     let onSelect: () -> Void
 
@@ -729,14 +761,14 @@ private struct TierSegment: View {
                     Text(tier.displayName)
                         .font(.ac(12, weight: isSelected ? .semibold : .medium))
                         .foregroundStyle(isSelected ? accent : Color.acTextPrimary.opacity(0.65))
-                    if tier == .balanced {
+                    if isRecommended {
                         Text("★")
                             .font(.ac(10))
                             .foregroundStyle(
                                 isSelected ? accent.opacity(0.9) : Color.secondary.opacity(0.5))
                     }
                 }
-                if tier == .balanced {
+                if isRecommended {
                     Text("Our pick")
                         .font(.ac(9))
                         .foregroundStyle(

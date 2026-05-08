@@ -19,6 +19,9 @@ struct CompanionChatResult: Sendable {
     /// When non-nil, a scheduled action parsed from the LLM output (timed nudge or delayed profile).
     var schedule: ScheduledActionCandidate?
     var usedModelIdentifier: String? = nil
+    /// Telemetry id of the chat-turn LLM call. Pass back to `resolveAction` so
+    /// the inspector can group action resolutions under their originating chat.
+    var interactionID: String? = nil
 }
 
 struct ChatActionResolutionRequest: Sendable {
@@ -36,6 +39,9 @@ struct ChatActionResolutionRequest: Sendable {
     var onlineModelIdentifier: String
     var onlineTextModelIdentifier: String?
     var localTextModelIdentifier: String?
+    /// Telemetry id of the originating chat-turn LLM call. The inspector
+    /// groups action resolutions under their parent chat episode.
+    var parentInteractionID: String? = nil
 }
 
 /// Lightweight representation of a schedule request from the LLM before conversion to
@@ -175,12 +181,62 @@ actor CompanionChatService {
                         + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
                         + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
                 )
-                output = try await runtime.runTextInference(
-                    runtimePath: runtimePath,
-                    modelIdentifier: localTextModelIdentifier,
-                    systemPrompt: systemPrompt,
-                    userPrompt: prompt
-                )
+                let localStartedAt = Date()
+                do {
+                    var localOutput = try await runtime.runTextInference(
+                        runtimePath: runtimePath,
+                        modelIdentifier: localTextModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: prompt
+                    )
+                    let interactionID = await LLMTelemetryRecorder.shared.record(
+                        LLMTelemetryCall(
+                            kind: .localChat,
+                            parentInteractionID: nil,
+                            runtime: .llamaCpp,
+                            modelIdentifier: localOutput.usedModelIdentifier ?? localTextModelIdentifier,
+                            promptMode: "chat",
+                            systemPrompt: systemPrompt,
+                            userPrompt: prompt,
+                            requestPayloadJSON: nil,
+                            imagePath: nil,
+                            startedAt: localStartedAt,
+                            endedAt: Date(),
+                            rawStdout: localOutput.stdout,
+                            rawStderr: localOutput.stderr,
+                            tokenUsage: localOutput.tokenUsage,
+                            failure: nil,
+                            summary: ""
+                        )
+                    )
+                    localOutput.interactionID = interactionID
+                    output = localOutput
+                } catch {
+                    await LLMTelemetryRecorder.shared.record(
+                        LLMTelemetryCall(
+                            kind: .localChat,
+                            parentInteractionID: nil,
+                            runtime: .llamaCpp,
+                            modelIdentifier: localTextModelIdentifier,
+                            promptMode: "chat",
+                            systemPrompt: systemPrompt,
+                            userPrompt: prompt,
+                            requestPayloadJSON: nil,
+                            imagePath: nil,
+                            startedAt: localStartedAt,
+                            endedAt: Date(),
+                            rawStdout: nil,
+                            rawStderr: nil,
+                            tokenUsage: nil,
+                            failure: LLMInteractionFailure(
+                                domain: String(describing: type(of: error)),
+                                message: error.localizedDescription
+                            ),
+                            summary: "local chat failed"
+                        )
+                    )
+                    throw error
+                }
                 await ActivityLogService.shared.append(level: .verbose,
                     category: "llm:chat",
                     message: "← llama.cpp · \(output.usedModelIdentifier ?? localTextModelIdentifier)"
@@ -207,6 +263,14 @@ actor CompanionChatService {
         let modelText = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let parseText = modelText.isEmpty ? combined : modelText
         if let parsed = LLMOutputParsing.extractChatResult(from: parseText) {
+            await annotateChatInteraction(
+                interactionID: output.interactionID,
+                isLocalChat: inferenceBackend == .local,
+                userMessage: userMessage,
+                reply: parsed.reply,
+                actions: parsed.actions,
+                schedule: parsed.schedule
+            )
             return CompanionChatResult(
                 reply: parsed.reply,
                 actions: parsed.actions,
@@ -216,7 +280,8 @@ actor CompanionChatService {
                         for: inferenceBackend,
                         onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
                         localModelIdentifier: localTextModelIdentifier
-                    )
+                    ),
+                interactionID: output.interactionID
             )
         }
 
@@ -227,19 +292,79 @@ actor CompanionChatService {
 
         // Legacy/fallback: pull a plain reply, no memory update.
         let reply = LLMOutputParsing.cleanChatOutput(parseText)
-        return reply.isEmpty
-            ? nil
-            : CompanionChatResult(
+        if reply.isEmpty {
+            return nil
+        }
+        await annotateChatInteraction(
+            interactionID: output.interactionID,
+            isLocalChat: inferenceBackend == .local,
+            userMessage: userMessage,
+            reply: reply,
+            actions: [],
+            schedule: nil
+        )
+        return CompanionChatResult(
+            reply: reply,
+            actions: [],
+            schedule: nil,
+            usedModelIdentifier: output.usedModelIdentifier
+                ?? resolvedModelIdentifier(
+                    for: inferenceBackend,
+                    onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
+                    localModelIdentifier: localTextModelIdentifier
+                ),
+            interactionID: output.interactionID
+        )
+    }
+
+    private func annotateChatInteraction(
+        interactionID: String?,
+        isLocalChat: Bool,
+        userMessage: String,
+        reply: String,
+        actions: [CompanionChatAction],
+        schedule: ScheduledActionCandidate?
+    ) async {
+        guard let interactionID else { return }
+        var fields: [String: String] = [
+            "userMessage": userMessage.cleanedSingleLine.truncatedForPrompt(maxLength: 500),
+            "replyPreview": reply.cleanedSingleLine.truncatedForPrompt(maxLength: 500),
+            "actionsCount": String(actions.count),
+        ]
+        if !actions.isEmpty {
+            fields["actionKinds"] = actions.map { $0.kind.rawValue }.joined(separator: ", ")
+        }
+        if let schedule {
+            fields["scheduleKind"] = schedule.kind.rawValue
+            fields["scheduleDelayMinutes"] = String(schedule.delayMinutes)
+        }
+        let parsed: String? = {
+            struct ParsedSummary: Encodable {
+                var reply: String
+                var actions: [CompanionChatAction]
+                var scheduleKind: String?
+                var scheduleDelayMinutes: Int?
+            }
+            let p = ParsedSummary(
                 reply: reply,
-                actions: [],
-                schedule: nil,
-                usedModelIdentifier: output.usedModelIdentifier
-                    ?? resolvedModelIdentifier(
-                        for: inferenceBackend,
-                        onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
-                        localModelIdentifier: localTextModelIdentifier
-                    )
+                actions: actions,
+                scheduleKind: schedule?.kind.rawValue,
+                scheduleDelayMinutes: schedule?.delayMinutes
             )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            guard let data = try? encoder.encode(p) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }()
+        await LLMTelemetryRecorder.shared.annotate(
+            LLMTelemetryAnnotation(
+                interactionID: interactionID,
+                kind: isLocalChat ? .localChat : .chat,
+                parsedOutputJSON: parsed,
+                summary: reply.cleanedSingleLine.truncatedForPrompt(maxLength: 140),
+                extractedFields: fields
+            )
+        )
     }
 
     nonisolated private static func onlineChatOptions() -> RuntimeInferenceOptions {
@@ -370,6 +495,7 @@ actor CompanionChatService {
         )
 
         let output: RuntimeProcessOutput
+        let resolveStartedAt = Date()
         do {
             if request.inferenceBackend == .openRouter {
                 output = try await onlineModelService.runInference(
@@ -380,7 +506,8 @@ actor CompanionChatService {
                         userPrompt: userPrompt,
                         imagePath: nil,
                         options: options
-                    )
+                    ),
+                    parentInteractionID: request.parentInteractionID
                 )
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: request.runtimeOverride)
@@ -389,13 +516,62 @@ actor CompanionChatService {
                       !localTextModelIdentifier.isEmpty else {
                     return nil
                 }
-                output = try await runtime.runTextInference(
-                    runtimePath: runtimePath,
-                    modelIdentifier: localTextModelIdentifier,
-                    systemPrompt: systemPrompt,
-                    userPrompt: userPrompt,
-                    options: options
-                )
+                do {
+                    var localOutput = try await runtime.runTextInference(
+                        runtimePath: runtimePath,
+                        modelIdentifier: localTextModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        options: options
+                    )
+                    let interactionID = await LLMTelemetryRecorder.shared.record(
+                        LLMTelemetryCall(
+                            kind: .chatAction,
+                            parentInteractionID: request.parentInteractionID,
+                            runtime: .llamaCpp,
+                            modelIdentifier: localOutput.usedModelIdentifier ?? localTextModelIdentifier,
+                            promptMode: "chat-action",
+                            systemPrompt: systemPrompt,
+                            userPrompt: userPrompt,
+                            requestPayloadJSON: nil,
+                            imagePath: nil,
+                            startedAt: resolveStartedAt,
+                            endedAt: Date(),
+                            rawStdout: localOutput.stdout,
+                            rawStderr: localOutput.stderr,
+                            tokenUsage: localOutput.tokenUsage,
+                            failure: nil,
+                            summary: ""
+                        )
+                    )
+                    localOutput.interactionID = interactionID
+                    output = localOutput
+                } catch {
+                    await LLMTelemetryRecorder.shared.record(
+                        LLMTelemetryCall(
+                            kind: .chatAction,
+                            parentInteractionID: request.parentInteractionID,
+                            runtime: .llamaCpp,
+                            modelIdentifier: localTextModelIdentifier,
+                            promptMode: "chat-action",
+                            systemPrompt: systemPrompt,
+                            userPrompt: userPrompt,
+                            requestPayloadJSON: nil,
+                            imagePath: nil,
+                            startedAt: resolveStartedAt,
+                            endedAt: Date(),
+                            rawStdout: nil,
+                            rawStderr: nil,
+                            tokenUsage: nil,
+                            failure: LLMInteractionFailure(
+                                domain: String(describing: type(of: error)),
+                                message: error.localizedDescription
+                            ),
+                            summary: "local chat-action failed"
+                        )
+                    )
+                    throw error
+                }
             }
         } catch {
             await ActivityLogService.shared.append(
@@ -407,6 +583,12 @@ actor CompanionChatService {
 
         let combined = [output.stdout, output.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
         if let action = LLMOutputParsing.extractChatAction(from: combined, expectedKind: request.action.kind) {
+            await annotateChatActionInteraction(
+                interactionID: output.interactionID,
+                parentInteractionID: request.parentInteractionID,
+                request: request,
+                resolved: action
+            )
             return action
         }
         await ActivityLogService.shared.append(
@@ -448,6 +630,43 @@ actor CompanionChatService {
             return "{}"
         }
         return json
+    }
+
+    private func annotateChatActionInteraction(
+        interactionID: String?,
+        parentInteractionID: String?,
+        request: ChatActionResolutionRequest,
+        resolved: CompanionChatAction
+    ) async {
+        guard let interactionID else { return }
+        var fields: [String: String] = [
+            "actionKind": resolved.kind.rawValue,
+            "instruction": (request.action.instruction ?? "").cleanedSingleLine.truncatedForPrompt(maxLength: 300),
+        ]
+        if let intent = resolved.intent { fields["intent"] = intent }
+        if let id = resolved.profileID { fields["profileID"] = id }
+        if let name = resolved.profileName { fields["profileName"] = name }
+        if let scope = resolved.scope { fields["scope"] = scope }
+        if let target = resolved.target?.value ?? resolved.target?.type { fields["target"] = target }
+        if let text = resolved.text { fields["text"] = text.truncatedForPrompt(maxLength: 200) }
+        if let duration = resolved.durationMinutes { fields["durationMinutes"] = String(duration) }
+        if let parent = parentInteractionID { fields["parentInteractionID"] = parent }
+        let parsed: String? = {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            guard let data = try? encoder.encode(resolved) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }()
+        await LLMTelemetryRecorder.shared.annotate(
+            LLMTelemetryAnnotation(
+                interactionID: interactionID,
+                kind: .chatAction,
+                parentInteractionID: parentInteractionID,
+                parsedOutputJSON: parsed,
+                summary: "\(resolved.kind.rawValue): \(resolved.intent ?? resolved.profileName ?? "—")",
+                extractedFields: fields
+            )
+        )
     }
 
     private func resolvedModelIdentifier(
