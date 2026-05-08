@@ -90,10 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         bindMood()
         bindActiveProfile()
         bindOnboardingState()
+        bindDisplayMode()
         startChipRefreshTimer()
         setUpKeyMonitor()
 
-        wc.showCompanion()
+        applyDisplayMode(controller.state.displayMode)
         wc.playEntranceAnimation()
 
         if !controller.hasCompletedOnboardingWizard {
@@ -128,38 +129,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         self.statusItem = item
     }
 
-    /// Append the active profile's name + remaining time to the menu bar button.
-    /// The default profile is shown too, so profile state is never hidden.
+    /// Refresh the chip based on the selected status bar style.
     private func applyChipTitle(to item: NSStatusItem) {
         guard let button = item.button else { return }
-        let active = controller.state.activeProfile
+        let style = controller.state.statusBarStyle
         let unreadDot = controller.hasUnreadChatMessages ? " •" : ""
 
-        if active.isDefault {
-            button.title = "\(active.name)\(unreadDot)"
-            button.toolTip = controller.hasUnreadChatMessages
-                ? "Active focus profile: \(active.name) — new message"
-                : "Active focus profile: \(active.name)"
-            return
-        }
-        let nameSegment = active.name
-        let remainingSegment: String
-        if let exp = active.expiresAt {
-            let mins = Int(max(0, exp.timeIntervalSinceNow) / 60)
-            if mins >= 60 {
-                let hours = mins / 60
-                let leftover = mins % 60
-                remainingSegment = leftover == 0 ? " · \(hours)h" : " · \(hours)h\(leftover)m"
-            } else {
-                remainingSegment = " · \(max(1, mins))m"
+        switch style {
+        case .icon:
+            button.image = NSImage(systemSymbolName: "cat.fill", accessibilityDescription: "AccountyCat")
+            button.image?.isTemplate = true
+            button.title = ""
+
+        case .ac:
+            button.image = nil
+            button.title = "AC\(unreadDot)"
+
+        case .profile:
+            button.image = nil
+            let active = controller.state.activeProfile
+            if active.isDefault {
+                button.title = "\(active.name)\(unreadDot)"
+                button.toolTip = controller.hasUnreadChatMessages
+                    ? "Active focus profile: \(active.name) — new message"
+                    : "Active focus profile: \(active.name)"
+                return
             }
-        } else {
-            remainingSegment = ""
+            let nameSegment = active.name
+            let remainingSegment: String
+            if let exp = active.expiresAt {
+                let mins = Int(max(0, exp.timeIntervalSinceNow) / 60)
+                if mins >= 60 {
+                    let hours = mins / 60
+                    let leftover = mins % 60
+                    remainingSegment = leftover == 0 ? " · \(hours)h" : " · \(hours)h\(leftover)m"
+                } else {
+                    remainingSegment = " · \(max(1, mins))m"
+                }
+            } else {
+                remainingSegment = ""
+            }
+            button.title = "\(nameSegment)\(remainingSegment)\(unreadDot)"
+            button.toolTip = controller.hasUnreadChatMessages
+                ? "Active focus profile: \(nameSegment) — new message"
+                : "Active focus profile: \(nameSegment)"
         }
-        button.title = "\(nameSegment)\(remainingSegment)\(unreadDot)"
-        button.toolTip = controller.hasUnreadChatMessages
-            ? "Active focus profile: \(nameSegment) — new message"
-            : "Active focus profile: \(nameSegment)"
     }
 
     /// Refresh the chip whenever the active profile id changes (also covers expiry-driven
@@ -175,6 +189,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             .store(in: &cancellables)
         controller.$hasUnreadChatMessages
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let item = self.statusItem else { return }
+                self.applyChipTitle(to: item)
+            }
+            .store(in: &cancellables)
+        controller.$state
+            .map(\.statusBarStyle)
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -317,6 +340,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
     }
 
+    // MARK: - Display mode
+
+    private func bindDisplayMode() {
+        controller.$state
+            .map(\.displayMode)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in
+                self?.applyDisplayMode(mode)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyDisplayMode(_ mode: ACDisplayMode) {
+        // Orb
+        if mode.showsOrb {
+            windowCoordinator?.showCompanion()
+        } else {
+            windowCoordinator?.hideCompanion()
+        }
+
+        // Menu bar status item
+        if mode.showsMenuBar {
+            if statusItem == nil { setUpStatusItem() }
+        } else {
+            if let item = statusItem {
+                NSStatusBar.system.removeStatusItem(item)
+                statusItem = nil
+            }
+        }
+    }
+
     @objc private func reopenPopoverIfOnboarding() {
         guard !controller.hasCompletedOnboardingWizard else { return }
         togglePopoverFromOrb()
@@ -336,12 +391,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - Main popover
 
     private func openPopover() {
-        guard let button = statusItem?.button else { return }
         let p = popover ?? makePopover()
         popover = p
         p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
         guard !p.isShown else { return }
-        p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+
+        if let button = statusItem?.button {
+            p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        } else if controller.state.displayMode.showsOrb {
+            togglePopoverFromOrb()
+            return
+        } else {
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         controller.markAllChatMessagesRead()
     }
@@ -444,16 +506,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let menu = NSMenu()
 
         let openItem = NSMenuItem(title: "Open AccountyCat",
-                                  action: #selector(openMainPopoverFromMenu),
-                                  keyEquivalent: "")
+                                   action: #selector(openMainPopoverFromMenu),
+                                   keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
 
-        let locateItem = NSMenuItem(title: "Locate AC",
-                                    action: #selector(locateAC),
-                                    keyEquivalent: "")
-        locateItem.target = self
-        menu.addItem(locateItem)
+        if controller.state.displayMode.showsOrb {
+            let locateItem = NSMenuItem(title: "Locate AC",
+                                        action: #selector(locateAC),
+                                        keyEquivalent: "")
+            locateItem.target = self
+            menu.addItem(locateItem)
+        }
 
         let pauseTitle = controller.state.isPaused ? "Resume Monitoring" : "Pause Monitoring"
         let pauseItem = NSMenuItem(title: pauseTitle,
@@ -480,6 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func quitApp()      { NSApp.terminate(nil) }
 
     @objc private func locateAC() {
+        guard controller.state.displayMode.showsOrb else { return }
         windowCoordinator?.playEntranceAnimation()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.openPopover()

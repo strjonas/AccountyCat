@@ -539,14 +539,18 @@ final class BrainService: NSObject {
         if inCall {
             if !wasInCallLastTick {
                 executiveArm.dismissOverlay()
-                executiveArm.hideCompanionPanel()
+                if state.displayMode.showsOrb {
+                    executiveArm.hideCompanionPanel()
+                }
             }
             moodSink?(.watching)
             statusSink?("In a call — AC is quiet.")
             wasInCallLastTick = true
             return
         } else if wasInCallLastTick {
-            executiveArm.showCompanionPanel()
+            if state.displayMode.showsOrb {
+                executiveArm.showCompanionPanel()
+            }
             wasInCallLastTick = false
         }
 

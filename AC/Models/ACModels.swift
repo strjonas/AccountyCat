@@ -87,6 +87,43 @@ enum LogLevel: String, CaseIterable, Codable {
     }
 }
 
+// MARK: - Display Mode
+
+/// Controls where the AccountyCat UI is visible: floating orb, menu bar chip, or both.
+enum ACDisplayMode: String, Codable, CaseIterable, Sendable {
+    case orb       // floating companion only
+    case menuBar   // menu bar chip only
+    case both      // both visible (default)
+
+    var displayName: String {
+        switch self {
+        case .orb:      return "Orb"
+        case .menuBar:  return "Menu Bar"
+        case .both:     return "Both"
+        }
+    }
+
+    var showsOrb: Bool { self == .orb || self == .both }
+    var showsMenuBar: Bool { self == .menuBar || self == .both }
+}
+
+// MARK: - Status Bar Style
+
+/// Controls what the menu bar status item displays.
+enum ACStatusBarStyle: String, Codable, CaseIterable, Sendable {
+    case profile   // profile name + remaining timer (default)
+    case ac        // compact "AC" label
+    case icon      // cat SF Symbol
+
+    var displayName: String {
+        switch self {
+        case .profile: return "Profile"
+        case .ac:      return "AC"
+        case .icon:    return "Icon"
+        }
+    }
+}
+
 enum TelemetryPersistencePolicy {
     static func storesVerboseTelemetry(debugMode: Bool) -> Bool {
         ACBuild.isDebug
@@ -625,6 +662,8 @@ struct ACState: Codable, Sendable {
     var aiTier: AITier = .balanced
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
+    var displayMode: ACDisplayMode = .both
+    var statusBarStyle: ACStatusBarStyle = .profile
     var isPaused = false
     var autoQuietOnCalls = true
     var debugMode = ACBuild.isDebug

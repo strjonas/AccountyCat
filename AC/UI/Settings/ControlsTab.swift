@@ -1,13 +1,13 @@
 //
-//  NudgesTab.swift
+//  ControlsTab.swift
 //  AC
 //
-//  Intervention toggles, sound toggles, read-only shortcuts list.
+//  Display mode, intervention toggles, sound toggles, read-only shortcuts list.
 //
 
 import SwiftUI
 
-struct NudgesTab: View {
+struct ControlsTab: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
 
@@ -19,6 +19,16 @@ struct NudgesTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            sectionLabel("show AC in")
+            displayModePicker
+
+            if controller.state.displayMode.showsMenuBar {
+                sectionLabel("menu bar shows")
+                statusBarStylePicker
+            }
+
+            Divider().opacity(0.3)
+
             sectionLabel("when AC intervenes")
             ToggleRow(label: "first nudge", hint: "inline chat message + tooltip near cat", isOn: $firstNudgeOn)
             ToggleRow(label: "escalation overlay", hint: "visual-novel screen if nudge is ignored ~3 min", isOn: $escalationOverlayOn)
@@ -57,6 +67,36 @@ struct NudgesTab: View {
             .padding(.top, 4)
         }
     }
+
+    // MARK: - Display mode picker
+
+    private var displayModePicker: some View {
+        HStack(spacing: 6) {
+            ForEach(ACDisplayMode.allCases, id: \.self) { mode in
+                let isSelected = controller.state.displayMode == mode
+                Button {
+                    controller.updateDisplayMode(mode)
+                } label: {
+                    Text(mode.displayName)
+                        .font(.ac(11, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Color.white : Color.acTextPrimary.opacity(0.7))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(isSelected ? accent : Color.acSurfaceInset)
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(isSelected ? accent.opacity(0.5) : Color.acHairline, lineWidth: 0.5)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Shortcuts
 
     private func shortcutRow(label: String, keys: [String]) -> some View {
         HStack {

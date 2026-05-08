@@ -3,7 +3,7 @@
 //  AC
 //
 //  6-tab settings embedded in the main panel.
-//  Tabs: look · profiles · ai · nudges · persona · you
+//  Tabs: look · profiles · ai · controls · persona · you
 //
 
 import SwiftUI
@@ -30,7 +30,7 @@ struct SettingsView: View {
                     case .look:     LookTab()
                     case .profiles: ProfilesTab()
                     case .ai:       AITab()
-                    case .nudges:   NudgesTab()
+                    case .controls: ControlsTab()
                     case .persona:  PersonaTab()
                     case .you:      YouTab()
                     }
@@ -120,7 +120,7 @@ enum SettingsTab: String, CaseIterable {
     case look     = "look"
     case profiles = "profiles"
     case ai       = "ai"
-    case nudges   = "nudges"
+    case controls = "controls"
     case persona  = "persona"
     case you      = "you"
 }

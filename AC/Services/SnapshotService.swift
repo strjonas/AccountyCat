@@ -90,8 +90,10 @@ enum SnapshotService {
     }
 
     static func captureActiveWindowScreenshot() async throws -> URL {
-        if let window = try await activeShareableWindow() {
-            return try await captureScreenshot(of: window)
+        if CGPreflightScreenCaptureAccess() {
+            if let window = try? await activeShareableWindow() {
+                return try await captureScreenshot(of: window)
+            }
         }
 
         if let windowRect = activeWindowRect() {
@@ -132,8 +134,6 @@ enum SnapshotService {
     private static func windowCaptureConfiguration(for filter: SCContentFilter) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.showsCursor = false
-        configuration.capturesAudio = false
-        configuration.excludesCurrentProcessAudio = true
         configuration.scalesToFit = false
         configuration.preservesAspectRatio = true
         configuration.ignoreShadowsSingleWindow = false

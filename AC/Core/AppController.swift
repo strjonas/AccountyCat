@@ -921,6 +921,20 @@ final class AppController: ObservableObject {
         persistState()
     }
 
+    func updateDisplayMode(_ mode: ACDisplayMode) {
+        guard state.displayMode != mode else { return }
+        state.displayMode = mode
+        logActivity("app", "Display mode: \(mode.displayName)")
+        persistState()
+    }
+
+    func updateStatusBarStyle(_ style: ACStatusBarStyle) {
+        guard state.statusBarStyle != style else { return }
+        state.statusBarStyle = style
+        logActivity("app", "Status bar style: \(style.displayName)")
+        persistState()
+    }
+
     func updateAccent(followsCharacter: Bool, customHex: String? = nil) {
         let normalizedHex: String? = customHex.flatMap { raw in
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
