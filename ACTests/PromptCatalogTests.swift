@@ -33,6 +33,8 @@ struct PromptCatalogTests {
         // Chat injects the personality directly into the system prompt.
         #expect(chatPrompt.contains("Character voice:"))
         #expect(chatPrompt.contains("sharp-minded, energetic focus co-pilot"))
+        #expect(chatPrompt.contains("\"actions\":[]"))
+        #expect(chatPrompt.contains("Action kinds:"))
 
         // Nudge and decision prompts must NOT contain the personality prefix as a
         // payload field reference — it is injected as a system-prompt prefix at

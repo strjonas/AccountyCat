@@ -13,8 +13,7 @@ enum LLMOutputParsing {
     }
 
     /// Parses the combined chat reply object:
-    /// `{"reply":"...", "memory": null | "short bullet", "profile_action": null | "instruction"}`.
-    /// Falls back to a reply-only shape if the `memory` key is missing.
+    /// `{"reply":"...", "actions": [], "schedule": null}`.
     nonisolated static func extractChatResult(from output: String) -> CompanionChatResult? {
         for json in jsonObjects(in: output).reversed() {
             guard let data = json.data(using: .utf8),
@@ -26,43 +25,36 @@ enum LLMOutputParsing {
             let cleanedReply = reply.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedReply.isEmpty else { continue }
 
-            let memoryValue = (object["memory"] as? String)
-                ?? (object["memory_update"] as? String)
-                ?? (object["memoryUpdate"] as? String)
-            let trimmedMemory = memoryValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalizedMemory: String?
-            if let trimmedMemory,
-               !trimmedMemory.isEmpty,
-               trimmedMemory.lowercased() != "none",
-               trimmedMemory.lowercased() != "null" {
-                normalizedMemory = trimmedMemory
-            } else {
-                normalizedMemory = nil
-            }
-
-            let profileActionValue = (object["profile_action"] as? String)
-                ?? (object["profileAction"] as? String)
-            let trimmedProfileAction = profileActionValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalizedProfileAction: String?
-            if let trimmedProfileAction,
-               !trimmedProfileAction.isEmpty,
-               trimmedProfileAction.lowercased() != "none",
-               trimmedProfileAction.lowercased() != "null" {
-                normalizedProfileAction = trimmedProfileAction
-            } else {
-                normalizedProfileAction = nil
-            }
+            let actions = decodeActions(from: object["actions"])
 
             let scheduleCandidate = Self.parseScheduleCandidate(from: object)
 
             return CompanionChatResult(
                 reply: cleanedReply,
-                memoryUpdate: normalizedMemory,
-                profileAction: normalizedProfileAction,
+                actions: actions,
                 schedule: scheduleCandidate
             )
         }
 
+        return nil
+    }
+
+    nonisolated static func extractChatAction(
+        from output: String,
+        expectedKind: CompanionChatActionKind
+    ) -> CompanionChatAction? {
+        let decoder = JSONDecoder()
+        for json in jsonObjects(in: output).reversed() {
+            guard let data = json.data(using: .utf8) else { continue }
+            if let payload = try? decoder.decode(CompanionChatActionResolutionPayload.self, from: data),
+               payload.action.kind == expectedKind || (expectedKind == .focusPolicy && payload.action.kind == .memory) {
+                return payload.action
+            }
+            if let action = try? decoder.decode(CompanionChatAction.self, from: data),
+               action.kind == expectedKind || (expectedKind == .focusPolicy && action.kind == .memory) {
+                return action
+            }
+        }
         return nil
     }
 
@@ -124,6 +116,24 @@ enum LLMOutputParsing {
 
     nonisolated static func jsonObjects(in output: String) -> [String] {
         StructuredOutputJSON.jsonObjects(in: output)
+    }
+
+    nonisolated private static func decodeActions(from value: Any?) -> [CompanionChatAction] {
+        guard let rawActions = value as? [[String: Any]], !rawActions.isEmpty else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        return rawActions.compactMap { raw in
+            guard JSONSerialization.isValidJSONObject(raw),
+                  let data = try? JSONSerialization.data(withJSONObject: raw),
+                  let action = try? decoder.decode(CompanionChatAction.self, from: data) else {
+                return nil
+            }
+            let hasInstruction = action.instruction?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let hasExecutableField = action.intent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ||
+                action.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            return hasInstruction || hasExecutableField ? action : nil
+        }
     }
 
     nonisolated static func cleanChatOutput(_ output: String) -> String {

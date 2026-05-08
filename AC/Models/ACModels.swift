@@ -680,8 +680,8 @@ struct ACState: Codable, Sendable {
     var usageByDay: [String: [String: TimeInterval]] = [:]
     var focusSegments: [FocusTimelineSegment] = []
     /// Timestamped persistent memory of user preferences, rules, and important context.
-    /// The LLM decides what goes in here (via chat-reply memory_update) and consolidates
-    /// when the list grows or entries go stale. Code does not filter, score, or rewrite.
+    /// Chat may propose memory actions; task-specific action resolution can also create
+    /// entries. Consolidation only runs when the list grows or entries go stale.
     var memoryEntries: [MemoryEntry] = []
     /// Last time the consolidation pass ran, so we can throttle it (at most once/day
     /// unless the list exceeds the soft cap).

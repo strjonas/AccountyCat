@@ -96,6 +96,46 @@ struct StructuredOutputJSONTests {
     }
 
     @Test
+    func chatResultParsesEmptyActions() throws {
+        let output = """
+        {"reply":"Just chatting.","actions":[],"schedule":null}
+        """
+
+        let result = try #require(LLMOutputParsing.extractChatResult(from: output))
+
+        #expect(result.reply == "Just chatting.")
+        #expect(result.actions.isEmpty)
+        #expect(result.schedule?.delayMinutes == nil)
+    }
+
+    @Test
+    func chatResultParsesMultipleActions() throws {
+        let output = """
+        {"reply":"Got it.","actions":[{"kind":"profile","instruction":"start coding for one hour"},{"kind":"memory","text":"User prefers short breaks."},{"kind":"focus_policy","intent":"allow","target":{"type":"current_context"},"duration":"profile_session"}],"schedule":null}
+        """
+
+        let result = try #require(LLMOutputParsing.extractChatResult(from: output))
+
+        #expect(result.actions.count == 3)
+        #expect(result.actions[0].kind == .profile)
+        #expect(result.actions[1].text == "User prefers short breaks.")
+        #expect(result.actions[2].target?.type == "current_context")
+    }
+
+    @Test
+    func actionResolutionParsesWrappedAction() throws {
+        let output = """
+        {"action":{"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"current_context"},"duration":"profile_session","locked":true}}
+        """
+
+        let action = try #require(LLMOutputParsing.extractChatAction(from: output, expectedKind: .focusPolicy))
+
+        #expect(action.kind == .focusPolicy)
+        #expect(action.intent == "allow")
+        #expect(action.locked == true)
+    }
+
+    @Test
     func memoryRenderingDoesNotScopeLegacyProfileEntries() {
         let createdAt = Date(timeIntervalSince1970: 1_745_423_400)
         let entries = [

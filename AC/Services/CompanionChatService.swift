@@ -7,18 +7,35 @@
 
 import Foundation
 
-/// Combined chat reply + memory update + optional profile action + optional scheduled action.
-/// AC decides all in one call.
+/// Combined chat reply + optional side-effect actions + optional scheduled action.
+/// AC uses a direct workflow for capable online models and a staged workflow for
+/// smaller/local models. Staged chat only emits action hints; dedicated executors
+/// turn those hints into profile, memory, or focus-policy mutations.
 struct CompanionChatResult: Sendable {
     var reply: String
-    /// When non-nil, a single bullet to append to persistent memory (AC's choice).
-    var memoryUpdate: String?
-    /// When non-nil, a short instruction for profile operations (switch, create, end).
-    /// Processed through the policy-memory pipeline.
-    var profileAction: String?
+    /// Optional side effects requested by the chat model. Online/direct models may
+    /// include executable fields; local/staged models should emit only kind + instruction.
+    var actions: [CompanionChatAction]
     /// When non-nil, a scheduled action parsed from the LLM output (timed nudge or delayed profile).
     var schedule: ScheduledActionCandidate?
     var usedModelIdentifier: String? = nil
+}
+
+struct ChatActionResolutionRequest: Sendable {
+    var action: CompanionChatAction
+    var latestUserMessage: String
+    var recentUserMessages: [String]
+    var goals: String
+    var freeFormMemory: String
+    var policyRules: String
+    var context: FrontmostContext?
+    var activeProfile: ProfilePromptSummary
+    var availableProfiles: [ProfilePromptSummary]
+    var runtimeOverride: String?
+    var inferenceBackend: MonitoringInferenceBackend
+    var onlineModelIdentifier: String
+    var onlineTextModelIdentifier: String?
+    var localTextModelIdentifier: String?
 }
 
 /// Lightweight representation of a schedule request from the LLM before conversion to
@@ -70,9 +87,13 @@ actor CompanionChatService {
         inferenceBackend: MonitoringInferenceBackend = .local,
         onlineModelIdentifier: String = AITier.balanced.byokModelIdentifierImage,
         onlineTextModelIdentifier: String? = nil,
-        localTextModelIdentifier: String? = nil
+        localTextModelIdentifier: String? = nil,
+        workflow: CompanionChatWorkflow
     ) async -> CompanionChatResult? {
-        let systemPrompt = ACPromptSets.chatSystemPrompt(withPersonality: character.personalityPrefix)
+        let systemPrompt = ACPromptSets.chatSystemPrompt(
+            withPersonality: character.personalityPrefix,
+            workflow: workflow
+        )
         let prompt = Self.makeChatPrompt(
             userMessage: userMessage,
             goals: goals,
@@ -81,7 +102,8 @@ actor CompanionChatService {
             history: history,
             memory: memory,
             policyRules: policyRules,
-            profileContext: activeProfileContext
+            profileContext: activeProfileContext,
+            workflow: workflow
         )
 
         let output: RuntimeProcessOutput
@@ -172,8 +194,7 @@ actor CompanionChatService {
             if inferenceBackend == .openRouter {
                 return CompanionChatResult(
                     reply: Self.fallbackReply(for: error),
-                    memoryUpdate: nil,
-                    profileAction: nil,
+                    actions: [],
                     schedule: nil
                 )
             }
@@ -188,8 +209,7 @@ actor CompanionChatService {
         if let parsed = LLMOutputParsing.extractChatResult(from: parseText) {
             return CompanionChatResult(
                 reply: parsed.reply,
-                memoryUpdate: parsed.memoryUpdate,
-                profileAction: parsed.profileAction,
+                actions: parsed.actions,
                 schedule: parsed.schedule,
                 usedModelIdentifier: output.usedModelIdentifier
                     ?? resolvedModelIdentifier(
@@ -211,8 +231,7 @@ actor CompanionChatService {
             ? nil
             : CompanionChatResult(
                 reply: reply,
-                memoryUpdate: nil,
-                profileAction: nil,
+                actions: [],
                 schedule: nil,
                 usedModelIdentifier: output.usedModelIdentifier
                     ?? resolvedModelIdentifier(
@@ -244,7 +263,8 @@ actor CompanionChatService {
         history: [ChatMessage],
         memory: String,
         policyRules: String,
-        profileContext: String
+        profileContext: String,
+        workflow: CompanionChatWorkflow
     ) -> String {
         let historySection: String
         if history.isEmpty {
@@ -258,6 +278,22 @@ actor CompanionChatService {
 
         let memorySection = memory.isEmpty ? "(none)" : memory
         let policyRulesSection = policyRules.isEmpty ? "(none)" : policyRules
+
+        let workflowInstruction: String
+        switch workflow {
+        case .direct:
+            workflowInstruction = """
+            Action workflow: direct.
+            Return executable minimal action fields when you know them. If an action is needed
+            but you are missing exact fields, return kind + instruction and AC will resolve it.
+            """
+        case .staged:
+            workflowInstruction = """
+            Action workflow: staged.
+            Do NOT output executable fields. For every needed action, return only kind + instruction.
+            Dedicated executor calls will resolve the details.
+            """
+        }
 
         return """
         [Context — use only if directly helpful, never be invasive]
@@ -286,7 +322,7 @@ actor CompanionChatService {
 
         Respond as AccountyCat. Match the energy and tone of the user's message.
         Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
-        Use the profile_action field when the user explicitly asks to switch/create/end a profile.
+        \(workflowInstruction)
 
         Scheduled actions:
         When the user asks for a *timed* action ("nudge me in 2 min" / "remind me to focus in 10 min" / "start Coding profile in 15 min"), include a `schedule` field. The app will execute the action at the right time.
@@ -295,12 +331,123 @@ actor CompanionChatService {
         delay_minutes max 1440 (24h). Only schedule when the user explicitly asks with a time.
         Do NOT schedule for things you can't actually do (calendar events, persistent alarms, app-restart-surviving reminders). If asked for something impossible, say so politely instead of pretending.
 
-        Return exactly one JSON object: {"reply":"your response","memory":null,"profile_action":null,"schedule":null}
-        or with memory: {"reply":"your response","memory":"single concise bullet under 20 words","profile_action":null,"schedule":null}
-        or with profile: {"reply":"your response","memory":null,"profile_action":"activate Coding profile for 60 min, allow Xcode and Terminal","schedule":null}
-        or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","memory":null,"profile_action":null,"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
+        Return exactly one JSON object: {"reply":"your response","actions":[],"schedule":null}
+        or with actions: {"reply":"your response","actions":[{"kind":"profile","instruction":"start coding for one hour"}],"schedule":null}
+        or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","actions":[],"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
         No markdown outside the JSON value. No other keys.
         """
+    }
+
+    func resolveAction(
+        _ request: ChatActionResolutionRequest
+    ) async -> CompanionChatAction? {
+        let systemPrompt: String
+        let maxTokens: Int
+        switch request.action.kind {
+        case .profile:
+            systemPrompt = ACPromptSets.profileActionExecutorSystemPrompt
+            maxTokens = 400
+        case .memory:
+            systemPrompt = ACPromptSets.memoryActionExecutorSystemPrompt
+            maxTokens = 500
+        case .focusPolicy:
+            systemPrompt = ACPromptSets.focusPolicyActionExecutorSystemPrompt
+            maxTokens = 700
+        }
+
+        let userPrompt = ACPromptSets.renderChatActionExecutorUserPrompt(
+            payloadJSON: Self.makeActionPayloadJSON(request)
+        )
+        let options = RuntimeInferenceOptions(
+            maxTokens: maxTokens,
+            temperature: 0.08,
+            topP: 0.9,
+            topK: 40,
+            ctxSize: 4096,
+            batchSize: 1024,
+            ubatchSize: 512,
+            timeoutSeconds: 35
+        )
+
+        let output: RuntimeProcessOutput
+        do {
+            if request.inferenceBackend == .openRouter {
+                output = try await onlineModelService.runInference(
+                    OnlineModelRequest(
+                        source: .chatAction,
+                        modelIdentifier: request.onlineTextModelIdentifier ?? request.onlineModelIdentifier,
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        imagePath: nil,
+                        options: options
+                    )
+                )
+            } else {
+                let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: request.runtimeOverride)
+                guard FileManager.default.isExecutableFile(atPath: runtimePath),
+                      let localTextModelIdentifier = request.localTextModelIdentifier,
+                      !localTextModelIdentifier.isEmpty else {
+                    return nil
+                }
+                output = try await runtime.runTextInference(
+                    runtimePath: runtimePath,
+                    modelIdentifier: localTextModelIdentifier,
+                    systemPrompt: systemPrompt,
+                    userPrompt: userPrompt,
+                    options: options
+                )
+            }
+        } catch {
+            await ActivityLogService.shared.append(
+                category: "chat-action-error",
+                message: error.localizedDescription
+            )
+            return nil
+        }
+
+        let combined = [output.stdout, output.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+        if let action = LLMOutputParsing.extractChatAction(from: combined, expectedKind: request.action.kind) {
+            return action
+        }
+        await ActivityLogService.shared.append(
+            category: "chat-action-parse-error",
+            message: "Could not parse \(request.action.kind.rawValue) action JSON. Raw output: \(combined.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
+        )
+        return nil
+    }
+
+    nonisolated private static func makeActionPayloadJSON(_ request: ChatActionResolutionRequest) -> String {
+        struct Payload: Encodable {
+            var actionHint: CompanionChatAction
+            var latestUserMessage: String
+            var recentUserMessages: [String]
+            var goals: String
+            var freeFormMemory: String
+            var policyRules: String
+            var context: FrontmostContext?
+            var activeProfile: ProfilePromptSummary
+            var availableProfiles: [ProfilePromptSummary]
+        }
+
+        let payload = Payload(
+            actionHint: request.action,
+            latestUserMessage: request.latestUserMessage,
+            recentUserMessages: request.recentUserMessages,
+            goals: request.goals,
+            freeFormMemory: request.freeFormMemory,
+            policyRules: request.policyRules,
+            context: request.context,
+            activeProfile: request.activeProfile,
+            availableProfiles: request.availableProfiles
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
     }
 
     private func resolvedModelIdentifier(

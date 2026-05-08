@@ -6,8 +6,9 @@
 import Foundation
 import Security
 
-enum OnlineModelRequestSource: String, Sendable {
+nonisolated enum OnlineModelRequestSource: String, Sendable {
     case chat
+    case chatAction = "chat-action"
     case policyMemory = "policy-memory"
     case memoryConsolidation = "memory-consolidation"
     case monitoringText = "monitoring-text"
@@ -15,7 +16,7 @@ enum OnlineModelRequestSource: String, Sendable {
     case safelistAppeal = "safelist-appeal"
 }
 
-struct OnlineModelRequest: Sendable {
+nonisolated struct OnlineModelRequest: Sendable {
     var source: OnlineModelRequestSource
     var requestID: String
     var modelIdentifier: String
@@ -43,7 +44,7 @@ struct OnlineModelRequest: Sendable {
     }
 }
 
-protocol OnlineModelServing: Sendable {
+nonisolated protocol OnlineModelServing: Sendable {
     func runInference(_ request: OnlineModelRequest) async throws -> RuntimeProcessOutput
     func runFirstSuccessfulInference(from requests: [OnlineModelRequest]) async throws -> RuntimeProcessOutput
     func hasHadSuccessfulChat() async -> Bool
@@ -208,14 +209,14 @@ actor OnlineModelService: OnlineModelServing {
     // MARK: - Premium Path
 
     private func isPremiumPath(for source: OnlineModelRequestSource) -> Bool {
-        guard source == .monitoringText || source == .monitoringVision || source == .chat || source == .policyMemory else {
+        guard source == .monitoringText || source == .monitoringVision || source == .chat || source == .chatAction || source == .policyMemory else {
             return false
         }
         return premiumSuccessCount < Self.premiumMaxSuccessCount
     }
 
     private func recordSuccessIfNeeded(for source: OnlineModelRequestSource) {
-        if source == .monitoringText || source == .monitoringVision || source == .chat || source == .policyMemory {
+        if source == .monitoringText || source == .monitoringVision || source == .chat || source == .chatAction || source == .policyMemory {
             premiumSuccessCount = min(premiumSuccessCount + 1, Self.premiumMaxSuccessCount)
         }
         if source == .chat {
@@ -576,7 +577,7 @@ actor OnlineModelService: OnlineModelServing {
         // fallback chain. User-facing monitoring/chat keep primary-model grouping
         // so a fast but weaker fallback is used only after the primary model fails.
         if includesModelFallbacks,
-           source == .policyMemory || source == .memoryConsolidation || source == .safelistAppeal {
+           source == .chatAction || source == .policyMemory || source == .memoryConsolidation || source == .safelistAppeal {
             provider["sort"] = [
                 "by": "latency",
                 "partition": "none",
@@ -618,7 +619,7 @@ actor OnlineModelService: OnlineModelServing {
         switch source {
         case .chat, .monitoringText, .monitoringVision:
             return isPremium ? 4 : 3
-        case .policyMemory, .memoryConsolidation, .safelistAppeal:
+        case .chatAction, .policyMemory, .memoryConsolidation, .safelistAppeal:
             return 2
         }
     }
@@ -643,7 +644,7 @@ actor OnlineModelService: OnlineModelServing {
             sourceCeiling = isPremium ? 20 : 14
         case .chat:
             sourceCeiling = isPremium ? 25 : 18
-        case .policyMemory, .memoryConsolidation, .safelistAppeal:
+        case .chatAction, .policyMemory, .memoryConsolidation, .safelistAppeal:
             sourceCeiling = 14
         }
         return min(TimeInterval(options.timeoutSeconds), sourceCeiling)
@@ -657,7 +658,7 @@ actor OnlineModelService: OnlineModelServing {
             return ["p50": 2.0, "p90": 6.0]
         case .chat:
             return ["p50": 2.0, "p90": 7.0]
-        case .policyMemory, .memoryConsolidation, .safelistAppeal:
+        case .chatAction, .policyMemory, .memoryConsolidation, .safelistAppeal:
             return ["p50": 2.0, "p90": 8.0]
         }
     }

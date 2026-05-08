@@ -2280,6 +2280,7 @@ final class AppController: ObservableObject {
         )
 
         let backend = state.monitoringConfiguration.inferenceBackend
+        let chatWorkflow: CompanionChatWorkflow = backend == .openRouter ? .direct : .staged
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
         let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
         let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
@@ -2294,8 +2295,7 @@ final class AppController: ObservableObject {
                     reply: usingOnline
                         ? "Add your OpenRouter API key in Settings, then I can chat."
                         : "Finish local setup first, or switch to online mode in Settings.",
-                    memoryUpdate: nil,
-                    profileAction: nil,
+                    actions: [],
                     schedule: nil
                 )
             } else if let response = await companionChatService.chat(
@@ -2312,7 +2312,8 @@ final class AppController: ObservableObject {
                 inferenceBackend: backend,
                 onlineModelIdentifier: onlineModelIdentifier,
                 onlineTextModelIdentifier: onlineTextModelIdentifier,
-                localTextModelIdentifier: localTextModelIdentifier
+                localTextModelIdentifier: localTextModelIdentifier,
+                workflow: chatWorkflow
             ) {
                 result = response
             } else {
@@ -2320,8 +2321,7 @@ final class AppController: ObservableObject {
                     reply: usingOnline
                         ? "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
                         : "I couldn't answer just now. Check the logs and local runtime status.",
-                    memoryUpdate: nil,
-                    profileAction: nil,
+                    actions: [],
                     schedule: nil
                 )
             }
@@ -2329,12 +2329,6 @@ final class AppController: ObservableObject {
             await MainActor.run {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
                 self.noteUsedModel(result.usedModelIdentifier)
-                if let update = result.memoryUpdate?.cleanedSingleLine, !update.isEmpty {
-                    self.state.memoryEntries.append(MemoryEntry(
-                        text: update
-                    ))
-                    self.logActivity("memory", "Remembered: \(update)")
-                }
                 if let schedule = result.schedule {
                     let fireAt = Date().addingTimeInterval(Double(schedule.delayMinutes) * 60)
                     let action = ScheduledAction(
@@ -2348,38 +2342,18 @@ final class AppController: ObservableObject {
                     self.logActivity("schedule", "Scheduled \(schedule.kind) in \(schedule.delayMinutes)m")
                 }
 
-                // Fast-path common profile lifecycle commands so small local models don't
-                // silently fail when the downstream policy-memory LLM can't produce valid JSON.
-                if let profileAction = result.profileAction?.cleanedSingleLine, !profileAction.isEmpty {
-                    self.logActivity("chat", "Profile action: \(profileAction)")
-                    if let ops = ProfileActionParser.parse(
-                        action: profileAction,
-                        availableProfiles: self.state.profiles,
-                        activeProfileID: self.state.activeProfileID
-                    ), !ops.isEmpty {
-                        self.applyProfileOperations(ops)
-                        self.logActivity("chat", "Profile fast-path applied: \(ops.map(\.type.rawValue).joined(separator: ", "))")
-                    }
-                }
-
                 self.persistState()
                 self.sendingChatMessage = false
             }
             self.logActivity("chat", "Assistant: \(result.reply)")
 
-            // Still run the policy-memory pipeline for rule side-effects and as a
-            // fallback when the fast-path parser couldn't handle the phrase.
-            if let profileAction = result.profileAction?.cleanedSingleLine, !profileAction.isEmpty {
-                self.schedulePolicyMemoryUpdate(
-                    eventSummary: "Profile action: \(profileAction)",
-                    context: SnapshotService.frontmostContext()
-                )
-            } else if let memoryUpdate = result.memoryUpdate?.cleanedSingleLine, !memoryUpdate.isEmpty {
-                self.schedulePolicyMemoryUpdate(
-                    eventSummary: "Latest user chat message: \(trimmedDraft.cleanedSingleLine)",
-                    context: SnapshotService.frontmostContext()
-                )
-            }
+            self.processChatActions(
+                result.actions,
+                workflow: chatWorkflow,
+                latestUserMessage: trimmedDraft,
+                recentMessages: boundedHistory,
+                context: SnapshotService.frontmostContext()
+            )
             // Run consolidation lazily so the chat reply never waits for it.
             self.maybeConsolidateMemory()
         }
@@ -2552,6 +2526,347 @@ final class AppController: ObservableObject {
                 self.persistState()
             }
         }
+    }
+
+    private func processChatActions(
+        _ actions: [CompanionChatAction],
+        workflow: CompanionChatWorkflow,
+        latestUserMessage: String,
+        recentMessages: [ChatMessage],
+        context: FrontmostContext?
+    ) {
+        guard !actions.isEmpty else { return }
+
+        let recentUserMessages = recentMessages
+            .filter { $0.role == .user }
+            .suffix(MonitoringPromptContextBudget.recentUserChatCount)
+            .map { $0.text.cleanedSingleLine }
+
+        for action in actions {
+            if workflow == .direct, applyChatAction(action, context: context) {
+                logActivity("chat-action", "Applied direct \(action.kind.rawValue) action")
+                continue
+            }
+
+            resolveChatAction(
+                action,
+                latestUserMessage: latestUserMessage,
+                recentUserMessages: recentUserMessages,
+                context: context
+            )
+        }
+    }
+
+    private func resolveChatAction(
+        _ action: CompanionChatAction,
+        latestUserMessage: String,
+        recentUserMessages: [String],
+        context: FrontmostContext?
+    ) {
+        let now = Date()
+        let request = ChatActionResolutionRequest(
+            action: action,
+            latestUserMessage: latestUserMessage.cleanedSingleLine,
+            recentUserMessages: recentUserMessages,
+            goals: state.goalsText,
+            freeFormMemory: state.memoryForPrompt(now: now),
+            policyRules: state.policyRulesForChatPrompt(now: now),
+            context: context,
+            activeProfile: makeProfilePromptSummary(state.activeProfile),
+            availableProfiles: state.profiles
+                .filter { $0.id != state.activeProfileID }
+                .map { makeProfilePromptSummary($0) },
+            runtimeOverride: state.runtimePathOverride,
+            inferenceBackend: state.monitoringConfiguration.inferenceBackend,
+            onlineModelIdentifier: state.monitoringConfiguration.onlineModelIdentifier,
+            onlineTextModelIdentifier: state.monitoringConfiguration.onlineModelIdentifierText,
+            localTextModelIdentifier: state.monitoringConfiguration.localModelIdentifierText
+        )
+
+        Task { [weak self, companionChatService] in
+            let resolved = await companionChatService.resolveAction(request)
+            await MainActor.run {
+                guard let self, let resolved else { return }
+                if self.applyChatAction(resolved, context: context) {
+                    self.logActivity("chat-action", "Applied resolved \(resolved.kind.rawValue) action")
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func applyChatAction(_ action: CompanionChatAction, context: FrontmostContext?) -> Bool {
+        switch action.kind {
+        case .memory:
+            return applyMemoryChatAction(action)
+        case .profile:
+            return applyProfileChatAction(action)
+        case .focusPolicy:
+            return applyFocusPolicyChatAction(action, context: context)
+        }
+    }
+
+    @discardableResult
+    private func applyMemoryChatAction(_ action: CompanionChatAction) -> Bool {
+        guard let text = action.text?.cleanedSingleLine, !text.isEmpty else { return false }
+        if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(text) == .orderedSame }) {
+            return true
+        }
+        state.memoryEntries.append(MemoryEntry(
+            text: text,
+            isLocked: action.locked == true
+        ))
+        logActivity("memory", "Remembered: \(text)")
+        persistState()
+        maybeConsolidateMemory()
+        return true
+    }
+
+    @discardableResult
+    private func applyProfileChatAction(_ action: CompanionChatAction) -> Bool {
+        let intent = action.intent?.cleanedSingleLine.lowercased() ?? ""
+        switch intent {
+        case "end", "stop", "end_active", "end_active_profile":
+            applyProfileOperations([PolicyMemoryOperation(type: .endActiveProfile, reason: action.reason)])
+            persistState()
+            return true
+
+        case "activate", "switch", "start":
+            let profileID = action.profileID
+                ?? action.profileName.flatMap { name in
+                    state.profiles.first {
+                        $0.name.cleanedSingleLine.caseInsensitiveCompare(name.cleanedSingleLine) == .orderedSame
+                    }?.id
+                }
+            guard let profileID else { return false }
+            applyProfileOperations([
+                PolicyMemoryOperation(
+                    type: .activateProfile,
+                    reason: action.reason,
+                    profileID: profileID,
+                    profileDurationMinutes: action.durationMinutes
+                )
+            ])
+            persistState()
+            return true
+
+        case "create", "create_and_activate":
+            guard let name = action.profileName?.cleanedSingleLine, !name.isEmpty else { return false }
+            applyProfileOperations([
+                PolicyMemoryOperation(
+                    type: .createAndActivateProfile,
+                    reason: action.reason,
+                    profileName: name,
+                    profileDescription: action.profileDescription,
+                    profileDurationMinutes: action.durationMinutes
+                )
+            ])
+            persistState()
+            return true
+
+        case "update":
+            let profileID = action.profileID ?? state.activeProfileID
+            guard let current = state.profile(withID: profileID) else { return false }
+            updateProfile(
+                id: profileID,
+                name: action.profileName?.cleanedSingleLine.isEmpty == false ? action.profileName! : current.name,
+                description: action.profileDescription ?? current.description,
+                defaultDurationMin: action.durationMinutes ?? current.defaultDurationMin
+            )
+            return true
+
+        default:
+            if let instruction = action.instruction,
+               let ops = ProfileActionParser.parse(
+                    action: instruction,
+                    availableProfiles: state.profiles,
+                    activeProfileID: state.activeProfileID
+               ), !ops.isEmpty {
+                applyProfileOperations(ops)
+                persistState()
+                return true
+            }
+            return false
+        }
+    }
+
+    @discardableResult
+    private func applyFocusPolicyChatAction(
+        _ action: CompanionChatAction,
+        context: FrontmostContext?
+    ) -> Bool {
+        let intent = normalizedFocusPolicyIntent(action.intent)
+        guard let kind = intent.kind else { return false }
+
+        if kind == .disallow,
+           let target = action.target,
+           !["current_context", "currentcontext"].contains(target.type.cleanedSingleLine.lowercased()),
+           let value = target.value?.cleanedSingleLine,
+           !value.isEmpty {
+            return addProfileBlocklistEntry(value, scope: action.scope)
+        }
+
+        guard let scope = makePolicyRuleScope(for: action, context: context, kind: kind) else {
+            return false
+        }
+
+        let now = Date()
+        let profileID = resolvedPolicyProfileID(scope: action.scope)
+        let expiresAt = expirationDate(for: action, kind: kind, now: now, profileID: profileID)
+        let targetSummary = policyRuleTargetSummary(scope: scope, fallback: action.target?.value ?? context?.appName)
+        var schedule = PolicyRuleSchedule()
+        schedule.expiresAt = expiresAt
+        let rule = PolicyRule(
+            kind: kind,
+            summary: "\(intent.summaryVerb) \(targetSummary)",
+            source: .userChat,
+            createdAt: now,
+            updatedAt: now,
+            priority: 60,
+            scope: scope,
+            schedule: schedule,
+            active: true,
+            isLocked: action.locked == true,
+            profileID: profileID
+        )
+        state.policyMemory.apply(
+            PolicyMemoryUpdateResponse(operations: [
+                PolicyMemoryOperation(type: .addRule, rule: rule, reason: action.reason)
+            ]),
+            now: now
+        )
+        persistState()
+        return true
+    }
+
+    private func normalizedFocusPolicyIntent(_ intent: String?) -> (kind: PolicyRuleKind?, summaryVerb: String) {
+        switch intent?.cleanedSingleLine.lowercased() {
+        case "allow", "safelist", "safe", "ok", "okay":
+            return (.allow, "Allow")
+        case "block", "disallow", "badlist", "deny":
+            return (.disallow, "Block")
+        case "discourage", "nudge":
+            return (.discourage, "Discourage")
+        case "limit":
+            return (.limit, "Limit")
+        default:
+            return (nil, "")
+        }
+    }
+
+    private func resolvedPolicyProfileID(scope: String?) -> String? {
+        let normalized = scope?.cleanedSingleLine.lowercased()
+        if normalized == "global" || normalized == "all_profiles" {
+            return nil
+        }
+        if let normalized,
+           let profile = state.profiles.first(where: {
+               $0.id.lowercased() == normalized ||
+               $0.name.cleanedSingleLine.lowercased() == normalized
+           }) {
+            return profile.id
+        }
+        return state.activeProfileID
+    }
+
+    private func expirationDate(
+        for action: CompanionChatAction,
+        kind: PolicyRuleKind,
+        now: Date,
+        profileID: String?
+    ) -> Date? {
+        if let minutes = action.durationMinutes, minutes > 0 {
+            return now.addingTimeInterval(TimeInterval(minutes) * 60)
+        }
+        switch action.duration?.cleanedSingleLine.lowercased() {
+        case "profile_session", "session", "right_now":
+            if let profileID,
+               let profile = state.profile(withID: profileID),
+               let expiresAt = profile.expiresAt {
+                return expiresAt
+            }
+            return now.addingTimeInterval(2 * 60 * 60)
+        case "today":
+            return Calendar.current.date(
+                byAdding: .day,
+                value: 1,
+                to: Calendar.current.startOfDay(for: now)
+            )
+        case "permanent", "forever", "always":
+            return nil
+        default:
+            return kind == .allow
+                ? now.addingTimeInterval(2 * 60 * 60)
+                : nil
+        }
+    }
+
+    private func makePolicyRuleScope(
+        for action: CompanionChatAction,
+        context: FrontmostContext?,
+        kind: PolicyRuleKind
+    ) -> PolicyRuleScope? {
+        let target = action.target
+        let targetType = target?.type.cleanedSingleLine.lowercased()
+        if target == nil || targetType == "current_context" || targetType == "currentcontext" {
+            guard let context else { return nil }
+            var scope = PolicyRuleScope()
+            let shouldUseTitle = MonitoringHeuristics.isBrowser(bundleIdentifier: context.bundleIdentifier)
+                || MonitoringHeuristics.titleScopedBundleIdentifiers.contains(context.bundleIdentifier ?? "")
+            if shouldUseTitle, let signature = BrowserTitleSignature.derive(from: context.windowTitle) {
+                scope.bundleIdentifier = context.bundleIdentifier
+                scope.titleContains = [signature]
+                return scope
+            }
+            if let bundleIdentifier = context.bundleIdentifier {
+                scope.bundleIdentifier = bundleIdentifier
+            } else {
+                scope.appName = context.appName
+            }
+            return scope
+        }
+
+        guard let target else { return nil }
+        let value = target.value?.cleanedSingleLine ?? ""
+        guard !value.isEmpty else { return nil }
+        var scope = PolicyRuleScope()
+        switch target.type.cleanedSingleLine.lowercased() {
+        case "app":
+            scope.appName = value
+        case "site", "domain", "title":
+            scope.titleContains = [value]
+        case "bundle":
+            scope.bundleIdentifier = value
+        default:
+            scope.appName = value
+        }
+        return scope
+    }
+
+    private func policyRuleTargetSummary(scope: PolicyRuleScope, fallback: String?) -> String {
+        if let appName = scope.appName, !appName.isEmpty { return appName }
+        if let bundleIdentifier = scope.bundleIdentifier, !bundleIdentifier.isEmpty {
+            if let title = scope.titleContains.first, !title.isEmpty {
+                return "\(bundleIdentifier) / \(title)"
+            }
+            return bundleIdentifier
+        }
+        if let title = scope.titleContains.first, !title.isEmpty { return title }
+        return fallback?.cleanedSingleLine.isEmpty == false ? fallback!.cleanedSingleLine : "requested context"
+    }
+
+    @discardableResult
+    private func addProfileBlocklistEntry(_ value: String, scope: String?) -> Bool {
+        guard let profileID = resolvedPolicyProfileID(scope: scope),
+              let index = state.profiles.firstIndex(where: { $0.id == profileID }) else {
+            return false
+        }
+        if !state.profiles[index].blocklist.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
+            state.profiles[index].blocklist.append(value)
+            persistState()
+        }
+        logActivity("profile", "Added blocklist entry \(value) to profile \(state.profiles[index].name)")
+        return true
     }
 
     private func scopePolicyRulesToActiveProfile(
@@ -3323,9 +3638,8 @@ private enum AppControllerChatSupport {
         return sanitized
     }
 
-    // `immediateMemoryLine` and `appendingMemoryLine` are gone. Chat messages now flow
-    // through the combined chat-reply prompt, which returns an optional `memory_update`.
-    // The LLM decides what — if anything — is worth remembering.
+    // `immediateMemoryLine` and `appendingMemoryLine` are gone. Chat messages now emit
+    // optional actions; memory writes happen only through direct or staged action handling.
 
     static func makeChatContext(from state: ACState) -> ChatContext {
         let now = Date()
@@ -3392,11 +3706,12 @@ private enum AppControllerChatSupport {
         let availableText = availableProfiles
             .map { profile in
                 let desc = profile.description.map { " — \($0)" } ?? ""
-                return "- \(profile.name)\(desc)"
+                return "- \(profile.name) (id: \(profile.id))\(desc)"
             }
             .joined(separator: "\n")
 
         return ACPromptSets.chatProfileContextSection(
+            activeProfileID: activeProfile.id,
             activeProfileName: activeProfile.name,
             activeProfileDescription: activeProfile.description,
             activeProfileIsDefault: activeProfile.isDefault,

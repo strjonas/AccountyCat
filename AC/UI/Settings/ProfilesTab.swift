@@ -2,7 +2,7 @@
 //  ProfilesTab.swift
 //  AC
 //
-//  Profile chip row + editor with safelist and blocklist.
+//  Profile chip row + editor with unified rules list.
 //
 
 import SwiftUI
@@ -16,11 +16,10 @@ struct ProfilesTab: View {
     @State private var descriptionDraft = ""
     @State private var emojiDraft = ""
     @State private var colorDraft = ""
-    @State private var blocklistDraft: [String] = []
     @State private var defaultDurationDraft: Int?
-    @State private var newBlocklistItem = ""
     @State private var showingDeleteConfirm = false
-    @State private var newSafelistItem = ""
+    @State private var newRuleKind: PolicyRuleKind = .allow
+    @State private var newRuleItem = ""
 
     private var sortedProfiles: [FocusProfile] {
         var list = controller.state.profiles
@@ -48,15 +47,23 @@ struct ProfilesTab: View {
         controller.state.profiles.filter { !$0.isDefault }.count < FocusProfile.maximumProfileCount - 1
     }
 
-    private var profileRules: [PolicyRule] {
-        controller.state.policyMemory.rules
-            .filter { !$0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == resolvedEditingID) }
-    }
+    private var allDisplayRules: [PolicyRule] {
+        let profileID = resolvedEditingID
+        var seen = Set<String>()
 
-    private var safelistRules: [PolicyRule] {
-        controller.state.policyMemory.rules
-            .filter { $0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == resolvedEditingID) }
+        // Active policy rules scoped to this profile (or global)
+        let rules = controller.state.policyMemory.rules
+            .filter { $0.isActive(at: Date()) && ($0.profileID == nil || $0.profileID == profileID) }
+            .sorted { $0.priority != $1.priority ? $0.priority > $1.priority : $0.updatedAt > $1.updatedAt }
+            .filter { seen.insert($0.id).inserted }
+
+        // Inactive policy rules (expired, revoked) for visibility
+        let inactive = controller.state.policyMemory.rules
+            .filter { !$0.isActive(at: Date()) && ($0.profileID == nil || $0.profileID == profileID) }
             .sorted { $0.updatedAt > $1.updatedAt }
+            .filter { seen.insert($0.id).inserted }
+
+        return rules + inactive
     }
 
     private var runningAppNames: [String] {
@@ -201,7 +208,7 @@ struct ProfilesTab: View {
             }
 
             if editingProfile.isDefault {
-                Text("everyday baseline — no specific focus. AC watches passively and only nudges for things you've asked it to help with. you can still manage a safelist and blocklist below.")
+                Text("everyday baseline — no specific focus. AC watches passively and only nudges for things you've asked it to help with.")
                     .font(.acCaption)
                     .foregroundStyle(.secondary)
                     .italic()
@@ -228,11 +235,8 @@ struct ProfilesTab: View {
                 durationPicker
             }
 
-            // Safelist
-            safelistSection
-
-            // Blocklist
-            blocklistSection
+            // Unified rules
+            rulesSection
 
             if !editingProfile.isDefault && draftsChanged {
                 HStack {
@@ -301,193 +305,215 @@ struct ProfilesTab: View {
         }
     }
 
-    // MARK: - Safelist
+    // MARK: - Rules
 
-    private var safelistSection: some View {
+    private var rulesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("safelist · ok during \"\(editingProfile.name)\"")
+                Text("rules · \"\(editingProfile.name)\"")
                     .font(.ac(11, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.7))
                 Spacer()
+                Text("AC manages these automatically")
+                    .font(.ac(9))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.35))
             }
 
-            let allSafelist = safelistRules + profileRules.filter { $0.kind == .allow }
-
-            if allSafelist.isEmpty {
-                Text("No safelisted items yet.")
+            if allDisplayRules.isEmpty {
+                Text("No rules yet. AC will create them as it learns your patterns.")
                     .font(.acCaption)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 4) {
-                    ForEach(allSafelist) { rule in
-                        HStack(spacing: 8) {
-                            Text(rule.kindLabel)
-                                .font(.ac(9, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Capsule(style: .continuous).fill(Color.green.opacity(0.75)))
-                            Text(rule.summary)
-                                .font(.ac(11))
-                                .foregroundStyle(Color.acTextPrimary.opacity(0.8))
-                            Spacer()
-
-                            Button {
-                                controller.toggleRuleLocked(id: rule.id)
-                            } label: {
-                                Image(systemName: rule.isLocked ? "lock.fill" : "lock.open")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.35))
-                                    .frame(width: 22, height: 22)
-                                    .background(
-                                        Circle()
-                                            .fill(rule.isLocked ? accent.opacity(0.10) : Color.acSurface)
-                                            .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.22) : Color.acHairline, lineWidth: 1))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .help(rule.isLocked ? "Unlock — allow cleanup to remove" : "Lock — keep on cleanup")
-
-                            Button {
-                                controller.deleteRule(id: rule.id)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(Color.secondary.opacity(0.4))
-                                    .frame(width: 22, height: 22)
-                                    .background(
-                                        Circle()
-                                            .fill(Color.acSurface)
-                                            .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(rule.isLocked)
-                            .help("Delete this rule")
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                .fill(rule.isLocked ? accent.opacity(0.04) : Color.acSurface)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                        .stroke(rule.isLocked ? accent.opacity(0.15) : Color.acHairline, lineWidth: 1)
-                                )
-                        )
+                    ForEach(allDisplayRules) { rule in
+                        ruleRow(rule)
                     }
                 }
             }
 
-            // Add to safelist
-            HStack(spacing: 6) {
-                Menu {
-                    ForEach(runningAppNames, id: \.self) { app in
-                        Button(app) {
-                            addSafelistApp(app)
-                        }
-                    }
-                    if !runningAppNames.isEmpty {
-                        Divider()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("pick app")
-                            .font(.ac(10, weight: .medium))
-                    }
-                    .foregroundStyle(accent.opacity(0.8))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.acSurface)
-                            .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
-                    )
-                }
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .disabled(runningAppNames.isEmpty)
-
-                TextField("or type app / tab title", text: $newSafelistItem)
-                    .textFieldStyle(.plain)
-                    .font(.ac(10))
-                    .frame(width: 130)
-                    .onSubmit { submitSafelistItem() }
-
-                Button {
-                    submitSafelistItem()
-                } label: {
-                    Text("add")
-                        .font(.ac(10, weight: .medium))
-                        .foregroundStyle(accent)
-                }
-                .buttonStyle(.plain)
-                .disabled(newSafelistItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+            addRuleRow
         }
     }
 
-    // MARK: - Blocklist
+    private func ruleRow(_ rule: PolicyRule) -> some View {
+        let isActive = rule.isActive(at: Date())
+        return HStack(spacing: 8) {
+            // Kind badge
+            Text(ruleKindLabel(rule.kind))
+                .font(.ac(9, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Capsule(style: .continuous).fill(ruleKindColor(rule.kind).opacity(isActive ? 0.85 : 0.4)))
 
-    private var blocklistSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("always-distractions")
-                .font(.ac(11, weight: .semibold))
-                .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+            // Summary
+            Text(rule.summary)
+                .font(.ac(11))
+                .foregroundStyle(Color.acTextPrimary.opacity(isActive ? 0.8 : 0.4))
+                .lineLimit(1)
 
-            ACFlowLayout(spacing: 6) {
-                ForEach(blocklistDraft, id: \.self) { item in
-                    HStack(spacing: 4) {
-                        Text(item)
-                            .font(.ac(11, weight: .medium))
-                            .foregroundStyle(Color.acTextPrimary.opacity(0.85))
-                        Button {
-                            blocklistDraft.removeAll { $0 == item }
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(Color.secondary.opacity(0.5))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+            if rule.isAutoSafelistRule {
+                Text("auto")
+                    .font(.ac(8, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.3))
+            }
+
+            Spacer()
+
+            // Lock
+            Button {
+                controller.toggleRuleLocked(id: rule.id)
+            } label: {
+                Image(systemName: rule.isLocked ? "lock.fill" : "lock.open")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.35))
+                    .frame(width: 22, height: 22)
                     .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.red.opacity(0.08))
-                            .overlay(Capsule(style: .continuous).stroke(Color.red.opacity(0.22), lineWidth: 1))
+                        Circle()
+                            .fill(rule.isLocked ? accent.opacity(0.10) : Color.acSurface)
+                            .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.22) : Color.acHairline, lineWidth: 1))
                     )
-                }
+            }
+            .buttonStyle(.plain)
+            .help(rule.isLocked ? "Unlock — allow AC to modify" : "Lock — prevent AC from changing")
 
-                HStack(spacing: 4) {
-                    TextField("add app or site", text: $newBlocklistItem)
-                        .textFieldStyle(.plain)
-                        .font(.ac(11))
-                        .frame(width: 100)
+            // Delete
+            Button {
+                controller.deleteRule(id: rule.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
+                    .frame(width: 22, height: 22)
+                    .background(
+                        Circle()
+                            .fill(Color.acSurface)
+                            .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(rule.isLocked)
+            .help("Delete this rule")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(rule.isLocked ? accent.opacity(0.04) : Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(rule.isLocked ? accent.opacity(0.15) : Color.acHairline, lineWidth: 1)
+                )
+        )
+    }
+
+    private var addRuleRow: some View {
+        HStack(spacing: 6) {
+            // Kind selector (compact pills)
+            HStack(spacing: 3) {
+                ForEach([PolicyRuleKind.allow, .disallow, .discourage], id: \.self) { kind in
                     Button {
-                        let trimmed = newBlocklistItem.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty, !blocklistDraft.contains(trimmed) else { return }
-                        blocklistDraft.append(trimmed)
-                        newBlocklistItem = ""
+                        newRuleKind = kind
                     } label: {
-                        Text("+ add")
-                            .font(.ac(11, weight: .medium))
-                            .foregroundStyle(accent)
+                        Text(ruleKindLabel(kind))
+                            .font(.ac(9, weight: newRuleKind == kind ? .semibold : .medium))
+                            .foregroundStyle(newRuleKind == kind ? .white : Color.acTextPrimary.opacity(0.6))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(newRuleKind == kind ? ruleKindColor(kind).opacity(0.8) : Color.acSurface)
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .stroke(newRuleKind == kind ? Color.clear : Color.acHairline, lineWidth: 0.5)
+                                    )
+                            )
                     }
                     .buttonStyle(.plain)
                 }
+            }
+
+            // App picker
+            Menu {
+                ForEach(runningAppNames, id: \.self) { app in
+                    Button(app) { addRule(app) }
+                }
+                if !runningAppNames.isEmpty { Divider() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("app")
+                        .font(.ac(10, weight: .medium))
+                }
+                .foregroundStyle(accent.opacity(0.8))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
                     Capsule(style: .continuous)
                         .fill(Color.acSurface)
-                        .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                        .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
                 )
             }
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .disabled(runningAppNames.isEmpty)
+
+            // Text input
+            TextField("app or tab name", text: $newRuleItem)
+                .textFieldStyle(.plain)
+                .font(.ac(10))
+                .frame(width: 110)
+                .onSubmit { submitRule() }
+
+            Button { submitRule() } label: {
+                Text("add")
+                    .font(.ac(10, weight: .medium))
+                    .foregroundStyle(accent)
+            }
+            .buttonStyle(.plain)
+            .disabled(newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+    }
+
+    // MARK: - Rule helpers
+
+    private func ruleKindLabel(_ kind: PolicyRuleKind) -> String {
+        switch kind {
+        case .allow:          return "Allow"
+        case .disallow:       return "Block"
+        case .discourage:     return "Limit"
+        case .limit:          return "Cap"
+        case .tonePreference: return "Tone"
+        }
+    }
+
+    private func ruleKindColor(_ kind: PolicyRuleKind) -> Color {
+        switch kind {
+        case .allow:          return .green
+        case .disallow:       return .red
+        case .discourage:     return .orange
+        case .limit:          return .blue
+        case .tonePreference: return .purple
+        }
+    }
+
+    private func addRule(_ appName: String) {
+        let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let exists = controller.state.policyMemory.rules.contains {
+            $0.kind == newRuleKind && $0.summary.localizedCaseInsensitiveContains(trimmed)
+                && ($0.profileID == nil || $0.profileID == resolvedEditingID)
+        }
+        guard !exists else { return }
+        controller.addUserRule(trimmed, kind: newRuleKind, appName: trimmed, profileID: resolvedEditingID)
+    }
+
+    private func submitRule() {
+        let trimmed = newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        addRule(trimmed)
+        newRuleItem = ""
     }
 
     // MARK: - Drafts
@@ -497,7 +523,6 @@ struct ProfilesTab: View {
             descriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines) != (editingProfile.description ?? "") ||
             emojiDraft != editingProfile.emoji ||
             colorDraft != editingProfile.color ||
-            blocklistDraft != editingProfile.blocklist ||
             defaultDurationDraft != editingProfile.defaultDurationMin
     }
 
@@ -506,7 +531,6 @@ struct ProfilesTab: View {
         descriptionDraft = editingProfile.description ?? ""
         emojiDraft = editingProfile.emoji
         colorDraft = editingProfile.color
-        blocklistDraft = editingProfile.blocklist
         defaultDurationDraft = editingProfile.defaultDurationMin
     }
 
@@ -517,26 +541,9 @@ struct ProfilesTab: View {
             description: descriptionDraft,
             emoji: emojiDraft,
             color: colorDraft,
-            blocklist: blocklistDraft,
+            blocklist: editingProfile.blocklist,
             defaultDurationMin: defaultDurationDraft
         )
-    }
-
-    private func addSafelistApp(_ appName: String) {
-        let profileID = resolvedEditingID
-        guard !appName.isEmpty, !profileID.isEmpty else { return }
-        let ruleExists = (safelistRules + profileRules).contains {
-            $0.kind == .allow && $0.summary.localizedCaseInsensitiveContains(appName)
-        }
-        guard !ruleExists else { return }
-        controller.addUserRule(appName, kind: .allow, appName: appName, profileID: profileID)
-    }
-
-    private func submitSafelistItem() {
-        let trimmed = newSafelistItem.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        addSafelistApp(trimmed)
-        newSafelistItem = ""
     }
 
     private func createNewProfile() {
@@ -563,18 +570,6 @@ struct ProfilesTab: View {
             .tracking(0.06)
             .foregroundStyle(Color.acTextPrimary.opacity(0.45))
             .textCase(.uppercase)
-    }
-}
-
-private extension PolicyRule {
-    var kindLabel: String {
-        switch kind {
-        case .allow:      return "Allow"
-        case .discourage: return "Limit"
-        case .disallow:   return "Block"
-        case .limit:      return "Limit"
-        case .tonePreference: return "Tone"
-        }
     }
 }
 

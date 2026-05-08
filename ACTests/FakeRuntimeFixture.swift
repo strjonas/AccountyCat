@@ -34,11 +34,23 @@ struct FakeRuntimeOutputSet {
     """
 
     var chatReply = """
-    {"reply":"Hey there! I'm AccountyCat, your focus companion.","memory":null}
+    {"reply":"Hey there! I'm AccountyCat, your focus companion.","actions":[],"schedule":null}
     """
 
     var chatReplyWithMemory = """
-    {"reply":"Got it — I'll remember that for next time.","memory":"User prefers short breaks every 45 minutes."}
+    {"reply":"Got it — I'll remember that for next time.","actions":[{"kind":"memory","instruction":"Remember that the user prefers short breaks every 45 minutes."}],"schedule":null}
+    """
+
+    var profileAction = """
+    {"action":{"kind":"profile","intent":"activate","profileID":"coding","durationMinutes":60,"reason":"coding focus"}}
+    """
+
+    var memoryAction = """
+    {"action":{"kind":"memory","text":"User prefers short breaks every 45 minutes."}}
+    """
+
+    var focusPolicyAction = """
+    {"action":{"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"current_context"},"duration":"profile_session","locked":false,"reason":"user correction"}}
     """
 }
 
@@ -130,9 +142,27 @@ struct FakeRuntimeFixture {
         \(outputs.chatReply)
         EOF_AC_CHAT
         )
+        profile_executor_output=$(cat <<'EOF_AC_PROFILE_ACTION'
+        \(outputs.profileAction)
+        EOF_AC_PROFILE_ACTION
+        )
+        memory_action_output=$(cat <<'EOF_AC_MEMORY_ACTION'
+        \(outputs.memoryAction)
+        EOF_AC_MEMORY_ACTION
+        )
+        focus_policy_action_output=$(cat <<'EOF_AC_FOCUS_POLICY_ACTION'
+        \(outputs.focusPolicyAction)
+        EOF_AC_FOCUS_POLICY_ACTION
+        )
 
         if [[ "$system_prompt" == *'update structured policy memory'* ]]; then
           printf '%s\n' "$policy_memory_output"
+        elif [[ "$system_prompt" == *'resolve one AccountyCat profile action'* ]]; then
+          printf '%s\n' "$profile_executor_output"
+        elif [[ "$system_prompt" == *'resolve one AccountyCat memory action'* ]]; then
+          printf '%s\n' "$memory_action_output"
+        elif [[ "$system_prompt" == *'resolve one AccountyCat focus-policy action'* ]]; then
+          printf '%s\n' "$focus_policy_action_output"
         elif [[ "$system_prompt" == *'typed appeal'* ]]; then
           printf '%s\n' "$appeal_output"
         elif [[ "$prompt" == *'Memory to compress:'* ]] || [[ "$system_prompt" == *'compressing a focus companion'* ]]; then
