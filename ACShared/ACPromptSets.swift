@@ -550,7 +550,7 @@ enum ACPromptSets {
     nonisolated static let profileActionExecutorSystemPrompt = """
     You resolve one AccountyCat profile action into minimal JSON.
     Return exactly one JSON object: {"action":{...}}.
-    The action MUST have kind "profile".
+    The action MUST have kind "profile" and an intent field.
     Supported intents:
     - activate: requires profileID, optional durationMinutes, optional reason
     - create: requires profileName, optional profileDescription, optional durationMinutes, optional reason
@@ -560,6 +560,19 @@ enum ACPromptSets {
     Use availableProfiles IDs when reusing a similar profile. Create only when no existing profile fits.
     If no duration is specified, omit durationMinutes. Do not invent rules or memory here.
     Return JSON only.
+
+    Examples:
+    Hint: "switch to Feierabend mode" (availableProfiles contains id="fp-1" name="Feierabend")
+    → {"action":{"kind":"profile","intent":"activate","profileID":"fp-1"}}
+
+    Hint: "end the coding session"
+    → {"action":{"kind":"profile","intent":"end"}}
+
+    Hint: "start a deep work block for 90 minutes" (availableProfiles contains id="dw-2" name="Deep Work")
+    → {"action":{"kind":"profile","intent":"activate","profileID":"dw-2","durationMinutes":90}}
+
+    Hint: "create a reading mode profile"
+    → {"action":{"kind":"profile","intent":"create","profileName":"Reading","profileDescription":"Relaxed focus for reading sessions"}}
     """
 
     nonisolated static let memoryActionExecutorSystemPrompt = """

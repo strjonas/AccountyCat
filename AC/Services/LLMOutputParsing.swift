@@ -54,8 +54,60 @@ enum LLMOutputParsing {
                action.kind == expectedKind || (expectedKind == .focusPolicy && action.kind == .memory) {
                 return action
             }
+            // Tolerant fallback: model collapsed kind + intent into the kind slot,
+            // e.g. {"action":{"kind":"end"}} instead of {"action":{"kind":"profile","intent":"end"}}.
+            if let salvaged = salvageCollapsedAction(data: data, expectedKind: expectedKind) {
+                return salvaged
+            }
         }
         return nil
+    }
+
+    /// Handles the case where a small model emits the intent value in the `kind` field instead of
+    /// using a separate `intent` field. Remaps known intent literals to the correct kind + intent.
+    nonisolated private static func salvageCollapsedAction(
+        data: Data,
+        expectedKind: CompanionChatActionKind
+    ) -> CompanionChatAction? {
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        let inner: [String: Any]
+        if let wrapped = raw["action"] as? [String: Any] {
+            inner = wrapped
+        } else {
+            inner = raw
+        }
+
+        guard let kindValue = (inner["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !kindValue.isEmpty else { return nil }
+
+        // Map known intent literals back to their parent action kind.
+        let profileIntents: Set<String> = ["end", "stop", "end_active", "end_active_profile",
+                                           "activate", "switch", "start",
+                                           "create", "create_and_activate", "update"]
+        let focusPolicyIntents: Set<String> = ["allow", "disallow", "discourage", "limit"]
+
+        let remappedKind: CompanionChatActionKind
+        switch expectedKind {
+        case .profile where profileIntents.contains(kindValue):
+            remappedKind = .profile
+        case .focusPolicy where focusPolicyIntents.contains(kindValue):
+            remappedKind = .focusPolicy
+        default:
+            return nil
+        }
+
+        // Reconstruct with the correct kind and the collapsed value as intent.
+        var rebuilt = inner
+        rebuilt["kind"] = remappedKind.rawValue
+        // Only set intent if there isn't already one.
+        if rebuilt["intent"] == nil {
+            rebuilt["intent"] = kindValue
+        }
+
+        guard let rebuiltData = try? JSONSerialization.data(withJSONObject: rebuilt),
+              let action = try? JSONDecoder().decode(CompanionChatAction.self, from: rebuiltData) else { return nil }
+        return action
     }
 
     nonisolated static func extractDecision(from output: String) -> LLMDecision? {
