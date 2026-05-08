@@ -447,6 +447,108 @@ struct ChatSuggestionData: Codable, Hashable, Sendable {
     }
 }
 
+struct RecurringSchedule: Codable, Hashable, Sendable {
+    var hour: Int
+    var minute: Int
+    /// nil = every day. 1 = Sunday … 7 = Saturday (matches `Calendar.current.component(.weekday, …)`).
+    var weekdays: [Int]?
+
+    init(hour: Int, minute: Int, weekdays: [Int]? = nil) {
+        self.hour = min(max(hour, 0), 23)
+        self.minute = min(max(minute, 0), 59)
+        self.weekdays = weekdays.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func matches(now: Date, calendar: Calendar = .current) -> Bool {
+        let components = calendar.dateComponents([.hour, .minute, .weekday], from: now)
+        guard let nowHour = components.hour, let nowMinute = components.minute else { return false }
+        let nowTotalMinutes = nowHour * 60 + nowMinute
+        let scheduledTotalMinutes = hour * 60 + minute
+        guard nowTotalMinutes >= scheduledTotalMinutes && nowTotalMinutes <= scheduledTotalMinutes + 2 else { return false }
+        if let weekdays, let weekday = components.weekday {
+            return weekdays.contains(weekday)
+        }
+        return true
+    }
+
+    func scheduleDescription() -> String {
+        let time = String(format: "%02d:%02d", hour, minute)
+        let days: String
+        if let weekdays {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            let shortNames = weekdays.compactMap { d -> String? in
+                guard d >= 1, d <= 7 else { return nil }
+                return fmt.shortWeekdaySymbols[d - 1]
+            }
+            days = shortNames.isEmpty ? "every day" : shortNames.joined(separator: ",")
+        } else {
+            days = "every day"
+        }
+        return "\(days) at \(time)"
+    }
+}
+
+struct RecurringNudge: Identifiable, Codable, Hashable, Sendable {
+    var id: UUID
+    var hour: Int
+    var minute: Int
+    var weekdays: [Int]?
+    var message: String
+    var createdAt: Date
+    var enabled: Bool
+    var lastFiredAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        hour: Int,
+        minute: Int,
+        weekdays: [Int]? = nil,
+        message: String,
+        createdAt: Date = Date(),
+        enabled: Bool = true,
+        lastFiredAt: Date? = nil
+    ) {
+        self.id = id
+        self.hour = min(max(hour, 0), 23)
+        self.minute = min(max(minute, 0), 59)
+        self.weekdays = weekdays.flatMap { $0.isEmpty ? nil : $0 }
+        self.message = message
+        self.createdAt = createdAt
+        self.enabled = enabled
+        self.lastFiredAt = lastFiredAt
+    }
+
+    func scheduleDescription() -> String {
+        let time = String(format: "%02d:%02d", hour, minute)
+        let days: String
+        if let weekdays {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            let shortNames = weekdays.compactMap { d -> String? in
+                guard d >= 1, d <= 7 else { return nil }
+                return fmt.shortWeekdaySymbols[d - 1]
+            }
+            days = shortNames.isEmpty ? "every day" : shortNames.joined(separator: ",")
+        } else {
+            days = "every day"
+        }
+        return "\(days) at \(time)"
+    }
+
+    func matches(now: Date, calendar: Calendar = .current) -> Bool {
+        let components = calendar.dateComponents([.hour, .minute, .weekday], from: now)
+        guard let nowHour = components.hour, let nowMinute = components.minute else { return false }
+        let nowTotalMinutes = nowHour * 60 + nowMinute
+        let scheduledTotalMinutes = hour * 60 + minute
+        guard nowTotalMinutes >= scheduledTotalMinutes && nowTotalMinutes <= scheduledTotalMinutes + 2 else { return false }
+        if let weekdays, let weekday = components.weekday {
+            return weekdays.contains(weekday)
+        }
+        return true
+    }
+}
+
 struct ScheduledAction: Identifiable, Codable, Sendable {
     enum ActionType: String, Codable, Sendable {
         case nudge
@@ -702,7 +804,7 @@ struct ACState: Codable, Sendable {
     /// Stored as an array on disk for stable Codable encoding.
     var enabledCalendarIdentifiers: Set<String> = []
     /// Stored focus profiles (default + up to N named). Default is always present.
-    /// LRU eviction by `lastUsedAt` enforces `FocusProfile.maximumProfileCount`.
+    /// When the profile count reaches cap, creation prompts the user to remove one first (suggesting the LRU candidate) instead of silently evicting.
     var profiles: [FocusProfile] = [FocusProfile.makeDefault()]
     /// Id of the currently active profile. Defaults to `general`.
     var activeProfileID: String = PolicyRule.defaultProfileID
@@ -712,6 +814,8 @@ struct ACState: Codable, Sendable {
     var hardEscalation: ActiveEscalation?
     /// Scheduled actions (timed nudges, delayed profile activations) created via chat.
     var scheduledActions: [ScheduledAction] = []
+    /// Recurring nudges — fire daily (or on specific weekdays) at the configured time.
+    var recurringNudges: [RecurringNudge] = []
 
     private static func sanitizeRuntimePathOverride(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
@@ -774,6 +878,7 @@ struct ACState: Codable, Sendable {
         case lastFullScreenCheckAt
         case hardEscalation
         case scheduledActions
+        case recurringNudges
     }
 
 
@@ -867,6 +972,7 @@ struct ACState: Codable, Sendable {
         lastFullScreenCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastFullScreenCheckAt)
         hardEscalation = try container.decodeIfPresent(ActiveEscalation.self, forKey: .hardEscalation)
         scheduledActions = try container.decodeIfPresent([ScheduledAction].self, forKey: .scheduledActions) ?? []
+        recurringNudges = try container.decodeIfPresent([RecurringNudge].self, forKey: .recurringNudges) ?? []
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -926,6 +1032,7 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(lastFullScreenCheckAt, forKey: .lastFullScreenCheckAt)
         try container.encodeIfPresent(hardEscalation, forKey: .hardEscalation)
         try container.encode(scheduledActions, forKey: .scheduledActions)
+        try container.encode(recurringNudges, forKey: .recurringNudges)
     }
 
     mutating func resetAlgorithmProfile() {
@@ -1027,10 +1134,11 @@ struct ACState: Codable, Sendable {
 
 /// A named focus context (e.g. "Coding", "Presentation prep") plus an always-present default.
 /// Each `PolicyRule.profileID` references one of these. Profiles persist across activations —
-/// per-rule expiry handles freshness — but they are evicted LRU once the cap is exceeded.
+/// per-rule expiry handles freshness. When the cap is reached, the user is asked to remove one
+/// (with an LRU-based suggestion) rather than having one silently evicted.
 struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
-    /// Maximum number of stored profiles (default + named). The oldest unused named profile is
-    /// evicted when a new one would exceed this cap.
+    /// Maximum number of stored profiles (default + named). When this cap is reached,
+    /// creation prompts the user to remove a profile first (suggesting the LRU candidate).
     static let maximumProfileCount = 7
 
     /// Display name shown in the menu bar and Brain tab when the default is active.
@@ -1056,6 +1164,11 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// `nil` for default; set on activation, cleared on switch.
     var expiresAt: Date?
     var createdReason: String?
+    /// When set, this profile auto-activates at the given time every day (or on specific weekdays).
+    /// nil for profiles without a recurring schedule. Omitted from chat prompts when nil.
+    var recurringSchedule: RecurringSchedule?
+    /// Last time this profile's recurring schedule fired (for same-day dedup).
+    var lastScheduleFireDate: Date?
 
     init(
         id: String = UUID().uuidString,
@@ -1070,7 +1183,8 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         lastUsedAt: Date = Date(),
         activatedAt: Date? = nil,
         expiresAt: Date? = nil,
-        createdReason: String? = nil
+        createdReason: String? = nil,
+        recurringSchedule: RecurringSchedule? = nil
     ) {
         self.id = id
         self.name = name
@@ -1085,12 +1199,15 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.activatedAt = activatedAt
         self.expiresAt = expiresAt
         self.createdReason = createdReason
+        self.recurringSchedule = recurringSchedule
+        self.lastScheduleFireDate = nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, isDefault, description
         case emoji, color, blocklist, defaultDurationMin
         case createdAt, lastUsedAt, activatedAt, expiresAt, createdReason
+        case recurringSchedule, lastScheduleFireDate
     }
 
     init(from decoder: Decoder) throws {
@@ -1108,6 +1225,8 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         activatedAt = try c.decodeIfPresent(Date.self, forKey: .activatedAt)
         expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
         createdReason = try c.decodeIfPresent(String.self, forKey: .createdReason)
+        recurringSchedule = try c.decodeIfPresent(RecurringSchedule.self, forKey: .recurringSchedule)
+        lastScheduleFireDate = try c.decodeIfPresent(Date.self, forKey: .lastScheduleFireDate)
     }
 
     static func makeDefault() -> FocusProfile {

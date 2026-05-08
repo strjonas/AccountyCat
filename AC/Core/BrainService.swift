@@ -433,6 +433,60 @@ final class BrainService: NSObject {
             )
         }
 
+        // Recurring profile activation (clock-driven). If a profile has a recurring schedule
+        // that matches the current time and is not already active, activate it.
+        // Uses a 2-minute grace window (see RecurringSchedule.matches) so startup
+        // at 9:03 still catches a 9:00 schedule. Same-day dedup via lastScheduleFireDate.
+        let calendar = Calendar.current
+        if let scheduledProfile = state.profiles.first(where: { profile in
+            !profile.isDefault
+                && profile.recurringSchedule?.matches(now: now, calendar: calendar) == true
+                && profile.id != state.activeProfileID
+                && (profile.lastScheduleFireDate.map { !calendar.isDate($0, inSameDayAs: now) } ?? true)
+        }) {
+            if let i = state.profiles.firstIndex(where: { $0.id == scheduledProfile.id }) {
+                state.profiles[i].activatedAt = now
+                state.profiles[i].lastUsedAt = now
+                state.profiles[i].lastScheduleFireDate = now
+                state.profiles[i].expiresAt = now.addingTimeInterval(
+                    TimeInterval(scheduledProfile.defaultDurationMin ?? 90) * 60
+                )
+            }
+            state.activeProfileID = scheduledProfile.id
+            state.chatHistory.append(ChatMessage(
+                role: .assistant,
+                text: "\(scheduledProfile.name) activated (\(scheduledProfile.recurringSchedule?.scheduleDescription() ?? "scheduled")).",
+                timestamp: now,
+                interruptionPolicy: .deferred
+            ))
+            stateSink?(baseState, state)
+            await appendMonitoringMetric(
+                kind: .profileChanged,
+                reason: "recurring_schedule",
+                state: state,
+                detail: scheduledProfile.id
+            )
+        }
+
+        // Recurring nudges (clock-driven). Fire each due nudge once per day.
+        for nudgeIndex in state.recurringNudges.indices {
+            var nudge = state.recurringNudges[nudgeIndex]
+            guard nudge.enabled,
+                  nudge.matches(now: now, calendar: calendar) else { continue }
+            if let lastFired = nudge.lastFiredAt,
+               calendar.isDate(lastFired, inSameDayAs: now) {
+                continue
+            }
+            state.recurringNudges[nudgeIndex].lastFiredAt = now
+            let message = nudge.message
+            executiveArm.perform(.showNudge(message))
+        }
+
+        // Persist any nudge lastFiredAt updates before continuing.
+        if state.recurringNudges != baseState.recurringNudges {
+            stateSink?(baseState, state)
+        }
+
         let idleSeconds = idleSecondsProvider?() ?? SnapshotService.idleSeconds()
         if idleSeconds >= 60 {
             cancelActiveEvaluationIfNeeded(reason: "idle_reset")

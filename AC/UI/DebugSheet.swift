@@ -78,8 +78,10 @@ struct DebugSheet: View {
     private var logsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
-                Button("Telemetry root") { controller.openTelemetryRoot() }
+                Button("Export Agent Debug Bundle") { controller.exportAgentDebugBundle() }
                     .buttonStyle(ACPrimaryButton())
+                Button("Telemetry root") { controller.openTelemetryRoot() }
+                    .buttonStyle(ACSecondaryButton())
                 Button("Current session") { controller.openCurrentTelemetrySession() }
                     .buttonStyle(ACSecondaryButton())
                 Button("Reliability") { controller.openOpenRouterHealthStats() }
@@ -97,6 +99,11 @@ struct DebugSheet: View {
                 Text(controller.telemetrySessionID ?? "No active session")
                     .font(.acMono)
                     .foregroundStyle(Color.acTextPrimary)
+                if let status = controller.agentDebugBundleStatus, !status.isEmpty {
+                    Text(status)
+                        .font(.acCaption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             logConsole(title: "Recent text log", text: controller.activityLog.isEmpty ? "No recent log tail yet." : controller.activityLog, height: 210)

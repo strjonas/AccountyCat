@@ -226,10 +226,12 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
     var profileName: String?
     var profileDescription: String?
     var profileDurationMinutes: Int?
+    var recurringSchedule: RecurringSchedule?
 
     private enum CodingKeys: String, CodingKey {
         case type, rule, ruleID, patch, reason
         case profileID, profileName, profileDescription, profileDurationMinutes
+        case recurringSchedule
     }
 
     init(
@@ -241,7 +243,8 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
         profileID: String? = nil,
         profileName: String? = nil,
         profileDescription: String? = nil,
-        profileDurationMinutes: Int? = nil
+        profileDurationMinutes: Int? = nil,
+        recurringSchedule: RecurringSchedule? = nil
     ) {
         self.type = type
         self.rule = rule
@@ -252,6 +255,7 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
         self.profileName = profileName
         self.profileDescription = profileDescription
         self.profileDurationMinutes = profileDurationMinutes
+        self.recurringSchedule = recurringSchedule
     }
 
     init(from decoder: Decoder) throws {
@@ -265,6 +269,7 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
         profileName = try c.decodeIfPresent(String.self, forKey: .profileName)
         profileDescription = try c.decodeIfPresent(String.self, forKey: .profileDescription)
         profileDurationMinutes = try c.decodeIfPresent(Int.self, forKey: .profileDurationMinutes)
+        recurringSchedule = try c.decodeIfPresent(RecurringSchedule.self, forKey: .recurringSchedule)
     }
 }
 

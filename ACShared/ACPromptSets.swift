@@ -516,6 +516,7 @@ enum ACPromptSets {
 
     Action kinds:
     - `profile`: start, switch, end, create, or update focus profiles and timed focus sessions.
+      For recurring "always activate X at 9PM" requests, include `recurringSchedule` with hour/minute.
     - `memory`: global durable preferences or vague/raw context future LLM calls should read.
       Memory is not a local safelist; use it for broad or ambiguous preferences.
       Use memory when the user says "always", "no matter what profile", "in general", or references
@@ -524,6 +525,8 @@ enum ACPromptSets {
     - `focus_policy`: concrete local allow/block/limit/discourage behavior AC can apply structurally.
       Always profile-scoped. Use it when the user wants a specific rule *within the current profile*:
       "block Reddit while coding", "this window is okay right now", "limit YouTube during this session".
+    - `recurring_nudge`: a recurring daily reminder. Use when the user asks for a nudge at a specific
+      time every day, e.g. "nudge me every day at 8am" or "remind me to take a break at 3PM on weekdays".
 
     Scope decision rule:
     - "block Instagram while I'm coding" → focus_policy (profile-specific rule)
@@ -533,9 +536,11 @@ enum ACPromptSets {
 
     Direct action examples:
     - profile: {"kind":"profile","intent":"activate","profileID":"...","durationMinutes":60,"reason":"coding focus"}
+    - profile with recurring schedule: {"kind":"profile","intent":"update","profileName":"Feierabend","recurringSchedule":{"hour":21,"minute":0}}
     - memory (global pref): {"kind":"memory","text":"User prefers Reddit judged by context, not treated as automatically bad."}
     - memory (cross-profile rule): {"kind":"memory","text":"User wants Instagram blocked regardless of which profile is active."}
     - focus_policy: {"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"current_context"},"duration":"profile_session","locked":false,"reason":"user corrected current window"}
+    - recurring_nudge: {"kind":"recurring_nudge","hour":8,"minute":0,"text":"Good morning! Time to plan your day.","weekdays":[2,3,4,5,6]}
 
     Scheduled actions:
     When the user asks for a *timed* action, include a `schedule` field. The app will execute
@@ -543,7 +548,9 @@ enum ACPromptSets {
     switch the active focus profile. Only schedule when the user explicitly asks with a time.
     What you CAN schedule: timed nudges (nudge me in 10 min), delayed profile switches
     (start Coding in 15 min). delay_minutes max 1440 (24h).
-    What you CANNOT do: persistent alarms, calendar integration, anything that survives app restart.
+    What you SHOULD use recurring actions for: "always activate X at 9PM", "nudge me every day at 8am" —
+    use `recurringSchedule` on a profile action or the `recurring_nudge` action kind instead of `schedule`.
+    What you CANNOT do: calendar integration, persistent alarms that survive app restart.
     If asked for something you can't do, say so politely instead of pretending you can.
     Schedule JSON format:
     {"type":"nudge","delay_minutes":5,"message":"Focus reminder!"} or
@@ -734,16 +741,18 @@ enum ACPromptSets {
         activeProfileDescription: String?,
         activeProfileIsDefault: Bool,
         activeProfileExpiresAtLabel: String?,
+        activeProfileScheduleLabel: String?,
         availableProfiles: String
     ) -> String {
         let defaultLabel = activeProfileIsDefault ? " (default)" : ""
         let descriptionLine = activeProfileDescription.map { "\nDescription: \($0)" } ?? ""
         let expiryLine = activeProfileExpiresAtLabel.map { "\nExpires at: \($0)" } ?? ""
+        let scheduleLine = activeProfileScheduleLabel.map { "\nRecurring: \($0)" } ?? ""
 
         return """
         [Active profile]
         \(activeProfileName)\(defaultLabel)
-        ID: \(activeProfileID)\(descriptionLine)\(expiryLine)
+        ID: \(activeProfileID)\(descriptionLine)\(expiryLine)\(scheduleLine)
 
         [Available profiles]
         \(availableProfiles.isEmpty ? "(none other)" : availableProfiles)

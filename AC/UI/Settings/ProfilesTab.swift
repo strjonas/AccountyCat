@@ -20,6 +20,11 @@ struct ProfilesTab: View {
     @State private var showingDeleteConfirm = false
     @State private var newRuleKind: PolicyRuleKind = .allow
     @State private var newRuleItem = ""
+    @State private var scheduleHourDraft: Int = 9
+    @State private var scheduleMinuteDraft: Int = 0
+    @State private var scheduleEveryDay: Bool = true
+    @State private var scheduleEnabledWeekdays: Set<Int> = []
+    @State private var scheduleEnabledDraft: Bool = false
 
     private var sortedProfiles: [FocusProfile] {
         var list = controller.state.profiles
@@ -233,6 +238,9 @@ struct ProfilesTab: View {
 
                 // Default duration
                 durationPicker
+
+                // Recurring schedule
+                scheduleEditor
             }
 
             // Unified rules
@@ -300,6 +308,102 @@ struct ProfilesTab: View {
                             )
                     }
                     .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var scheduleEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("recurring schedule", isOn: $scheduleEnabledDraft.animation(.acSnap))
+                .font(.ac(11, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                .toggleStyle(.checkbox)
+
+            if scheduleEnabledDraft {
+                HStack(spacing: 6) {
+                    Menu {
+                        ForEach(0..<24, id: \.self) { h in
+                            Button(String(format: "%02d", h)) { scheduleHourDraft = h }
+                        }
+                    } label: {
+                        Text(String(format: "%02d", scheduleHourDraft))
+                            .font(.ac(11))
+                            .foregroundStyle(Color.acTextPrimary)
+                            .frame(minWidth: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .menuIndicator(.visible)
+
+                    Text(":")
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.5))
+
+                    Menu {
+                        ForEach([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55], id: \.self) { m in
+                            Button(String(format: "%02d", m)) { scheduleMinuteDraft = m }
+                        }
+                    } label: {
+                        Text(String(format: "%02d", scheduleMinuteDraft))
+                            .font(.ac(11))
+                            .foregroundStyle(Color.acTextPrimary)
+                            .frame(minWidth: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .menuIndicator(.visible)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+                )
+
+                weekdayToggles
+            }
+        }
+    }
+
+    private var weekdayToggles: some View {
+        let symbols: [(label: String, value: Int)] = [
+            ("Sun", 1), ("Mon", 2), ("Tue", 3), ("Wed", 4),
+            ("Thu", 5), ("Fri", 6), ("Sat", 7),
+        ]
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Toggle("Every day", isOn: $scheduleEveryDay.animation(.acSnap))
+                    .font(.ac(10))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.6))
+                    .toggleStyle(.checkbox)
+            }
+
+            if !scheduleEveryDay {
+                HStack(spacing: 4) {
+                    ForEach(symbols, id: \.value) { item in
+                        Button {
+                            if scheduleEnabledWeekdays.contains(item.value) {
+                                scheduleEnabledWeekdays.remove(item.value)
+                            } else {
+                                scheduleEnabledWeekdays.insert(item.value)
+                            }
+                        } label: {
+                            Text(item.label)
+                                .font(.ac(9, weight: scheduleEnabledWeekdays.contains(item.value) ? .bold : .medium))
+                                .foregroundStyle(scheduleEnabledWeekdays.contains(item.value) ? .white : Color.acTextPrimary.opacity(0.5))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(scheduleEnabledWeekdays.contains(item.value) ? accent.opacity(0.8) : Color.acSurface.opacity(0.7))
+                                        .overlay(
+                                            Capsule(style: .continuous)
+                                                .stroke(scheduleEnabledWeekdays.contains(item.value) ? Color.clear : Color.acHairline, lineWidth: 1)
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
         }
@@ -527,7 +631,29 @@ struct ProfilesTab: View {
             descriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines) != (editingProfile.description ?? "") ||
             emojiDraft != editingProfile.emoji ||
             colorDraft != editingProfile.color ||
-            defaultDurationDraft != editingProfile.defaultDurationMin
+            defaultDurationDraft != editingProfile.defaultDurationMin ||
+            scheduleHasChanged
+    }
+
+    private var scheduleHasChanged: Bool {
+        let current = editingProfile.recurringSchedule
+        let currentlyEnabled = current != nil
+        if currentlyEnabled != scheduleEnabledDraft { return true }
+        guard scheduleEnabledDraft, let current else { return false }
+        let currentEveryDay = current.weekdays == nil
+        let currentWeekdays = Set(current.weekdays ?? [])
+        return current.hour != scheduleHourDraft
+            || current.minute != scheduleMinuteDraft
+            || currentEveryDay != scheduleEveryDay
+            || (!scheduleEveryDay && currentWeekdays != scheduleEnabledWeekdays)
+    }
+
+    private var resolvedSchedule: RecurringSchedule? {
+        guard scheduleEnabledDraft else { return nil }
+        guard scheduleHourDraft >= 0, scheduleHourDraft < 24,
+              scheduleMinuteDraft >= 0, scheduleMinuteDraft < 60 else { return nil }
+        let weekdays: [Int]? = scheduleEveryDay ? nil : scheduleEnabledWeekdays.sorted()
+        return RecurringSchedule(hour: scheduleHourDraft, minute: scheduleMinuteDraft, weekdays: weekdays)
     }
 
     private func syncDrafts() {
@@ -536,9 +662,23 @@ struct ProfilesTab: View {
         emojiDraft = editingProfile.emoji
         colorDraft = editingProfile.color
         defaultDurationDraft = editingProfile.defaultDurationMin
+        if let schedule = editingProfile.recurringSchedule {
+            scheduleEnabledDraft = true
+            scheduleHourDraft = schedule.hour
+            scheduleMinuteDraft = schedule.minute
+            scheduleEveryDay = schedule.weekdays == nil
+            scheduleEnabledWeekdays = Set(schedule.weekdays ?? [])
+        } else {
+            scheduleEnabledDraft = false
+            scheduleHourDraft = 9
+            scheduleMinuteDraft = 0
+            scheduleEveryDay = true
+            scheduleEnabledWeekdays = []
+        }
     }
 
     private func saveProfile() {
+        let newSchedule = resolvedSchedule
         controller.updateProfile(
             id: editingProfile.id,
             name: nameDraft,
@@ -546,7 +686,8 @@ struct ProfilesTab: View {
             emoji: emojiDraft,
             color: colorDraft,
             blocklist: editingProfile.blocklist,
-            defaultDurationMin: defaultDurationDraft
+            defaultDurationMin: defaultDurationDraft,
+            recurringSchedule: newSchedule
         )
     }
 

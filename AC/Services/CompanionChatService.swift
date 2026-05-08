@@ -478,6 +478,8 @@ actor CompanionChatService {
         case .focusPolicy:
             systemPrompt = ACPromptSets.focusPolicyActionExecutorSystemPrompt
             maxTokens = 700
+        case .recurringNudge:
+            return request.action
         }
 
         let userPrompt = ACPromptSets.renderChatActionExecutorUserPrompt(

@@ -67,6 +67,7 @@ final class AppController: ObservableObject {
     @Published var availableCalendars: [ACCalendarInfo] = []
     /// Timestamp of the last BrainService tick that reached evaluation (or skip).
     @Published var lastMonitoringCheckAt: Date?
+    @Published var agentDebugBundleStatus: String?
 
     /// Closure set by AppDelegate to allow UI components to close the main NSPopover.
     var dismissPopover: (() -> Void)?
@@ -638,7 +639,9 @@ final class AppController: ObservableObject {
         )
     }
 
-    /// Create and activate a new named profile. Enforces the LRU cap.
+    /// Create and activate a new named profile.
+    /// If there is no room (profile count is at cap), returns nil and posts a chat message
+    /// asking the user to remove a profile first, suggesting the least-recently-used one.
     @discardableResult
     func createAndActivateProfile(
         name: String,
@@ -648,8 +651,13 @@ final class AppController: ObservableObject {
     ) -> FocusProfile? {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return nil }
-        let now = Date()
         state.ensureDefaultProfileExists()
+        let namedCount = state.profiles.filter { !$0.isDefault }.count
+        if namedCount >= FocusProfile.maximumProfileCount - 1 {
+            suggestProfileRemoval(newProfileName: trimmedName)
+            return nil
+        }
+        let now = Date()
         let durationToUse = duration ?? 90 * 60
         let profile = FocusProfile(
             name: trimmedName,
@@ -661,7 +669,6 @@ final class AppController: ObservableObject {
             createdReason: reason
         )
         state.profiles.append(profile)
-        evictLRUIfNeeded()
         state.activeProfileID = profile.id
         persistState()
         logActivity("profile", "Created+activated profile '\(profile.name)' for \(Int(durationToUse / 60))m")
@@ -790,7 +797,8 @@ final class AppController: ObservableObject {
         emoji: String? = nil,
         color: String? = nil,
         blocklist: [String]? = nil,
-        defaultDurationMin: Int? = nil
+        defaultDurationMin: Int? = nil,
+        recurringSchedule: RecurringSchedule? = nil
     ) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty,
@@ -805,6 +813,7 @@ final class AppController: ObservableObject {
         if let color { state.profiles[index].color = color }
         if let blocklist { state.profiles[index].blocklist = blocklist }
         if let defaultDurationMin { state.profiles[index].defaultDurationMin = defaultDurationMin }
+        state.profiles[index].recurringSchedule = recurringSchedule
         persistState()
         logActivity("profile", "Updated profile metadata: \(id)")
     }
@@ -833,19 +842,38 @@ final class AppController: ObservableObject {
         logActivity("profile", "Deleted profile: \(id)")
     }
 
-    /// LRU eviction: if profile count > cap, remove the oldest unused non-default profile.
-    private func evictLRUIfNeeded() {
-        let cap = FocusProfile.maximumProfileCount
-        while state.profiles.count > cap {
-            let evictable = state.profiles
-                .enumerated()
-                .filter { !$0.element.isDefault && $0.element.id != state.activeProfileID }
-                .min(by: { $0.element.lastUsedAt < $1.element.lastUsedAt })
-            guard let (index, profile) = evictable else { break }
-            state.profiles.remove(at: index)
-            state.policyMemory.rules.removeAll { $0.profileID == profile.id && !$0.isLocked }
-            logActivity("profile", "LRU-evicted profile '\(profile.name)' (last used \(profile.lastUsedAt))")
+    /// Suggests that the user remove a profile before creating a new one.
+    /// Posts a deferred chat message naming the least-recently-used non-active, non-default profile
+    /// and listing all removable profiles.
+    private func suggestProfileRemoval(newProfileName: String) {
+        let candidates = state.profiles
+            .filter { !$0.isDefault && $0.id != state.activeProfileID && canDeleteProfile(id: $0.id) }
+            .sorted { $0.lastUsedAt < $1.lastUsedAt }
+        guard !candidates.isEmpty else {
+            let chatMessage = ChatMessage(
+                role: .assistant,
+                text: "You have too many profiles to add \"\(newProfileName)\" right now. Remove a profile first via Settings → Profiles.",
+                timestamp: Date(),
+                interruptionPolicy: .deferred
+            )
+            state.chatHistory.append(chatMessage)
+            chatMessages.append(chatMessage)
+            recomputeUnreadChatBadge()
+            return
         }
+        let suggestion = candidates.first!
+        let suggestionSchedule = suggestion.recurringSchedule.map { " (has a recurring schedule at \($0.scheduleDescription()))" } ?? ""
+        let names = candidates.prefix(5).map { "\($0.name)\($0.recurringSchedule != nil ? " *" : "")" }.joined(separator: ", ")
+        let chatMessage = ChatMessage(
+            role: .assistant,
+            text: "You have \(FocusProfile.maximumProfileCount - 1) profiles already. Remove one first to make room for \"\(newProfileName)\" — I'd suggest \"\(suggestion.name)\" since you haven't used it recently\(suggestionSchedule). Removable: \(names).\(!candidates.contains(where: { $0.recurringSchedule != nil }) ? "" : " * = has recurring schedule")",
+            timestamp: Date(),
+            interruptionPolicy: .deferred
+        )
+        state.chatHistory.append(chatMessage)
+        chatMessages.append(chatMessage)
+        recomputeUnreadChatBadge()
+        logActivity("profile", "Suggested removing '\(suggestion.name)' to make room for '\(newProfileName)'")
     }
 
     private func appendMonitoringMetric(
@@ -2217,6 +2245,31 @@ final class AppController: ObservableObject {
         }
     }
 
+    func exportAgentDebugBundle() {
+        agentDebugBundleStatus = "Exporting agent debug bundle..."
+        let snapshot = state
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await ACDebugBundleService(telemetryStore: self?.telemetryStore ?? .shared)
+                    .export(state: snapshot)
+                self?.agentDebugBundleStatus = "Exported \(result.bundleURL.lastPathComponent)"
+                NSWorkspace.shared.open(result.bundleURL)
+                await ActivityLogService.shared.append(
+                    level: .standard,
+                    category: "debug-bundle",
+                    message: "Exported agent debug bundle: \(result.bundleURL.path)"
+                )
+            } catch {
+                self?.agentDebugBundleStatus = error.localizedDescription
+                await ActivityLogService.shared.append(
+                    level: .error,
+                    category: "debug-bundle-error",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
     func openOpenRouterHealthStats() {
         Task {
             let url = await OpenRouterHealthStatsService.shared.snapshotFileURL()
@@ -2608,7 +2661,32 @@ final class AppController: ObservableObject {
             return applyProfileChatAction(action)
         case .focusPolicy:
             return applyFocusPolicyChatAction(action, context: context)
+        case .recurringNudge:
+            return applyRecurringNudgeChatAction(action)
         }
+    }
+
+    @discardableResult
+    private func applyRecurringNudgeChatAction(_ action: CompanionChatAction) -> Bool {
+        let schedule = action.recurringSchedule
+        let hour = schedule?.hour ?? action.hour
+        let minute = schedule?.minute ?? action.minute
+        guard let hour, let minute else { return false }
+        let text = action.text?.cleanedSingleLine
+        let reason = action.reason?.cleanedSingleLine
+        let message = (text?.isEmpty == false ? text : nil)
+            ?? (reason?.isEmpty == false ? reason : nil)
+            ?? "Time to check your focus."
+        let nudge = RecurringNudge(
+            hour: hour,
+            minute: minute,
+            weekdays: schedule?.weekdays ?? action.weekdays,
+            message: message
+        )
+        state.recurringNudges.append(nudge)
+        logActivity("recurring-nudge", "Added recurring nudge \(nudge.scheduleDescription())")
+        persistState()
+        return true
     }
 
     @discardableResult
@@ -2644,20 +2722,26 @@ final class AppController: ObservableObject {
                     }?.id
                 }
             guard let profileID else { return false }
-            applyProfileOperations([
+            var ops = [
                 PolicyMemoryOperation(
                     type: .activateProfile,
                     reason: action.reason,
                     profileID: profileID,
                     profileDurationMinutes: action.durationMinutes
                 )
-            ])
+            ]
+            if let schedule = action.recurringSchedule.map({
+                RecurringSchedule(hour: $0.hour, minute: $0.minute, weekdays: $0.weekdays)
+            }) {
+                ops[0].recurringSchedule = schedule
+            }
+            applyProfileOperations(ops)
             persistState()
             return true
 
         case "create", "create_and_activate":
             guard let name = action.profileName?.cleanedSingleLine, !name.isEmpty else { return false }
-            applyProfileOperations([
+            var ops = [
                 PolicyMemoryOperation(
                     type: .createAndActivateProfile,
                     reason: action.reason,
@@ -2665,18 +2749,31 @@ final class AppController: ObservableObject {
                     profileDescription: action.profileDescription,
                     profileDurationMinutes: action.durationMinutes
                 )
-            ])
+            ]
+            if let schedule = action.recurringSchedule.map({
+                RecurringSchedule(hour: $0.hour, minute: $0.minute, weekdays: $0.weekdays)
+            }) {
+                ops[0].recurringSchedule = schedule
+            }
+            applyProfileOperations(ops)
             persistState()
             return true
 
         case "update":
             let profileID = action.profileID ?? state.activeProfileID
             guard let current = state.profile(withID: profileID) else { return false }
+            let schedule: RecurringSchedule?
+            if let sched = action.recurringSchedule {
+                schedule = RecurringSchedule(hour: sched.hour, minute: sched.minute, weekdays: sched.weekdays)
+            } else {
+                schedule = current.recurringSchedule
+            }
             updateProfile(
                 id: profileID,
                 name: action.profileName?.cleanedSingleLine.isEmpty == false ? action.profileName! : current.name,
                 description: action.profileDescription ?? current.description,
-                defaultDurationMin: action.durationMinutes ?? current.defaultDurationMin
+                defaultDurationMin: action.durationMinutes ?? current.defaultDurationMin,
+                recurringSchedule: schedule
             )
             return true
 
@@ -2686,7 +2783,7 @@ final class AppController: ObservableObject {
                     action: instruction,
                     availableProfiles: state.profiles,
                     activeProfileID: state.activeProfileID
-               ), !ops.isEmpty {
+                ), !ops.isEmpty {
                 applyProfileOperations(ops)
                 persistState()
                 return true
@@ -2742,6 +2839,22 @@ final class AppController: ObservableObject {
         )
         persistState()
         return true
+    }
+
+    func removeRecurringNudge(id: UUID) {
+        state.recurringNudges.removeAll { $0.id == id }
+        persistState()
+    }
+
+    func fireRecurringNudge(_ nudge: RecurringNudge) {
+        let message = nudge.message
+        executiveArm?.perform(.showNudge(message))
+        recordDisplayedNudge(message)
+        logActivity("recurring_nudge", "Fired recurring nudge: \(message)")
+        if let index = state.recurringNudges.firstIndex(where: { $0.id == nudge.id }) {
+            state.recurringNudges[index].lastFiredAt = Date()
+            persistState()
+        }
     }
 
     private func normalizedFocusPolicyIntent(_ intent: String?) -> (kind: PolicyRuleKind?, summaryVerb: String) {
@@ -3065,6 +3178,11 @@ final class AppController: ObservableObject {
                     expiresAt = nil
                 }
                 if activateProfile(id: profileID, expiresAt: expiresAt, reason: op.reason) {
+                    if let schedule = op.recurringSchedule,
+                       let index = state.profiles.firstIndex(where: { $0.id == profileID }) {
+                        state.profiles[index].recurringSchedule = schedule
+                        persistState()
+                    }
                     announcementReason = op.reason
                     shouldAnnounce = true
                 }
@@ -3074,12 +3192,17 @@ final class AppController: ObservableObject {
                 let duration: TimeInterval? = (op.profileDurationMinutes ?? 0) > 0
                     ? TimeInterval(op.profileDurationMinutes!) * 60
                     : nil
-                if createAndActivateProfile(
+                if let newProfile = createAndActivateProfile(
                     name: name,
                     description: op.profileDescription,
                     duration: duration,
                     reason: op.reason
-                ) != nil {
+                ) {
+                    if let schedule = op.recurringSchedule,
+                       let index = state.profiles.firstIndex(where: { $0.id == newProfile.id }) {
+                        state.profiles[index].recurringSchedule = schedule
+                        persistState()
+                    }
                     announcementReason = op.reason
                     shouldAnnounce = true
                 }
@@ -3707,11 +3830,13 @@ private enum AppControllerChatSupport {
         } else {
             expiryLabel = nil
         }
+        let scheduleLabel = activeProfile.recurringSchedule?.scheduleDescription()
 
         let availableText = availableProfiles
             .map { profile in
                 let desc = profile.description.map { " — \($0)" } ?? ""
-                return "- \(profile.name) (id: \(profile.id))\(desc)"
+                let sched = profile.recurringSchedule.map { " [scheduled: \($0.scheduleDescription())]" } ?? ""
+                return "- \(profile.name) (id: \(profile.id))\(desc)\(sched)"
             }
             .joined(separator: "\n")
 
@@ -3721,6 +3846,7 @@ private enum AppControllerChatSupport {
             activeProfileDescription: activeProfile.description,
             activeProfileIsDefault: activeProfile.isDefault,
             activeProfileExpiresAtLabel: expiryLabel,
+            activeProfileScheduleLabel: scheduleLabel,
             availableProfiles: availableText
         )
     }

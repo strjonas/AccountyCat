@@ -41,6 +41,7 @@ enum ProfileActionParser {
         guard !trimmedName.isEmpty else { return nil }
 
         let durationMinutes = extractDuration(from: lower)
+        let recurringSchedule = extractRecurringSchedule(from: cleaned)
 
         // Try to match an existing profile (case-insensitive, generous substring match).
         let matchedProfile = availableProfiles.first { p in
@@ -56,14 +57,16 @@ enum ProfileActionParser {
             return [PolicyMemoryOperation(
                 type: .activateProfile,
                 profileID: matched.id,
-                profileDurationMinutes: durationMinutes
+                profileDurationMinutes: durationMinutes,
+                recurringSchedule: recurringSchedule
             )]
         }
 
         return [PolicyMemoryOperation(
             type: .createAndActivateProfile,
             profileName: trimmedName,
-            profileDurationMinutes: durationMinutes
+            profileDurationMinutes: durationMinutes,
+            recurringSchedule: recurringSchedule
         )]
     }
 
@@ -134,5 +137,113 @@ enum ProfileActionParser {
             return number * multiplier
         }
         return nil
+    }
+
+    // MARK: - Recurring schedule extraction
+
+    private static func extractRecurringSchedule(from text: String) -> RecurringSchedule? {
+        let lower = text.lowercased()
+
+        // Must have a recurring signal word
+        let recurringWords = ["always", "every day", "everyday", "daily", "each day", "every morning",
+                              "every evening", "every night", "every weekday", "every week", "regularly",
+                              "on weekdays", "on weekday", "recurring", "schedule"]
+        guard recurringWords.contains(where: lower.contains) else { return nil }
+
+        guard let (hour, minute) = extractTimeOfDay(from: text) else { return nil }
+
+        let weekdays = extractWeekdays(from: text)
+
+        return RecurringSchedule(hour: hour, minute: minute, weekdays: weekdays)
+    }
+
+    private static func extractTimeOfDay(from text: String) -> (hour: Int, minute: Int)? {
+        let lower = text.lowercased()
+
+        // 24-hour format: "at 21:00", "at 09:30"
+        if let regex = try? NSRegularExpression(pattern: #"\b(\d{1,2}):(\d{2})\b"#, options: []),
+           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let hourRange = Range(match.range(at: 1), in: text),
+           let minuteRange = Range(match.range(at: 2), in: text),
+           let hour = Int(text[hourRange]), let minute = Int(text[minuteRange]),
+           (0...23).contains(hour), (0...59).contains(minute) {
+            return (hour, minute)
+        }
+
+        // 12-hour format: "at 9PM", "at 9 pm", "at 9:00 AM", "at 7:30pm"
+        let patterns: [(String, Int)] = [
+            (#"(\d{1,2})\s*(pm|p\.m\.|am|a\.m\.|p\.m|a\.m)\b"#, 0),
+            (#"(\d{1,2}):(\d{2})\s*(pm|p\.m\.|am|a\.m\.|p\.m|a\.m)\b"#, 0),
+        ]
+
+        for (pattern, _) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                  let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { continue }
+
+            let hourStr: Substring
+            let minuteVal: Int
+            let isPM: Bool
+
+            if match.numberOfRanges >= 4,
+               let hRange = Range(match.range(at: 1), in: text),
+               let mRange = Range(match.range(at: 2), in: text),
+               let ampmRange = Range(match.range(at: 3), in: text) {
+                hourStr = text[hRange]
+                minuteVal = Int(text[mRange]) ?? 0
+                isPM = text[ampmRange].lowercased().hasPrefix("p")
+            } else if match.numberOfRanges >= 3,
+                      let hRange = Range(match.range(at: 1), in: text),
+                      let ampmRange = Range(match.range(at: 2), in: text) {
+                hourStr = text[hRange]
+                minuteVal = 0
+                isPM = text[ampmRange].lowercased().hasPrefix("p")
+            } else {
+                continue
+            }
+
+            guard var hour = Int(hourStr), (1...12).contains(hour) else { continue }
+            if isPM && hour != 12 { hour += 12 }
+            if !isPM && hour == 12 { hour = 0 }
+            return (hour, minuteVal)
+        }
+
+        return nil
+    }
+
+    private static func extractWeekdays(from text: String) -> [Int]? {
+        let lower = text.lowercased()
+
+        // "every day" / "daily" → nil (every day)
+        if lower.contains("every day") || lower.contains("daily") || lower.contains("everyday")
+            || lower.contains("each day") || lower.contains("always") {
+            // Check if there's also a specific weekday mention
+        }
+
+        let weekdayMap: [String: Int] = [
+            "sunday": 1, "monday": 2, "tuesday": 3, "wednesday": 4,
+            "thursday": 5, "friday": 6, "saturday": 7,
+            "sundays": 1, "mondays": 2, "tuesdays": 3, "wednesdays": 4,
+            "thursdays": 5, "fridays": 6, "saturdays": 7,
+            "sun": 1, "mon": 2, "tue": 3, "wed": 4, "thu": 5, "fri": 6, "sat": 7,
+        ]
+
+        var found: Set<Int> = []
+        for (key, value) in weekdayMap {
+            if lower.contains(key) {
+                found.insert(value)
+            }
+        }
+
+        // "on weekdays" → Mon–Fri
+        if lower.contains("weekday") && !lower.contains("weekends") {
+            found.formUnion([2, 3, 4, 5, 6])
+        }
+
+        // "on weekends" → Sat, Sun
+        if lower.contains("weekend") {
+            found.formUnion([1, 7])
+        }
+
+        return found.isEmpty ? nil : found.sorted()
     }
 }

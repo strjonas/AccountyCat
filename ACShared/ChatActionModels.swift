@@ -20,6 +20,7 @@ nonisolated enum CompanionChatActionKind: String, Codable, Hashable, Sendable {
     case profile
     case memory
     case focusPolicy = "focus_policy"
+    case recurringNudge = "recurring_nudge"
 }
 
 nonisolated struct CompanionChatActionTarget: Codable, Hashable, Sendable {
@@ -72,6 +73,10 @@ nonisolated struct CompanionChatAction: Codable, Hashable, Sendable {
     var target: CompanionChatActionTarget?
     var duration: String?
     var locked: Bool?
+    var recurringSchedule: RecurringChatSchedule?
+    var hour: Int?
+    var minute: Int?
+    var weekdays: [Int]?
 
     init(
         kind: CompanionChatActionKind,
@@ -86,7 +91,11 @@ nonisolated struct CompanionChatAction: Codable, Hashable, Sendable {
         scope: String? = nil,
         target: CompanionChatActionTarget? = nil,
         duration: String? = nil,
-        locked: Bool? = nil
+        locked: Bool? = nil,
+        recurringSchedule: RecurringChatSchedule? = nil,
+        hour: Int? = nil,
+        minute: Int? = nil,
+        weekdays: [Int]? = nil
     ) {
         self.kind = kind
         self.instruction = instruction
@@ -101,6 +110,10 @@ nonisolated struct CompanionChatAction: Codable, Hashable, Sendable {
         self.target = target
         self.duration = duration
         self.locked = locked
+        self.recurringSchedule = recurringSchedule
+        self.hour = hour
+        self.minute = minute
+        self.weekdays = weekdays
     }
 
     init(from decoder: Decoder) throws {
@@ -122,12 +135,18 @@ nonisolated struct CompanionChatAction: Codable, Hashable, Sendable {
         target = try c.decodeIfPresent(CompanionChatActionTarget.self, forKey: .target)
         duration = try c.decodeIfPresent(String.self, forKey: .duration)
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked)
+        recurringSchedule = try c.decodeIfPresent(RecurringChatSchedule.self, forKey: .recurringSchedule)
+            ?? (try c.decodeIfPresent(RecurringChatSchedule.self, forKey: .recurring_schedule))
+        hour = Self.decodeFlexibleInt(c, .hour)
+        minute = Self.decodeFlexibleInt(c, .minute)
+        weekdays = try c.decodeIfPresent([Int].self, forKey: .weekdays)
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind, instruction, intent, profileID, profile_id, profileName, profile_name
         case profileDescription, profile_description, durationMinutes, duration_minutes
         case reason, text, scope, target, duration, locked
+        case recurringSchedule, recurring_schedule, hour, minute, weekdays
     }
 
     func encode(to encoder: Encoder) throws {
@@ -145,6 +164,10 @@ nonisolated struct CompanionChatAction: Codable, Hashable, Sendable {
         try c.encodeIfPresent(target, forKey: .target)
         try c.encodeIfPresent(duration, forKey: .duration)
         try c.encodeIfPresent(locked, forKey: .locked)
+        try c.encodeIfPresent(recurringSchedule, forKey: .recurringSchedule)
+        try c.encodeIfPresent(hour, forKey: .hour)
+        try c.encodeIfPresent(minute, forKey: .minute)
+        try c.encodeIfPresent(weekdays, forKey: .weekdays)
     }
 
     private static func decodeFlexibleInt(
@@ -159,6 +182,12 @@ nonisolated struct CompanionChatAction: Codable, Hashable, Sendable {
         }
         return nil
     }
+}
+
+nonisolated struct RecurringChatSchedule: Codable, Hashable, Sendable {
+    var hour: Int
+    var minute: Int
+    var weekdays: [Int]?
 }
 
 nonisolated struct CompanionChatActionResolutionPayload: Codable, Hashable, Sendable {
