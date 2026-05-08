@@ -518,13 +518,23 @@ enum ACPromptSets {
     - `profile`: start, switch, end, create, or update focus profiles and timed focus sessions.
     - `memory`: global durable preferences or vague/raw context future LLM calls should read.
       Memory is not a local safelist; use it for broad or ambiguous preferences.
+      Use memory when the user says "always", "no matter what profile", "in general", or references
+      behavior that should apply across all profiles. Rules cannot be global — if they want something
+      global, memory is the right place.
     - `focus_policy`: concrete local allow/block/limit/discourage behavior AC can apply structurally.
-      This is usually active-profile scoped. Use it for things like "this window is okay right now",
-      "block Reddit while coding", or "limit YouTube during this profile".
+      Always profile-scoped. Use it when the user wants a specific rule *within the current profile*:
+      "block Reddit while coding", "this window is okay right now", "limit YouTube during this session".
+
+    Scope decision rule:
+    - "block Instagram while I'm coding" → focus_policy (profile-specific rule)
+    - "don't let me use Instagram today" → focus_policy (profile-specific, expires today)
+    - "never let me use Instagram, no matter what profile I'm in" → memory (global preference, rules can't span profiles)
+    - "I generally find Reddit a distraction" → memory (vague/global, not a structural rule)
 
     Direct action examples:
     - profile: {"kind":"profile","intent":"activate","profileID":"...","durationMinutes":60,"reason":"coding focus"}
-    - memory: {"kind":"memory","text":"User prefers Reddit judged by context, not treated as automatically bad."}
+    - memory (global pref): {"kind":"memory","text":"User prefers Reddit judged by context, not treated as automatically bad."}
+    - memory (cross-profile rule): {"kind":"memory","text":"User wants Instagram blocked regardless of which profile is active."}
     - focus_policy: {"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"current_context"},"duration":"profile_session","locked":false,"reason":"user corrected current window"}
 
     Scheduled actions:
@@ -583,6 +593,19 @@ enum ACPromptSets {
     Keep text concise, but preserve important wording when the user was emphatic.
     If the request is not worth remembering, return {"action":{"kind":"memory","text":""}}.
     Return JSON only.
+
+    Examples:
+    Hint: "remember that I prefer dark mode in all editors"
+    → {"action":{"kind":"memory","text":"User prefers dark mode in all editors."}}
+
+    Hint: "I always take a 10-minute break after 90 minutes of focused work"
+    → {"action":{"kind":"memory","text":"User takes a 10-minute break after every 90 minutes of focused work."}}
+
+    Hint: "forget it, not worth remembering"
+    → {"action":{"kind":"memory","text":""}}
+
+    Hint: "I'm a night owl, I do my best work after 10pm"
+    → {"action":{"kind":"memory","text":"User is a night owl and does their best work after 10pm."}}
     """
 
     nonisolated static let focusPolicyActionExecutorSystemPrompt = """
@@ -593,11 +616,32 @@ enum ACPromptSets {
     Use focus_policy only for concrete local behavior AC can apply structurally.
     Use target {"type":"current_context"} when the user refers to the currently open app/window.
     Use target {"type":"app","value":"Name"} or {"type":"site","value":"domain"} for explicit named targets.
-    Use scope "active_profile" unless the user explicitly names another profile or says global.
+    Rules are always profile-scoped. If the hint implies "no matter what profile" or cross-profile
+    behavior, return kind "memory" with descriptive text instead — rules cannot span profiles.
+    Use scope "active_profile" for all structural rules.
     Use duration "profile_session", "today", "permanent", or omit it. For "right now", use "profile_session".
     Set locked true only when the user explicitly asks for permanence ("never forget", "lock this", "always").
     If the request is too vague for a structural rule, return kind "memory" with text instead.
     Return JSON only.
+
+    Examples:
+    Hint: "don't let me use Instagram today"
+    → {"action":{"kind":"focus_policy","intent":"disallow","target":{"type":"site","value":"instagram.com"},"scope":"active_profile","duration":"today"}}
+
+    Hint: "block this app for the rest of the session" (current context is Reels)
+    → {"action":{"kind":"focus_policy","intent":"disallow","target":{"type":"current_context"},"scope":"active_profile","duration":"profile_session"}}
+
+    Hint: "YouTube is fine during this session, I'm using it for research"
+    → {"action":{"kind":"focus_policy","intent":"allow","target":{"type":"site","value":"youtube.com"},"scope":"active_profile","duration":"profile_session"}}
+
+    Hint: "always allow Spotify, no matter what profile I'm in"
+    → {"action":{"kind":"memory","text":"User wants Spotify allowed regardless of which profile is active."}}
+
+    Hint: "I've been spending too much time on Reddit lately, remind me when I open it"
+    → {"action":{"kind":"focus_policy","intent":"discourage","target":{"type":"site","value":"reddit.com"},"scope":"active_profile"}}
+
+    Hint: "block Instagram while coding" (active profile is Coding)
+    → {"action":{"kind":"focus_policy","intent":"disallow","target":{"type":"app","value":"Instagram"},"scope":"active_profile"}}
     """
 
     nonisolated static func renderChatActionExecutorUserPrompt(payloadJSON: String) -> String {
