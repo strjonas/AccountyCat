@@ -308,23 +308,22 @@ struct ProfilesTab: View {
     // MARK: - Rules
 
     private var rulesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("rules · \"\(editingProfile.name)\"")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionLabel("rules for \"\(editingProfile.name)\"")
                 Spacer()
-                Text("AC manages these automatically")
+                Text("AC learns these · tweak anytime")
                     .font(.ac(9))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.35))
             }
 
             if allDisplayRules.isEmpty {
-                Text("No rules yet. AC will create them as it learns your patterns.")
+                Text("no rules yet — AC will learn from your usage")
                     .font(.acCaption)
                     .foregroundStyle(.secondary)
+                    .padding(.vertical, 2)
             } else {
-                VStack(spacing: 4) {
+                VStack(spacing: 3) {
                     ForEach(allDisplayRules) { rule in
                         ruleRow(rule)
                     }
@@ -349,130 +348,135 @@ struct ProfilesTab: View {
             // Summary
             Text(rule.summary)
                 .font(.ac(11))
-                .foregroundStyle(Color.acTextPrimary.opacity(isActive ? 0.8 : 0.4))
+                .foregroundStyle(Color.acTextPrimary.opacity(isActive ? 0.82 : 0.38))
                 .lineLimit(1)
 
             if rule.isAutoSafelistRule {
                 Text("auto")
                     .font(.ac(8, weight: .medium))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.3))
+                    .foregroundStyle(Color.secondary.opacity(0.45))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(Capsule().stroke(Color.acHairline, lineWidth: 0.5))
+                    )
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
             // Lock
-            Button {
-                controller.toggleRuleLocked(id: rule.id)
-            } label: {
+            Button { controller.toggleRuleLocked(id: rule.id) } label: {
                 Image(systemName: rule.isLocked ? "lock.fill" : "lock.open")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.35))
-                    .frame(width: 22, height: 22)
+                    .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.28))
+                    .frame(width: 20, height: 20)
                     .background(
                         Circle()
-                            .fill(rule.isLocked ? accent.opacity(0.10) : Color.acSurface)
-                            .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.22) : Color.acHairline, lineWidth: 1))
+                            .fill(rule.isLocked ? accent.opacity(0.10) : Color.clear)
+                            .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.20) : Color.acHairline.opacity(0.6), lineWidth: 1))
                     )
             }
             .buttonStyle(.plain)
             .help(rule.isLocked ? "Unlock — allow AC to modify" : "Lock — prevent AC from changing")
 
             // Delete
-            Button {
-                controller.deleteRule(id: rule.id)
-            } label: {
+            Button { controller.deleteRule(id: rule.id) } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color.secondary.opacity(0.4))
-                    .frame(width: 22, height: 22)
-                    .background(
-                        Circle()
-                            .fill(Color.acSurface)
-                            .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
-                    )
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.secondary.opacity(0.32))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Color.acSurface).overlay(Circle().stroke(Color.acHairline, lineWidth: 0.5)))
             }
             .buttonStyle(.plain)
             .disabled(rule.isLocked)
-            .help("Delete this rule")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                .fill(rule.isLocked ? accent.opacity(0.04) : Color.acSurface)
+                .fill(rule.isLocked ? accent.opacity(0.04) : Color.acSurface.opacity(0.7))
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                        .stroke(rule.isLocked ? accent.opacity(0.15) : Color.acHairline, lineWidth: 1)
+                        .stroke(rule.isLocked ? accent.opacity(0.12) : Color.acHairline.opacity(0.65), lineWidth: 1)
                 )
         )
     }
 
     private var addRuleRow: some View {
-        HStack(spacing: 6) {
-            // Kind selector (compact pills)
-            HStack(spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                // Kind selector pills
                 ForEach([PolicyRuleKind.allow, .disallow, .discourage], id: \.self) { kind in
                     Button {
-                        newRuleKind = kind
+                        withAnimation(.acSnap) { newRuleKind = kind }
                     } label: {
                         Text(ruleKindLabel(kind))
-                            .font(.ac(9, weight: newRuleKind == kind ? .semibold : .medium))
-                            .foregroundStyle(newRuleKind == kind ? .white : Color.acTextPrimary.opacity(0.6))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
+                            .font(.ac(9, weight: newRuleKind == kind ? .bold : .medium))
+                            .foregroundStyle(newRuleKind == kind ? .white : Color.acTextPrimary.opacity(0.55))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
                             .background(
                                 Capsule(style: .continuous)
-                                    .fill(newRuleKind == kind ? ruleKindColor(kind).opacity(0.8) : Color.acSurface)
-                                    .overlay(
-                                        Capsule(style: .continuous)
-                                            .stroke(newRuleKind == kind ? Color.clear : Color.acHairline, lineWidth: 0.5)
-                                    )
+                                    .fill(newRuleKind == kind ? ruleKindColor(kind) : Color.acSurface)
+                                    .overlay(Capsule(style: .continuous).stroke(newRuleKind == kind ? Color.clear : Color.acHairline, lineWidth: 1))
                             )
                     }
                     .buttonStyle(.plain)
                 }
-            }
 
-            // App picker
-            Menu {
-                ForEach(runningAppNames, id: \.self) { app in
-                    Button(app) { addRule(app) }
+                Spacer()
+
+                // App picker
+                if !runningAppNames.isEmpty {
+                    Menu {
+                        ForEach(runningAppNames, id: \.self) { app in
+                            Button(app) { addRule(app) }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text("open app")
+                                .font(.ac(10, weight: .medium))
+                        }
+                        .foregroundStyle(accent.opacity(0.8))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.acSurface)
+                                .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
+                        )
+                    }
+                    .menuIndicator(.hidden)
+                    .buttonStyle(.plain)
                 }
-                if !runningAppNames.isEmpty { Divider() }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text("app")
-                        .font(.ac(10, weight: .medium))
-                }
-                .foregroundStyle(accent.opacity(0.8))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.acSurface)
-                        .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
-                )
             }
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .disabled(runningAppNames.isEmpty)
 
             // Text input
-            TextField("app or tab name", text: $newRuleItem)
-                .textFieldStyle(.plain)
-                .font(.ac(10))
-                .frame(width: 110)
-                .onSubmit { submitRule() }
+            HStack(spacing: 8) {
+                TextField("app name, site domain, or window title…", text: $newRuleItem)
+                    .textFieldStyle(.plain)
+                    .font(.ac(11))
+                    .onSubmit { submitRule() }
 
-            Button { submitRule() } label: {
-                Text("add")
-                    .font(.ac(10, weight: .medium))
-                    .foregroundStyle(accent)
+                Button { submitRule() } label: {
+                    Text("add")
+                        .font(.ac(10, weight: .semibold))
+                        .foregroundStyle(!newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? accent : Color.secondary.opacity(0.28))
+                }
+                .buttonStyle(.plain)
+                .disabled(newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .buttonStyle(.plain)
-            .disabled(newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+            )
         }
     }
 
@@ -480,21 +484,21 @@ struct ProfilesTab: View {
 
     private func ruleKindLabel(_ kind: PolicyRuleKind) -> String {
         switch kind {
-        case .allow:          return "Allow"
-        case .disallow:       return "Block"
-        case .discourage:     return "Limit"
-        case .limit:          return "Cap"
-        case .tonePreference: return "Tone"
+        case .allow:          return "allow"
+        case .disallow:       return "block"
+        case .discourage:     return "limit"
+        case .limit:          return "cap"
+        case .tonePreference: return "tone"
         }
     }
 
     private func ruleKindColor(_ kind: PolicyRuleKind) -> Color {
         switch kind {
-        case .allow:          return .green
-        case .disallow:       return .red
-        case .discourage:     return .orange
-        case .limit:          return .blue
-        case .tonePreference: return .purple
+        case .allow:          return Color(red: 0.28, green: 0.72, blue: 0.49)
+        case .disallow:       return Color(red: 0.86, green: 0.36, blue: 0.36)
+        case .discourage:     return Color(red: 0.92, green: 0.62, blue: 0.25)
+        case .limit:          return Color(red: 0.46, green: 0.62, blue: 0.88)
+        case .tonePreference: return Color(red: 0.65, green: 0.48, blue: 0.88)
         }
     }
 
