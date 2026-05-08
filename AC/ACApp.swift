@@ -85,6 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         wc.openPopoverFromOrb = { [weak self] in
             self?.togglePopoverFromOrb()
         }
+        wc.statusItemButtonFrameProvider = { [weak self] in
+            guard let button = self?.statusItem?.button,
+                  let window = button.window else { return .zero }
+            let localRect = button.bounds
+            let windowRect = button.convert(localRect, to: nil)
+            return window.convertToScreen(windowRect)
+        }
 
         setUpStatusItem()
         bindMood()
@@ -137,8 +144,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         switch style {
         case .icon:
-            button.image = NSImage(systemSymbolName: "cat.fill", accessibilityDescription: "AccountyCat")
-            button.image?.isTemplate = true
+            let img = CatView.menuBarTemplateImage(
+                size: 18,
+                character: controller.state.character,
+                skin: controller.state.selectedSkin,
+                expression: .neutral
+            )
+            button.image = img
             button.title = ""
 
         case .ac:
@@ -198,6 +210,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
         controller.$state
             .map(\.statusBarStyle)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let item = self.statusItem else { return }
+                self.applyChipTitle(to: item)
+            }
+            .store(in: &cancellables)
+        controller.$state
+            .map { "\($0.character.rawValue)-\($0.selectedSkin.rawValue)" }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -361,6 +382,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             windowCoordinator?.hideCompanion()
         }
 
+        // Dismiss status bar nudge if switching away from menuBar
+        if !mode.showsMenuBar {
+            windowCoordinator?.dismissStatusBarNudgePanel()
+        }
+
         // Menu bar status item
         if mode.showsMenuBar {
             if statusItem == nil { setUpStatusItem() }
@@ -498,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         orbPopoverAnchorWindow?.orderOut(nil)
+        NotificationCenter.default.post(name: .acDismissSheet, object: nil)
     }
 
     // MARK: - Right-click context menu (minimal — full controls live in the popover)

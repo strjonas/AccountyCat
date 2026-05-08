@@ -181,6 +181,7 @@ struct OpenRouterKeyInfo: Codable {
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
     nonisolated static let premiumFallbackModelIdentifier = "google/gemini-3-flash-preview"
+    nonisolated static let maxOpenRouterModelsArrayCount = 3
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
     nonisolated private static let premiumMaxSuccessCount = 5
 
@@ -276,7 +277,7 @@ actor OnlineModelService: OnlineModelServing {
                 let result = try await runInference(
                     request,
                     modelIdentifier: primaryModelIdentifier,
-                    fallbackModelIdentifiers: secondaryFallbacks,
+                    fallbackModelIdentifiers: Self.openRouterModelsArray(from: secondaryFallbacks),
                     enforceZDR: true,
                     startTime: startTime
                 )
@@ -387,6 +388,7 @@ actor OnlineModelService: OnlineModelServing {
             )
         }
 
+        let providerFallbackModelIdentifiers = Self.openRouterModelsArray(from: fallbackModelIdentifiers)
         var body: [String: Any] = [
             "model": modelIdentifier,
             "messages": [
@@ -409,15 +411,15 @@ actor OnlineModelService: OnlineModelServing {
             ],
             "provider": Self.providerPreferences(
                 enforceZDR: enforceZDR,
-                includesModelFallbacks: !fallbackModelIdentifiers.isEmpty,
+                includesModelFallbacks: !providerFallbackModelIdentifiers.isEmpty,
                 source: request.source
             ),
         ]
         if !request.options.thinkingEnabled {
             body["reasoning"] = ["max_reasoning_tokens": 0] as [String: Any]
         }
-        if !fallbackModelIdentifiers.isEmpty {
-            body["models"] = fallbackModelIdentifiers
+        if !providerFallbackModelIdentifiers.isEmpty {
+            body["models"] = providerFallbackModelIdentifiers
         }
 
         let isPremium = isPremiumPath(for: request.source)
@@ -582,6 +584,10 @@ actor OnlineModelService: OnlineModelServing {
         }
 
         return provider
+    }
+
+    nonisolated static func openRouterModelsArray(from fallbackModelIdentifiers: [String]) -> [String] {
+        Array(fallbackModelIdentifiers.prefix(maxOpenRouterModelsArrayCount))
     }
 
     nonisolated static func modelIdentifiersEquivalent(_ lhs: String, _ rhs: String) -> Bool {

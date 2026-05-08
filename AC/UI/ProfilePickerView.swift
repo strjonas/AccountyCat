@@ -119,52 +119,71 @@ struct ProfilePickerView: View {
     private func profileRow(_ profile: FocusProfile) -> some View {
         let color = Color(acHexString: profile.color) ?? accent
         let selected = profile.id == (selectedProfileID ?? controller.state.activeProfileID)
-        return Button {
+        return HStack(spacing: 10) {
+            Text(profile.emoji)
+                .font(.system(size: 15))
+                .foregroundStyle(color)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(color.opacity(0.14)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(profile.isDefault ? "everyday" : profile.name)
+                    .font(.ac(12, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+                Text(profile.description ?? (profile.isDefault ? "passive watching, no timer" : "focused session"))
+                    .font(.ac(10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if controller.state.activeProfileID == profile.id {
+                Text("active")
+                    .font(.ac(9, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule(style: .continuous).fill(color))
+            }
+
+            if !profile.isDefault {
+                Button {
+                    NotificationCenter.default.post(name: .acOpenSettings, object: nil)
+                    NotificationCenter.default.post(name: .acSelectSettingsTab, object: SettingsTab.profiles.rawValue)
+                    withAnimation(.acSnap) { isPresented = false }
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.5))
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle()
+                                .fill(Color.acSurface)
+                                .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Edit profile in settings")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(selected ? color.opacity(0.10) : Color.acSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(selected ? color.opacity(0.36) : Color.acHairline, lineWidth: 0.5)
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
             withAnimation(.acSnap) {
                 selectedProfileID = profile.id
                 selectedDuration = profile.defaultDurationMin ?? selectedDuration
             }
-        } label: {
-            HStack(spacing: 10) {
-                Text(profile.emoji)
-                    .font(.system(size: 15))
-                    .foregroundStyle(color)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(color.opacity(0.14)))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(profile.isDefault ? "everyday" : profile.name)
-                        .font(.ac(12, weight: .semibold))
-                        .foregroundStyle(Color.acTextPrimary)
-                    Text(profile.description ?? (profile.isDefault ? "passive watching, no timer" : "focused session"))
-                        .font(.ac(10.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                if controller.state.activeProfileID == profile.id {
-                    Text("active")
-                        .font(.ac(9, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule(style: .continuous).fill(color))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selected ? color.opacity(0.10) : Color.acSurface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(selected ? color.opacity(0.36) : Color.acHairline, lineWidth: 0.5)
-                    )
-            )
         }
-        .buttonStyle(.plain)
     }
 
     private func durationChip(_ minutes: Int) -> some View {

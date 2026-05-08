@@ -20,6 +20,7 @@ struct ProfilesTab: View {
     @State private var defaultDurationDraft: Int?
     @State private var newBlocklistItem = ""
     @State private var showingDeleteConfirm = false
+    @State private var newSafelistItem = ""
 
     private var sortedProfiles: [FocusProfile] {
         var list = controller.state.profiles
@@ -56,6 +57,15 @@ struct ProfilesTab: View {
         controller.state.policyMemory.rules
             .filter { $0.isAutoSafelistRule && ($0.profileID == nil || $0.profileID == resolvedEditingID) }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var runningAppNames: [String] {
+        var seen = Set<String>()
+        return NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap { $0.localizedName }
+            .filter { seen.insert($0.lowercased()).inserted }
+            .sorted()
     }
 
     var body: some View {
@@ -369,6 +379,54 @@ struct ProfilesTab: View {
                     }
                 }
             }
+
+            // Add to safelist
+            HStack(spacing: 6) {
+                Menu {
+                    ForEach(runningAppNames, id: \.self) { app in
+                        Button(app) {
+                            addSafelistApp(app)
+                        }
+                    }
+                    if !runningAppNames.isEmpty {
+                        Divider()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("pick app")
+                            .font(.ac(10, weight: .medium))
+                    }
+                    .foregroundStyle(accent.opacity(0.8))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
+                    )
+                }
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .disabled(runningAppNames.isEmpty)
+
+                TextField("or type app / tab title", text: $newSafelistItem)
+                    .textFieldStyle(.plain)
+                    .font(.ac(10))
+                    .frame(width: 130)
+                    .onSubmit { submitSafelistItem() }
+
+                Button {
+                    submitSafelistItem()
+                } label: {
+                    Text("add")
+                        .font(.ac(10, weight: .medium))
+                        .foregroundStyle(accent)
+                }
+                .buttonStyle(.plain)
+                .disabled(newSafelistItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 
@@ -462,6 +520,23 @@ struct ProfilesTab: View {
             blocklist: blocklistDraft,
             defaultDurationMin: defaultDurationDraft
         )
+    }
+
+    private func addSafelistApp(_ appName: String) {
+        let profileID = resolvedEditingID
+        guard !appName.isEmpty, !profileID.isEmpty else { return }
+        let ruleExists = (safelistRules + profileRules).contains {
+            $0.kind == .allow && $0.summary.localizedCaseInsensitiveContains(appName)
+        }
+        guard !ruleExists else { return }
+        controller.addUserRule(appName, kind: .allow, appName: appName, profileID: profileID)
+    }
+
+    private func submitSafelistItem() {
+        let trimmed = newSafelistItem.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        addSafelistApp(trimmed)
+        newSafelistItem = ""
     }
 
     private func createNewProfile() {

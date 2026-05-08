@@ -118,8 +118,8 @@ enum ACStatusBarStyle: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .profile: return "Profile"
-        case .ac:      return "AC"
-        case .icon:    return "Icon"
+        case .ac:      return "\"AC\""
+        case .icon:    return "Cat"
         }
     }
 }
@@ -746,6 +746,8 @@ struct ACState: Codable, Sendable {
         case setupStatus
         case isPaused
         case autoQuietOnCalls
+        case displayMode
+        case statusBarStyle
         case debugMode
         case minimumLogLevel
         case goalsText
@@ -805,6 +807,8 @@ struct ACState: Codable, Sendable {
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
         autoQuietOnCalls = try container.decodeIfPresent(Bool.self, forKey: .autoQuietOnCalls) ?? true
+        displayMode = try container.decodeIfPresent(ACDisplayMode.self, forKey: .displayMode) ?? .both
+        statusBarStyle = try container.decodeIfPresent(ACStatusBarStyle.self, forKey: .statusBarStyle) ?? .profile
         debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? ACBuild.isDebug
         minimumLogLevel = try container.decodeIfPresent(LogLevel.self, forKey: .minimumLogLevel) ?? LogLevel.defaultForBuild
         goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
@@ -895,6 +899,8 @@ struct ACState: Codable, Sendable {
         try container.encode(setupStatus, forKey: .setupStatus)
         try container.encode(isPaused, forKey: .isPaused)
         try container.encode(autoQuietOnCalls, forKey: .autoQuietOnCalls)
+        try container.encode(displayMode, forKey: .displayMode)
+        try container.encode(statusBarStyle, forKey: .statusBarStyle)
         try container.encode(debugMode, forKey: .debugMode)
         try container.encode(minimumLogLevel, forKey: .minimumLogLevel)
         try container.encode(goalsText, forKey: .goalsText)

@@ -19,12 +19,12 @@ struct ControlsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionLabel("show AC in")
-            displayModePicker
-
-            if controller.state.displayMode.showsMenuBar {
-                sectionLabel("menu bar shows")
-                statusBarStylePicker
+            // Display + status bar pickers
+            VStack(alignment: .leading, spacing: 12) {
+                pickerRow(label: "show AC in", selection: displayModeBinding, options: ACDisplayMode.allCases) { $0.displayName }
+                if controller.state.displayMode.showsMenuBar {
+                    pickerRow(label: "menu bar", selection: statusBarStyleBinding, options: ACStatusBarStyle.allCases) { $0.displayName }
+                }
             }
 
             Divider().opacity(0.3)
@@ -68,30 +68,59 @@ struct ControlsTab: View {
         }
     }
 
-    // MARK: - Display mode picker
+    // MARK: - Bindings
 
-    private var displayModePicker: some View {
-        HStack(spacing: 6) {
-            ForEach(ACDisplayMode.allCases, id: \.self) { mode in
-                let isSelected = controller.state.displayMode == mode
-                Button {
-                    controller.updateDisplayMode(mode)
-                } label: {
-                    Text(mode.displayName)
-                        .font(.ac(11, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? Color.white : Color.acTextPrimary.opacity(0.7))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(isSelected ? accent : Color.acSurfaceInset)
-                                .overlay(
-                                    Capsule(style: .continuous)
-                                        .stroke(isSelected ? accent.opacity(0.5) : Color.acHairline, lineWidth: 0.5)
-                                )
-                        )
+    private var displayModeBinding: Binding<ACDisplayMode> {
+        Binding(
+            get: { controller.state.displayMode },
+            set: { controller.updateDisplayMode($0) }
+        )
+    }
+
+    private var statusBarStyleBinding: Binding<ACStatusBarStyle> {
+        Binding(
+            get: { controller.state.statusBarStyle },
+            set: { controller.updateStatusBarStyle($0) }
+        )
+    }
+
+    // MARK: - Compact picker row
+
+    private func pickerRow<T: Hashable & CaseIterable>(
+        label: String,
+        selection: Binding<T>,
+        options: [T],
+        title: @escaping (T) -> String
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .tracking(0.06)
+                .foregroundStyle(Color.acTextPrimary.opacity(0.45))
+                .textCase(.uppercase)
+                .fixedSize()
+            HStack(spacing: 4) {
+                ForEach(Array(options), id: \.self) { option in
+                    let isSelected = selection.wrappedValue == option
+                    Button {
+                        selection.wrappedValue = option
+                    } label: {
+                        Text(title(option))
+                            .font(.ac(11, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? Color.white : Color.acTextPrimary.opacity(0.7))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(isSelected ? accent : Color.acSurfaceInset)
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .stroke(isSelected ? accent.opacity(0.5) : Color.acHairline, lineWidth: 0.5)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }

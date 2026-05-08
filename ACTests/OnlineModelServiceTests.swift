@@ -165,6 +165,28 @@ struct OnlineModelServiceTests {
     }
 
     @Test
+    func openRouterModelsArrayIsCappedToProviderLimit() {
+        let providerModels = OnlineModelService.openRouterModelsArray(
+            from: [
+                "google/gemma-4-31b-it",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "deepseek/deepseek-v4-flash",
+                "moonshotai/kimi-k2.6",
+                "google/gemini-3-flash-preview",
+            ]
+        )
+
+        #expect(providerModels.count == OnlineModelService.maxOpenRouterModelsArrayCount)
+        #expect(
+            providerModels == [
+                "google/gemma-4-31b-it",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "deepseek/deepseek-v4-flash",
+            ]
+        )
+    }
+
+    @Test
     func nonPremiumPathOmitsPremiumFallbackModel() async {
         let fallbacks = await fallbackModelIdentifiers(
             for: "deepseek/deepseek-v4-flash",

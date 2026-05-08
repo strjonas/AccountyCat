@@ -20,6 +20,7 @@ final class WindowCoordinator {
     private(set) var companionPanel: PassivePanel?
     private var overlayWindow: NSWindow?
     private var entranceWindow: NSWindow?
+    private var statusBarNudgePanel: NSPanel?
 
     var isOverlayVisible: Bool { overlayWindow?.isVisible == true }
     private var nudgeBorderWindow: NSWindow?
@@ -53,6 +54,10 @@ final class WindowCoordinator {
     /// Set by AppDelegate so the orb tap can open the popover even when the
     /// menu bar status item is hidden behind macOS's overflow ( >> ).
     var openPopoverFromOrb: (() -> Void)?
+
+    /// Returns the status item button frame in screen coordinates.
+    /// Set by AppDelegate so the status bar nudge can anchor near the menu bar.
+    var statusItemButtonFrameProvider: (() -> NSRect)?
 
     init(controller: AppController) {
         self.controller = controller
@@ -264,6 +269,14 @@ final class WindowCoordinator {
     // MARK: - Nudge (speech bubble edition)
 
     func showNudge(message: String) {
+        if controller.state.displayMode.showsOrb {
+            showOrbNudge(message: message)
+        } else {
+            showStatusBarNudge(message: message)
+        }
+    }
+
+    private func showOrbNudge(message: String) {
         adjustCompanionForVisibleNudgeIfNeeded()
         expandPanelForNudge()
         controller.recordDisplayedNudge(message)
@@ -274,7 +287,6 @@ final class WindowCoordinator {
             NSSound(named: NSSound.Name("Tink"))?.play()
         }
 
-        // Auto-dismiss after 7 s
         dismissNudgeWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.restoreCompanionAfterNudgeIfNeeded()
@@ -283,6 +295,107 @@ final class WindowCoordinator {
         }
         dismissNudgeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: work)
+    }
+
+    private func showStatusBarNudge(message: String) {
+        controller.recordDisplayedNudge(message)
+        showNudgeBorder()
+        triggerHaptic()
+
+        if UserDefaults.standard.bool(forKey: "acSoundEnabled") {
+            NSSound(named: NSSound.Name("Tink"))?.play()
+        }
+
+        let panel = statusBarNudgePanel ?? makeStatusBarNudgePanel()
+        statusBarNudgePanel = panel
+
+        // Position below the status bar area at the top-right of the screen
+        let screen = activeScreen()
+        let vf = screen.visibleFrame
+        let sf = screen.frame
+        let panelWidth: CGFloat = 320
+        let panelHeight: CGFloat = 180
+
+        // Try to get the button frame; fall back to top-right of visible area
+        let panelX: CGFloat
+        let panelTopY: CGFloat
+        if let buttonFrame = statusItemButtonFrameProvider?(), buttonFrame.width > 0 {
+            panelX = buttonFrame.midX - panelWidth / 2
+            // buttonFrame is in screen coords (origin bottom-left).
+            // The nudge should hang just below the button.
+            panelTopY = buttonFrame.minY - 4
+        } else {
+            panelX = vf.maxX - panelWidth - 16
+            // Menu bar is above the visible frame; place panel just below it
+            panelTopY = vf.maxY - (sf.height - vf.maxY) - 4
+        }
+
+        // Clamp X within screen
+        let clampedX = max(vf.minX + 8, min(panelX, vf.maxX - panelWidth - 8))
+
+        // Update the SwiftUI content before setting the frame — otherwise
+        // NSWindow.contentViewController replacement can auto-resize the panel.
+        let onRate: (Bool) -> Void = { [weak self] positive in
+            self?.dismissNudgeWorkItem?.cancel()
+            self?.dismissStatusBarNudge()
+            self?.controller.rateNudge(positive: positive, nudgeText: message)
+            self?.hideNudgeBorder()
+        }
+        let view = StatusBarNudgeView(text: message, onRate: onRate)
+            .environmentObject(controller)
+            .acAccent(for: controller.state)
+        let hosting = NSHostingController(rootView: AnyView(view))
+        panel.contentViewController = hosting
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.isOpaque = false
+        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
+
+        // panel.setFrame uses bottom-left origin, so subtract height
+        let panelY = panelTopY - panelHeight
+        panel.setFrame(NSRect(x: clampedX, y: panelY, width: panelWidth, height: panelHeight), display: true)
+
+        panel.orderFrontRegardless()
+
+        dismissNudgeWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.dismissStatusBarNudge()
+            self?.controller.clearTransientUI()
+            self?.hideNudgeBorder()
+        }
+        dismissNudgeWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: work)
+    }
+
+    private func dismissStatusBarNudge() {
+        statusBarNudgePanel?.orderOut(nil)
+    }
+
+    func dismissStatusBarNudgePanel() {
+        dismissStatusBarNudge()
+    }
+
+    private func makeStatusBarNudgePanel() -> NSPanel {
+        let hosting = NSHostingController(rootView: AnyView(
+            StatusBarNudgeView(text: "", onRate: nil)
+                .environmentObject(controller)
+                .acAccent(for: controller.state)
+        ))
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.contentViewController = hosting
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.isOpaque = false
+        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
+        return panel
     }
 
     private func expandPanelForNudge() {
