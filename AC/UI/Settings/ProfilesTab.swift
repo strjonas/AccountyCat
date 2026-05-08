@@ -308,7 +308,7 @@ struct ProfilesTab: View {
     // MARK: - Rules
 
     private var rulesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 sectionLabel("rules for \"\(editingProfile.name)\"")
                 Spacer()
@@ -321,7 +321,7 @@ struct ProfilesTab: View {
                 Text("no rules yet — AC will learn from your usage")
                     .font(.acCaption)
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
             } else {
                 VStack(spacing: 3) {
                     ForEach(allDisplayRules) { rule in
@@ -405,79 +405,79 @@ struct ProfilesTab: View {
     }
 
     private var addRuleRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                // Kind selector pills
+        // Single contained form: [kind ▾] | [text field] [pick app ▾] | [add]
+        HStack(spacing: 0) {
+            // Kind dropdown — leftmost, sets the rule type
+            Menu {
                 ForEach([PolicyRuleKind.allow, .disallow, .discourage], id: \.self) { kind in
                     Button {
                         withAnimation(.acSnap) { newRuleKind = kind }
                     } label: {
-                        Text(ruleKindLabel(kind))
-                            .font(.ac(9, weight: newRuleKind == kind ? .bold : .medium))
-                            .foregroundStyle(newRuleKind == kind ? .white : Color.acTextPrimary.opacity(0.55))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(newRuleKind == kind ? ruleKindColor(kind) : Color.acSurface)
-                                    .overlay(Capsule(style: .continuous).stroke(newRuleKind == kind ? Color.clear : Color.acHairline, lineWidth: 1))
-                            )
+                        Label(ruleKindLabel(kind), systemImage: newRuleKind == kind ? "checkmark" : "")
                     }
-                    .buttonStyle(.plain)
                 }
-
-                Spacer()
-
-                // App picker
-                if !runningAppNames.isEmpty {
-                    Menu {
-                        ForEach(runningAppNames, id: \.self) { app in
-                            Button(app) { addRule(app) }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text("open app")
-                                .font(.ac(10, weight: .medium))
-                        }
-                        .foregroundStyle(accent.opacity(0.8))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3.5)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.acSurface)
-                                .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
-                        )
-                    }
-                    .menuIndicator(.hidden)
-                    .buttonStyle(.plain)
+            } label: {
+                HStack(spacing: 3) {
+                    Text(ruleKindLabel(newRuleKind))
+                        .font(.ac(9, weight: .bold))
+                        .foregroundStyle(.white)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.7))
                 }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 8)
+                .background(ruleKindColor(newRuleKind).opacity(0.88))
             }
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
 
-            // Text input
-            HStack(spacing: 8) {
-                TextField("app name, site domain, or window title…", text: $newRuleItem)
-                    .textFieldStyle(.plain)
-                    .font(.ac(11))
-                    .onSubmit { submitRule() }
+            Rectangle().fill(Color.acHairline).frame(width: 1).padding(.vertical, 7)
 
-                Button { submitRule() } label: {
-                    Text("add")
-                        .font(.ac(10, weight: .semibold))
-                        .foregroundStyle(!newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? accent : Color.secondary.opacity(0.28))
+            // Text field — picks up focus, also filled by app picker
+            TextField("app, site, or window title…", text: $newRuleItem)
+                .textFieldStyle(.plain)
+                .font(.ac(11))
+                .padding(.leading, 9)
+                .padding(.vertical, 8)
+                .onSubmit { submitRule() }
+
+            // App picker — fills the field, does NOT add immediately
+            if !runningAppNames.isEmpty {
+                Menu {
+                    ForEach(runningAppNames, id: \.self) { app in
+                        Button(app) { newRuleItem = app }
+                    }
+                } label: {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.38))
+                        .frame(width: 30, height: 30)
                 }
                 .buttonStyle(.plain)
-                .disabled(newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .menuIndicator(.hidden)
+                .help("Pick from running apps")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                    .fill(Color.acSurface)
-                    .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
-            )
+
+            Rectangle().fill(Color.acHairline).frame(width: 1).padding(.vertical, 7)
+
+            // Add — the single confirmation action
+            Button { submitRule() } label: {
+                Text("add")
+                    .font(.ac(10, weight: .semibold))
+                    .foregroundStyle(!newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? accent : Color.secondary.opacity(0.25))
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+            .disabled(newRuleItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface)
+                .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous))
     }
 
     // MARK: - Rule helpers
