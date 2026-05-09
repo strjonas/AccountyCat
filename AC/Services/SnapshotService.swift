@@ -14,6 +14,8 @@ import UniformTypeIdentifiers
 
 enum SnapshotService {
     private static let captureTimeoutSeconds: UInt64 = 8
+    private static let screenCapturePermissionErrorDomain = "com.apple.ScreenCaptureKit.CoreGraphicsErrorDomain"
+    private static let screenCapturePermissionDeniedCode = 1004
 
     static func idleSeconds() -> TimeInterval {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: Self.anyInputEventType)
@@ -100,6 +102,16 @@ enum SnapshotService {
             return try await captureScreenshot(in: windowRect)
         }
         return try await captureScreenshot()
+    }
+
+    /// ScreenCaptureKit can keep failing after a dev rebuild invalidates the
+    /// existing TCC grant for the app's current code identity. Treat those
+    /// failures as permission loss so the UI can stop retrying screenshots
+    /// until the user re-grants access.
+    static func indicatesScreenCapturePermissionLoss(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == screenCapturePermissionErrorDomain
+            && nsError.code == screenCapturePermissionDeniedCode
     }
 
     private static func captureScreenshot(in rect: CGRect) async throws -> URL {

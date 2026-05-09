@@ -69,4 +69,16 @@ struct SnapshotServiceTests {
         #expect(SnapshotService.pixelLength(points: 100.25, scale: 2) == 201)
         #expect(SnapshotService.pixelLength(points: 0, scale: 2) == 1)
     }
+
+    @Test
+    func detectsScreenCaptureKitPermissionErrors() {
+        let permissionError = NSError(
+            domain: "com.apple.ScreenCaptureKit.CoreGraphicsErrorDomain",
+            code: 1004
+        )
+        let unrelatedError = NSError(domain: NSCocoaErrorDomain, code: 4)
+
+        #expect(SnapshotService.indicatesScreenCapturePermissionLoss(permissionError))
+        #expect(!SnapshotService.indicatesScreenCapturePermissionLoss(unrelatedError))
+    }
 }

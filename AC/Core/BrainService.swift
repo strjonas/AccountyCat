@@ -119,6 +119,29 @@ final class BrainService: NSObject {
         return TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: resolvedState.debugMode)
     }
 
+    private func refreshPermissionsAfterScreenCaptureFailure(
+        _ error: Error,
+        state: inout ACState,
+        baseState: ACState,
+        category: String
+    ) -> Bool {
+        guard SnapshotService.indicatesScreenCapturePermissionLoss(error) else {
+            return false
+        }
+
+        state.permissions = PermissionService.currentSnapshot()
+        statusSink?("Screen Recording access appears unavailable. Re-enable it in System Settings to restore screenshots.")
+        stateSink?(baseState, state)
+
+        Task {
+            await ActivityLogService.shared.append(
+                category: category,
+                message: "Detected Screen Recording permission loss while capturing a screenshot."
+            )
+        }
+        return true
+    }
+
     private func ensureTelemetrySessionIfNeeded(for state: ACState) async -> TelemetrySessionDescriptor? {
         guard shouldPersistVerboseTelemetry(state: state) else {
             return nil
@@ -763,7 +786,15 @@ final class BrainService: NSObject {
                 requiresScreenshot: evaluationPlan.requiresScreenshot
             )
         } catch {
-            statusSink?("Snapshot capture failed. Trying again later.")
+            let lostScreenRecordingPermission = refreshPermissionsAfterScreenCaptureFailure(
+                error,
+                state: &state,
+                baseState: baseState,
+                category: "snapshot-permission"
+            )
+            if !lostScreenRecordingPermission {
+                statusSink?("Snapshot capture failed. Trying again later.")
+            }
             stateSink?(baseState, state)
             await ActivityLogService.shared.append(category: "snapshot-error", message: error.localizedDescription)
             await appendFailureIfNeeded(
@@ -919,6 +950,12 @@ final class BrainService: NSObject {
                 stateSink?(baseState, state)
                 return
             } catch {
+                _ = refreshPermissionsAfterScreenCaptureFailure(
+                    error,
+                    state: &state,
+                    baseState: baseState,
+                    category: "vision-retry-permission"
+                )
                 await ActivityLogService.shared.append(
                     category: "vision-retry-error",
                     message: error.localizedDescription
@@ -1014,6 +1051,12 @@ final class BrainService: NSObject {
                 stateSink?(baseState, state)
                 return
             } catch {
+                _ = refreshPermissionsAfterScreenCaptureFailure(
+                    error,
+                    state: &state,
+                    baseState: baseState,
+                    category: "vision-retry-permission"
+                )
                 // Retry failure: keep the original unclear verdict, log, and continue.
                 await ActivityLogService.shared.append(
                     category: "vision-retry-error",

@@ -30,6 +30,8 @@ struct OverlayView: View {
         let character = controller.state.character
 
         GeometryReader { proxy in
+            let usesCompactLayout = proxy.size.width < 860
+
             ZStack {
                 // Warm vignette + dim
                 Color.black.opacity(0.55)
@@ -47,17 +49,17 @@ struct OverlayView: View {
                 .ignoresSafeArea()
 
                 // Main stage — visual-novel layout
-                HStack(spacing: 0) {
+                HStack(spacing: usesCompactLayout ? 12 : 0) {
                     // Left: large cat portrait with soft glow
                     catPortrait(character: character)
-                        .frame(width: min(proxy.size.width * 0.38, 260))
+                        .frame(width: usesCompactLayout ? 180 : min(proxy.size.width * 0.34, 250))
 
                     // Right: dialog content (overlaps portrait slightly)
                     dialogContent(presentation: presentation, character: character)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.leading, -30)
+                        .frame(maxWidth: min(max(proxy.size.width * 0.58, 460), 620), maxHeight: .infinity)
+                        .padding(.leading, usesCompactLayout ? 0 : -24)
                 }
-                .frame(maxWidth: min(proxy.size.width - 80, 820), maxHeight: min(proxy.size.height - 80, 420))
+                .frame(maxWidth: min(proxy.size.width - 48, 900), maxHeight: min(proxy.size.height - 56, 460))
 
                 // Quiet × dismiss
                 VStack {
@@ -151,17 +153,17 @@ struct OverlayView: View {
 
                 // Optional appeal input
                 if presentation.prompt != nil {
-                    appealSection()
+                    appealSection(character: character)
                 }
 
                 Spacer(minLength: 0)
 
                 // Actions
-                HStack(spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
                     Button {
                         controller.dismissOverlay()
                     } label: {
-                        Text("snooze 5 min")
+                        Text("Snooze 5 min")
                             .font(.ac(12, weight: .medium))
                             .foregroundStyle(Color.acTextPrimary.opacity(0.82))
                             .padding(.horizontal, 14)
@@ -179,21 +181,27 @@ struct OverlayView: View {
                     Spacer(minLength: 4)
 
                     if presentation.prompt == nil {
-                        Button("back to work") {
+                        Button(presentation.submitButtonTitle) {
                             controller.handleBackToWork()
                         }
                         .buttonStyle(OverlayPrimaryButton())
                     } else {
                         let canSubmit = !controller.sendingOverlayAppeal && !controller.overlayAppealDraft.cleanedSingleLine.isEmpty
-                        Button(controller.sendingOverlayAppeal ? "thinking…" : (canSubmit ? "got it — back to work" : "back to work")) {
+                        Button(presentation.secondaryButtonTitle) {
+                            controller.handleBackToWork()
+                        }
+                        .buttonStyle(OverlaySecondaryActionButton())
+
+                        Button(controller.sendingOverlayAppeal ? "\(character.displayName) is thinking…" : appealButtonTitle(for: character, fallback: presentation.submitButtonTitle)) {
                             controller.submitOverlayAppeal()
                         }
                         .buttonStyle(OverlayPrimaryButton())
-                        .disabled(controller.sendingOverlayAppeal || controller.overlayAppealDraft.cleanedSingleLine.isEmpty)
+                        .disabled(!canSubmit)
                     }
                 }
             }
             .padding(26)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(dialogBackground)
         }
     }
@@ -241,8 +249,19 @@ struct OverlayView: View {
 
     // MARK: - Appeal section
 
-    private func appealSection() -> some View {
+    private func appealSection(character: ACCharacter) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("If this is helping, tell \(character.displayName) why.")
+                    .font(.ac(12.5, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+
+                Text("Write a quick explanation, head back to work, or snooze this reminder.")
+                    .font(.ac(11.5))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.62))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor).opacity(0.92))
@@ -255,20 +274,20 @@ struct OverlayView: View {
                     )
 
                 TextField(
-                    "Explain why this is actually helping…",
+                    "What are you doing here, and how does it help?",
                     text: $controller.overlayAppealDraft,
                     axis: .vertical
                 )
                 .font(.ac(12))
-                .lineLimit(2...5)
+                .lineLimit(3...6)
                 .textFieldStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focused($appealFocused)
                 .opacity(controller.sendingOverlayAppeal ? 0.6 : 1.0)
             }
-            .frame(maxWidth: .infinity, minHeight: 60)
+            .frame(maxWidth: .infinity, minHeight: 92)
             .animation(.acSnap, value: appealFocused)
 
             OverlayReasonChips { reason in
@@ -285,6 +304,23 @@ struct OverlayView: View {
             }
         }
     }
+
+    private func appealButtonTitle(for character: ACCharacter, fallback: String) -> String {
+        let cleanedFallback = fallback.cleanedSingleLine.lowercased()
+        let genericTitles = [
+            "submit",
+            "explain",
+            "let me explain",
+            "make your case",
+            "reflect"
+        ]
+
+        if genericTitles.contains(cleanedFallback) {
+            return "Let \(character.displayName) think about it"
+        }
+
+        return fallback
+    }
 }
 
 // MARK: - Reason chips
@@ -293,10 +329,10 @@ private struct OverlayReasonChips: View {
     let onSelect: (String) -> Void
 
     private let reasons: [(String, String)] = [
-        ("magnifyingglass", "actually working — leave me"),
-        ("cup.and.saucer.fill", "research, related to my work"),
-        ("questionmark.bubble.fill", "5 minute break, on purpose"),
-        ("paperclip", "you're right, going back"),
+        ("magnifyingglass", "This is part of the task"),
+        ("cup.and.saucer.fill", "I am researching something relevant"),
+        ("questionmark.bubble.fill", "This is an intentional short break"),
+        ("paperplane", "Let me wrap this up, then I will switch back"),
     ]
 
     var body: some View {
@@ -328,6 +364,26 @@ private struct OverlayReasonChips: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct OverlaySecondaryActionButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.ac(12, weight: .medium))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.90))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.acSurface.opacity(0.85))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(Color.acHairline.opacity(0.8), lineWidth: 1)
+                    )
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.acSnap, value: configuration.isPressed)
     }
 }
 
