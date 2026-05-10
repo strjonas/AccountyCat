@@ -322,6 +322,53 @@ struct PolicyMemoryProposalTests {
 struct PolicyMemoryProposalControllerTests {
 
     @Test
+    func acceptedOverlayAppealLearnsAndClosesWithoutBackToWorkAction() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.appealReview = """
+        {"decision":"allow","message":"That sounds aligned with your goals."}
+        """
+        outputs.policyMemory = """
+        {"operations":[]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        var state = ACState()
+        state.runtimePathOverride = runtimeFixture.runtimePath
+        state.monitoringConfiguration = MonitoringConfiguration(inferenceBackend: .local)
+        controller.state = state
+        controller.activeOverlay = OverlayPresentation(
+            headline: "Still in the stories loop?",
+            body: "This is starting to feel like a loop.",
+            prompt: "If this is helping, tell Mochi why.",
+            appName: "Instagram",
+            evaluationID: "eval-overlay",
+            submitButtonTitle: "Let Mochi think about it",
+            secondaryButtonTitle: "Back to work",
+            isHardEscalation: false
+        )
+        controller.overlayVisible = true
+        controller.overlayAppealDraft = "short, reviewing stories on friends is okay"
+
+        controller.submitOverlayAppeal()
+
+        let deadline = Date().addingTimeInterval(5)
+        while controller.sendingOverlayAppeal && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(controller.activeOverlay == nil)
+        #expect(controller.overlayVisible == false)
+        #expect(controller.state.memoryEntries.contains {
+            $0.text.contains("Instagram was okay")
+                && $0.text.contains("reviewing stories")
+        })
+        #expect(controller.state.recentActions.contains { $0.kind == .backToWork } == false)
+    }
+
+    @Test
     func acceptProposedRuleAddsItToPolicyMemoryAndRemovesFromQueue() {
         let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state

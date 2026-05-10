@@ -2164,15 +2164,55 @@ final class AppController: ObservableObject {
                     self.executiveArm?.dismissOverlay()
                     self.overlayAppealDraft = ""
                     self.companionMood = .watching
-                } else {
+                } else if output.result.decision == .allow {
+                    self.appendMemoryLine("• Correction: \(presentation.appName) was okay. User said: \"\(trimmedAppeal)\"")
+                    self.recordBehavioralSignal(BehavioralSignalSummary(
+                        kind: "appealApproved",
+                        observedAt: Date(),
+                        scope: AppController.scopeForContext(SnapshotService.frontmostContext(), fallbackAppName: presentation.appName),
+                        detail: "\(presentation.appName): \(trimmedAppeal)"
+                    ))
+                    self.schedulePolicyMemoryUpdate(
+                        eventSummary: "User explained that \(presentation.appName) was okay and AC accepted the appeal: \(trimmedAppeal). Learn this as a correction and avoid nudging similar legitimate activity.",
+                        context: SnapshotService.frontmostContext()
+                    )
+                    self.brainService?.recordUserReaction(
+                        UserReactionRecord(
+                            kind: .overlayDismissed,
+                            relatedAction: TelemetryCompanionActionRecord(
+                                kind: .overlay,
+                                message: "\(presentation.headline) — \(presentation.body)"
+                            ),
+                            positive: true,
+                            details: trimmedAppeal
+                        )
+                    )
+                    self.activeOverlay = nil
+                    self.overlayVisible = false
+                    self.executiveArm?.dismissOverlay()
+                    self.overlayAppealDraft = ""
+                    self.state.hardEscalation = nil
+                    self.companionMood = .watching
+                } else if output.result.decision == .deny {
                     self.activeOverlay = OverlayPresentation(
-                        headline: output.result.decision == .allow ? "Okay." : "Not convinced yet.",
+                        headline: "Not convinced yet.",
                         body: output.result.message,
-                        prompt: output.result.decision == .deferDecision ? presentation.prompt : nil,
+                        prompt: nil,
                         appName: presentation.appName,
                         evaluationID: presentation.evaluationID,
-                        submitButtonTitle: output.result.decision == .deferDecision ? "Submit" : "Back to work",
+                        submitButtonTitle: "Switch back",
                         secondaryButtonTitle: "Dismiss",
+                        isHardEscalation: presentation.isHardEscalation
+                    )
+                } else {
+                    self.activeOverlay = OverlayPresentation(
+                        headline: "Tell me a bit more.",
+                        body: output.result.message,
+                        prompt: presentation.prompt,
+                        appName: presentation.appName,
+                        evaluationID: presentation.evaluationID,
+                        submitButtonTitle: "Submit",
+                        secondaryButtonTitle: presentation.secondaryButtonTitle,
                         isHardEscalation: presentation.isHardEscalation
                     )
                 }

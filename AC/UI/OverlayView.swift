@@ -273,21 +273,27 @@ struct OverlayView: View {
                             )
                     )
 
-                TextField(
-                    "What are you doing here, and how does it help?",
-                    text: $controller.overlayAppealDraft,
-                    axis: .vertical
-                )
-                .font(.ac(12))
-                .lineLimit(3...6)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .focused($appealFocused)
-                .opacity(controller.sendingOverlayAppeal ? 0.6 : 1.0)
+                if controller.overlayAppealDraft.isEmpty {
+                    Text("What are you doing here, and how does it help?")
+                        .font(.ac(12))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.38))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 15)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $controller.overlayAppealDraft)
+                    .font(.ac(12))
+                    .foregroundStyle(Color.acTextPrimary)
+                    .textEditorStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 92, maxHeight: 132, alignment: .topLeading)
+                    .focused($appealFocused)
+                    .opacity(controller.sendingOverlayAppeal ? 0.6 : 1.0)
             }
-            .frame(maxWidth: .infinity, minHeight: 92)
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
             .animation(.acSnap, value: appealFocused)
 
             OverlayReasonChips { reason in
