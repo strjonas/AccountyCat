@@ -567,6 +567,8 @@ actor TelemetryIndexStore {
         switch event.kind {
         case .sessionStarted:
             return "Session started"
+        case .sessionHeartbeat:
+            return "Session heartbeat"
         case .observation:
             return event.observation?.context.appName ?? "Observation"
         case .evaluationRequested:
@@ -843,7 +845,7 @@ actor TelemetryIndexStore {
 
     private func insertEpisode(_ episode: IndexedEpisode, db: OpaquePointer?) throws {
         let sql = """
-        INSERT INTO episodes (id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm, kind, parent_episode_id, extracted_fields_json, system_prompt_path, raw_stdout_path, raw_stderr_path, summary, model_identifier, failure_message)
+        INSERT OR REPLACE INTO episodes (id, session_id, app_name, window_title, started_at, ended_at, status, end_reason, pinned, labels_json, note, screenshot_path, rendered_prompt_path, prompt_payload_path, model_output_json, reaction_summary, algorithm_id, algorithm_version, prompt_profile_id, experiment_arm, kind, parent_episode_id, extracted_fields_json, system_prompt_path, raw_stdout_path, raw_stderr_path, summary, model_identifier, failure_message)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
@@ -917,7 +919,7 @@ actor TelemetryIndexStore {
 
     private func insertEvent(_ event: IndexedEvent, db: OpaquePointer?) throws {
         let sql = """
-        INSERT INTO events (id, session_id, episode_id, kind, timestamp, summary, raw_json)
+        INSERT OR REPLACE INTO events (id, session_id, episode_id, kind, timestamp, summary, raw_json)
         VALUES (?, ?, ?, ?, ?, ?, ?);
         """
         var statement: OpaquePointer?
