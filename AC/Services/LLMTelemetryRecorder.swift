@@ -115,6 +115,9 @@ actor LLMTelemetryRecorder {
         guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: ACBuild.isDebug) else {
             return nil
         }
+        guard Self.canUseSharedStoreInCurrentProcess() else {
+            return nil
+        }
 
         let interactionID = UUID().uuidString
         do {
@@ -227,6 +230,9 @@ actor LLMTelemetryRecorder {
         guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: ACBuild.isDebug) else {
             return
         }
+        guard Self.canUseSharedStoreInCurrentProcess() else {
+            return
+        }
         do {
             let session = try await store.ensureCurrentSession()
             let sessionID = session.id
@@ -300,6 +306,14 @@ actor LLMTelemetryRecorder {
     nonisolated private static func preview(_ s: String, limit: Int) -> String {
         if s.count <= limit { return s }
         return String(s.prefix(limit)) + "…"
+    }
+
+    nonisolated private static func canUseSharedStoreInCurrentProcess() -> Bool {
+        guard NSClassFromString("XCTest") != nil else {
+            return true
+        }
+        let env = ProcessInfo.processInfo.environment
+        return env["AC_TELEMETRY_ROOT"] != nil || env["AC_APPLICATION_SUPPORT_DIR"] != nil
     }
 }
 

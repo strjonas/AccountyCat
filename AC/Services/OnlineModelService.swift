@@ -94,7 +94,7 @@ enum OnlineModelCredentialStore {
     nonisolated private static let account = "openrouter_api_key"
 
     nonisolated static func loadAPIKey() -> String? {
-        guard NSClassFromString("XCTest") == nil else { return nil }
+        guard !ACTestEnvironment.isRunning else { return nil }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -115,7 +115,7 @@ enum OnlineModelCredentialStore {
 
     @discardableResult
     nonisolated static func saveAPIKey(_ value: String?) -> Bool {
-        guard NSClassFromString("XCTest") == nil else { return false }
+        guard !ACTestEnvironment.isRunning else { return false }
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -390,16 +390,86 @@ actor OnlineModelService: OnlineModelServing {
                 startedAt: startTime,
                 endedAt: Date(),
                 rawStdout: nil,
-                rawStderr: nil,
+                rawStderr: Self.failureDiagnosticsJSON(
+                    error: terminal,
+                    request: request,
+                    attemptedModel: primaryModelIdentifier,
+                    fallbackModels: secondaryFallbacks,
+                    attempt: attempt,
+                    startedAt: startTime
+                ),
                 tokenUsage: nil,
-                failure: LLMInteractionFailure(
-                    domain: String(describing: type(of: terminal)),
-                    message: terminal.localizedDescription
+                failure: Self.llmFailure(
+                    from: terminal,
+                    request: request,
+                    attemptedModel: primaryModelIdentifier,
+                    fallbackModels: secondaryFallbacks,
+                    attempt: attempt,
+                    startedAt: startTime
                 ),
                 summary: "failed after \(attempt) attempt(s)"
             )
         )
         throw terminal
+    }
+
+    nonisolated private static func llmFailure(
+        from error: Error,
+        request: OnlineModelRequest,
+        attemptedModel: String,
+        fallbackModels: [String],
+        attempt: Int,
+        startedAt: Date
+    ) -> LLMInteractionFailure {
+        let onlineError = error as? OnlineModelError
+        return LLMInteractionFailure(
+            domain: String(describing: type(of: error)),
+            message: error.localizedDescription,
+            statusCode: statusCode(from: onlineError),
+            providerName: providerName(from: onlineError),
+            requestedModel: request.modelIdentifier,
+            attemptedModel: attemptedModel,
+            fallbackModels: fallbackModels.isEmpty ? nil : fallbackModels,
+            requestID: request.requestID,
+            source: request.source.rawValue,
+            retryable: isRetryable(error: error),
+            attempt: attempt,
+            elapsedMs: Int(Date().timeIntervalSince(startedAt) * 1000)
+        )
+    }
+
+    nonisolated private static func failureDiagnosticsJSON(
+        error: Error,
+        request: OnlineModelRequest,
+        attemptedModel: String,
+        fallbackModels: [String],
+        attempt: Int,
+        startedAt: Date
+    ) -> String {
+        var diagnostics: [String: Any] = [
+            "domain": String(describing: type(of: error)),
+            "message": error.localizedDescription,
+            "requestID": request.requestID,
+            "source": request.source.rawValue,
+            "requestedModel": request.modelIdentifier,
+            "attemptedModel": attemptedModel,
+            "attempt": attempt,
+            "elapsedMs": Int(Date().timeIntervalSince(startedAt) * 1000),
+            "retryable": isRetryable(error: error),
+        ]
+        if !fallbackModels.isEmpty {
+            diagnostics["fallbackModels"] = fallbackModels
+        }
+        if let onlineError = error as? OnlineModelError {
+            if let status = statusCode(from: onlineError) {
+                diagnostics["statusCode"] = status
+            }
+            if let provider = providerName(from: onlineError) {
+                diagnostics["providerName"] = provider
+            }
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: diagnostics, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? error.localizedDescription
     }
 
     nonisolated private static func makeRequestPayloadJSON(

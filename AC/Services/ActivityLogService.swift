@@ -23,9 +23,7 @@ actor ActivityLogService {
     private var _minimumLogLevel: LogLevel = LogLevel.defaultForBuild
 
     init(fileManager: FileManager = .default) {
-        let supportURL = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support", isDirectory: true)
-            .appendingPathComponent("AC", isDirectory: true)
+        let supportURL = TelemetryPaths.applicationSupportURL(fileManager: fileManager)
             .appendingPathComponent("logs", isDirectory: true)
         self.logURL = supportURL.appendingPathComponent("activity.log")
 

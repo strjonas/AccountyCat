@@ -8,6 +8,11 @@
 import XCTest
 
 final class ACUITestsLaunchTests: XCTestCase {
+    private func makeTestApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["AC_UI_TESTING"] = "1"
+        return app
+    }
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
@@ -19,7 +24,7 @@ final class ACUITestsLaunchTests: XCTestCase {
 
     @MainActor
     func testLaunch() throws {
-        let app = XCUIApplication()
+        let app = makeTestApplication()
         app.launch()
 
         // Insert steps here to perform after app launch but before taking a screenshot,

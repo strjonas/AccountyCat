@@ -12,6 +12,7 @@ import Foundation
 import Testing
 @testable import AC
 
+@MainActor
 struct PolicyMemoryProposalTests {
 
     // MARK: - PolicyMemory.apply: propose ops never mutate `rules`

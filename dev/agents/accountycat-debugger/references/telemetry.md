@@ -24,6 +24,10 @@
 - `parsedOutputJSON`: parsed domain object when the caller annotated the interaction.
 - `extractedFields`: small kind-specific fields for quick triage.
 - `failure`: infrastructure or parsing failure attached to the call.
+  For OpenRouter failures this may include `statusCode`, `providerName`,
+  `requestedModel`, `attemptedModel`, `fallbackModels`, `requestID`, `source`,
+  `retryable`, `attempt`, and `elapsedMs`. The raw stderr artifact may contain
+  the same diagnostics as JSON when the request failed before a model response.
 - `isAnnotation`: true for append-only enrichment events; Inspector summary merges them by `interactionID`.
 
 ## Focus Decision Episodes
@@ -39,6 +43,10 @@ Focus decisions are built from multiple events:
 - `action_executed`: nudge/overlay/minimize execution.
 - `monitoring_metric`: skips, vision retries, profile changes.
 - `failure`: snapshot, provider, parsing, or config failures.
+- `session_heartbeat`: app lifecycle/watchdog breadcrumb. Reasons include
+  `app_bootstrap`, `app_alive`, `app_shutdown_started`, `system_will_sleep`,
+  `system_did_wake`, `session_inactive`, `session_active`,
+  `watchdog_stale_evaluation`, and `evaluation_cancelled`.
 
 ## Fast Signals
 
@@ -46,4 +54,7 @@ Focus decisions are built from multiple events:
 - Wrong screenshot behavior: check `model_input_saved.screenshot` and `summary.artifactHints`.
 - Wrong decision: check `policy_decided.model`, `blockReason`, `finalAction`.
 - Provider failure: check `recentFailures`, `llm_interaction.failure`, `openrouter_health.json`.
+- Hang/freeze: compare the last `session_heartbeat` to `session_ended`; a recent
+  heartbeat without `session_ended` suggests kill/crash, while no heartbeat gap
+  suggests the app stopped before telemetry could flush.
 - Bad memory/rule update: check `policy_memory` or `memory_consolidation` interactions plus `current_state_redacted.json`.

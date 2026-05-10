@@ -9,6 +9,7 @@ import Foundation
 
 nonisolated enum TelemetryEventKind: String, Codable, CaseIterable, Sendable {
     case sessionStarted = "session_started"
+    case sessionHeartbeat = "session_heartbeat"
     case observation = "observation"
     case evaluationRequested = "evaluation_requested"
     case modelInputSaved = "model_input_saved"
@@ -43,6 +44,16 @@ nonisolated enum LLMInteractionRuntime: String, Codable, Sendable {
 nonisolated struct LLMInteractionFailure: Codable, Hashable, Sendable {
     var domain: String
     var message: String
+    var statusCode: Int? = nil
+    var providerName: String? = nil
+    var requestedModel: String? = nil
+    var attemptedModel: String? = nil
+    var fallbackModels: [String]? = nil
+    var requestID: String? = nil
+    var source: String? = nil
+    var retryable: Bool? = nil
+    var attempt: Int? = nil
+    var elapsedMs: Int? = nil
 }
 
 nonisolated struct LLMInteractionRequestArtifacts: Codable, Hashable, Sendable {
@@ -572,6 +583,7 @@ nonisolated struct UserReactionRecord: Codable, Hashable, Sendable {
 
 nonisolated struct SessionLifecycleRecord: Codable, Hashable, Sendable {
     var reason: String
+    var details: [String: String]? = nil
 }
 
 nonisolated struct FailureRecord: Codable, Hashable, Sendable {

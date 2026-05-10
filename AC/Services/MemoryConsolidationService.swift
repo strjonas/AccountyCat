@@ -162,10 +162,6 @@ actor MemoryConsolidationService {
                   let wire = try? decoder.decode(Wire.self, from: data) else {
                 continue
             }
-            let fallbackByID: [UUID: MemoryEntry] = Dictionary(
-                fallback.map { ($0.id, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
             let fallbackByText: [String: MemoryEntry] = Dictionary(
                 fallback.map { ($0.text.lowercased(), $0) },
                 uniquingKeysWith: { a, _ in a }

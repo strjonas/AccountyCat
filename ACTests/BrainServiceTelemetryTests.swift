@@ -16,7 +16,7 @@ struct BrainServiceTelemetryTests {
     func userReactionCreatesTelemetrySession() async throws {
         let store = makeStore()
         let brainService = makeBrainService(store: store)
-        var state = ACState()
+        let state = ACState()
         brainService.stateProvider = { state }
 
         brainService.recordUserReaction(

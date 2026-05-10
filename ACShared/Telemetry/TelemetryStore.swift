@@ -24,13 +24,21 @@ struct StoredImageArtifacts: Sendable {
 
 enum TelemetryPaths {
     nonisolated static func applicationSupportURL(fileManager: FileManager = .default) -> URL {
-        fileManager.homeDirectoryForCurrentUser
+        if let override = ProcessInfo.processInfo.environment["AC_APPLICATION_SUPPORT_DIR"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support", isDirectory: true)
             .appendingPathComponent("AC", isDirectory: true)
     }
 
     nonisolated static func telemetryRootURL(fileManager: FileManager = .default) -> URL {
-        applicationSupportURL(fileManager: fileManager)
+        if let override = ProcessInfo.processInfo.environment["AC_TELEMETRY_ROOT"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return applicationSupportURL(fileManager: fileManager)
             .appendingPathComponent("telemetry", isDirectory: true)
     }
 
@@ -163,6 +171,34 @@ actor TelemetryStore {
         }
 
         self.currentSession = nil
+    }
+
+    func appendSessionHeartbeat(reason: String, details: [String: String] = [:]) async {
+        guard let session = try? await ensureCurrentSession(reason: "runtime") else {
+            return
+        }
+        try? await appendEvent(
+            TelemetryEvent(
+                id: UUID().uuidString,
+                kind: .sessionHeartbeat,
+                timestamp: Date(),
+                sessionID: session.id,
+                episodeID: nil,
+                episode: nil,
+                session: SessionLifecycleRecord(reason: reason, details: details.isEmpty ? nil : details),
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                reaction: nil,
+                annotation: nil,
+                failure: nil
+            ),
+            sessionID: session.id
+        )
     }
 
     func listSessions() async -> [TelemetrySessionDescriptor] {

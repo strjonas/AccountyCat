@@ -96,7 +96,7 @@ final class BrainService: NSObject {
     /// monitoring payload retains the goal anchor across the transition.
     /// Pure mutation — no I/O, no main-actor dependencies. Returns an outcome the
     /// caller drives side effects on.
-    nonisolated static func applySoftProfileLifecycle(
+    static func applySoftProfileLifecycle(
         state: inout ACState,
         lastObservedContext: FrontmostContext?,
         now: Date
@@ -418,6 +418,7 @@ final class BrainService: NSObject {
     @objc private func handleWillSleep() {
         cancelActiveEvaluationIfNeeded(reason: "system_sleep")
         isSessionAvailable = false
+        appendLifecycleHeartbeat(reason: "system_will_sleep")
         Task {
             await ActivityLogService.shared.append(category: "app", message: "System will sleep. Monitoring is standing by.")
         }
@@ -437,6 +438,7 @@ final class BrainService: NSObject {
 
     @objc private func handleDidWake() {
         isSessionAvailable = true
+        appendLifecycleHeartbeat(reason: "system_did_wake")
         Task {
             await ActivityLogService.shared.append(category: "app", message: "System woke up. Monitoring resumed.")
         }
@@ -446,6 +448,7 @@ final class BrainService: NSObject {
     @objc private func handleSessionInactive() {
         cancelActiveEvaluationIfNeeded(reason: "session_inactive")
         isSessionAvailable = false
+        appendLifecycleHeartbeat(reason: "session_inactive")
         Task {
             await ActivityLogService.shared.append(category: "app", message: "User session became inactive. Monitoring is standing by.")
         }
@@ -465,6 +468,7 @@ final class BrainService: NSObject {
 
     @objc private func handleSessionActive() {
         isSessionAvailable = true
+        appendLifecycleHeartbeat(reason: "session_active")
         Task {
             await ActivityLogService.shared.append(category: "app", message: "User session became active. Monitoring resumed.")
         }
@@ -622,7 +626,7 @@ final class BrainService: NSObject {
 
         // Recurring nudges (clock-driven). Fire each due nudge once per day.
         for nudgeIndex in state.recurringNudges.indices {
-            var nudge = state.recurringNudges[nudgeIndex]
+            let nudge = state.recurringNudges[nudgeIndex]
             guard nudge.enabled,
                   nudge.matches(now: now, calendar: calendar) else { continue }
             if let lastFired = nudge.lastFiredAt,
@@ -2196,6 +2200,10 @@ final class BrainService: NSObject {
     private func checkEvaluationHealth() {
         guard isEvaluating, let startedAt = evaluationStartedAt else { return }
         guard Date().timeIntervalSince(startedAt) > 35 else { return }
+        appendLifecycleHeartbeat(
+            reason: "watchdog_stale_evaluation",
+            details: ["ageSeconds": String(Int(Date().timeIntervalSince(startedAt)))]
+        )
         cancelActiveEvaluationIfNeeded(reason: "watchdog_stale_evaluation")
     }
 
@@ -2204,11 +2212,19 @@ final class BrainService: NSObject {
         guard !activeEvaluationTask.isCancelled else { return }
 
         activeEvaluationTask.cancel()
+        appendLifecycleHeartbeat(reason: "evaluation_cancelled", details: ["reason": reason])
         Task {
             await ActivityLogService.shared.append(
                 category: "monitoring-cancel",
                 message: reason
             )
+        }
+    }
+
+    private func appendLifecycleHeartbeat(reason: String, details: [String: String] = [:]) {
+        guard shouldPersistVerboseTelemetry() else { return }
+        Task { [telemetryStore] in
+            await telemetryStore.appendSessionHeartbeat(reason: reason, details: details)
         }
     }
 

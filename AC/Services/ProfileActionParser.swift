@@ -23,7 +23,7 @@ enum ProfileActionParser {
         let lower = cleaned.lowercased()
 
         // ── End profile ──
-        if lower.contains("end active") || lower.contains("end profile") || lower == "end" {
+        if looksLikeEndProfileCommand(lower) {
             return [PolicyMemoryOperation(type: .endActiveProfile)]
         }
 
@@ -33,10 +33,11 @@ enum ProfileActionParser {
             || lower.contains("activate")
             || lower.contains("switch to")
             || lower.contains("start")
+            || lower.contains("schedule")
 
         guard isLifecycle else { return nil }
 
-        guard let profileName = extractProfileName(from: cleaned) else { return nil }
+        guard let profileName = extractProfileName(from: cleaned, preferVerbFallback: isCreate) else { return nil }
         let trimmedName = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return nil }
 
@@ -72,8 +73,27 @@ enum ProfileActionParser {
 
     // MARK: - Private helpers
 
-    private static func extractProfileName(from text: String) -> String? {
+    private static func looksLikeEndProfileCommand(_ lower: String) -> Bool {
+        if lower == "end" { return true }
+        let patterns = [
+            #"\bend\s+active\b"#,
+            #"\bend\s+(the\s+)?profile\b"#,
+            #"\bstop\s+(the\s+)?profile\b"#,
+        ]
+        return patterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+                return false
+            }
+            return regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil
+        }
+    }
+
+    private static func extractProfileName(from text: String, preferVerbFallback: Bool = false) -> String? {
         let lower = text.lowercased()
+
+        if preferVerbFallback, let name = extractProfileNameAfterVerb(from: text, lower: lower) {
+            return name
+        }
 
         // Pattern: "… Name profile …"  (e.g. "activate Coding profile for 60 min")
         // We intentionally capture only the single word directly before "profile"
@@ -103,7 +123,11 @@ enum ProfileActionParser {
         }
 
         // Fallback: grab the first real word after a known verb.
-        let verbs = ["activate", "switch to", "start", "create and activate", "set up"]
+        return extractProfileNameAfterVerb(from: text, lower: lower)
+    }
+
+    private static func extractProfileNameAfterVerb(from text: String, lower: String) -> String? {
+        let verbs = ["create and activate", "activate", "switch to", "start", "set up", "schedule"]
         for verb in verbs {
             guard let range = lower.range(of: verb) else { continue }
             let remainder = String(text[range.upperBound...])
@@ -147,7 +171,7 @@ enum ProfileActionParser {
         // Must have a recurring signal word
         let recurringWords = ["always", "every day", "everyday", "daily", "each day", "every morning",
                               "every evening", "every night", "every weekday", "every week", "regularly",
-                              "on weekdays", "on weekday", "recurring", "schedule"]
+                              "on weekdays", "on weekday", "on weekends", "on weekend", "recurring", "schedule"]
         guard recurringWords.contains(where: lower.contains) else { return nil }
 
         guard let (hour, minute) = extractTimeOfDay(from: text) else { return nil }
@@ -158,8 +182,6 @@ enum ProfileActionParser {
     }
 
     private static func extractTimeOfDay(from text: String) -> (hour: Int, minute: Int)? {
-        let lower = text.lowercased()
-
         // 24-hour format: "at 21:00", "at 09:30"
         if let regex = try? NSRegularExpression(pattern: #"\b(\d{1,2}):(\d{2})\b"#, options: []),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),

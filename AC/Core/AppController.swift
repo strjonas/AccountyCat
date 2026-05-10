@@ -103,6 +103,7 @@ final class AppController: ObservableObject {
     private var lastPromptedDependencySignature: String?
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
     private var installRuntimeTask: Task<Void, Never>?
+    private var telemetryHeartbeatTask: Task<Void, Never>?
     private var activeScheduledTimers: [UUID: DispatchWorkItem] = [:]
 
     private init() {
@@ -212,6 +213,14 @@ final class AppController: ObservableObject {
             }
             if let session = try? await self.telemetryStore.startSession(reason: "app_launch") {
                 self.telemetrySessionID = session.id
+                await self.telemetryStore.appendSessionHeartbeat(
+                    reason: "app_bootstrap",
+                    details: [
+                        "setupStatus": self.state.setupStatus.rawValue,
+                        "debugMode": String(self.state.debugMode),
+                    ]
+                )
+                self.startTelemetryHeartbeat()
             }
         }
         refreshSystemState(persist: false)
@@ -222,8 +231,30 @@ final class AppController: ObservableObject {
 
     func shutdown() async {
         persistState()
+        telemetryHeartbeatTask?.cancel()
+        telemetryHeartbeatTask = nil
+        await telemetryStore.appendSessionHeartbeat(reason: "app_shutdown_started")
         await localModelRuntime.shutdown()
         await telemetryStore.endCurrentSession(reason: "app_termination")
+    }
+
+    private func startTelemetryHeartbeat() {
+        telemetryHeartbeatTask?.cancel()
+        telemetryHeartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self else { continue }
+                let state = await MainActor.run { self.state }
+                await self.telemetryStore.appendSessionHeartbeat(
+                    reason: "app_alive",
+                    details: [
+                        "setupStatus": state.setupStatus.rawValue,
+                        "paused": String(state.isPaused),
+                        "activeProfileID": state.activeProfileID,
+                    ]
+                )
+            }
+        }
     }
 
     func attachExecutiveArm(_ executiveArm: ExecutiveArm) {
@@ -1310,14 +1341,18 @@ final class AppController: ObservableObject {
             return
         }
         let key = onlineAPIKeyDraft
-        Task { @MainActor [weak self] in
+        Task { [weak self, onlineModelService] in
             do {
-                let info = try await self?.onlineModelService.fetchKeyInfo(apiKey: key)
-                self?.openRouterKeyInfo = info
-                self?.openRouterKeyInfoError = nil
+                let info = try await onlineModelService.fetchKeyInfo(apiKey: key)
+                await MainActor.run {
+                    self?.openRouterKeyInfo = info
+                    self?.openRouterKeyInfoError = nil
+                }
             } catch {
-                self?.openRouterKeyInfo = nil
-                self?.openRouterKeyInfoError = error.localizedDescription
+                await MainActor.run {
+                    self?.openRouterKeyInfo = nil
+                    self?.openRouterKeyInfoError = error.localizedDescription
+                }
             }
         }
     }

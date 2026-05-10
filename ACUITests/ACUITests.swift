@@ -8,6 +8,11 @@
 import XCTest
 
 final class ACUITests: XCTestCase {
+    private func makeTestApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["AC_UI_TESTING"] = "1"
+        return app
+    }
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
@@ -25,7 +30,7 @@ final class ACUITests: XCTestCase {
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        let app = makeTestApplication()
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -37,7 +42,7 @@ final class ACUITests: XCTestCase {
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            makeTestApplication().launch()
         }
     }
 }

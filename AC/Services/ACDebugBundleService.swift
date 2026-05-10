@@ -187,7 +187,7 @@ actor ACDebugBundleService {
     }
 
     func export(state: ACState, now: Date = Date()) async throws -> ACDebugBundleExportResult {
-        let isDebug = await ACBuild.isDebug
+        let isDebug = ACBuild.isDebug
         guard isDebug else {
             throw ACDebugBundleError.releaseBuild
         }

@@ -10,6 +10,18 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum ACTestEnvironment {
+    nonisolated
+    static var isRunning: Bool {
+        if NSClassFromString("XCTest") != nil {
+            return true
+        }
+
+        let environment = ProcessInfo.processInfo.environment
+        return environment["AC_TESTING"] == "1" || environment["AC_UI_TESTING"] == "1"
+    }
+}
+
 @main
 struct ACApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -32,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var keyMonitor: Any?
 
     override init() {
-        if NSClassFromString("XCTest") != nil {
+        if ACTestEnvironment.isRunning {
             self.controller = AppController.makeForTesting(storageService: .temporary())
         } else {
             self.controller = AppController.shared
@@ -41,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard NSClassFromString("XCTest") == nil else { return }
+        guard !ACTestEnvironment.isRunning else { return }
         NSApp.setActivationPolicy(.accessory)
 
         controller.bootstrap()
@@ -121,8 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         controller.persistState()
         Task { @MainActor [weak self] in
             await self?.controller.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
         }
-        return .terminateNow
+        return .terminateLater
     }
 
     // MARK: - Status item

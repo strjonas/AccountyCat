@@ -49,6 +49,7 @@ enum ACCharacter: String, Codable, CaseIterable, Sendable {
 
 enum ACBuild {
     /// True for Debug configuration builds; false for Release.
+    nonisolated
     static let isDebug: Bool = {
         #if DEBUG
         true
@@ -64,7 +65,7 @@ enum LogLevel: String, CaseIterable, Codable {
     case more
     case verbose
 
-    var ordinal: Int {
+    nonisolated var ordinal: Int {
         switch self {
         case .error: return 0
         case .standard: return 1
@@ -82,7 +83,7 @@ enum LogLevel: String, CaseIterable, Codable {
         }
     }
 
-    static var defaultForBuild: LogLevel {
+    nonisolated static var defaultForBuild: LogLevel {
         ACBuild.isDebug ? .standard : .error
     }
 }
@@ -125,7 +126,7 @@ enum ACStatusBarStyle: String, Codable, CaseIterable, Sendable {
 }
 
 enum TelemetryPersistencePolicy {
-    static func storesVerboseTelemetry(debugMode: Bool) -> Bool {
+    nonisolated static func storesVerboseTelemetry(debugMode: Bool) -> Bool {
         ACBuild.isDebug
     }
 }
@@ -447,7 +448,7 @@ struct ChatSuggestionData: Codable, Hashable, Sendable {
     }
 }
 
-struct RecurringSchedule: Codable, Hashable, Sendable {
+nonisolated struct RecurringSchedule: Codable, Hashable, Sendable {
     var hour: Int
     var minute: Int
     /// nil = every day. 1 = Sunday … 7 = Saturday (matches `Calendar.current.component(.weekday, …)`).
@@ -489,7 +490,7 @@ struct RecurringSchedule: Codable, Hashable, Sendable {
     }
 }
 
-struct RecurringNudge: Identifiable, Codable, Hashable, Sendable {
+nonisolated struct RecurringNudge: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var hour: Int
     var minute: Int
@@ -537,6 +538,11 @@ struct RecurringNudge: Identifiable, Codable, Hashable, Sendable {
     }
 
     func matches(now: Date, calendar: Calendar = .current) -> Bool {
+        guard enabled else { return false }
+        if let lastFiredAt, calendar.isDate(lastFiredAt, inSameDayAs: now) {
+            return false
+        }
+
         let components = calendar.dateComponents([.hour, .minute, .weekday], from: now)
         guard let nowHour = components.hour, let nowMinute = components.minute else { return false }
         let nowTotalMinutes = nowHour * 60 + nowMinute
@@ -1177,11 +1183,11 @@ struct ACState: Codable, Sendable {
 struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Maximum number of stored profiles (default + named). When this cap is reached,
     /// creation prompts the user to remove a profile first (suggesting the LRU candidate).
-    static let maximumProfileCount = 7
+    nonisolated static let maximumProfileCount = 7
 
     /// Display name shown in the menu bar and Brain tab when the default is active.
     /// Picked over "Default" to feel less system-y while staying neutral.
-    static let defaultDisplayName = "Everyday"
+    nonisolated static let defaultDisplayName = "Everyday"
 
     let id: String
     var name: String

@@ -12,6 +12,7 @@ import Foundation
 import Testing
 @testable import AC
 
+@MainActor
 struct SoftProfileExpiryTests {
 
     // MARK: - Pre-expiry warning

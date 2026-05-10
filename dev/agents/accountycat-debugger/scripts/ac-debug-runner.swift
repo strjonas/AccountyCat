@@ -23,6 +23,9 @@ guard let command = args.first else {
 }
 
 let repo = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+let debugSupportURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("ac-debug-runner-\(UUID().uuidString)", isDirectory: true)
+try? FileManager.default.createDirectory(at: debugSupportURL, withIntermediateDirectories: true)
 
 func option(_ name: String) -> String? {
     guard let index = args.firstIndex(of: name), args.indices.contains(index + 1) else {
@@ -36,13 +39,14 @@ func run(_ executable: String, _ arguments: [String], environment: [String: Stri
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
     process.currentDirectoryURL = repo
-    if !environment.isEmpty {
-        var merged = ProcessInfo.processInfo.environment
-        for (key, value) in environment {
-            merged[key] = value
-        }
-        process.environment = merged
+    var merged = ProcessInfo.processInfo.environment
+    merged["AC_APPLICATION_SUPPORT_DIR"] = debugSupportURL.path
+    merged["AC_TELEMETRY_ROOT"] = debugSupportURL.appendingPathComponent("telemetry", isDirectory: true).path
+    merged["AC_DEBUG_RUNNER_ISOLATED_SUPPORT"] = debugSupportURL.path
+    for (key, value) in environment {
+        merged[key] = value
     }
+    process.environment = merged
     process.standardOutput = FileHandle.standardOutput
     process.standardError = FileHandle.standardError
     do {
