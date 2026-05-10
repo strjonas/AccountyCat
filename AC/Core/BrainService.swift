@@ -78,6 +78,116 @@ final class BrainService: NSObject {
         }
     }
 
+    /// Outcome of `applySoftProfileLifecycle`. Reported back to the caller so it can
+    /// drive side effects (chat sink, telemetry, activity log) without the lifecycle
+    /// helper itself needing access to those services.
+    enum SoftProfileLifecycleOutcome: Equatable {
+        case idle
+        case preWarned(profileName: String, minutesLeft: Int)
+        case autoExtended(profileName: String, until: Date)
+        case ended(profileName: String)
+    }
+
+    /// Soft profile lifecycle: clears stale `recentlyEndedSession`, posts a single
+    /// pre-expiry warning ~5 min before expiry, and at expiry either auto-extends
+    /// the session by 30m (when last assessment was focused AND the visible title
+    /// still relates to the goal AND we haven't already auto-extended this run) or
+    /// ends the profile and stamps `recentlyEndedSession` for ~30 min so the
+    /// monitoring payload retains the goal anchor across the transition.
+    /// Pure mutation — no I/O, no main-actor dependencies. Returns an outcome the
+    /// caller drives side effects on.
+    nonisolated static func applySoftProfileLifecycle(
+        state: inout ACState,
+        lastObservedContext: FrontmostContext?,
+        now: Date
+    ) -> SoftProfileLifecycleOutcome {
+        if let staleSession = state.recentlyEndedSession, staleSession.isStale(at: now) {
+            state.recentlyEndedSession = nil
+        }
+
+        let activeProfile = state.activeProfile
+        guard !activeProfile.isDefault else { return .idle }
+
+        if let secondsLeft = activeProfile.secondsUntilExpiry(at: now),
+           secondsLeft > 0,
+           secondsLeft <= 5 * 60,
+           activeProfile.prewarnSentAt == nil {
+            if let i = state.profiles.firstIndex(where: { $0.id == activeProfile.id }) {
+                state.profiles[i].prewarnSentAt = now
+            }
+            let minutesLeft = max(1, Int((secondsLeft / 60).rounded(.up)))
+            let warning = "Heads up — your \(activeProfile.name) session ends in \(minutesLeft) min. Want to extend?"
+            state.chatHistory.append(ChatMessage(
+                role: .assistant,
+                text: warning,
+                timestamp: now,
+                interruptionPolicy: .deferred
+            ))
+            return .preWarned(profileName: activeProfile.name, minutesLeft: minutesLeft)
+        }
+
+        guard activeProfile.isExpired(at: now) else { return .idle }
+
+        // Heuristic recheck — auto-extend once when the user clearly looks on-task.
+        let allowAutoExtend = activeProfile.autoExtendedAt == nil
+        let lastAssessment = state.algorithmState.llmPolicy.distraction.lastAssessment
+        let focusGoalForExpiry: String? = {
+            if let description = activeProfile.description, !description.isEmpty {
+                return description
+            }
+            return activeProfile.name
+        }()
+        let titleStillRelevant = MonitoringHeuristics.titleRelatesToFocus(
+            lastObservedContext?.windowTitle,
+            focusGoal: focusGoalForExpiry
+        ) == true
+        let stillOnTask = allowAutoExtend
+            && lastAssessment == .focused
+            && titleStillRelevant
+
+        if stillOnTask {
+            let extendedExpiry = now.addingTimeInterval(30 * 60)
+            if let i = state.profiles.firstIndex(where: { $0.id == activeProfile.id }) {
+                state.profiles[i].expiresAt = extendedExpiry
+                state.profiles[i].autoExtendedAt = now
+                state.profiles[i].prewarnSentAt = nil
+            }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "HH:mm"
+            let untilText = formatter.string(from: extendedExpiry)
+            state.chatHistory.append(ChatMessage(
+                role: .assistant,
+                text: "Still in the zone — extending \(activeProfile.name) to \(untilText). Wrap up when you're ready.",
+                timestamp: now,
+                interruptionPolicy: .deferred
+            ))
+            return .autoExtended(profileName: activeProfile.name, until: extendedExpiry)
+        }
+
+        if let i = state.profiles.firstIndex(where: { $0.id == activeProfile.id }) {
+            state.profiles[i].activatedAt = nil
+            state.profiles[i].expiresAt = nil
+            state.profiles[i].autoExtendedAt = nil
+            state.profiles[i].prewarnSentAt = nil
+        }
+        state.activeProfileID = PolicyRule.defaultProfileID
+        state.recentlyEndedSession = RecentlyEndedSession(
+            name: activeProfile.name,
+            description: activeProfile.description,
+            endedAt: now,
+            goalSummary: activeProfile.createdReason
+        )
+        let modeChange = "\(activeProfile.name) session done — back to everyday mode. Take a breath."
+        state.chatHistory.append(ChatMessage(
+            role: .assistant,
+            text: modeChange,
+            timestamp: now,
+            interruptionPolicy: .deferred
+        ))
+        return .ended(profileName: activeProfile.name)
+    }
+
     /// Pull the last `limit` user chat messages (oldest→newest) from the stored history.
     /// Safety net so fresh intent reaches the decision stage even if memory extraction lags.
     static func recentUserMessages(chatHistory: [ChatMessage], limit: Int) -> [String] {
@@ -432,27 +542,46 @@ final class BrainService: NSObject {
 
         let now = Date()
 
-        // Profile expiry check (clock-driven, no separate scheduler). If the active named
-        // profile expired, swap to default before this tick runs so the rule scope is correct.
-        let activeProfile = state.activeProfile
-        if !activeProfile.isDefault, activeProfile.isExpired(at: now) {
-            if let i = state.profiles.firstIndex(where: { $0.id == activeProfile.id }) {
-                state.profiles[i].activatedAt = nil
-                state.profiles[i].expiresAt = nil
-            }
-            state.activeProfileID = PolicyRule.defaultProfileID
-            state.chatHistory.append(ChatMessage(
-                role: .assistant,
-                text: "\(activeProfile.name) ended. Switched back to Everyday.",
-                timestamp: now,
-                interruptionPolicy: .deferred
-            ))
+        // Soft profile lifecycle (clock-driven, no separate scheduler). The pure-state
+        // logic lives in `applySoftProfileLifecycle` so it can be unit-tested in isolation;
+        // here we drive the side effects (chat sink, activity log, telemetry).
+        let lifecycleOutcome = Self.applySoftProfileLifecycle(
+            state: &state,
+            lastObservedContext: lastObservedContext,
+            now: now
+        )
+        switch lifecycleOutcome {
+        case .idle:
+            break
+        case .preWarned(let profileName, let minutes):
+            stateSink?(baseState, state)
+            await ActivityLogService.shared.append(
+                category: "profile",
+                message: "Pre-expiry warning posted: \(profileName) ends in \(minutes) min"
+            )
+        case .autoExtended(let profileName, _):
+            stateSink?(baseState, state)
+            await appendMonitoringMetric(
+                kind: .profileChanged,
+                reason: "auto_extended_at_expiry",
+                state: state,
+                detail: profileName
+            )
+            await ActivityLogService.shared.append(
+                category: "profile",
+                message: "Auto-extended \(profileName) by 30m at expiry"
+            )
+        case .ended(let profileName):
             stateSink?(baseState, state)
             await appendMonitoringMetric(
                 kind: .profileChanged,
                 reason: "profile_expired",
                 state: state,
-                detail: activeProfile.id
+                detail: profileName
+            )
+            await ActivityLogService.shared.append(
+                category: "profile",
+                message: "Ended \(profileName) at expiry — back to Everyday"
             )
         }
 
@@ -631,7 +760,27 @@ final class BrainService: NSObject {
             wasInCallLastTick = false
         }
 
-        let heuristics = MonitoringHeuristics.telemetrySnapshot(for: context)
+        // Compute the focus-goal text for the title-relevance heuristic.
+        // Active session description wins; otherwise fall back to a recently
+        // ended session's goalSummary (kept for ~30 min after expiry) so the
+        // model still sees the anchor right after a profile transition.
+        let focusGoalForHeuristic: String? = {
+            let active = state.activeProfile
+            if !active.isDefault {
+                if let description = active.description, !description.isEmpty {
+                    return description
+                }
+                return active.name
+            }
+            if let recentlyEnded = state.recentlyEndedSession, !recentlyEnded.isStale(at: now) {
+                return recentlyEnded.goalSummary ?? recentlyEnded.description ?? recentlyEnded.name
+            }
+            return nil
+        }()
+        let heuristics = MonitoringHeuristics.telemetrySnapshot(
+            for: context,
+            focusGoal: focusGoalForHeuristic
+        )
 
         guard !isEvaluating else {
             moodSink?(.watching)
@@ -670,6 +819,7 @@ final class BrainService: NSObject {
                 context: context,
                 heuristics: heuristics,
                 policyMemory: scopedPolicyMemory,
+                activeProfileID: state.activeProfileID,
                 now: now,
                 state: &state.algorithmState
             )
@@ -828,7 +978,15 @@ final class BrainService: NSObject {
 
         // Re-read activeProfile here in case the expiry check earlier in this tick swapped it.
         let currentProfile = state.activeProfile
-        let evaluationTask = Task { [monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile] in
+        // Carry a recently-ended session into the payload (~30 min retention).
+        // The model sees what the user just finished even after the profile drops
+        // back to Everyday; without this, the goal anchor evaporates at expiry.
+        let recentlyEndedForPayload: RecentlyEndedSessionSummary? = {
+            guard let recentlyEnded = state.recentlyEndedSession,
+                  !recentlyEnded.isStale(at: now) else { return nil }
+            return recentlyEnded.promptSummary
+        }()
+        let evaluationTask = Task { [monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile, recentlyEndedForPayload] in
             try await monitoringAlgorithmRegistry.evaluate(
                 input: MonitoringDecisionInput(
                     now: now,
@@ -852,7 +1010,8 @@ final class BrainService: NSObject {
                 activeProfileID: currentProfile.id,
                 activeProfileName: currentProfile.name,
                 activeProfileDescription: currentProfile.description,
-                activeProfileExpiresAt: currentProfile.expiresAt
+                activeProfileExpiresAt: currentProfile.expiresAt,
+                recentlyEndedSession: recentlyEndedForPayload
                 )
             )
         }

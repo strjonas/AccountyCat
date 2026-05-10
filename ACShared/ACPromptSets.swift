@@ -92,6 +92,42 @@ enum ACPromptSets {
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","reason_tags":["tag"]}
     """
 
+    /// Shared rule reminding both modes that user-defined rules are authoritative
+    /// regardless of mode. Keeps "Reddit is never okay" working in everyday mode.
+    private static let authoritativeRulesClause = """
+    Rules in `policySummary` are authoritative regardless of mode. A `disallow`/`discourage`/`limit` rule fires per-tick even in everyday mode; an `allow` rule for the current activity skips the check entirely (you will not be asked).
+    """
+
+    /// Shared soft-signal clause for the `titleRelatesToDeclaredFocus` heuristic.
+    /// Used in both `onlineDecision` and `decision` stages.
+    private static let titleRelatesClause = """
+    `heuristics.titleRelatesToDeclaredFocus=true` is a soft hint that the visible title shares vocabulary with the user's current or recently-ended focus topic — weight against false-positive nudges. It is never a guarantee.
+    """
+
+    /// Mode-specific instruction block for everyday (default profile) operation.
+    /// Embedded into the `onlineDecision` and `decision` system prompts via interpolation
+    /// so a single source of truth governs both. Lenient on residual life (errands,
+    /// breaks, life admin) but the user-defined rule store still wins (see
+    /// `authoritativeRulesClause`).
+    private static let everydayModeBlock = """
+    Mode: EVERYDAY (default profile, no focus session active).
+    - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
+    - Only flag activity that has been clearly going on for a while AND conflicts with the user's stated long-term goals OR with a `disallow`/`discourage` rule listed in `policySummary`.
+    - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
+    - `recentlyEndedSession` (when present) tells you what the user was just doing — research adjacent to that topic likely still counts as on-task even if the formal session ended.
+    """
+
+    /// Mode-specific instruction block for an active named focus session.
+    /// More attentive than everyday mode: the user opted in to being checked, and
+    /// goal-mismatch should be called promptly.
+    private static let sessionModeBlock = """
+    Mode: FOCUS SESSION (named profile active).
+    - Judge against the active profile's name/description and the user's stated goals. The user opted in to being checked — call goal-mismatch promptly.
+    - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
+    - Productive work that doesn't fit the session scope can still be a distraction (e.g. coding during "Presentation prep").
+    - `recentlyEndedSession` is rarely set when a session is already active; if it is, treat it as background context only.
+    """
+
     // MARK: - Policy stage prompt set
 
     nonisolated static let policyDefaultPromptSet = ACPromptSetDefinition(
@@ -167,9 +203,16 @@ enum ACPromptSets {
                 Profile / memory scoping:
                 - `policySummary` lists rules for the active profile. Rules from other profiles are hidden.
                 - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
-                Profile context:
-                - If `activeProfile.isDefault=true`, this is general/everyday mode: be conservative; everyday utilities (Finder, Mail, calendar, setup/admin) are usually fine.
-                - If a named profile is active, judge against that profile's name/description and the user's goals. Productive work outside that scope can still be a distraction (e.g. coding during "Presentation prep").
+                \(authoritativeRulesClause)
+                AC operates in two modes — read `activeProfile.isDefault` to know which one applies right now. Apply ONLY the matching block:
+
+                IF `activeProfile.isDefault == true`:
+                \(everydayModeBlock)
+
+                IF `activeProfile.isDefault == false`:
+                \(sessionModeBlock)
+
+                \(titleRelatesClause)
 
                 Decision rules:
                 - Activity supports the goals or matches an allowance → `focused` + `none`.
@@ -219,9 +262,16 @@ enum ACPromptSets {
                 Profile / memory scoping:
                 - `policySummary` lists rules for the active profile. Rules from other profiles are hidden.
                 - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
-                Profile context:
-                - If `activeProfile.isDefault=true`, this is general/everyday mode: be conservative; everyday utilities (Finder, Mail, calendar, setup/admin) are usually fine.
-                - If a named profile is active, judge against that profile's name/description and the user's goals. Productive work outside that scope can still be a distraction (e.g. coding during "Presentation prep").
+                \(authoritativeRulesClause)
+                AC operates in two modes — read `activeProfile.isDefault` to know which one applies right now. Apply ONLY the matching block:
+
+                IF `activeProfile.isDefault == true`:
+                \(everydayModeBlock)
+
+                IF `activeProfile.isDefault == false`:
+                \(sessionModeBlock)
+
+                \(titleRelatesClause)
 
                 Decision rules:
                 - Activity supports the goals OR is covered by an allowance in memory/chat → `focused` + `none`.
@@ -330,7 +380,7 @@ enum ACPromptSets {
                 {
                   "operations":[
                     {
-                      "type":"add_rule|update_rule|remove_rule|expire_rule|activate_profile|create_and_activate_profile|end_active_profile",
+                      "type":"add_rule|update_rule|remove_rule|expire_rule|activate_profile|create_and_activate_profile|end_active_profile|add_memory|propose_rule|propose_memory",
                       "rule":{...optional full rule...},
                       "ruleID":"optional existing id",
                       "patch":{...optional partial patch...},
@@ -338,6 +388,7 @@ enum ACPromptSets {
                       "profileName":"optional — for create_and_activate_profile",
                       "profileDescription":"optional — for create_and_activate_profile",
                       "profileDurationMinutes":"optional integer — overrides 90-min default",
+                      "memoryNote":"optional string — used by propose_memory",
                       "reason":"short reason"
                     }
                   ]
@@ -363,6 +414,37 @@ enum ACPromptSets {
                 - If no duration is specified, omit `profileDurationMinutes` and let the controller pick its 90-min default.
                 - Match generously: "deep work", "writing", "research" etc. should reuse a similar existing profile rather than creating a new one each session.
                 - Never emit a profile op when the user's message is an everyday remark (vent, status, nudge feedback). Only when the user is explicitly choosing a focus mode.
+
+                Behavioral signals (`recentBehavioralSignals` array, may be absent):
+                Each entry is `{kind, observedAt, scope?, detail?, occurrences?}`. Use them to
+                judge whether to APPLY a rule directly or merely PROPOSE one.
+                - `appealApproved` — the user successfully appealed AC's nudge. Treat this as
+                  evidence that an existing rule/memory of the same scope is correct; you may
+                  emit `add_rule` directly when the same scope has been appeal-approved twice
+                  in the last 7 days.
+                - `userExplicitChatStatement` — the user just said something in chat that
+                  applied an action. Use it as further confirmation; it is already applied.
+                - `repeatedDismissal` — the user dismissed/ignored multiple nudges on the same
+                  app/scope. NEVER emit `add_rule` from this alone — emit `propose_rule` so
+                  the user can confirm. Suggest a `discourage` rule (or `allow` if context
+                  suggests they want it permitted) and explain in `reason`.
+                - `postNudgeReturnToFocus` — soft positive signal that the recent nudge worked.
+
+                When to use add_memory vs propose_rule / propose_memory:
+                - The user explicitly stated a personal preference, schedule, habit, or life
+                  fact in chat or appeal text → `add_memory` with concise text. This includes
+                  cases where the assistant promised to remember ("I'll keep that in mind") and
+                  the eventSummary captures the exchange. Memory is global soft context.
+                  Examples: "On Sundays I take my sabbath" → add_memory text "User keeps Sundays
+                  as a rest day; light work is fine if user signals it." "I'm a night owl" →
+                  add_memory text "User does best work after 10pm."
+                - You see a behavioral pattern but no explicit user endorsement → `propose_rule`.
+                - You'd like to remember a generalization the user has not stated → `propose_memory`.
+                - Anything the user already explicitly said about app/site rules → `add_rule`.
+                - Safelist promotions are handled by a separate path; do not emit them here.
+
+                Never auto-apply a rule that wasn't explicitly endorsed by the user (chat
+                statement or appealApproved on the same scope). When in doubt, propose, don't apply.
 
                 Prefer minimal updates. Only emit operations that actually change state.
                 """
@@ -506,11 +588,19 @@ enum ACPromptSets {
     When they slip up, you nudge gently like a best friend would — curious, caring, maybe a tiny bit teasing.
     Keep replies short unless the user is clearly in conversation mode. No bullet lists unless asked.
 
-    Actions are optional side effects. Most messages should use `"actions":[]`.
-    Use actions only when the user asks for or clearly implies a durable change AC should remember or apply.
-    Do not add actions for ordinary chat, venting, status updates, praise, or questions that only need an answer.
-    If the user's request is too vague for a concrete rule, either ask a natural clarification in `reply`
-    with no action, or add a global memory action if the preference is still useful as soft context.
+    Actions are optional side effects. Ordinary chat (greetings, venting, status, praise, simple
+    questions) gets `"actions":[]`. But ALWAYS emit a `memory` action — even casually — when the
+    user states a personal preference, schedule, habit, or life fact, OR when your reply commits
+    to remembering something ("I'll keep that in mind", "got it", "noted", "I'll go easy on…").
+    A self-commitment without a memory action is a bug — if you say you'll remember, write it down.
+    Memory-worthy examples (emit `kind:"memory"` with concise text):
+    - "on Sundays I take my sabbath, but sometimes doing something is okay" → memory: "User keeps Sundays as a rest day; light work is fine if user signals it."
+    - "I'm a night owl, I do my best work after 10pm" → memory: "User does best work after 10pm."
+    - "mornings I focus better with a coffee first" → memory: "User wants a coffee/start-of-day buffer before deep work."
+    - "I rest after lunch usually" → memory: "User rests right after lunch; everyday-mode lenience there."
+    For concrete app/site rules use `focus_policy`; for global cross-profile rules use `memory`.
+    If the request is too vague for a concrete rule but still a real preference, prefer `memory`
+    over silently dropping it.
 
     \(workflowText)
 

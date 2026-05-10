@@ -32,11 +32,32 @@ nonisolated struct MonitoringPromptHeuristicSummary: Codable, Hashable, Sendable
     var clearlyProductive: Bool
     var browser: Bool
     var helpfulWindowTitle: Bool
+    /// Soft hint: does the visible window title plausibly relate to the user's
+    /// declared focus topic (active or recently-ended session)? `nil` when no
+    /// goal is available or the title is empty. Never a guarantee — just a
+    /// signal to weight against false-positive nudges.
+    var titleRelatesToDeclaredFocus: Bool?
 
     init(heuristics: TelemetryHeuristicSnapshot) {
         clearlyProductive = heuristics.clearlyProductive
         browser = heuristics.browser
         helpfulWindowTitle = heuristics.helpfulWindowTitle
+        titleRelatesToDeclaredFocus = heuristics.titleRelatesToDeclaredFocus
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case clearlyProductive
+        case browser
+        case helpfulWindowTitle
+        case titleRelatesToDeclaredFocus
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(clearlyProductive, forKey: .clearlyProductive)
+        try c.encode(browser, forKey: .browser)
+        try c.encode(helpfulWindowTitle, forKey: .helpfulWindowTitle)
+        try c.encodeIfPresent(titleRelatesToDeclaredFocus, forKey: .titleRelatesToDeclaredFocus)
     }
 }
 
@@ -66,6 +87,30 @@ nonisolated struct MonitoringPromptSwitchRecord: Codable, Hashable, Sendable {
 nonisolated struct MonitoringPromptUsageRecord: Codable, Hashable, Sendable {
     var appName: String
     var seconds: TimeInterval
+}
+
+/// Compact snapshot of a focus session that just ended within the last ~30 minutes.
+/// Carried in the monitoring payload so the model still sees what the user was just
+/// doing after the session expires (and the active profile drops to Everyday). Without
+/// this, the "Writing essay X" anchor evaporates the moment expiresAt is reached.
+nonisolated struct RecentlyEndedSessionSummary: Codable, Hashable, Sendable {
+    var name: String
+    var description: String?
+    var endedAt: Date
+    /// Optional reason/goal text captured at activation (e.g. "Writing essay 'can machines think'").
+    var goalSummary: String?
+
+    nonisolated init(
+        name: String,
+        description: String? = nil,
+        endedAt: Date,
+        goalSummary: String? = nil
+    ) {
+        self.name = name
+        self.description = description
+        self.endedAt = endedAt
+        self.goalSummary = goalSummary
+    }
 }
 
 nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Sendable {
@@ -120,6 +165,10 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var calendarContext: String?
     var screenshotIncluded: Bool
     var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
+    /// A focus session that ended within the last ~30 minutes. Present even
+    /// when `activeProfile.isDefault=true` so the model knows what the user
+    /// was just doing.
+    var recentlyEndedSession: RecentlyEndedSessionSummary?
 }
 
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
@@ -145,6 +194,8 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     /// not authority.
     var calendarContext: String?
     var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
+    /// See `MonitoringOnlineDecisionPromptPayload.recentlyEndedSession`.
+    var recentlyEndedSession: RecentlyEndedSessionSummary?
 }
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {

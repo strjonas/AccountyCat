@@ -670,4 +670,139 @@ struct ProfileManagementTests {
         let ops = try #require(result)
         #expect(ops[0].profileDurationMinutes == 120)
     }
+
+    // MARK: - Soft profile expiry
+
+    @Test
+    func endActiveProfileSetsRecentlyEndedSession() throws {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer {
+            controller.state = originalState
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        let profile = FocusProfile(
+            id: "writing",
+            name: "Writing",
+            description: "Drafting essay 'can machines think'",
+            createdReason: "Essay sprint"
+        )
+        state.profiles.append(profile)
+        state.activeProfileID = profile.id
+        controller.state = state
+
+        controller.endActiveProfile(announce: false)
+
+        #expect(controller.state.activeProfileID == PolicyRule.defaultProfileID)
+        let recentlyEnded = try #require(controller.state.recentlyEndedSession)
+        #expect(recentlyEnded.name == "Writing")
+        #expect(recentlyEnded.description == "Drafting essay 'can machines think'")
+        #expect(recentlyEnded.goalSummary == "Essay sprint")
+        #expect(!recentlyEnded.isStale(at: Date()))
+    }
+
+    @Test
+    func recentlyEndedSessionGoesStaleAfterRetentionWindow() {
+        let endedAt = Date(timeIntervalSince1970: 1_000)
+        let session = RecentlyEndedSession(name: "Writing", endedAt: endedAt)
+
+        let withinWindow = endedAt.addingTimeInterval(RecentlyEndedSession.retentionWindow - 60)
+        let outsideWindow = endedAt.addingTimeInterval(RecentlyEndedSession.retentionWindow + 60)
+
+        #expect(!session.isStale(at: withinWindow))
+        #expect(session.isStale(at: outsideWindow))
+    }
+
+    @Test
+    func activatingNamedProfileClearsRecentlyEndedSession() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer {
+            controller.state = originalState
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        let writing = FocusProfile(id: "writing", name: "Writing", description: "Essay")
+        let coding = FocusProfile(id: "coding", name: "Coding", description: "Repo work")
+        state.profiles.append(contentsOf: [writing, coding])
+        state.activeProfileID = writing.id
+        state.recentlyEndedSession = RecentlyEndedSession(
+            name: "Reading",
+            endedAt: Date().addingTimeInterval(-60)
+        )
+        controller.state = state
+
+        // Activating a different named profile should clear the prior anchor.
+        _ = controller.activateProfile(id: coding.id)
+        #expect(controller.state.recentlyEndedSession == nil)
+    }
+
+    @Test
+    func activatingDefaultProfilePreservesRecentlyEndedSession() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer {
+            controller.state = originalState
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        let writing = FocusProfile(id: "writing", name: "Writing", description: "Essay")
+        state.profiles.append(writing)
+        state.activeProfileID = writing.id
+        state.recentlyEndedSession = RecentlyEndedSession(
+            name: "Reading",
+            endedAt: Date().addingTimeInterval(-60)
+        )
+        controller.state = state
+
+        // Going back to Everyday should keep the anchor — that's its whole point.
+        _ = controller.activateProfile(id: PolicyRule.defaultProfileID)
+        #expect(controller.state.recentlyEndedSession != nil)
+    }
+
+    @Test
+    func activationResetsAutoExtendAndPrewarnFlags() throws {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer {
+            controller.state = originalState
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        var profile = FocusProfile(id: "writing", name: "Writing")
+        // Simulate a prior activation that already auto-extended and warned.
+        profile.autoExtendedAt = Date().addingTimeInterval(-3600)
+        profile.prewarnSentAt = Date().addingTimeInterval(-3500)
+        state.profiles.append(profile)
+        controller.state = state
+
+        _ = controller.activateProfile(id: profile.id, durationMinutes: 30)
+
+        let activated = try #require(controller.state.profiles.first(where: { $0.id == profile.id }))
+        #expect(activated.autoExtendedAt == nil)
+        #expect(activated.prewarnSentAt == nil)
+    }
+
+    @Test
+    func focusProfileSecondsUntilExpiryReturnsRemainingSeconds() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let active = FocusProfile(
+            id: "writing",
+            name: "Writing",
+            expiresAt: now.addingTimeInterval(120)
+        )
+        #expect(active.secondsUntilExpiry(at: now) == 120)
+        #expect(active.secondsUntilExpiry(at: now.addingTimeInterval(150)) == -30)
+
+        let defaultProfile = FocusProfile.makeDefault()
+        #expect(defaultProfile.secondsUntilExpiry(at: now) == nil)
+
+        let noExpiry = FocusProfile(id: "x", name: "X", expiresAt: nil)
+        #expect(noExpiry.secondsUntilExpiry(at: now) == nil)
+    }
 }

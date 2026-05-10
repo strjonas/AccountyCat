@@ -120,7 +120,13 @@ struct LLMMonitorAlgorithmTests {
 
         #expect(result.policy.action == .none)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
-        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(5 * 60))
+        // Default profile is active here, so the everyday-mode cadence multiplier (1.5x)
+        // is applied on top of the balanced focusedFollowUp (5 min) → 7.5 min.
+        let expectedFollowUp = MonitoringCadenceMode.balanced.adjustedDelay(
+            MonitoringCadenceMode.balanced.focusedFollowUp,
+            isDefaultProfile: true
+        )
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(expectedFollowUp))
         #expect(result.updatedAlgorithmState.llmPolicy.focusSignal.driftEMA < 0.2)
     }
 
@@ -171,6 +177,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: gentle,
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval(30)
         )
 
@@ -185,6 +192,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: sharp,
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval(30)
         )
 
@@ -223,7 +231,12 @@ struct LLMMonitorAlgorithmTests {
         #expect(result.policy.record.blockReason == "recent_allow_override")
         #expect(result.evaluation.attempts.isEmpty)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
-        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(5 * 60))
+        // Default profile here → the everyday-mode 1.5x multiplier applies.
+        let expectedFollowUp = MonitoringCadenceMode.balanced.adjustedDelay(
+            MonitoringCadenceMode.balanced.focusedFollowUp,
+            isDefaultProfile: true
+        )
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(expectedFollowUp))
     }
 
     @Test
@@ -355,6 +368,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval(60)
         )
         let afterDue = algorithm.evaluationPlan(
@@ -363,6 +377,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval((5 * 60) + 1)
         )
 
@@ -397,6 +412,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: configuration,
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval(10 * 60)
         )
 
@@ -409,6 +425,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: PolicyMemory(),
             configuration: configuration,
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval(10 * 60)
         )
 
@@ -446,6 +463,7 @@ struct LLMMonitorAlgorithmTests {
             heuristics: makeHeuristics(),
             policyMemory: policyMemory,
             configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
             now: start.addingTimeInterval(30)
         )
 
@@ -479,12 +497,16 @@ struct LLMMonitorAlgorithmTests {
         var scoped = policyMemory
         scoped.rules = scoped.rules.filter { $0.profileID == nil || $0.profileID == "coding" }
 
+        // Use a named profile here so the everyday-mode cadence multiplier (1.5x) does
+        // not push the stable-context threshold past the +30s probe used below — this
+        // test is about cross-profile rule scoping, not cadence math.
         let plan = algorithm.evaluationPlan(
             state: &state,
             context: context,
             heuristics: makeHeuristics(),
             policyMemory: scoped,
             configuration: MonitoringConfiguration(),
+            activeProfileID: "coding",
             now: start.addingTimeInterval(30)
         )
 

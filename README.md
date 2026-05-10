@@ -26,6 +26,14 @@ The model behind that decision is configurable. You choose how much intelligence
 
 ---
 
+## How it stays out of your way
+
+AccountyCat behaves differently when you're in a focus session versus everyday life. In a session it's attentive — it expects you to stick to the activity you declared, and asks if you drift. In everyday mode it's relaxed by default; life happens, errands and short detours are fine, and AC stays quiet unless something clearly conflicts with your stated goals or a rule you've set.
+
+What makes it sharp over time is memory. When you correct AC, set a rule, or click "it's fine" on a nudge, AC remembers. Repeated patterns surface as suggestions rather than silent rules — you accept or dismiss them in the **You** tab, and a small "AC learned" toast with an undo affordance is shown whenever something is applied automatically. Every learned entry is editable.
+
+---
+
 ## Open source, auditable, private
 
 AccountyCat asks for Screen Recording and Accessibility permissions. Those are serious. So the source code is fully open — you can read exactly what happens with them. The short answer: screenshots are analyzed and discarded. Nothing is stored permanently. Nothing is sent anywhere you didn't configure.

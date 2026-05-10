@@ -68,6 +68,13 @@ final class AppController: ObservableObject {
     /// Timestamp of the last BrainService tick that reached evaluation (or skip).
     @Published var lastMonitoringCheckAt: Date?
     @Published var agentDebugBundleStatus: String?
+    /// Subtle "AC learned: …" toast that appears briefly when a memory entry or rule is
+    /// auto-added (source ≠ explicit user statement). Carries an Undo handler. Auto-clears
+    /// after `LearnedToast.defaultDuration`.
+    @Published var learnedToast: LearnedToast?
+    /// Auto-dismiss task for the current `learnedToast`. Cancelled when a new toast lands
+    /// or when the user dismisses it manually.
+    private var learnedToastDismissTask: Task<Void, Never>?
 
     /// Closure set by AppDelegate to allow UI components to close the main NSPopover.
     var dismissPopover: (() -> Void)?
@@ -602,6 +609,10 @@ final class AppController: ObservableObject {
         var profile = state.profiles[index]
         profile.activatedAt = now
         profile.lastUsedAt = now
+        // Each activation is a fresh session: clear any soft-expiry bookkeeping
+        // from the previous run so the next pre-warn / auto-extend cycle works.
+        profile.autoExtendedAt = nil
+        profile.prewarnSentAt = nil
         if profile.isDefault {
             profile.expiresAt = nil
         } else {
@@ -611,6 +622,12 @@ final class AppController: ObservableObject {
             profile.createdReason = reason
         }
         state.profiles[index] = profile
+        // Activating any named profile clears the recently-ended session — the
+        // user's anchor has moved on. (Activating Everyday keeps it so the
+        // model still sees the prior session's goal context for ~30 min.)
+        if !profile.isDefault {
+            state.recentlyEndedSession = nil
+        }
         state.activeProfileID = profile.id
         persistState()
         logActivity("profile", "Activated profile '\(profile.name)' until \(profile.expiresAt.map { ISO8601DateFormatter().string(from: $0) } ?? "default-no-expiry")")
@@ -669,6 +686,8 @@ final class AppController: ObservableObject {
             createdReason: reason
         )
         state.profiles.append(profile)
+        // New named profile: prior recently-ended anchor is no longer relevant.
+        state.recentlyEndedSession = nil
         state.activeProfileID = profile.id
         persistState()
         logActivity("profile", "Created+activated profile '\(profile.name)' for \(Int(durationToUse / 60))m")
@@ -677,14 +696,31 @@ final class AppController: ObservableObject {
     }
 
     /// End the active profile and switch back to default. No-op when default is already active.
+    /// Sets `recentlyEndedSession` so the next ~30 min of monitoring evals retain the
+    /// just-ended goal anchor in the prompt payload.
     func endActiveProfile(announce: Bool = false) {
         guard state.activeProfileID != PolicyRule.defaultProfileID else { return }
         state.ensureDefaultProfileExists()
+        let endedSnapshot: RecentlyEndedSession?
         if let i = state.profiles.firstIndex(where: { $0.id == state.activeProfileID }) {
+            let ended = state.profiles[i]
+            endedSnapshot = RecentlyEndedSession(
+                name: ended.name,
+                description: ended.description,
+                endedAt: Date(),
+                goalSummary: ended.createdReason
+            )
             state.profiles[i].activatedAt = nil
             state.profiles[i].expiresAt = nil
+            state.profiles[i].autoExtendedAt = nil
+            state.profiles[i].prewarnSentAt = nil
+        } else {
+            endedSnapshot = nil
         }
         state.activeProfileID = PolicyRule.defaultProfileID
+        if let endedSnapshot {
+            state.recentlyEndedSession = endedSnapshot
+        }
         persistState()
         logActivity("profile", "Ended active profile, back to default")
         appendMonitoringMetric(kind: .profileChanged, reason: "ended", profile: state.activeProfile, detail: nil)
@@ -1873,6 +1909,7 @@ final class AppController: ObservableObject {
         executiveArm?.dismissOverlay()
         overlayVisible = false
         let overlayMessage = activeOverlay.map { "\($0.headline) — \($0.body)" }
+        let dismissedAppName = activeOverlay?.appName
         activeOverlay = nil
         overlayAppealDraft = ""
         if !wasHard {
@@ -1887,18 +1924,58 @@ final class AppController: ObservableObject {
             )
         )
         let context = SnapshotService.frontmostContext()
+        let now = Date()
         state.recentActions.insert(ActionRecord(
             id: UUID().uuidString,
             kind: .dismissOverlay,
             message: nil,
-            timestamp: Date(),
+            timestamp: now,
             contextKey: context?.contextKey,
             appName: context?.appName,
             windowTitle: context?.windowTitle
         ), at: 0)
         state.recentActions = Array(state.recentActions.prefix(12))
+        if let scope = AppController.scopeForContext(context, fallbackAppName: dismissedAppName) {
+            recordRepeatedDismissalIfWarranted(scope: scope, now: now)
+        }
         logActivity("action", "Overlay dismissed")
         persistState()
+    }
+
+    /// Count overlay dismisses + ignored nudges in the last 4h on the same scope key. When
+    /// we cross 3, append a `repeatedDismissal` behavioral signal so the next policy_memory
+    /// pass can decide whether to propose a discourage rule (or just remember the pattern).
+    /// Only fires once per 4h-window per scope.
+    private func recordRepeatedDismissalIfWarranted(scope: PolicyRuleScope, now: Date) {
+        let windowSeconds: TimeInterval = 4 * 60 * 60
+        guard let scopeKey = (scope.bundleIdentifier ?? scope.appName)?.cleanedSingleLine,
+              !scopeKey.isEmpty else { return }
+
+        let dismissCount = state.recentActions.lazy
+            .filter { now.timeIntervalSince($0.timestamp) <= windowSeconds }
+            .filter { $0.kind == .dismissOverlay || $0.kind == .nudge }
+            .filter { record in
+                guard let appName = record.appName?.cleanedSingleLine else { return false }
+                return appName.caseInsensitiveCompare(scopeKey) == .orderedSame
+            }
+            .count
+        guard dismissCount >= 3 else { return }
+
+        let alreadyEmitted = state.recentBehavioralSignals.contains { signal in
+            guard signal.kind == "repeatedDismissal",
+                  now.timeIntervalSince(signal.observedAt) <= windowSeconds else { return false }
+            let signalKey = signal.scope?.bundleIdentifier ?? signal.scope?.appName ?? ""
+            return signalKey.caseInsensitiveCompare(scopeKey) == .orderedSame
+        }
+        guard !alreadyEmitted else { return }
+
+        recordBehavioralSignal(BehavioralSignalSummary(
+            kind: "repeatedDismissal",
+            observedAt: now,
+            scope: scope,
+            detail: "\(dismissCount) dismisses/ignored nudges in last 4h",
+            occurrences: dismissCount
+        ))
     }
 
     func showHardEscalationOnReopen(appName: String) {
@@ -2037,6 +2114,12 @@ final class AppController: ObservableObject {
                     // User convinced AC — save to memory, clear hard escalation
                     self.state.hardEscalation = nil
                     self.appendMemoryLine("• User convinced AC to allow \(presentation.appName): \"\(trimmedAppeal)\"")
+                    self.recordBehavioralSignal(BehavioralSignalSummary(
+                        kind: "appealApproved",
+                        observedAt: Date(),
+                        scope: AppController.scopeForContext(SnapshotService.frontmostContext(), fallbackAppName: presentation.appName),
+                        detail: "\(presentation.appName): \(trimmedAppeal)"
+                    ))
                     self.schedulePolicyMemoryUpdate(
                         eventSummary: "User convinced AC to allow \(presentation.appName): \(trimmedAppeal). Safe to let them continue.",
                         context: SnapshotService.frontmostContext()
@@ -2408,6 +2491,22 @@ final class AppController: ObservableObject {
                 context: SnapshotService.frontmostContext(),
                 parentInteractionID: result.interactionID
             )
+
+            // Backstop: when the chat returns no actions but the reply commits to remembering
+            // something (e.g. "I'll keep that in mind"), the model has promised a memory write
+            // it didn't perform. Run a single policy_memory pass over the exchange so the
+            // preference still lands. Cheap insurance against the chat model's "actions:[]" bias.
+            await MainActor.run {
+                if result.actions.isEmpty,
+                   AppController.replyPromisesMemory(reply: result.reply) {
+                    self.schedulePolicyMemoryUpdate(
+                        eventSummary: "Chat exchange — extract any preference the user stated. "
+                            + "User said: \(trimmedDraft). AC replied: \(result.reply)",
+                        context: SnapshotService.frontmostContext()
+                    )
+                }
+            }
+
             // Run consolidation lazily so the chat reply never waits for it.
             self.maybeConsolidateMemory()
         }
@@ -2495,18 +2594,28 @@ final class AppController: ObservableObject {
 
     // MARK: - Memory helpers
 
-    private func appendMemoryLine(_ line: String) {
+    private func appendMemoryLine(_ line: String, notify: Bool = true) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // Avoid exact-duplicate entries from noisy call sites (e.g. repeated feedback).
         if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(trimmed) == .orderedSame }) {
             return
         }
-        state.memoryEntries.append(MemoryEntry(
-            text: trimmed
-        ))
+        let entry = MemoryEntry(text: trimmed)
+        state.memoryEntries.append(entry)
         persistState()
         maybeConsolidateMemory()
+        if notify {
+            let summary = trimmed.hasPrefix("• ")
+                ? String(trimmed.dropFirst(2))
+                : trimmed
+            presentLearnedToast(
+                LearnedToast(
+                    detail: summary,
+                    subject: .memory(entryID: entry.id, text: trimmed)
+                )
+            )
+        }
     }
 
     private func recordDistractionCorrection(_ text: String) {
@@ -2564,7 +2673,8 @@ final class AppController: ObservableObject {
             activeProfile: makeProfilePromptSummary(state.activeProfile),
             availableProfiles: state.profiles
                 .filter { $0.id != state.activeProfileID }
-                .map { makeProfilePromptSummary($0) }
+                .map { makeProfilePromptSummary($0) },
+            recentBehavioralSignals: state.recentBehavioralSignals
         )
 
         Task {
@@ -2575,10 +2685,254 @@ final class AppController: ObservableObject {
 
             await MainActor.run {
                 let scopedResponse = self.scopePolicyRulesToActiveProfile(response)
+                let beforeIDs = Set(self.state.policyMemory.rules.map(\.id))
                 self.state.policyMemory.apply(scopedResponse, now: request.now)
                 self.applyProfileOperations(scopedResponse.operations)
+                self.routeProposalOperations(scopedResponse.operations, now: request.now, context: context)
+                self.surfaceAutoLearnedRules(addedSince: beforeIDs)
                 self.persistState()
             }
+        }
+    }
+
+    /// Diff `state.policyMemory.rules` against the IDs we knew before the policy_memory
+    /// pipeline applied an update. Any newly-added rule whose source is *not* a direct
+    /// user statement (`userChat` / `explicitFeedback`) becomes a one-line "AC learned…"
+    /// toast with an Undo affordance — the audit-trail surface from the plan.
+    private func surfaceAutoLearnedRules(addedSince beforeIDs: Set<String>) {
+        for rule in state.policyMemory.rules where !beforeIDs.contains(rule.id) {
+            switch rule.source {
+            case .userChat, .explicitFeedback:
+                continue
+            case .implicitFeedback, .appeal, .system:
+                let detail = ruleToastDetail(for: rule)
+                presentLearnedToast(
+                    LearnedToast(
+                        detail: detail,
+                        subject: .rule(id: rule.id, summary: rule.summary)
+                    )
+                )
+            }
+        }
+    }
+
+    private func ruleToastDetail(for rule: PolicyRule) -> String {
+        let target = rule.scope.appName
+            ?? rule.scope.bundleIdentifier
+            ?? rule.scope.titleContains.first
+            ?? rule.summary
+        let kind: String
+        switch rule.kind {
+        case .allow: kind = "allowed"
+        case .disallow: kind = "blocked"
+        case .discourage: kind = "discouraged"
+        case .limit: kind = "limited"
+        case .tonePreference: kind = "tone preference"
+        }
+        if let profileID = rule.profileID,
+           profileID != PolicyRule.defaultProfileID,
+           let profile = state.profile(withID: profileID) {
+            return "\(target) is \(kind) during \(profile.name)"
+        }
+        return "\(target) is \(kind)"
+    }
+
+    /// Show a learned-toast; cancels any in-flight auto-dismiss and starts a new timer.
+    private func presentLearnedToast(_ toast: LearnedToast) {
+        learnedToastDismissTask?.cancel()
+        learnedToast = toast
+        let duration = LearnedToast.defaultDuration
+        learnedToastDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            await MainActor.run {
+                guard let self else { return }
+                if self.learnedToast?.id == toast.id {
+                    self.learnedToast = nil
+                }
+            }
+        }
+    }
+
+    /// Hide the learned-toast without undoing — user clicked the close affordance or it timed out.
+    func dismissLearnedToast() {
+        learnedToastDismissTask?.cancel()
+        learnedToast = nil
+    }
+
+    /// Reverse what the toast announced. For rules, expire the rule so it stops applying.
+    /// For memory, delete the entry. Either way the toast disappears.
+    func undoLearnedToast() {
+        guard let toast = learnedToast else { return }
+        let now = Date()
+        switch toast.subject {
+        case .rule(let ruleID, _):
+            state.policyMemory.apply(
+                PolicyMemoryUpdateResponse(operations: [
+                    PolicyMemoryOperation(type: .expireRule, ruleID: ruleID, reason: "user_undo")
+                ]),
+                now: now
+            )
+            logActivity("policy-memory", "Undo: expired auto-added rule \(ruleID)")
+        case .memory(let entryID, _):
+            state.memoryEntries.removeAll { $0.id == entryID }
+            logActivity("memory", "Undo: removed auto-added memory entry")
+        }
+        dismissLearnedToast()
+        persistState()
+    }
+
+    /// Routes the controller-side operations out of a policy_memory response:
+    /// - `propose_rule` / `propose_memory` → parked in `state.proposedChanges` for approval.
+    /// - `add_memory` → directly appended to `state.memoryEntries` with a learned-toast.
+    /// Stale proposals are pruned at the same time so the queue never grows unbounded.
+    private func routeProposalOperations(
+        _ operations: [PolicyMemoryOperation],
+        now: Date,
+        context: FrontmostContext?
+    ) {
+        state.proposedChanges.removeAll { $0.isStale(at: now) }
+
+        for op in operations {
+            switch op.type {
+            case .proposeRule:
+                guard var rule = op.rule else { continue }
+                if rule.profileID == nil, rule.kind != .tonePreference {
+                    rule.profileID = state.activeProfileID
+                }
+                let proposal = ProposedPolicyChange(
+                    kind: .rule,
+                    proposedRule: rule,
+                    reason: op.reason,
+                    createdAt: now,
+                    sourceContextKey: context?.contextKey
+                )
+                state.proposedChanges.append(proposal)
+                logActivity(
+                    "policy-memory",
+                    "Proposed rule (\(rule.kind.rawValue)): \(rule.summary)"
+                )
+
+            case .proposeMemory:
+                let trimmed = op.memoryNote?.cleanedSingleLine ?? ""
+                guard !trimmed.isEmpty else { continue }
+                let proposal = ProposedPolicyChange(
+                    kind: .memory,
+                    proposedMemoryNote: trimmed,
+                    reason: op.reason,
+                    createdAt: now,
+                    sourceContextKey: context?.contextKey
+                )
+                state.proposedChanges.append(proposal)
+                logActivity("policy-memory", "Proposed memory: \(trimmed)")
+
+            case .addMemory:
+                let trimmed = op.memoryNote?.cleanedSingleLine ?? ""
+                guard !trimmed.isEmpty else { continue }
+                let line = trimmed.hasPrefix("• ") ? trimmed : "• " + trimmed
+                appendMemoryLine(line)
+                logActivity("policy-memory", "Auto-added memory: \(trimmed)")
+
+            default:
+                continue
+            }
+        }
+    }
+
+    /// Accept a parked proposal — adds the rule/memory and removes the proposal.
+    func acceptProposedChange(id: String) {
+        guard let index = state.proposedChanges.firstIndex(where: { $0.id == id }) else { return }
+        let proposal = state.proposedChanges.remove(at: index)
+        let now = Date()
+        switch proposal.kind {
+        case .rule:
+            guard let rule = proposal.proposedRule else { break }
+            state.policyMemory.apply(
+                PolicyMemoryUpdateResponse(operations: [
+                    PolicyMemoryOperation(type: .addRule, rule: rule, reason: proposal.reason)
+                ]),
+                now: now
+            )
+            logActivity("policy-memory", "Accepted proposed rule: \(rule.summary)")
+        case .memory:
+            if let note = proposal.proposedMemoryNote, !note.isEmpty {
+                // Suppress the "AC learned" toast — the user just clicked Accept; they
+                // already know what they accepted.
+                appendMemoryLine("• " + note, notify: false)
+                logActivity("policy-memory", "Accepted proposed memory: \(note)")
+            }
+        }
+        persistState()
+    }
+
+    /// Drop a parked proposal without applying it.
+    func dismissProposedChange(id: String) {
+        guard let index = state.proposedChanges.firstIndex(where: { $0.id == id }) else { return }
+        let removed = state.proposedChanges.remove(at: index)
+        logActivity("policy-memory", "Dismissed proposed \(removed.kind.rawValue)")
+        persistState()
+    }
+
+    /// True when an assistant chat reply commits to remembering something. Used as a backstop
+    /// signal: if the chat workflow returns `actions:[]` but the reply contains a phrase like
+    /// "I'll keep that in mind" / "noted" / "I'll go easy on...", the model has promised a
+    /// memory write it didn't perform. We then re-run the exchange through policy_memory to
+    /// extract the preference. Returning true on these phrases is intentionally conservative —
+    /// false positives just trigger one extra cheap LLM call.
+    nonisolated static func replyPromisesMemory(reply: String) -> Bool {
+        let lowered = reply.lowercased()
+        let phrases = [
+            "i'll keep that in mind",
+            "i will keep that in mind",
+            "keep that in mind",
+            "i'll remember",
+            "i will remember",
+            "noted",
+            "got it",
+            "good to know",
+            "i'll go easy",
+            "won't bug you",
+            "won't nudge you",
+            "i'll lay off",
+            "duly noted",
+            "sounds like a deal",
+            "it's a deal",
+        ]
+        return phrases.contains(where: lowered.contains)
+    }
+
+    /// Build a coarse `PolicyRuleScope` from a frontmost context — bundle id when known,
+    /// app name otherwise. Behavioral signals don't need title precision; the model
+    /// decides whether to widen or tighten the proposal scope at apply time.
+    nonisolated static func scopeForContext(
+        _ context: FrontmostContext?,
+        fallbackAppName: String?
+    ) -> PolicyRuleScope? {
+        var scope = PolicyRuleScope()
+        if let bundleIdentifier = context?.bundleIdentifier, !bundleIdentifier.isEmpty {
+            scope.bundleIdentifier = bundleIdentifier
+            return scope
+        }
+        if let appName = context?.appName.cleanedSingleLine, !appName.isEmpty {
+            scope.appName = appName
+            return scope
+        }
+        if let fallback = fallbackAppName?.cleanedSingleLine, !fallback.isEmpty {
+            scope.appName = fallback
+            return scope
+        }
+        return nil
+    }
+
+    /// Append a behavioral signal for the next policy_memory pass to weigh.
+    /// Bounded to the last `recentBehavioralSignalsCap` entries within a 7-day window.
+    func recordBehavioralSignal(_ signal: BehavioralSignalSummary) {
+        let now = Date()
+        state.recentBehavioralSignals.append(signal)
+        state.recentBehavioralSignals.removeAll { $0.isStale(at: now) }
+        if state.recentBehavioralSignals.count > ACState.recentBehavioralSignalsCap {
+            state.recentBehavioralSignals.removeFirst(
+                state.recentBehavioralSignals.count - ACState.recentBehavioralSignalsCap
+            )
         }
     }
 
@@ -2600,6 +2954,7 @@ final class AppController: ObservableObject {
         for action in actions {
             if workflow == .direct, applyChatAction(action, context: context) {
                 logActivity("chat-action", "Applied direct \(action.kind.rawValue) action")
+                recordExplicitChatStatementSignal(for: action, context: context)
                 continue
             }
 
@@ -2611,6 +2966,22 @@ final class AppController: ObservableObject {
                 parentInteractionID: parentInteractionID
             )
         }
+    }
+
+    private func recordExplicitChatStatementSignal(
+        for action: CompanionChatAction,
+        context: FrontmostContext?
+    ) {
+        let detail = "chat \(action.kind.rawValue)"
+            + (action.target?.value?.cleanedSingleLine.isEmpty == false
+                ? " — " + (action.target?.value?.cleanedSingleLine ?? "")
+                : "")
+        recordBehavioralSignal(BehavioralSignalSummary(
+            kind: "userExplicitChatStatement",
+            observedAt: Date(),
+            scope: AppController.scopeForContext(context, fallbackAppName: action.target?.value),
+            detail: detail
+        ))
     }
 
     private func resolveChatAction(
@@ -2647,6 +3018,7 @@ final class AppController: ObservableObject {
                 guard let self, let resolved else { return }
                 if self.applyChatAction(resolved, context: context) {
                     self.logActivity("chat-action", "Applied resolved \(resolved.kind.rawValue) action")
+                    self.recordExplicitChatStatementSignal(for: resolved, context: context)
                 }
             }
         }

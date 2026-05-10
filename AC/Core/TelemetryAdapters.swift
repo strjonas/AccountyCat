@@ -76,7 +76,14 @@ extension FrontmostContext {
 }
 
 extension MonitoringHeuristics {
-    nonisolated static func telemetrySnapshot(for context: FrontmostContext) -> TelemetryHeuristicSnapshot {
+    /// Build the per-tick heuristic snapshot. `focusGoal` is the active profile's
+    /// description (or the recently-ended session's goal summary) — supplying it
+    /// enables the soft `titleRelatesToDeclaredFocus` signal in the prompt payload.
+    /// Pass `nil` (the default) to skip that signal entirely.
+    nonisolated static func telemetrySnapshot(
+        for context: FrontmostContext,
+        focusGoal: String? = nil
+    ) -> TelemetryHeuristicSnapshot {
         let helpfulWindowTitle: Bool
         if let title = context.windowTitle {
             helpfulWindowTitle = !isUnhelpfulWindowTitle(title, appName: context.appName)
@@ -88,7 +95,8 @@ extension MonitoringHeuristics {
             clearlyProductive: isClearlyProductive(bundleIdentifier: context.bundleIdentifier, appName: context.appName),
             browser: isBrowser(bundleIdentifier: context.bundleIdentifier),
             helpfulWindowTitle: helpfulWindowTitle,
-            periodicVisualReason: visualCheckReason(for: context)
+            periodicVisualReason: visualCheckReason(for: context),
+            titleRelatesToDeclaredFocus: titleRelatesToFocus(context.windowTitle, focusGoal: focusGoal)
         )
     }
 }

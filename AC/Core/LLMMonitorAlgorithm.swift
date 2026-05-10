@@ -12,6 +12,7 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
     var recentUserMessages: [String]
     var policySummary: String
     var activeProfile: MonitoringActiveProfilePromptPayload
+    var recentlyEndedSession: RecentlyEndedSessionSummary?
 
     init(input: MonitoringDecisionInput) {
         goals = input.goals.cleanedSingleLine.truncatedForPrompt(
@@ -34,6 +35,7 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
             description: input.activeProfileDescription,
             expiresAt: input.activeProfileExpiresAt
         )
+        recentlyEndedSession = input.recentlyEndedSession
     }
 }
 
@@ -108,8 +110,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         heuristics: TelemetryHeuristicSnapshot,
         policyMemory: PolicyMemory,
         configuration: MonitoringConfiguration,
+        activeProfileID: String,
         now: Date
     ) -> MonitoringEvaluationPlan {
+        let isDefaultProfile = activeProfileID == PolicyRule.defaultProfileID
         let profile = LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
         let canSkipScreenshot = MonitoringHeuristics.canRelyOnTitleAlone(
             bundleIdentifier: context.bundleIdentifier,
@@ -146,7 +150,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
            cached.contextKey == key,
            cached.assessment == .focused,
            state.llmPolicy.distraction.lastAssessment == nil,
-           now.timeIntervalSince(cached.decidedAt) < configuration.cadenceMode.focusedDecisionCacheTTL {
+           now.timeIntervalSince(cached.decidedAt) < configuration.cadenceMode.adjustedDelay(
+               configuration.cadenceMode.focusedDecisionCacheTTL,
+               isDefaultProfile: isDefaultProfile
+           ) {
             recordDeterministicFocusedSkip(in: &state, contextKey: key, now: now)
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
@@ -168,7 +175,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             reason = "scheduled_recheck"
         } else if distraction.lastAssessment == nil,
                   let stableSince = state.llmPolicy.currentContextEnteredAt {
-            shouldEvaluate = now.timeIntervalSince(stableSince) >= configuration.cadenceMode.stableContextDelay
+            let delay = configuration.cadenceMode.adjustedDelay(
+                configuration.cadenceMode.stableContextDelay,
+                isDefaultProfile: isDefaultProfile
+            )
+            shouldEvaluate = now.timeIntervalSince(stableSince) >= delay
             reason = "stable_context"
         } else if distraction.lastAssessment != nil {
             shouldEvaluate = true
@@ -218,6 +229,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     func evaluate(input: MonitoringDecisionInput) async -> MonitoringDecisionResult {
         let cadence = input.configuration.cadenceMode
+        let isDefaultProfile = input.activeProfileID == PolicyRule.defaultProfileID
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: input.runtimeOverride)
         let pipelineProfile = LLMPolicyCatalog.pipelineProfile(id: input.configuration.pipelineProfileID)
         let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: input.configuration.runtimeProfileID)
@@ -288,7 +300,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             updatedState.llmPolicy.distraction.contextKey = updatedState.llmPolicy.currentContextKey
             updatedState.llmPolicy.distraction.lastAssessment = .focused
             updatedState.llmPolicy.distraction.consecutiveDistractedCount = 0
-            updatedState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.focusedFollowUp)
+            updatedState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(
+                cadence.adjustedDelay(cadence.focusedFollowUp, isDefaultProfile: isDefaultProfile)
+            )
             updatedState.llmPolicy.focusSignal.record(
                 assessment: .focused,
                 confidence: 1.0,
@@ -403,7 +417,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     titlePerception: titlePerception,
                     visionPerception: visionPerception,
                     calendarContext: input.calendarContext,
-                    activeProfile: requestScope.activeProfile
+                    activeProfile: requestScope.activeProfile,
+                    recentlyEndedSession: requestScope.recentlyEndedSession
                 ),
                 attempts: &attempts,
                 decoder: MonitoringDecisionEnvelope.self
@@ -474,7 +489,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         case .focused:
             distraction.lastAssessment = .focused
             distraction.consecutiveDistractedCount = 0
-            distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.focusedFollowUp)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(
+                cadence.adjustedDelay(cadence.focusedFollowUp, isDefaultProfile: isDefaultProfile)
+            )
             policyState.activeAppeal = nil
             action = .none
             blockReason = nil
@@ -482,7 +499,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         case .unclear:
             distraction.lastAssessment = .unclear
             distraction.consecutiveDistractedCount = 0
-            distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.unclearFollowUp)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(
+                cadence.adjustedDelay(cadence.unclearFollowUp, isDefaultProfile: isDefaultProfile)
+            )
             policyState.activeAppeal = nil
             action = .none
             blockReason = "unclear_assessment"
@@ -490,7 +509,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         case .distracted:
             distraction.lastAssessment = .distracted
             distraction.consecutiveDistractedCount += 1
-            distraction.nextEvaluationAt = input.now.addingTimeInterval(cadence.distractedFollowUp)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(
+                cadence.adjustedDelay(cadence.distractedFollowUp, isDefaultProfile: isDefaultProfile)
+            )
 
             switch decision.suggestedAction {
             case .overlay:
@@ -1117,7 +1138,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
             calendarContext: input.calendarContext,
             screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration),
-            activeProfile: requestScope.activeProfile
+            activeProfile: requestScope.activeProfile,
+            recentlyEndedSession: requestScope.recentlyEndedSession
         )
 
         let screenshotPath = visionEnabled(for: input.configuration)

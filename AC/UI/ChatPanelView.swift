@@ -91,6 +91,23 @@ struct ChatPanelView: View {
                     .zIndex(5)
             }
         }
+        .overlay(alignment: .bottom) {
+            if let toast = controller.learnedToast {
+                LearnedToastView(
+                    toast: toast,
+                    onUndo: { controller.undoLearnedToast() },
+                    onDismiss: { controller.dismissLearnedToast() }
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 56)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .move(edge: .bottom)),
+                    removal: .opacity
+                ))
+                .zIndex(7)
+            }
+        }
+        .animation(.acFade, value: controller.learnedToast?.id)
         .acAccent(for: controller.state)
         .animation(.acFade, value: controller.state.character)
         .animation(.acFade, value: controller.state.customAccentHex)

@@ -213,6 +213,18 @@ nonisolated enum PolicyMemoryOperationType: String, Codable, CaseIterable, Senda
     case createAndActivateProfile = "create_and_activate_profile"
     /// End the active named profile and switch back to the default. No fields required.
     case endActiveProfile = "end_active_profile"
+    /// Suggest a new rule the user must approve before it takes effect. Routed to
+    /// `state.proposedChanges` rather than `policyMemory.rules`. Use when the model has
+    /// pattern-level evidence (e.g. repeated dismissals on an app) but no explicit user
+    /// statement endorsing the rule.
+    case proposeRule = "propose_rule"
+    /// Suggest a free-form memory line the user must approve. Routed to
+    /// `state.proposedChanges` rather than `memoryEntries`.
+    case proposeMemory = "propose_memory"
+    /// Append a free-form memory entry directly. Use ONLY when the user explicitly stated the
+    /// preference in chat or appeal text — never from behavior-only inference. Routed to
+    /// `state.memoryEntries` and shown to the user as an "AC learned" toast with Undo.
+    case addMemory = "add_memory"
 }
 
 nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
@@ -227,11 +239,13 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
     var profileDescription: String?
     var profileDurationMinutes: Int?
     var recurringSchedule: RecurringSchedule?
+    /// Free-form note used by `proposeMemory` (the suggested memory line).
+    var memoryNote: String?
 
     private enum CodingKeys: String, CodingKey {
         case type, rule, ruleID, patch, reason
         case profileID, profileName, profileDescription, profileDurationMinutes
-        case recurringSchedule
+        case recurringSchedule, memoryNote
     }
 
     init(
@@ -244,7 +258,8 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
         profileName: String? = nil,
         profileDescription: String? = nil,
         profileDurationMinutes: Int? = nil,
-        recurringSchedule: RecurringSchedule? = nil
+        recurringSchedule: RecurringSchedule? = nil,
+        memoryNote: String? = nil
     ) {
         self.type = type
         self.rule = rule
@@ -256,6 +271,7 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
         self.profileDescription = profileDescription
         self.profileDurationMinutes = profileDurationMinutes
         self.recurringSchedule = recurringSchedule
+        self.memoryNote = memoryNote
     }
 
     init(from decoder: Decoder) throws {
@@ -270,6 +286,112 @@ nonisolated struct PolicyMemoryOperation: Codable, Hashable, Sendable {
         profileDescription = try c.decodeIfPresent(String.self, forKey: .profileDescription)
         profileDurationMinutes = try c.decodeIfPresent(Int.self, forKey: .profileDurationMinutes)
         recurringSchedule = try c.decodeIfPresent(RecurringSchedule.self, forKey: .recurringSchedule)
+        memoryNote = try c.decodeIfPresent(String.self, forKey: .memoryNote)
+    }
+}
+
+/// A pending suggestion the model wants the user to approve before it lands in
+/// `policyMemory.rules` or `memoryEntries`. Surfaced in the Brain tab.
+nonisolated struct ProposedPolicyChange: Codable, Hashable, Identifiable, Sendable {
+    /// What the proposal applies to when accepted.
+    nonisolated enum Kind: String, Codable, Sendable {
+        case rule
+        case memory
+    }
+
+    var id: String
+    var kind: Kind
+    /// Set when `kind == .rule`. The exact rule that will be added on accept.
+    var proposedRule: PolicyRule?
+    /// Set when `kind == .memory`. The free-form memory line to append on accept.
+    var proposedMemoryNote: String?
+    /// One-liner explaining the behavioral evidence the model relied on.
+    var reason: String?
+    var createdAt: Date
+    /// Optional context fingerprint (app + title key) the proposal was derived from.
+    var sourceContextKey: String?
+    /// When non-nil, the proposal auto-expires from the queue at this time.
+    var expiresAt: Date?
+
+    static let defaultRetention: TimeInterval = 7 * 24 * 60 * 60
+
+    init(
+        id: String = UUID().uuidString,
+        kind: Kind,
+        proposedRule: PolicyRule? = nil,
+        proposedMemoryNote: String? = nil,
+        reason: String? = nil,
+        createdAt: Date = Date(),
+        sourceContextKey: String? = nil,
+        expiresAt: Date? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.proposedRule = proposedRule
+        self.proposedMemoryNote = proposedMemoryNote
+        self.reason = reason
+        self.createdAt = createdAt
+        self.sourceContextKey = sourceContextKey
+        self.expiresAt = expiresAt ?? createdAt.addingTimeInterval(Self.defaultRetention)
+    }
+
+    func isStale(at now: Date) -> Bool {
+        guard let expiresAt else { return false }
+        return now > expiresAt
+    }
+}
+
+/// "AC learned: …" toast model. Surfaced briefly in the main popover whenever a memory
+/// entry or rule is auto-added (i.e. not from a direct user statement). Carries enough
+/// information to support a one-click Undo.
+nonisolated struct LearnedToast: Identifiable, Equatable, Sendable {
+    nonisolated enum Subject: Equatable, Sendable {
+        case rule(id: String, summary: String)
+        case memory(entryID: UUID, text: String)
+    }
+
+    var id: UUID = UUID()
+    var detail: String
+    var subject: Subject
+    var createdAt: Date = Date()
+
+    static let defaultDuration: TimeInterval = 6
+}
+
+/// A behavioral observation that feeds into the policy_memory pipeline so the model
+/// can decide whether to apply or merely propose a rule.
+nonisolated struct BehavioralSignalSummary: Codable, Hashable, Sendable {
+    /// Stable kind identifier (string-typed for prompt readability and forward compat).
+    /// Suggested values:
+    /// - `appealApproved` — user successfully appealed; treat existing rules as confirmed.
+    /// - `repeatedDismissal` — user dismissed/ignored nudges in the same context multiple times.
+    /// - `postNudgeReturnToFocus` — user came back to focused work after a nudge.
+    /// - `userExplicitChatStatement` — user just said something in chat that landed an action.
+    var kind: String
+    var observedAt: Date
+    var scope: PolicyRuleScope?
+    var detail: String?
+    var occurrences: Int
+
+    init(
+        kind: String,
+        observedAt: Date = Date(),
+        scope: PolicyRuleScope? = nil,
+        detail: String? = nil,
+        occurrences: Int = 1
+    ) {
+        self.kind = kind
+        self.observedAt = observedAt
+        self.scope = scope
+        self.detail = detail
+        self.occurrences = occurrences
+    }
+
+    /// Signals retain in-state for ~7 days; older ones are dropped before send.
+    static let retentionWindow: TimeInterval = 7 * 24 * 60 * 60
+
+    func isStale(at now: Date) -> Bool {
+        now.timeIntervalSince(observedAt) > Self.retentionWindow
     }
 }
 
@@ -361,6 +483,13 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
 
             case .activateProfile, .createAndActivateProfile, .endActiveProfile:
                 // Handled at the controller layer (AppController.applyProfileOperations).
+                continue
+
+            case .proposeRule, .proposeMemory, .addMemory:
+                // Routed by the controller layer:
+                // - propose_* → `state.proposedChanges`
+                // - add_memory → `state.memoryEntries` via `appendMemoryLine`
+                // None of these mutate `rules`.
                 continue
             }
         }

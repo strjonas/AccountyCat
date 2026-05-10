@@ -60,6 +60,11 @@ struct YouTab: View {
             memoryInput
             memoryList
 
+            // Pending proposals (rule/memory suggestions awaiting approval)
+            if !controller.state.proposedChanges.isEmpty {
+                proposalsSection
+            }
+
             // Calendar integration
             CalendarIntelligenceSection()
                 .environmentObject(controller)
@@ -347,5 +352,123 @@ struct YouTab: View {
             .tracking(0.06)
             .foregroundStyle(Color.acTextPrimary.opacity(0.45))
             .textCase(.uppercase)
+    }
+
+    // MARK: - Proposals
+
+    private var proposalsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("waiting on you")
+
+            Text("ac noticed a pattern but didn't apply anything yet. accept or dismiss.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+                .padding(.top, -4)
+
+            VStack(spacing: 4) {
+                ForEach(controller.state.proposedChanges.sorted { $0.createdAt > $1.createdAt }) { proposal in
+                    proposalRow(proposal)
+                }
+            }
+        }
+    }
+
+    private func proposalRow(_ proposal: ProposedPolicyChange) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: proposalIcon(for: proposal))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.8))
+                .frame(width: 18, height: 18)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(proposalSummary(for: proposal))
+                    .font(.ac(11, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.92))
+                    .lineLimit(3)
+                if let reason = proposal.reason?.cleanedSingleLine, !reason.isEmpty {
+                    Text(reason)
+                        .font(.acCaption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 6) {
+                Button {
+                    controller.acceptProposedChange(id: proposal.id)
+                } label: {
+                    Text("accept")
+                        .font(.ac(10, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(accent))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    controller.dismissProposedChange(id: proposal.id)
+                } label: {
+                    Text("dismiss")
+                        .font(.ac(10, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().stroke(Color.acHairline, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(accent.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(accent.opacity(0.18), lineWidth: 1)
+                )
+        )
+    }
+
+    private func proposalIcon(for proposal: ProposedPolicyChange) -> String {
+        switch proposal.kind {
+        case .rule:
+            switch proposal.proposedRule?.kind {
+            case .allow: return "checkmark.shield"
+            case .disallow, .discourage: return "exclamationmark.shield"
+            case .limit: return "timer"
+            case .tonePreference, nil: return "sparkles"
+            }
+        case .memory:
+            return "brain"
+        }
+    }
+
+    private func proposalSummary(for proposal: ProposedPolicyChange) -> String {
+        switch proposal.kind {
+        case .rule:
+            guard let rule = proposal.proposedRule else { return "Proposed rule" }
+            let target = rule.scope.appName
+                ?? rule.scope.bundleIdentifier
+                ?? rule.scope.titleContains.first
+                ?? rule.summary
+            let kind: String
+            switch rule.kind {
+            case .allow: kind = "Allow"
+            case .disallow: kind = "Block"
+            case .discourage: kind = "Discourage"
+            case .limit: kind = "Limit"
+            case .tonePreference: kind = "Tone"
+            }
+            return "\(kind) \(target)"
+        case .memory:
+            return proposal.proposedMemoryNote ?? "Proposed memory entry"
+        }
     }
 }

@@ -201,6 +201,60 @@ enum MonitoringHeuristics {
         return titleHasStructuralContentMarker(title)
     }
 
+    /// Stopwords excluded from focus-overlap matching. Tokens shorter than 4 characters
+    /// are also dropped — too many of them collide ("on", "is", "for", "AC", etc.).
+    /// Intentionally narrow: only generic glue words and AC-internal meta-vocabulary
+    /// ("session", "profile", "mode", "focus") that would otherwise produce spurious
+    /// overlap with profile descriptions. User-meaningful nouns ("essay", "paper",
+    /// "writing", "coding", "research") stay in — those carry the real signal.
+    nonisolated static let focusMatchingStopwords: Set<String> = [
+        "the", "and", "for", "with", "about", "from", "into", "your", "you're",
+        "this", "that", "have", "want", "need", "really", "actually", "just",
+        "make", "made", "doing", "today", "now",
+        "session", "profile", "mode", "focus"
+    ]
+
+    /// True when the window title plausibly relates to the user's declared focus topic.
+    /// Cheap deterministic check (token overlap, no LLM). Returns:
+    ///   - `true`  when at least one substantive token (length ≥ 4, not a stopword) is
+    ///             shared between title and focus goal.
+    ///   - `false` when the title is non-empty and shares no substantive tokens.
+    ///   - `nil`   when there's no title or no goal (no signal either way).
+    /// This is a soft signal — never used to skip evaluation, only as prompt context.
+    nonisolated static func titleRelatesToFocus(_ title: String?, focusGoal: String?) -> Bool? {
+        guard let title = title?.cleanedSingleLine, !title.isEmpty else { return nil }
+        guard let goal = focusGoal?.cleanedSingleLine, !goal.isEmpty else { return nil }
+
+        let titleTokens = focusMatchingTokens(in: title)
+        let goalTokens = focusMatchingTokens(in: goal)
+        guard !titleTokens.isEmpty, !goalTokens.isEmpty else { return nil }
+
+        return !titleTokens.isDisjoint(with: goalTokens)
+    }
+
+    /// Tokenize a phrase into substantive lowercase tokens used by `titleRelatesToFocus`.
+    /// Strips punctuation, drops stopwords, and requires `length >= 4` so noise like
+    /// "the / for / and" never produces spurious matches.
+    nonisolated static func focusMatchingTokens(in text: String) -> Set<String> {
+        let allowed = CharacterSet.letters.union(.decimalDigits)
+        var tokens = Set<String>()
+        var current = ""
+        for scalar in text.lowercased().unicodeScalars {
+            if allowed.contains(scalar) {
+                current.unicodeScalars.append(scalar)
+            } else {
+                if current.count >= 4, !focusMatchingStopwords.contains(current) {
+                    tokens.insert(current)
+                }
+                current.removeAll(keepingCapacity: true)
+            }
+        }
+        if current.count >= 4, !focusMatchingStopwords.contains(current) {
+            tokens.insert(current)
+        }
+        return tokens
+    }
+
     nonisolated static func visualCheckReason(for context: FrontmostContext) -> String? {
         if isClearlyProductive(bundleIdentifier: context.bundleIdentifier, appName: context.appName) {
             return nil

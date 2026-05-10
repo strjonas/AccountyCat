@@ -73,6 +73,21 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     var focusedDecisionCacheTTL: TimeInterval {
         focusedFollowUp * 3
     }
+
+    /// Multiplier applied to all cadence delays when no named profile is active.
+    /// Everyday mode is leaner on calls because life-admin / shopping / breaks should
+    /// not trigger as often as drift inside a declared focus session.
+    /// 1.5× preserves the user's selected cadence shape (sharp/balanced/gentle) while
+    /// extending all gates by half. Tunable here, not user-facing.
+    nonisolated static let everydayDelayMultiplier: Double = 1.5
+
+    /// Apply the everyday multiplier when no named profile is active.
+    /// Internal helper for `LLMMonitorAlgorithm` — keeps the multiplier in one place
+    /// rather than scattering ternaries at every cadence call site.
+    func adjustedDelay(_ base: TimeInterval, isDefaultProfile: Bool) -> TimeInterval {
+        guard isDefaultProfile else { return base }
+        return base * Self.everydayDelayMultiplier
+    }
 }
 
 enum ScreenshotCaptureMode: String, Codable, Hashable, Sendable, CaseIterable {

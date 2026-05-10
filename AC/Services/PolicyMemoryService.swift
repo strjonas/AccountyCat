@@ -22,6 +22,10 @@ struct PolicyMemoryUpdateRequest: Sendable {
     var activeProfile: ProfilePromptSummary
     /// Other available profiles for matching against an `activate_profile` op.
     var availableProfiles: [ProfilePromptSummary]
+    /// Recent behavioral observations (appeal approvals, repeated dismissals, returns to focus
+    /// after a nudge). The model uses these to decide whether to apply a rule directly or to
+    /// emit `propose_rule` for the user to approve.
+    var recentBehavioralSignals: [BehavioralSignalSummary] = []
 }
 
 /// Compact, prompt-safe summary of a focus profile for the policy_memory pipeline.
@@ -231,7 +235,13 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             var context: FrontmostContext?
             var activeProfile: ProfilePromptSummary
             var availableProfiles: [ProfilePromptSummary]
+            var recentBehavioralSignals: [BehavioralSignalSummary]?
         }
+
+        let recentSignals = request.recentBehavioralSignals
+            .filter { !$0.isStale(at: request.now) }
+            .suffix(8)
+            .map { $0 }
 
         let payload = Payload(
             now: request.now,
@@ -242,7 +252,8 @@ actor PolicyMemoryService: PolicyMemoryServicing {
             recentActions: Array(request.recentActions.prefix(4)),
             context: request.context,
             activeProfile: request.activeProfile,
-            availableProfiles: request.availableProfiles
+            availableProfiles: request.availableProfiles,
+            recentBehavioralSignals: recentSignals.isEmpty ? nil : recentSignals
         )
 
         guard let data = try? encoder.encode(payload),

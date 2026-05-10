@@ -245,6 +245,42 @@ nonisolated struct TelemetryHeuristicSnapshot: Codable, Hashable, Sendable {
     var browser: Bool
     var helpfulWindowTitle: Bool
     var periodicVisualReason: String?
+    /// `true` when the window title shares meaningful tokens with the user's
+    /// declared focus (active profile description or a session that just
+    /// ended). `false` when there's a non-empty title and no overlap. `nil`
+    /// when no goal is available or the title is empty / unhelpful.
+    var titleRelatesToDeclaredFocus: Bool?
+
+    nonisolated init(
+        clearlyProductive: Bool,
+        browser: Bool,
+        helpfulWindowTitle: Bool,
+        periodicVisualReason: String? = nil,
+        titleRelatesToDeclaredFocus: Bool? = nil
+    ) {
+        self.clearlyProductive = clearlyProductive
+        self.browser = browser
+        self.helpfulWindowTitle = helpfulWindowTitle
+        self.periodicVisualReason = periodicVisualReason
+        self.titleRelatesToDeclaredFocus = titleRelatesToDeclaredFocus
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case clearlyProductive
+        case browser
+        case helpfulWindowTitle
+        case periodicVisualReason
+        case titleRelatesToDeclaredFocus
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        clearlyProductive = try c.decode(Bool.self, forKey: .clearlyProductive)
+        browser = try c.decode(Bool.self, forKey: .browser)
+        helpfulWindowTitle = try c.decode(Bool.self, forKey: .helpfulWindowTitle)
+        periodicVisualReason = try c.decodeIfPresent(String.self, forKey: .periodicVisualReason)
+        titleRelatesToDeclaredFocus = try c.decodeIfPresent(Bool.self, forKey: .titleRelatesToDeclaredFocus)
+    }
 }
 
 nonisolated struct TelemetryDistractionState: Codable, Hashable, Sendable {

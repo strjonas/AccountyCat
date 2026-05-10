@@ -816,6 +816,22 @@ struct ACState: Codable, Sendable {
     var scheduledActions: [ScheduledAction] = []
     /// Recurring nudges — fire daily (or on specific weekdays) at the configured time.
     var recurringNudges: [RecurringNudge] = []
+    /// A focus session that ended within the last ~30 minutes, carried into the
+    /// monitoring payload so the model still sees what the user was just doing
+    /// after the session expires. Cleared automatically once stale (`endedAt`
+    /// older than `RecentlyEndedSession.retentionWindow`) or when a new
+    /// non-default profile activates.
+    var recentlyEndedSession: RecentlyEndedSession?
+    /// Suggestions the LLM emitted via `propose_rule` / `propose_memory` that need explicit
+    /// user approval before they land in `policyMemory.rules` / `memoryEntries`. Pruned of
+    /// stale entries on access.
+    var proposedChanges: [ProposedPolicyChange] = []
+    /// Recent behavioral observations (appeal approvals, repeated dismissals, post-nudge
+    /// returns to focus) the model uses to decide whether to apply or merely propose a
+    /// rule. Bounded to the last 32 entries within a 7-day window.
+    var recentBehavioralSignals: [BehavioralSignalSummary] = []
+
+    static let recentBehavioralSignalsCap = 32
 
     private static func sanitizeRuntimePathOverride(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
@@ -879,6 +895,9 @@ struct ACState: Codable, Sendable {
         case hardEscalation
         case scheduledActions
         case recurringNudges
+        case recentlyEndedSession
+        case proposedChanges
+        case recentBehavioralSignals
     }
 
 
@@ -973,6 +992,19 @@ struct ACState: Codable, Sendable {
         hardEscalation = try container.decodeIfPresent(ActiveEscalation.self, forKey: .hardEscalation)
         scheduledActions = try container.decodeIfPresent([ScheduledAction].self, forKey: .scheduledActions) ?? []
         recurringNudges = try container.decodeIfPresent([RecurringNudge].self, forKey: .recurringNudges) ?? []
+        if let decoded = try container.decodeIfPresent(RecentlyEndedSession.self, forKey: .recentlyEndedSession),
+           !decoded.isStale(at: Date()) {
+            recentlyEndedSession = decoded
+        } else {
+            recentlyEndedSession = nil
+        }
+        let now = Date()
+        proposedChanges = (try container.decodeIfPresent([ProposedPolicyChange].self, forKey: .proposedChanges) ?? [])
+            .filter { !$0.isStale(at: now) }
+        recentBehavioralSignals = (try container.decodeIfPresent([BehavioralSignalSummary].self, forKey: .recentBehavioralSignals) ?? [])
+            .filter { !$0.isStale(at: now) }
+            .suffix(Self.recentBehavioralSignalsCap)
+            .map { $0 }
         do {
             chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
@@ -1033,6 +1065,9 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(hardEscalation, forKey: .hardEscalation)
         try container.encode(scheduledActions, forKey: .scheduledActions)
         try container.encode(recurringNudges, forKey: .recurringNudges)
+        try container.encodeIfPresent(recentlyEndedSession, forKey: .recentlyEndedSession)
+        try container.encode(proposedChanges, forKey: .proposedChanges)
+        try container.encode(recentBehavioralSignals, forKey: .recentBehavioralSignals)
     }
 
     mutating func resetAlgorithmProfile() {
@@ -1060,6 +1095,9 @@ struct ACState: Codable, Sendable {
         profiles = [FocusProfile.makeDefault()]
         activeProfileID = PolicyRule.defaultProfileID
         scheduledActions = []
+        recentlyEndedSession = nil
+        proposedChanges = []
+        recentBehavioralSignals = []
     }
 
     // MARK: - Memory helpers
@@ -1169,6 +1207,13 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var recurringSchedule: RecurringSchedule?
     /// Last time this profile's recurring schedule fired (for same-day dedup).
     var lastScheduleFireDate: Date?
+    /// Set when soft-expiry auto-extended the current activation. Cleared on
+    /// reactivation. Prevents multiple auto-extensions from chaining together
+    /// (the user is meant to confirm via chat after the first one).
+    var autoExtendedAt: Date?
+    /// Set when the 5-min pre-expiry warning fired for the current activation.
+    /// Cleared on reactivation. Ensures a single warning per session.
+    var prewarnSentAt: Date?
 
     init(
         id: String = UUID().uuidString,
@@ -1184,7 +1229,9 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         activatedAt: Date? = nil,
         expiresAt: Date? = nil,
         createdReason: String? = nil,
-        recurringSchedule: RecurringSchedule? = nil
+        recurringSchedule: RecurringSchedule? = nil,
+        autoExtendedAt: Date? = nil,
+        prewarnSentAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -1201,6 +1248,8 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.createdReason = createdReason
         self.recurringSchedule = recurringSchedule
         self.lastScheduleFireDate = nil
+        self.autoExtendedAt = autoExtendedAt
+        self.prewarnSentAt = prewarnSentAt
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1208,6 +1257,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         case emoji, color, blocklist, defaultDurationMin
         case createdAt, lastUsedAt, activatedAt, expiresAt, createdReason
         case recurringSchedule, lastScheduleFireDate
+        case autoExtendedAt, prewarnSentAt
     }
 
     init(from decoder: Decoder) throws {
@@ -1227,6 +1277,8 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         createdReason = try c.decodeIfPresent(String.self, forKey: .createdReason)
         recurringSchedule = try c.decodeIfPresent(RecurringSchedule.self, forKey: .recurringSchedule)
         lastScheduleFireDate = try c.decodeIfPresent(Date.self, forKey: .lastScheduleFireDate)
+        autoExtendedAt = try c.decodeIfPresent(Date.self, forKey: .autoExtendedAt)
+        prewarnSentAt = try c.decodeIfPresent(Date.self, forKey: .prewarnSentAt)
     }
 
     static func makeDefault() -> FocusProfile {
@@ -1247,6 +1299,41 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     func isExpired(at now: Date) -> Bool {
         guard !isDefault, let expiresAt else { return false }
         return expiresAt <= now
+    }
+
+    /// Seconds remaining until expiry. Negative when already expired. `nil` for default
+    /// or non-expiring profiles.
+    func secondsUntilExpiry(at now: Date) -> TimeInterval? {
+        guard !isDefault, let expiresAt else { return nil }
+        return expiresAt.timeIntervalSince(now)
+    }
+}
+
+/// Snapshot of a focus session that just ended. Persisted on `ACState` so it
+/// survives across ticks; the monitoring payload reads it for ~30 min so the
+/// model retains the "what was the user just doing" anchor after a profile
+/// drops back to Everyday.
+struct RecentlyEndedSession: Codable, Equatable, Hashable, Sendable {
+    /// Window during which the session is still surfaced to the model.
+    static let retentionWindow: TimeInterval = 30 * 60
+
+    var name: String
+    var description: String?
+    var endedAt: Date
+    /// Optional reason / goal text from the activation (e.g. `createdReason`).
+    var goalSummary: String?
+
+    func isStale(at now: Date) -> Bool {
+        now.timeIntervalSince(endedAt) > Self.retentionWindow
+    }
+
+    var promptSummary: RecentlyEndedSessionSummary {
+        RecentlyEndedSessionSummary(
+            name: name,
+            description: description,
+            endedAt: endedAt,
+            goalSummary: goalSummary
+        )
     }
 }
 
