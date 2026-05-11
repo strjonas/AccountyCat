@@ -33,7 +33,7 @@ The product is not a blocker or a rules engine first. It is a context-aware comp
 - No workaround-driven architecture. If something is unclear, ask or trace the code properly.
 - Efficiency matters, but AC's judgment quality matters more.
 
-## Bar for V1.0
+## Bar for V1.0 (Current Sprint)
 
 Shipping quality means:
 
