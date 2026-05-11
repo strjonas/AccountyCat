@@ -26,9 +26,9 @@ struct CatView: View {
         Canvas { ctx, canvasSize in
             let renderer: CatRenderer = {
                 switch skin {
-                case .pixel:  return CatRendererPixel()
+                case .mono:   return CatRendererMono()
                 case .bubble: return CatRendererBubble()
-                case .liquid: return CatRendererLiquid()
+                case .plush:  return CatRendererPlush()
                 }
             }()
             renderer.render(in: ctx, size: canvasSize, character: character, expression: expression)

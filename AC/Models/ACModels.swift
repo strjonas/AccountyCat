@@ -1003,7 +1003,17 @@ struct ACState: Codable, Sendable {
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
         character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
-        selectedSkin = try container.decodeIfPresent(ACSkin.self, forKey: .selectedSkin) ?? .bubble
+        // Skin migration: decode raw string so legacy "pixel" / "liquid" values
+        // from older state files remap cleanly instead of throwing.
+        if let rawSkin = try container.decodeIfPresent(String.self, forKey: .selectedSkin) {
+            switch rawSkin {
+            case "pixel":  selectedSkin = .mono
+            case "liquid", "chibi": selectedSkin = .plush
+            default:       selectedSkin = ACSkin(rawValue: rawSkin) ?? .bubble
+            }
+        } else {
+            selectedSkin = .bubble
+        }
         useLiquidGlass = try container.decodeIfPresent(Bool.self, forKey: .useLiquidGlass) ?? false
         accentFollowsCharacter = try container.decodeIfPresent(Bool.self, forKey: .accentFollowsCharacter) ?? true
         customAccentHex = try container.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#7BA3D9"

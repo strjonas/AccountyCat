@@ -258,29 +258,13 @@ struct ChatPanelView: View {
                 }))
             }
 
-            switch controller.state.selectedSkin {
-            case .pixel:
-                LinearGradient(
-                    colors: [
-                        accent.opacity(colorScheme == .dark ? 0.06 : 0.08),
-                        Color.white.opacity(colorScheme == .dark ? 0.02 : 0.18)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                PixelPanelTexture()
-                    .opacity(colorScheme == .dark ? 0.12 : 0.07)
-            case .bubble:
-                // Flat modern: minimal, mature, clean. No tint gradients.
-                // Just a whisper of warmth so it doesn't feel sterile.
-                Color(nsColor: NSColor(name: nil) { appearance in
-                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                        ? NSColor(white: 0.16, alpha: 0.35)
-                        : NSColor(white: 1.0, alpha: 0.18)
-                })
-            default:
-                EmptyView()
-            }
+            // Flat modern wash — uniform across skins. Skin identity lives in
+            // the cat icon itself, not in the chat chrome.
+            Color(nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(white: 0.16, alpha: 0.35)
+                    : NSColor(white: 1.0, alpha: 0.18)
+            })
         }
     }
 
@@ -339,24 +323,3 @@ struct ChatPanelView: View {
     }
 }
 
-private struct PixelPanelTexture: View {
-    var body: some View {
-        Canvas { context, size in
-            let step: CGFloat = 8
-            var path = Path()
-            var x: CGFloat = 0
-            while x <= size.width {
-                path.move(to: CGPoint(x: x, y: 0))
-                path.addLine(to: CGPoint(x: x, y: size.height))
-                x += step
-            }
-            var y: CGFloat = 0
-            while y <= size.height {
-                path.move(to: CGPoint(x: 0, y: y))
-                path.addLine(to: CGPoint(x: size.width, y: y))
-                y += step
-            }
-            context.stroke(path, with: .color(Color.acTextPrimary.opacity(0.35)), lineWidth: 0.5)
-        }
-    }
-}

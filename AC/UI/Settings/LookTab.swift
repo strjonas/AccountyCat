@@ -13,7 +13,7 @@ struct LookTab: View {
 
     @State private var previewExpression: ACCatExpression = .neutral
 
-    private let skins: [ACSkin] = [.bubble, .pixel, .liquid]
+    private let skins: [ACSkin] = [.mono, .bubble, .plush]
     private let expressions: [ACCatExpression] = [.neutral, .happy, .celebrate, .concern, .drift, .sleep, .alert]
 
     var body: some View {
