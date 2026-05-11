@@ -92,6 +92,7 @@ Tests use `CODE_SIGNING_ALLOWED=NO`, which produces an ad-hoc binary. macOS TCC 
 - `OnlineModelServiceTests.swift`
 - `StorageServiceTests.swift`
 - `AgentDebugBundleTests.swift`
+- `StabilityLifecycleTests.swift`
 
 ## Build / Test Commands
 

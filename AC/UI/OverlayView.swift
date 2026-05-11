@@ -39,7 +39,7 @@ struct OverlayView: View {
 
                 RadialGradient(
                     colors: [
-                        Color.orange.opacity(colorScheme == .dark ? 0.12 : 0.18),
+                        accent.opacity(colorScheme == .dark ? 0.12 : 0.18),
                         Color.clear
                     ],
                     center: .init(x: 0.30, y: 0.50),
@@ -84,7 +84,7 @@ struct OverlayView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
-        .acAccent(for: character)
+        .acAccent(for: controller.state)
     }
 
     // MARK: - Cat portrait (left side)
@@ -93,7 +93,7 @@ struct OverlayView: View {
         ZStack {
             // Soft circular shadow / glow
             Circle()
-                .fill(character.accentColor.opacity(0.18))
+                .fill(accent.opacity(0.18))
                 .frame(width: 200, height: 200)
                 .blur(radius: 40)
 
@@ -109,7 +109,7 @@ struct OverlayView: View {
             // Name below cat, serif-style
             Text(character.displayName.lowercased())
                 .font(.system(size: 14, weight: .medium, design: .serif))
-                .foregroundStyle(character.accentColor)
+                .foregroundStyle(accent)
                 .offset(y: 100)
         }
         .padding(20)

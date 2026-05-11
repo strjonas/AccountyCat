@@ -52,7 +52,7 @@ extension CatView {
             expression: expression,
             size: size,
             animating: false,
-            accentOverride: character.accentColor
+            accentOverride: skin.defaultAccentColor
         )
         .colorInvert()
         let renderer = ImageRenderer(content: content)

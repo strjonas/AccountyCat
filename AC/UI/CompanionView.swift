@@ -146,7 +146,7 @@ struct CompanionView: View {
     // MARK: - Mood helpers
 
     /// When a named profile is active, tint the orb glow with the profile color.
-    /// Falls back to character palette when the default profile is active.
+    /// Falls back to the current Look accent when the default profile is active.
     private var profileTintColor: Color {
         let profile = controller.state.activeProfile
         if profile.isDefault { return accent }

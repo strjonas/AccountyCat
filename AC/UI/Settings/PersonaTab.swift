@@ -10,6 +10,7 @@ import SwiftUI
 
 struct PersonaTab: View {
     @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
 
     private let blurbs: [ACCharacter: String] = [
         .mochi: "warm, rooting for you. uses 🥺 occasionally.",
@@ -20,7 +21,7 @@ struct PersonaTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             sectionLabel("character (voice & personality)")
-            Text("character is separate from style — change look in the look tab.")
+            Text("character changes voice only — style and color stay controlled by look.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
@@ -41,7 +42,7 @@ struct PersonaTab: View {
             VStack(spacing: 10) {
                 CatView(
                     character: character,
-                    skin: .bubble,
+                    skin: controller.state.selectedSkin,
                     expression: .happy,
                     size: 72,
                     animating: false
@@ -50,7 +51,7 @@ struct PersonaTab: View {
                 VStack(spacing: 2) {
                     Text(character.displayName)
                         .font(.ac(13, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? character.accentColor : Color.acTextPrimary)
+                        .foregroundStyle(isSelected ? accent : Color.acTextPrimary)
                     Text(blurbs[character] ?? "")
                         .font(.ac(10))
                         .foregroundStyle(.secondary)
@@ -63,10 +64,10 @@ struct PersonaTab: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                    .fill(isSelected ? character.accentColor.opacity(0.08) : Color.acSurface)
+                    .fill(isSelected ? accent.opacity(0.08) : Color.acSurface)
                     .overlay(
                         RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .stroke(isSelected ? character.accentColor.opacity(0.35) : Color.acHairline, lineWidth: 1)
+                            .stroke(isSelected ? accent.opacity(0.35) : Color.acHairline, lineWidth: 1)
                     )
             )
         }

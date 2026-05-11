@@ -1036,7 +1036,7 @@ final class AppController: ObservableObject {
         persistState()
     }
 
-    func updateAccent(followsCharacter: Bool, customHex: String? = nil) {
+    func updateAccent(usesDefault: Bool, customHex: String? = nil) {
         let normalizedHex: String? = customHex.flatMap { raw in
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             let digits = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
@@ -1044,8 +1044,8 @@ final class AppController: ObservableObject {
             return "#\(digits.uppercased())"
         }
         var changed = false
-        if state.accentFollowsCharacter != followsCharacter {
-            state.accentFollowsCharacter = followsCharacter
+        if state.accentFollowsCharacter != usesDefault {
+            state.accentFollowsCharacter = usesDefault
             changed = true
         }
         if let normalizedHex, state.customAccentHex != normalizedHex {
@@ -1053,7 +1053,7 @@ final class AppController: ObservableObject {
             changed = true
         }
         guard changed else { return }
-        logActivity("app", "Updated accent: \(state.accentFollowsCharacter ? "character" : state.customAccentHex)")
+        logActivity("app", "Updated accent: \(state.accentFollowsCharacter ? "skin default" : state.customAccentHex)")
         persistState()
     }
 

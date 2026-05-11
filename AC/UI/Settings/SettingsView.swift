@@ -12,6 +12,7 @@ struct SettingsView: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.dismiss) private var dismiss
     @Environment(\.acAccent) private var accent
+    @Environment(\.acAccentLight) private var accentLight
 
     var embeddedInPanel = false
     @State private var selectedTab: SettingsTab = .look
@@ -74,7 +75,7 @@ struct SettingsView: View {
         .padding(.vertical, 12)
         .background(
             LinearGradient(
-                colors: [controller.state.character.headerLightTop, controller.state.character.headerLightBottom],
+                colors: [accentLight.opacity(0.72), accent.opacity(0.10)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )

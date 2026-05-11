@@ -3,10 +3,9 @@
 //  AC
 //
 //  Mono skin — a faithful translation of the AC AppIcon into vector code.
-//  Wider-than-tall "pillow" head, small rounded ears, visible body
-//  silhouette below the chin. The line color is a slate-tinted version of
-//  the user's accent (so the cat reads as the logo, but the user's selected
-//  palette comes through); fill is a warm cream; accent itself drives the
+//  Head-only, wide, calm, and logo-like. The line color is a slate-tinted
+//  version of the user's accent (so the cat reads as the logo, but the user's
+//  selected palette comes through); fill is a warm cream; accent itself drives
 //  cheek dots and inner-ear color.
 //
 
@@ -42,72 +41,55 @@ struct CatRendererMono: CatRenderer {
         let thin = StrokeStyle(lineWidth: 1.4 * s, lineCap: .round, lineJoin: .round)
         let hair = StrokeStyle(lineWidth: 1.1 * s, lineCap: .round, lineJoin: .round)
 
-        // ─── Body silhouette (drawn first so the chin line sits on top) ───
-        var body = Path()
-        body.move(to: pt(16, 40))
-        body.addQuadCurve(to: pt(10, 47), control: pt(11, 42))
-        body.addQuadCurve(to: pt(13, 56), control: pt(8, 53))
-        body.addQuadCurve(to: pt(32, 59), control: pt(18, 60))
-        body.addQuadCurve(to: pt(51, 56), control: pt(46, 60))
-        body.addQuadCurve(to: pt(54, 47), control: pt(56, 53))
-        body.addQuadCurve(to: pt(48, 40), control: pt(53, 42))
-        body.closeSubpath()
-        context.fill(body, with: .linearGradient(
-            Gradient(colors: [fillTop, fillBottom]),
-            startPoint: pt(32, 40),
-            endPoint: pt(32, 58)
-        ))
-        context.stroke(body, with: .color(ink), style: stroke)
-
-        // ─── Head silhouette: a wide pillow with two rounded ears ───
+        // ─── Head silhouette: app-icon proportions, no lower body base ───
         var head = Path()
-        head.move(to: pt(8, 30))                                                     // left cheek outer
-        head.addQuadCurve(to: pt(12, 22), control: pt(8, 25))                        // up-left curve
-        head.addQuadCurve(to: pt(20, 7), control: pt(12, 12))                        // up to left ear tip
-        head.addQuadCurve(to: pt(28, 21), control: pt(26, 13))                       // down inner ear
-        head.addQuadCurve(to: pt(36, 21), control: pt(32, 25))                       // valley between ears
-        head.addQuadCurve(to: pt(44, 7), control: pt(38, 13))                        // up right ear tip
-        head.addQuadCurve(to: pt(52, 22), control: pt(52, 12))                       // down right ear
-        head.addQuadCurve(to: pt(56, 30), control: pt(56, 25))                       // right cheek outer
-        head.addQuadCurve(to: pt(52, 41), control: pt(56, 38))                       // right chin
-        head.addQuadCurve(to: pt(32, 44), control: pt(48, 45))                       // chin center (slight bow)
-        head.addQuadCurve(to: pt(12, 41), control: pt(16, 45))                       // chin left
-        head.addQuadCurve(to: pt(8, 30), control: pt(8, 38))                         // back to start
+        head.move(to: pt(10, 34))
+        head.addQuadCurve(to: pt(12, 26), control: pt(9, 30))
+        head.addQuadCurve(to: pt(15.5, 9.5), control: pt(11, 13))
+        head.addQuadCurve(to: pt(29, 20.5), control: pt(22, 7))
+        head.addQuadCurve(to: pt(35, 20.5), control: pt(32, 19.4))
+        head.addQuadCurve(to: pt(48.5, 9.5), control: pt(42, 7))
+        head.addQuadCurve(to: pt(52, 26), control: pt(53, 13))
+        head.addQuadCurve(to: pt(54, 34), control: pt(55, 30))
+        head.addQuadCurve(to: pt(48.5, 49.2), control: pt(55, 45))
+        head.addQuadCurve(to: pt(32, 54.5), control: pt(43, 55))
+        head.addQuadCurve(to: pt(15.5, 49.2), control: pt(21, 55))
+        head.addQuadCurve(to: pt(10, 34), control: pt(9, 45))
         head.closeSubpath()
         context.fill(head, with: .linearGradient(
             Gradient(colors: [fillTop, fillBottom]),
             startPoint: pt(32, 8),
-            endPoint: pt(32, 44)
+            endPoint: pt(32, 55)
         ))
         context.stroke(head, with: .color(ink), style: stroke)
 
         // ─── Inner ear curves (the small concave dips from the AppIcon) ───
         var innerL = Path()
-        innerL.move(to: pt(18, 13))
-        innerL.addQuadCurve(to: pt(25, 20), control: pt(22, 16))
+        innerL.move(to: pt(18, 15.5))
+        innerL.addQuadCurve(to: pt(24.5, 21.5), control: pt(21.5, 17.5))
         var innerR = Path()
-        innerR.move(to: pt(46, 13))
-        innerR.addQuadCurve(to: pt(39, 20), control: pt(42, 16))
+        innerR.move(to: pt(46, 15.5))
+        innerR.addQuadCurve(to: pt(39.5, 21.5), control: pt(42.5, 17.5))
         context.stroke(innerL, with: .color(ink.opacity(0.62)), style: thin)
         context.stroke(innerR, with: .color(ink.opacity(0.62)), style: thin)
 
         // Soft inner-ear blush fill — the small pink dots inside the ears.
-        context.fill(softTri(pt(20, 15), pt(22, 19), pt(24, 16)), with: .color(innerEar))
-        context.fill(softTri(pt(44, 15), pt(42, 19), pt(40, 16)), with: .color(innerEar))
+        context.fill(softTri(pt(20, 16.5), pt(22, 20), pt(24, 17)), with: .color(innerEar))
+        context.fill(softTri(pt(44, 16.5), pt(42, 20), pt(40, 17)), with: .color(innerEar))
 
         // ─── Forehead "M" wisp (two tiny inverted curves between the ears) ───
         var tuft = Path()
-        tuft.move(to: pt(29, 22))
-        tuft.addQuadCurve(to: pt(32, 25.5), control: pt(30.5, 25))
-        tuft.addQuadCurve(to: pt(35, 22), control: pt(33.5, 25))
+        tuft.move(to: pt(29, 22.5))
+        tuft.addQuadCurve(to: pt(32, 25.5), control: pt(30.5, 25.2))
+        tuft.addQuadCurve(to: pt(35, 22.5), control: pt(33.5, 25.2))
         context.stroke(tuft, with: .color(ink.opacity(0.62)), style: hair)
 
         // ─── Whiskers (two per side, fade out below 36px) ───
         if size.width >= 36 {
-            var wl = Path(); wl.move(to: pt(3, 32)); wl.addLine(to: pt(10, 32.5))
-            var wl2 = Path(); wl2.move(to: pt(3.5, 36)); wl2.addLine(to: pt(10, 35.5))
-            var wr = Path(); wr.move(to: pt(61, 32)); wr.addLine(to: pt(54, 32.5))
-            var wr2 = Path(); wr2.move(to: pt(60.5, 36)); wr2.addLine(to: pt(54, 35.5))
+            var wl = Path(); wl.move(to: pt(3, 35)); wl.addLine(to: pt(10.5, 35.2))
+            var wl2 = Path(); wl2.move(to: pt(3.5, 39)); wl2.addLine(to: pt(10.5, 38.2))
+            var wr = Path(); wr.move(to: pt(61, 35)); wr.addLine(to: pt(53.5, 35.2))
+            var wr2 = Path(); wr2.move(to: pt(60.5, 39)); wr2.addLine(to: pt(53.5, 38.2))
             context.stroke(wl, with: .color(ink.opacity(0.42)), style: hair)
             context.stroke(wl2, with: .color(ink.opacity(0.32)), style: hair)
             context.stroke(wr, with: .color(ink.opacity(0.42)), style: hair)
@@ -116,8 +98,8 @@ struct CatRendererMono: CatRenderer {
 
         // ─── Cheek blush dots ───
         if expression == .happy || expression == .celebrate || expression == .neutral || expression == .alert {
-            context.fill(Path(ellipseIn: rect(16, 33, 4, 2.4)), with: .color(blush.opacity(0.72)))
-            context.fill(Path(ellipseIn: rect(44, 33, 4, 2.4)), with: .color(blush.opacity(0.72)))
+            context.fill(Path(ellipseIn: rect(16, 37, 4, 2.4)), with: .color(blush.opacity(0.72)))
+            context.fill(Path(ellipseIn: rect(44, 37, 4, 2.4)), with: .color(blush.opacity(0.72)))
         }
 
         // ─── Eyes ───
@@ -125,9 +107,9 @@ struct CatRendererMono: CatRenderer {
 
         // ─── Nose (small filled triangle, centered) ───
         var nose = Path()
-        nose.move(to: pt(30.6, 33))
-        nose.addLine(to: pt(33.4, 33))
-        nose.addLine(to: pt(32, 34.8))
+        nose.move(to: pt(30.6, 36))
+        nose.addLine(to: pt(33.4, 36))
+        nose.addLine(to: pt(32, 37.8))
         nose.closeSubpath()
         context.fill(nose, with: .color(ink))
 
@@ -163,7 +145,7 @@ private extension CatRendererMono {
         return Color(.sRGB, red: r * 0.92, green: g * 0.92, blue: b * 0.92, opacity: 1)
     }
 
-    /// Warm cream fill, faintly tinted toward the accent so the body picks up
+    /// Warm cream fill, faintly tinted toward the accent so the icon picks up
     /// the user's palette without going saturated. `dark` returns the gradient
     /// bottom (slightly more saturated than top).
     func creamFill(from accent: Color, dark: Bool) -> Color {
@@ -212,59 +194,59 @@ private extension CatRendererMono {
             // Open dot eyes — AppIcon signature, with a tiny catch-light.
             let w: CGFloat = expression == .alert ? 3.2 : 2.8
             let h: CGFloat = expression == .alert ? 3.4 : 3.0
-            context.fill(Path(ellipseIn: rect(21.4, 28.0, w, h)), with: .color(ink))
-            context.fill(Path(ellipseIn: rect(39.4, 28.0, w, h)), with: .color(ink))
-            context.fill(Path(ellipseIn: rect(22.6, 28.4, 1.0, 1.0)), with: .color(fillHi))
-            context.fill(Path(ellipseIn: rect(40.6, 28.4, 1.0, 1.0)), with: .color(fillHi))
+            context.fill(Path(ellipseIn: rect(21.4, 31.0, w, h)), with: .color(ink))
+            context.fill(Path(ellipseIn: rect(39.4, 31.0, w, h)), with: .color(ink))
+            context.fill(Path(ellipseIn: rect(22.6, 31.4, 1.0, 1.0)), with: .color(fillHi))
+            context.fill(Path(ellipseIn: rect(40.6, 31.4, 1.0, 1.0)), with: .color(fillHi))
 
         case .happy:
             // Closed-arc smile-eyes (happier than the AppIcon's calm neutral).
             var left = Path()
-            left.move(to: pt(20, 30))
-            left.addQuadCurve(to: pt(25, 30), control: pt(22.5, 26.6))
+            left.move(to: pt(20, 33))
+            left.addQuadCurve(to: pt(25, 33), control: pt(22.5, 29.6))
             var right = Path()
-            right.move(to: pt(39, 30))
-            right.addQuadCurve(to: pt(44, 30), control: pt(41.5, 26.6))
+            right.move(to: pt(39, 33))
+            right.addQuadCurve(to: pt(44, 33), control: pt(41.5, 29.6))
             context.stroke(left, with: .color(ink), style: stroke)
             context.stroke(right, with: .color(ink), style: stroke)
 
         case .sleep:
             // Flat horizontal eyelid lines — fully closed.
             var left = Path()
-            left.move(to: pt(20, 29.6))
-            left.addLine(to: pt(25, 29.6))
+            left.move(to: pt(20, 32.6))
+            left.addLine(to: pt(25, 32.6))
             var right = Path()
-            right.move(to: pt(39, 29.6))
-            right.addLine(to: pt(44, 29.6))
+            right.move(to: pt(39, 32.6))
+            right.addLine(to: pt(44, 32.6))
             context.stroke(left, with: .color(ink), style: stroke)
             context.stroke(right, with: .color(ink), style: stroke)
 
         case .celebrate:
             // Sparkle-arc eyes + a tiny vertical shine tick above each.
             var left = Path()
-            left.move(to: pt(20, 30))
-            left.addQuadCurve(to: pt(25, 30), control: pt(22.5, 26.4))
+            left.move(to: pt(20, 33))
+            left.addQuadCurve(to: pt(25, 33), control: pt(22.5, 29.4))
             var right = Path()
-            right.move(to: pt(39, 30))
-            right.addQuadCurve(to: pt(44, 30), control: pt(41.5, 26.4))
+            right.move(to: pt(39, 33))
+            right.addQuadCurve(to: pt(44, 33), control: pt(41.5, 29.4))
             context.stroke(left, with: .color(ink), style: stroke)
             context.stroke(right, with: .color(ink), style: stroke)
-            var tickL = Path(); tickL.move(to: pt(22.5, 24)); tickL.addLine(to: pt(22.5, 25.5))
-            var tickR = Path(); tickR.move(to: pt(41.5, 24)); tickR.addLine(to: pt(41.5, 25.5))
+            var tickL = Path(); tickL.move(to: pt(22.5, 27)); tickL.addLine(to: pt(22.5, 28.5))
+            var tickR = Path(); tickR.move(to: pt(41.5, 27)); tickR.addLine(to: pt(41.5, 28.5))
             context.stroke(tickL, with: .color(ink.opacity(0.78)), style: thin)
             context.stroke(tickR, with: .color(ink.opacity(0.78)), style: thin)
 
         case .drift:
             // Small offset dots — bored / distracted.
-            context.fill(Path(ellipseIn: rect(23, 29.5, 2.0, 2.0)), with: .color(ink))
-            context.fill(Path(ellipseIn: rect(41, 29.5, 2.0, 2.0)), with: .color(ink))
+            context.fill(Path(ellipseIn: rect(23, 32.5, 2.0, 2.0)), with: .color(ink))
+            context.fill(Path(ellipseIn: rect(41, 32.5, 2.0, 2.0)), with: .color(ink))
 
         case .concern:
             // Slim ovals + slanted brows.
-            context.fill(Path(ellipseIn: rect(21.4, 28.8, 2.4, 3.2)), with: .color(ink))
-            context.fill(Path(ellipseIn: rect(40.2, 28.8, 2.4, 3.2)), with: .color(ink))
-            var browL = Path(); browL.move(to: pt(19.5, 25)); browL.addLine(to: pt(25, 27))
-            var browR = Path(); browR.move(to: pt(44.5, 25)); browR.addLine(to: pt(39, 27))
+            context.fill(Path(ellipseIn: rect(21.4, 31.8, 2.4, 3.2)), with: .color(ink))
+            context.fill(Path(ellipseIn: rect(40.2, 31.8, 2.4, 3.2)), with: .color(ink))
+            var browL = Path(); browL.move(to: pt(19.5, 28)); browL.addLine(to: pt(25, 30))
+            var browR = Path(); browR.move(to: pt(44.5, 28)); browR.addLine(to: pt(39, 30))
             context.stroke(browL, with: .color(ink), style: thin)
             context.stroke(browR, with: .color(ink), style: thin)
         }
@@ -282,30 +264,30 @@ private extension CatRendererMono {
         case .happy, .celebrate:
             // Open-mouth smile: small filled curve below the nose.
             var smile = Path()
-            smile.move(to: pt(29.5, 35.6))
-            smile.addQuadCurve(to: pt(34.5, 35.6), control: pt(32, 39.4))
-            smile.addLine(to: pt(29.5, 35.6))
+            smile.move(to: pt(29.5, 38.6))
+            smile.addQuadCurve(to: pt(34.5, 38.6), control: pt(32, 42.4))
+            smile.addLine(to: pt(29.5, 38.6))
             smile.closeSubpath()
             context.fill(smile, with: .color(ink.opacity(0.85)))
             context.stroke(smile, with: .color(ink), style: thin)
         case .concern:
             var path = Path()
-            path.move(to: pt(30, 38))
-            path.addQuadCurve(to: pt(34, 38), control: pt(32, 36))
+            path.move(to: pt(30, 41))
+            path.addQuadCurve(to: pt(34, 41), control: pt(32, 39))
             context.stroke(path, with: .color(ink), style: thin)
         case .drift:
             var path = Path()
-            path.move(to: pt(30, 37.4))
-            path.addLine(to: pt(34, 37.4))
+            path.move(to: pt(30, 40.4))
+            path.addLine(to: pt(34, 40.4))
             context.stroke(path, with: .color(ink), style: thin)
         default:
             // Logo "ω": two short curves meeting under the nose.
             var left = Path()
-            left.move(to: pt(28.8, 35.2))
-            left.addQuadCurve(to: pt(32, 37.4), control: pt(30.4, 37.6))
+            left.move(to: pt(28.8, 38.2))
+            left.addQuadCurve(to: pt(32, 40.4), control: pt(30.4, 40.6))
             var right = Path()
-            right.move(to: pt(32, 37.4))
-            right.addQuadCurve(to: pt(35.2, 35.2), control: pt(33.6, 37.6))
+            right.move(to: pt(32, 40.4))
+            right.addQuadCurve(to: pt(35.2, 38.2), control: pt(33.6, 40.6))
             context.stroke(left, with: .color(ink), style: thin)
             context.stroke(right, with: .color(ink), style: thin)
         }
@@ -342,19 +324,5 @@ private extension CatRendererMono {
         var crescent = outer
         crescent.addPath(inner)
         context.fill(crescent, with: .color(color), style: FillStyle(eoFill: true))
-    }
-}
-
-// MARK: - Color helpers
-
-extension Color {
-    /// Extract sRGB components. Falls back to NSColor on macOS.
-    var acRGB: (r: Double, g: Double, b: Double) {
-        let ns = NSColor(self).usingColorSpace(.sRGB)
-        return (
-            Double(ns?.redComponent ?? 0.5),
-            Double(ns?.greenComponent ?? 0.5),
-            Double(ns?.blueComponent ?? 0.5)
-        )
     }
 }

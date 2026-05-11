@@ -47,7 +47,7 @@ struct LookTab: View {
             Divider().opacity(0.3)
 
             sectionLabel("accent")
-            Text("follow the character palette, or pin the whole UI to a custom accent.")
+            Text("use the selected cat's default color, or pin the whole UI to a custom accent.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
@@ -135,9 +135,9 @@ struct LookTab: View {
     private var accentControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Toggle("follow character", isOn: Binding(
+                Toggle("use cat default", isOn: Binding(
                     get: { controller.state.accentFollowsCharacter },
-                    set: { controller.updateAccent(followsCharacter: $0) }
+                    set: { controller.updateAccent(usesDefault: $0) }
                 ))
                 .toggleStyle(.switch)
                 .font(.ac(12, weight: .medium))
@@ -159,7 +159,7 @@ struct LookTab: View {
                     let selected = !controller.state.accentFollowsCharacter
                         && controller.state.customAccentHex.uppercased() == hex
                     Button {
-                        controller.updateAccent(followsCharacter: false, customHex: hex)
+                        controller.updateAccent(usesDefault: false, customHex: hex)
                     } label: {
                         Circle()
                             .fill(color)

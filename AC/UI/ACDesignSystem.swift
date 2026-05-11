@@ -31,6 +31,30 @@ extension Color {
         }
         self.init(hex: value, alpha: alpha)
     }
+
+    /// Extract sRGB components. Falls back to neutral gray if SwiftUI cannot
+    /// bridge the color into an sRGB NSColor.
+    var acRGB: (r: Double, g: Double, b: Double) {
+        let ns = NSColor(self).usingColorSpace(.sRGB)
+        return (
+            Double(ns?.redComponent ?? 0.5),
+            Double(ns?.greenComponent ?? 0.5),
+            Double(ns?.blueComponent ?? 0.5)
+        )
+    }
+
+    func acMixed(with other: Color, amount: Double) -> Color {
+        let a = acRGB
+        let b = other.acRGB
+        let t = min(max(amount, 0), 1)
+        return Color(
+            .sRGB,
+            red: a.r * (1 - t) + b.r * t,
+            green: a.g * (1 - t) + b.g * t,
+            blue: a.b * (1 - t) + b.b * t,
+            opacity: 1
+        )
+    }
 }
 
 // MARK: - Notification Names
@@ -55,7 +79,7 @@ extension Color {
     static let acCream        = Color(red: 1.00, green: 0.97, blue: 0.93)
     static let acPaper        = Color(red: 0.99, green: 0.96, blue: 0.90)
 
-    // Caramel accent (Mochi default — also used as fallback when env accent is absent)
+    // Legacy warm accent tokens retained for older surfaces and migrations.
     static let acCaramel      = Color(red: 0.91, green: 0.66, blue: 0.35)
     static let acCaramelLight = Color(red: 0.97, green: 0.83, blue: 0.63)
     static let acCaramelSoft  = Color(red: 0.98, green: 0.90, blue: 0.75)
@@ -245,15 +269,15 @@ enum ACSpace {
 // MARK: - Accent environment
 
 private struct ACAccentKey: EnvironmentKey {
-    static let defaultValue: Color = Color(red: 0.91, green: 0.66, blue: 0.35) // Mochi
+    static let defaultValue: Color = Color(hex: 0xE89B7A) // Bubble default
 }
 
 private struct ACAccentLightKey: EnvironmentKey {
-    static let defaultValue: Color = Color(red: 0.97, green: 0.83, blue: 0.63)
+    static let defaultValue: Color = Color(hex: 0xF2C1AD)
 }
 
 private struct ACAccentSoftKey: EnvironmentKey {
-    static let defaultValue: Color = Color(red: 0.98, green: 0.90, blue: 0.75)
+    static let defaultValue: Color = Color(hex: 0xF8E4DC)
 }
 
 extension EnvironmentValues {
@@ -273,25 +297,51 @@ extension EnvironmentValues {
 
 extension View {
     /// Inject the accent palette into this view subtree.
-    /// The user can either follow the character palette or override it from Look.
-    func acAccent(for character: ACCharacter) -> some View {
-        self
-            .environment(\.acAccent, character.accentColor)
-            .environment(\.acAccentLight, character.accentLight)
-            .environment(\.acAccentSoft, character.accentSoft)
-            .tint(character.accentColor)
+    /// Skin defaults and custom user accents stay consistent across the app.
+    func acAccent(for state: ACState) -> some View {
+        return self
+            .environment(\.acAccent, state.effectiveAccentColor)
+            .environment(\.acAccentLight, state.effectiveAccentLight)
+            .environment(\.acAccentSoft, state.effectiveAccentSoft)
+            .tint(state.effectiveAccentColor)
+    }
+}
+
+extension ACSkin {
+    var defaultAccentColor: Color {
+        switch self {
+        case .mono:   return Color(hex: 0x6F84A8) // logo slate blue
+        case .bubble: return Color(hex: 0xE89B7A) // warm peach
+        case .plush:  return Color(hex: 0xB99DFF) // soft lilac
+        }
     }
 
-    func acAccent(for state: ACState) -> some View {
-        let custom = Color(acHexString: state.customAccentHex) ?? Color.acProfileWriting
-        let accent = state.accentFollowsCharacter ? state.character.accentColor : custom
-        let accentLight = state.accentFollowsCharacter ? state.character.accentLight : custom.opacity(0.58)
-        let accentSoft = state.accentFollowsCharacter ? state.character.accentSoft : custom.opacity(0.16)
-        return self
-            .environment(\.acAccent, accent)
-            .environment(\.acAccentLight, accentLight)
-            .environment(\.acAccentSoft, accentSoft)
-            .tint(accent)
+    var defaultAccentLight: Color {
+        defaultAccentColor.acMixed(with: .white, amount: 0.46)
+    }
+
+    var defaultAccentSoft: Color {
+        defaultAccentColor.acMixed(with: .white, amount: 0.78)
+    }
+}
+
+extension ACState {
+    var effectiveAccentColor: Color {
+        accentFollowsCharacter
+            ? selectedSkin.defaultAccentColor
+            : (Color(acHexString: customAccentHex) ?? selectedSkin.defaultAccentColor)
+    }
+
+    var effectiveAccentLight: Color {
+        accentFollowsCharacter
+            ? selectedSkin.defaultAccentLight
+            : effectiveAccentColor.acMixed(with: .white, amount: 0.42)
+    }
+
+    var effectiveAccentSoft: Color {
+        accentFollowsCharacter
+            ? selectedSkin.defaultAccentSoft
+            : effectiveAccentColor.acMixed(with: .white, amount: 0.76)
     }
 }
 

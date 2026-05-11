@@ -5,8 +5,8 @@
 //  Plush skin: a soft, glossy toy-cat. The expressive slot — squashed
 //  egg-shaped silhouette (intentionally distinct from Bubble's round head),
 //  bold pink ear interiors, large sticker-clean eyes with a single bright
-//  catch-light, and a small character-specific charm (heart / star / leaf)
-//  that gives Mochi / Nova / Sage their own visual signature.
+//  catch-light, and a tiny accent charm. Persona is deliberately ignored for
+//  color so Look owns the visual identity and Persona owns voice only.
 //
 
 import SwiftUI
@@ -22,7 +22,7 @@ struct CatRendererPlush: CatRenderer {
         let s = min(size.width, size.height) / 64
         let ox = size.width / 2 - 32 * s
         let oy = size.height / 2 - 32 * s
-        let p = PlushPalette(character)
+        let p = PlushPalette(accent: accent)
 
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
             CGPoint(x: ox + x * s, y: oy + y * s)
@@ -96,10 +96,10 @@ struct CatRendererPlush: CatRenderer {
         // ─── Tiny mouth ───
         drawMouth(context, pt: pt, scale: s, palette: p, expression: expression, outline: outline)
 
-        // ─── Character-specific charm in the upper-right (only on positive
-        //     expressions and when there's room to render it cleanly) ───
+        // ─── Accent charm in the upper-right (only on positive expressions
+        //     and when there's room to render it cleanly) ───
         if size.width >= 44 && (expression == .neutral || expression == .happy || expression == .celebrate || expression == .alert) {
-            drawCharm(context, rect: rect, pt: pt, scale: s, character: character, palette: p)
+            drawCharm(context, pt: pt, scale: s, palette: p)
         }
 
         // ─── Decorations ───
@@ -125,36 +125,41 @@ private struct PlushPalette {
     let eye: Color
     let nose: Color
 
-    init(_ character: ACCharacter) {
-        switch character {
-        case .mochi:
-            body = Color(hex: 0xFAE0BC)
-            shadow = Color(hex: 0xEDC18F)
-            outline = Color(hex: 0x6E4427)
-            innerEar = Color(hex: 0xF0A38A)
-            blush = Color(hex: 0xF09A82)
-            charm = Color(hex: 0xE26B6B)     // heart red
-            eye = Color(hex: 0x2A1B0E)
-            nose = Color(hex: 0xB36A4D)
-        case .nova:
-            body = Color(hex: 0xCFC0EE)
-            shadow = Color(hex: 0xA593CE)
-            outline = Color(hex: 0x2F2552)
-            innerEar = Color(hex: 0xDDB2DA)
-            blush = Color(hex: 0xE0A0CC)
-            charm = Color(hex: 0xF4E15C)     // star yellow
-            eye = Color(hex: 0x1B132E)
-            nose = Color(hex: 0x4A3868)
-        case .sage:
-            body = Color(hex: 0xD3DBB4)
-            shadow = Color(hex: 0xA8B486)
-            outline = Color(hex: 0x394726)
-            innerEar = Color(hex: 0xE5C7A3)
-            blush = Color(hex: 0xE8A48A)
-            charm = Color(hex: 0x5F9A4A)     // leaf green
-            eye = Color(hex: 0x1B1F10)
-            nose = Color(hex: 0x5A4632)
-        }
+    init(accent: Color) {
+        let rgb = accent.acRGB
+        let bodyColor = accent.acMixed(with: .white, amount: 0.58)
+        body = bodyColor
+        shadow = Color(
+            .sRGB,
+            red: rgb.r * 0.50 + 0.34,
+            green: rgb.g * 0.50 + 0.30,
+            blue: rgb.b * 0.50 + 0.28,
+            opacity: 1
+        )
+        outline = Color(
+            .sRGB,
+            red: rgb.r * 0.18 + 0.12,
+            green: rgb.g * 0.18 + 0.10,
+            blue: rgb.b * 0.18 + 0.14,
+            opacity: 1
+        )
+        innerEar = bodyColor.acMixed(with: Color(hex: 0xF0A0A0), amount: 0.50)
+        blush = accent.acMixed(with: Color(hex: 0xF59A9A), amount: 0.48)
+        charm = accent.acMixed(with: .white, amount: 0.10)
+        eye = Color(
+            .sRGB,
+            red: rgb.r * 0.12 + 0.07,
+            green: rgb.g * 0.12 + 0.06,
+            blue: rgb.b * 0.12 + 0.10,
+            opacity: 1
+        )
+        nose = Color(
+            .sRGB,
+            red: rgb.r * 0.48 + 0.20,
+            green: rgb.g * 0.34 + 0.12,
+            blue: rgb.b * 0.32 + 0.12,
+            opacity: 1
+        )
     }
 }
 
@@ -286,56 +291,11 @@ private extension CatRendererPlush {
 
     func drawCharm(
         _ context: GraphicsContext,
-        rect: (CGFloat, CGFloat, CGFloat, CGFloat) -> CGRect,
         pt: (CGFloat, CGFloat) -> CGPoint,
         scale s: CGFloat,
-        character: ACCharacter,
         palette p: PlushPalette
     ) {
-        switch character {
-        case .mochi:
-            // Tiny heart at the top-right.
-            drawHeart(context, center: pt(50, 14), scale: s * 1.4, color: p.charm)
-        case .nova:
-            // Tiny star at the top-right.
-            drawStar(context, center: pt(50, 14), scale: s * 1.6, color: p.charm)
-        case .sage:
-            // Tiny leaf at the top-right.
-            drawLeaf(context, center: pt(50, 14), scale: s * 1.4, color: p.charm, outline: p.outline)
-        }
-    }
-
-    func drawHeart(_ context: GraphicsContext, center: CGPoint, scale: CGFloat, color: Color) {
-        var path = Path()
-        let cx = center.x
-        let cy = center.y
-        path.move(to: CGPoint(x: cx, y: cy + 2.2 * scale))
-        path.addCurve(
-            to: CGPoint(x: cx - 2.6 * scale, y: cy - 0.5 * scale),
-            control1: CGPoint(x: cx - 1.6 * scale, y: cy + 1.1 * scale),
-            control2: CGPoint(x: cx - 2.6 * scale, y: cy + 0.6 * scale)
-        )
-        path.addArc(
-            center: CGPoint(x: cx - 1.3 * scale, y: cy - 0.9 * scale),
-            radius: 1.3 * scale,
-            startAngle: .degrees(180),
-            endAngle: .degrees(0),
-            clockwise: false
-        )
-        path.addArc(
-            center: CGPoint(x: cx + 1.3 * scale, y: cy - 0.9 * scale),
-            radius: 1.3 * scale,
-            startAngle: .degrees(180),
-            endAngle: .degrees(0),
-            clockwise: false
-        )
-        path.addCurve(
-            to: CGPoint(x: cx, y: cy + 2.2 * scale),
-            control1: CGPoint(x: cx + 2.6 * scale, y: cy + 0.6 * scale),
-            control2: CGPoint(x: cx + 1.6 * scale, y: cy + 1.1 * scale)
-        )
-        path.closeSubpath()
-        context.fill(path, with: .color(color))
+        drawStar(context, center: pt(50, 14), scale: s * 1.55, color: p.charm)
     }
 
     func drawStar(_ context: GraphicsContext, center: CGPoint, scale: CGFloat, color: Color) {
@@ -358,31 +318,6 @@ private extension CatRendererPlush {
         }
         path.closeSubpath()
         context.fill(path, with: .color(color))
-    }
-
-    func drawLeaf(_ context: GraphicsContext, center: CGPoint, scale: CGFloat, color: Color, outline: Color) {
-        var path = Path()
-        let cx = center.x
-        let cy = center.y
-        path.move(to: CGPoint(x: cx - 1.8 * scale, y: cy + 1.4 * scale))
-        path.addQuadCurve(
-            to: CGPoint(x: cx + 1.8 * scale, y: cy - 1.4 * scale),
-            control: CGPoint(x: cx - 1.4 * scale, y: cy - 2.0 * scale)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: cx - 1.8 * scale, y: cy + 1.4 * scale),
-            control: CGPoint(x: cx + 1.4 * scale, y: cy + 2.0 * scale)
-        )
-        path.closeSubpath()
-        context.fill(path, with: .color(color))
-        // Mid-vein
-        var vein = Path()
-        vein.move(to: CGPoint(x: cx - 1.4 * scale, y: cy + 1.0 * scale))
-        vein.addQuadCurve(
-            to: CGPoint(x: cx + 1.4 * scale, y: cy - 1.0 * scale),
-            control: CGPoint(x: cx, y: cy)
-        )
-        context.stroke(vein, with: .color(outline.opacity(0.6)), lineWidth: 0.6 * scale)
     }
 
     func softTriangle(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Path {

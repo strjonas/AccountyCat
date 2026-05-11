@@ -4,9 +4,8 @@
 //
 //  Geometric pixel-grid cat face.  A 16×16 grid of rounded squares forms the
 //  cat silhouette; each cell is independently filled and can animate per-mood.
-//  The pattern is the same across all personalities — only colour and timing
-//  differ.  Designed for use both inside the floating orb and as a small
-//  header icon.
+//  The pattern is the same across all personalities.  Designed for use both
+//  inside the floating orb and as a small header icon.
 //
 
 import SwiftUI
@@ -16,9 +15,11 @@ struct PixelCatView: View {
     let character: ACCharacter
     var diameter: CGFloat = 72
     var animating: Bool = true
+    var accentOverride: Color? = nil
 
     @State private var isBlinking = false
     @State private var blinkTask: Task<Void, Never>?
+    @Environment(\.acAccent) private var accent
 
     private let gridSize = PixelCatGrid.gridSize
 
@@ -27,7 +28,7 @@ struct PixelCatView: View {
         let cellRadius = character.pixelCornerRadius * (diameter / 72.0)
         let currentCells = PixelCatGrid.cells(for: mood)
         let accentCells = PixelCatGrid.accentCells(for: mood)
-        let bodyColor: Color = character.accentColor.opacity(mood == .paused ? 0.30 : 1.0)
+        let bodyColor: Color = (accentOverride ?? accent).opacity(mood == .paused ? 0.30 : 1.0)
         let accentColor: Color = .white.opacity(mood == .paused ? 0.25 : 0.95)
         let showingEyes = !(isBlinking && (mood == .idle || mood == .watching || mood == .setup))
         let eyesForBlink = showingEyes

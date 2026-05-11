@@ -841,6 +841,8 @@ struct ACState: Codable, Sendable {
     var character: ACCharacter = .mochi
     var selectedSkin: ACSkin = .bubble
     var useLiquidGlass: Bool = false
+    /// Legacy persisted key name. True now means "use the selected cat skin's
+    /// default accent"; false means "use customAccentHex".
     var accentFollowsCharacter: Bool = true
     var customAccentHex: String = "#7BA3D9"
     var aiTier: AITier = .balanced

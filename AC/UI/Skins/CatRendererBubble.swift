@@ -82,6 +82,11 @@ struct CatRendererBubble: CatRenderer {
         context.fill(Path(ellipseIn: rect(16, 17, 32, 6)), with: .color(.white.opacity(0.30)))
         context.fill(Path(ellipseIn: rect(22, 18, 20, 3.2)), with: .color(.white.opacity(0.22)))
 
+        let rim = StrokeStyle(lineWidth: 0.65 * s, lineCap: .round, lineJoin: .round)
+        context.stroke(leftEar, with: .color(p.rim.opacity(0.52)), style: rim)
+        context.stroke(rightEar, with: .color(p.rim.opacity(0.52)), style: rim)
+        context.stroke(head, with: .color(p.rim.opacity(0.58)), style: rim)
+
         // ─── Eyes — sit slightly above center, small enough to feel mature ───
         drawEyes(context, pt: pt, rect: rect, scale: s, palette: p, expression: expression)
 
@@ -123,6 +128,8 @@ private struct BubblePalette {
     let nose: Color
     let shadow: Color
     let spark: Color
+    let rim: Color
+    let highlight: Color
 
     init(accent: Color) {
         let rgb = accent.acRGB
@@ -133,7 +140,8 @@ private struct BubblePalette {
         let topR = cream.r * 0.75 + rgb.r * 0.25
         let topG = cream.g * 0.75 + rgb.g * 0.25
         let topB = cream.b * 0.75 + rgb.b * 0.25
-        bodyTop = Color(.sRGB, red: topR, green: topG, blue: topB, opacity: 1)
+        let bodyTopColor = Color(.sRGB, red: topR, green: topG, blue: topB, opacity: 1)
+        bodyTop = bodyTopColor
 
         // Body bottom: a touch more saturated than top, slightly darker. Gives
         // genuine depth without needing a glossy specular.
@@ -180,6 +188,14 @@ private struct BubblePalette {
                       green: min(1.0, rgb.g * 1.05),
                       blue: min(1.0, rgb.b * 1.05),
                       opacity: 1)
+
+        rim = Color(.sRGB,
+                    red: rgb.r * 0.32 + 0.36,
+                    green: rgb.g * 0.32 + 0.28,
+                    blue: rgb.b * 0.32 + 0.22,
+                    opacity: 1)
+
+        highlight = bodyTopColor.acMixed(with: .white, amount: 0.78)
     }
 }
 
@@ -194,42 +210,74 @@ private extension CatRendererBubble {
         palette p: BubblePalette,
         expression: ACCatExpression
     ) {
-        if expression == .sleep || expression == .happy {
-            let style = StrokeStyle(lineWidth: 1.6 * s, lineCap: .round)
+        func openEye(centerX: CGFloat, centerY: CGFloat, width: CGFloat, height: CGFloat, lookX: CGFloat = 0) {
+            let x = centerX - width / 2 + lookX
+            let y = centerY - height / 2
+            context.fill(Path(ellipseIn: rect(x, y, width, height)), with: .color(p.eye))
+            context.fill(Path(ellipseIn: rect(x + width * 0.30, y + height * 0.18, 1.15, 1.15)), with: .color(p.highlight.opacity(0.96)))
+            context.fill(Path(ellipseIn: rect(x + width * 0.60, y + height * 0.64, 0.55, 0.55)), with: .color(p.highlight.opacity(0.62)))
+
+            var lower = Path()
+            lower.move(to: pt(centerX - width * 0.44 + lookX, centerY + height * 0.62))
+            lower.addQuadCurve(
+                to: pt(centerX + width * 0.44 + lookX, centerY + height * 0.62),
+                control: pt(centerX + lookX, centerY + height * 0.84)
+            )
+            context.stroke(lower, with: .color(p.eye.opacity(0.16)), style: StrokeStyle(lineWidth: 0.7 * s, lineCap: .round))
+        }
+
+        switch expression {
+        case .happy:
+            let style = StrokeStyle(lineWidth: 1.75 * s, lineCap: .round)
             var left = Path()
-            left.move(to: pt(22, 31.2))
-            left.addQuadCurve(to: pt(28, 31.2), control: pt(25, 34.6))
+            left.move(to: pt(21.7, 31.4))
+            left.addQuadCurve(to: pt(28.3, 31.4), control: pt(25, 35.0))
             var right = Path()
-            right.move(to: pt(36, 31.2))
-            right.addQuadCurve(to: pt(42, 31.2), control: pt(39, 34.6))
+            right.move(to: pt(35.7, 31.4))
+            right.addQuadCurve(to: pt(42.3, 31.4), control: pt(39, 35.0))
             context.stroke(left, with: .color(p.eye), style: style)
             context.stroke(right, with: .color(p.eye), style: style)
-            return
-        }
 
-        if expression == .celebrate {
+        case .sleep:
+            let style = StrokeStyle(lineWidth: 1.55 * s, lineCap: .round)
+            var left = Path()
+            left.move(to: pt(21.8, 32.0))
+            left.addQuadCurve(to: pt(28.2, 32.0), control: pt(25, 33.0))
+            var right = Path()
+            right.move(to: pt(35.8, 32.0))
+            right.addQuadCurve(to: pt(42.2, 32.0), control: pt(39, 33.0))
+            context.stroke(left, with: .color(p.eye.opacity(0.82)), style: style)
+            context.stroke(right, with: .color(p.eye.opacity(0.82)), style: style)
+
+        case .celebrate:
             drawSpark(context, center: pt(25, 31.5), scale: s * 1.15, color: p.eye)
             drawSpark(context, center: pt(39, 31.5), scale: s * 1.15, color: p.eye)
-            return
-        }
 
-        // Open eyes — slightly oval (taller than wide), small + mature.
-        let dy: CGFloat = expression == .concern ? -1.0 : 0
-        let dx: CGFloat = expression == .drift ? 1.0 : 0
-        let w: CGFloat = expression == .alert ? 3.6 : 3.2
-        let h: CGFloat = expression == .alert ? 4.0 : 3.8
-        context.fill(Path(ellipseIn: rect(23.8 + dx, 29.4 + dy, w, h)), with: .color(p.eye))
-        context.fill(Path(ellipseIn: rect(37.0 + dx, 29.4 + dy, w, h)), with: .color(p.eye))
-        // Single tight catch-light per eye.
-        context.fill(Path(ellipseIn: rect(24.8 + dx, 29.8 + dy, 1.2, 1.2)), with: .color(p.bodyTop))
-        context.fill(Path(ellipseIn: rect(38.0 + dx, 29.8 + dy, 1.2, 1.2)), with: .color(p.bodyTop))
+        case .drift:
+            openEye(centerX: 25.3, centerY: 32.2, width: 3.2, height: 3.0, lookX: 0.8)
+            openEye(centerX: 39.3, centerY: 32.2, width: 3.2, height: 3.0, lookX: 0.8)
+            let style = StrokeStyle(lineWidth: 1.15 * s, lineCap: .round)
+            var lidL = Path(); lidL.move(to: pt(22.3, 30.6)); lidL.addQuadCurve(to: pt(28.3, 30.7), control: pt(25.3, 29.8))
+            var lidR = Path(); lidR.move(to: pt(36.3, 30.6)); lidR.addQuadCurve(to: pt(42.3, 30.7), control: pt(39.3, 29.8))
+            context.stroke(lidL, with: .color(p.eye.opacity(0.82)), style: style)
+            context.stroke(lidR, with: .color(p.eye.opacity(0.82)), style: style)
 
-        if expression == .concern {
+        case .concern:
+            openEye(centerX: 25.0, centerY: 30.9, width: 3.4, height: 4.2)
+            openEye(centerX: 39.0, centerY: 30.9, width: 3.4, height: 4.2)
             let style = StrokeStyle(lineWidth: 1.1 * s, lineCap: .round)
             var browL = Path(); browL.move(to: pt(21, 25)); browL.addQuadCurve(to: pt(28, 26.5), control: pt(24.5, 22.5))
             var browR = Path(); browR.move(to: pt(43, 25)); browR.addQuadCurve(to: pt(36, 26.5), control: pt(39.5, 22.5))
             context.stroke(browL, with: .color(p.eye), style: style)
             context.stroke(browR, with: .color(p.eye), style: style)
+
+        case .alert:
+            openEye(centerX: 25.0, centerY: 31.4, width: 4.2, height: 5.0)
+            openEye(centerX: 39.0, centerY: 31.4, width: 4.2, height: 5.0)
+
+        case .neutral:
+            openEye(centerX: 25.0, centerY: 31.6, width: 3.8, height: 4.6)
+            openEye(centerX: 39.0, centerY: 31.6, width: 3.8, height: 4.6)
         }
     }
 
