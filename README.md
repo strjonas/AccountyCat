@@ -123,7 +123,14 @@ Everything stays under `~/Library/Application Support/AC`. With BYOK, screenshot
 
 ## Docs
 
-- [Direct OpenAI routing experiment](docs/direct-openai-routing.md)
+- [Docs index](docs/README.md)
+- [North star](docs/core/north-star.md)
+- [Codebase map](docs/core/codebase-map.md)
+- [Monitoring pipeline](docs/reference/monitoring-pipeline.md)
+- [Runtime, providers, and setup](docs/reference/runtime-providers-and-setup.md)
+- [State, persistence, and testing](docs/reference/state-persistence-and-testing.md)
+- [Telemetry, Inspector, and debugging](docs/reference/telemetry-inspector-and-debugging.md)
+- [Direct OpenAI routing experiment](docs/experiments/direct-openai-routing.md)
 - [Contributing](CONTRIBUTING.md)
 
 ---

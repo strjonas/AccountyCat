@@ -1,13 +1,34 @@
 # AccountyCat — Agent Guide
 
-## What this is
+## Start Here
 
-Native macOS Swift app (Apple Silicon). Menu bar focus companion that uses LLMs to evaluate screenshots and active-app context, then nudges you when you drift off-task. Ships with local `llama.cpp` runtime or BYOK via OpenRouter.
+AccountyCat ("AC") is a native macOS focus companion for Apple Silicon. It lives in the menu bar and as a floating orb, watches frontmost-app context plus screenshots when needed, and uses LLMs to decide whether to stay quiet, nudge, or escalate.
 
-Read files in /docs to get an overview over AC (but in case of doubt, do not trust them since they might be slightly out of date). 
-When debugging live/runtime behavior from telemetry, logs, Inspector output, or an exported agent debug bundle, read `dev/agents/accountycat-debugger/SKILL.md` first and follow its triage flow.
+Read this file first. Then load more context selectively:
 
-## Build & test
+- Always for non-trivial work: `docs/README.md`
+- Always when changing product behavior or UX: `docs/core/north-star.md`
+- Always when changing architecture or unfamiliar code: `docs/core/codebase-map.md`
+- Monitoring pipeline work: `docs/reference/monitoring-pipeline.md`
+- Runtime / model / provider / onboarding setup work: `docs/reference/runtime-providers-and-setup.md`
+- State / persistence / tests / migrations: `docs/reference/state-persistence-and-testing.md`
+- Telemetry / Inspector / debug bundles: `docs/reference/telemetry-inspector-and-debugging.md`
+- Live/runtime debugging from telemetry, logs, Inspector output, or an exported debug bundle: read `dev/agents/accountycat-debugger/SKILL.md` first, then follow its triage flow
+
+Do not load the whole `docs/` tree into every session. `core/` is the default context; `reference/` and `experiments/` are on-demand.
+
+Never reference or modify `_Legacy/`. It is intentionally out of the active build.
+
+## What Must Stay True
+
+- AC should feel useful, quiet, and deeply integrated into macOS.
+- Interrupting legitimate work is a bug.
+- Everyday mode should be lenient; named focus sessions should be stricter.
+- Reliability beats feature count. No hacky workarounds.
+- The codebase should stay easy for agents to navigate and edit.
+- All prompts live in `ACShared/ACPromptSets.swift`. That file is the single source of truth.
+
+## Build & Test
 
 ```bash
 # Run unit tests (no code signing needed)
@@ -17,45 +38,50 @@ xcodebuild test -project AC.xcodeproj -scheme AC -destination 'platform=macOS' -
 xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=NO
 ```
 
-No linter/formatter/CI configured. Just make sure tests pass before PRs.
+No formatter/linter/CI is configured. Run tests before finishing meaningful code changes.
 
-## Architecture (read `docs/system-overview.md` for the full picture (be careful though, the document might not always be up to date))
+## Architecture Snapshot
 
-Runtime flow:
-1. `AppController` — owns persisted state, setup, settings (singleton, `@MainActor`)
-2. `BrainService` — polls frontmost context, decides when evaluation is due
-3. `MonitoringAlgorithmRegistry` — resolves the configured algorithm seam (currently only `llm_monitor_v1`)
-4. `LLMMonitorAlgorithm` — skip / nudge / abstain / escalate decision
-5. `ExecutiveArm` — renders nudge or overlay
+1. `AC/ACApp.swift`
+   App entry point, `AppDelegate`, status item, popover/orb wiring, shutdown.
+2. `AC/Core/AppController.swift`
+   Main-actor app singleton. Owns persisted state, bootstrapping, setup flow, settings mutations, chat side effects, memory updates, and brain wiring.
+3. `AC/Core/BrainService.swift`
+   Timer-driven runtime loop. Polls context, applies heuristics, schedules evaluations, records telemetry, and feeds actions to the executive arm.
+4. `AC/Core/MonitoringAlgorithm.swift` + `AC/Core/LLMMonitorAlgorithm.swift`
+   The active monitoring seam. `llm_monitor_v1` is the only live algorithm.
+5. `AC/Core/ExecutiveArm.swift`
+   Executes UI consequences: nudge, overlay, app minimization, rescue-app launch, companion visibility.
+6. `AC/Services/`
+   Runtime setup, local/online inference, provider routing, chat, policy memory, memory consolidation, snapshotting, storage, logs, debug bundles.
+7. `ACShared/`
+   Shared prompts, model/runtime catalogs, structured-output helpers, telemetry models/store.
+8. `ACInspector/`
+   Local telemetry viewer and Prompt Lab for replaying scenarios and comparing prompt/runtime configurations.
 
-Key directories:
-- `AC/Core/` — orchestration (AppController, BrainService, MonitoringAlgorithm)
-- `AC/Services/` — LLM client, runtime setup, storage, snapshots, prompts
-- `AC/Models/` — data types and state definitions
-- `AC/UI/` — SwiftUI views
-- `ACShared/` — code shared between AC and ACInspector (prompts, model config, telemetry)
-- `_Legacy/` — old monitoring implementations excluded from build; always ignore this directory, never reference or modify it
+## Repo Map
 
-## Testing
+- `AC/Core/`: orchestration and decision flow
+- `AC/Services/`: IO, inference, persistence, platform integrations
+- `AC/Models/`: persisted state and domain models
+- `AC/UI/`: app UI, settings, orb, overlays, skins
+- `ACShared/`: shared prompts, schemas, telemetry types
+- `ACInspector/`: inspector app and prompt-lab tooling
+- `ACTests/`: unit and golden tests, fake runtime fixture
+- `docs/`: durable onboarding docs and volatile reference docs
+- `dev/agents/accountycat-debugger/`: debugging skill and telemetry triage references
 
-- Tests are in `ACTests/`. Use `FakeRuntimeFixture` to inject deterministic LLM outputs without calling a real model.
-- `ACTests/Goldens/` holds golden JSON files for snapshot-style tests.
-- UI tests exist in `ACUITests/` but are minimal.
-- **Never use `AppController.shared` or `StorageService()` in tests.** Both write to the user's real state file at `~/Library/Application Support/AC/state.json`. Use `AppController.makeForTesting(storageService: .temporary())` or `StorageService.temporary()` instead. The test host launches `AppDelegate`, which now detects XCTest and skips real initialization — but explicit isolation in test code is still required for correctness.
-- **Never let `runtimePathOverride` from a `FakeRuntimeFixture` leak into the real state file.** A fixture path persisted as `runtimePathOverride` routes all LLM calls (including chat) through the fakery script, which returns wrong-format JSON for anything it doesn't recognize. `ACState.sanitizeRuntimePathOverride` discards override paths under `NSTemporaryDirectory` or containing `ac-fake-runtime` on decode, and `AppController.updateRuntimeOverride` applies the same guard when set via Settings.
+## Testing Footguns
 
-## V1 roadmap
+- Never use `AppController.shared` in tests.
+- Never use `StorageService()` in tests. It writes to the real state file at `~/Library/Application Support/AC/state.json`.
+- Use `AppController.makeForTesting(storageService: .temporary())` or `StorageService.temporary()`.
+- Never persist a fake runtime path into real state. `runtimePathOverride` is sanitized for temp/fake paths, and tests should keep using isolated state anyway.
+- Verbose telemetry is effectively Debug-build only. Do not assume release builds have the same artifacts available.
 
-`docs/V1_VISION.md` is the detailed V1 plan (8 phases). Several phases have inline **status notes** marking completed work as of 2026-05-02 — read those before touching related code. Key V1 concepts an agent should know:
+## Change-Specific Guardrails
 
-- **Focus profiles** (Phase 5, keystone feature): `FocusProfile` in `AC/Models/ACModels.swift`. Profiles scope `PolicyRule`s; the default is "General". Profile lifecycle is chat-driven or menu-bar-popover-driven. Expiry is checked on tick, not timer-driven. Max 8 + default, LRU eviction.
-- **Vision gate** (Phase 4): title-length heuristic in `MonitoringHeuristics.canRelyOnTitleAlone` skips screenshots for long descriptive titles. Threshold is user-configurable (default 30). One-shot escalation retries with screenshot on `unclear`.
-- **StatsView** (Phase 1): debug-only pane showing calls/hour, decision mix, skip causes, vision attach rate, per-stage cost. Wire changes through this for observability.
-- **MonitoringRequestScopeContext** (Phase 2e): payload built once per evaluation tick and reused across all LLM stages — don't re-encode fields per stage.
-- **Prompt assets** — all staging prompt text lives inline in `ACShared/ACPromptSets.swift` (the single source of truth). `PromptCatalog.swift` is a thin accessor that forwards directly to `ACPromptSets.policyDefaultPromptSet`.
-
-## Conventions
-
-- Prompt assets live inline in `ACShared/ACPromptSets.swift`, which is the single source of truth. Use `PromptCatalog.swift` (a thin accessor) to consume them at runtime — do not read prompt files from disk.
-- When touching the setup/first-run flow: keep disk-space checks, partial-download cleanup, user-readable errors, and explicit "done" signal. Test on a clean macOS environment if possible.
-- `MonitoringConfiguration.algorithmID` exists for extensibility; historical IDs normalize to `llm_monitor_v1` on decode.
+- Setup / first run: keep disk-space checks, interrupted-download cleanup, user-readable subprocess errors, and an explicit completion signal.
+- Monitoring: preserve the distinction between cheap deterministic gates and expensive LLM calls.
+- Prompt work: update prompt text only in `ACShared/ACPromptSets.swift`.
+- Online routing: OpenRouter is the default path; direct OpenAI is currently an experiment documented separately.
