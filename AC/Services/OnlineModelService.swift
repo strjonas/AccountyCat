@@ -4,7 +4,38 @@
 //
 
 import Foundation
-import Security
+
+nonisolated enum OnlineModelProvider: String, Sendable {
+    case openAI = "openai"
+    case openRouter = "openrouter"
+
+    var displayName: String {
+        switch self {
+        case .openAI:
+            return "OpenAI"
+        case .openRouter:
+            return "OpenRouter"
+        }
+    }
+
+    var telemetryRuntime: LLMInteractionRuntime {
+        switch self {
+        case .openAI:
+            return .openAI
+        case .openRouter:
+            return .openrouter
+        }
+    }
+
+    var endpointURLString: String {
+        switch self {
+        case .openAI:
+            return "https://api.openai.com/v1/chat/completions"
+        case .openRouter:
+            return "https://openrouter.ai/api/v1/chat/completions"
+        }
+    }
+}
 
 nonisolated enum OnlineModelRequestSource: String, Sendable {
     case chat
@@ -58,88 +89,34 @@ extension OnlineModelServing {
 }
 
 enum OnlineModelError: LocalizedError, Equatable, Sendable {
-    case missingAPIKey
-    case invalidEndpoint
+    case missingAPIKey(provider: OnlineModelProvider)
+    case invalidEndpoint(provider: OnlineModelProvider)
     case invalidImageData(String)
-    case httpFailure(statusCode: Int, message: String, rawBody: String)
-    case emptyResponse
-    case malformedResponse
+    case httpFailure(provider: OnlineModelProvider, statusCode: Int, message: String, rawBody: String)
+    case emptyResponse(provider: OnlineModelProvider)
+    case malformedResponse(provider: OnlineModelProvider)
     case allRequestsFailed([String])
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey:
-            return "OpenRouter API key is missing."
-        case .invalidEndpoint:
-            return "The OpenRouter endpoint is invalid."
+        case let .missingAPIKey(provider):
+            return "\(provider.displayName) API key is missing."
+        case let .invalidEndpoint(provider):
+            return "The \(provider.displayName) endpoint is invalid."
         case let .invalidImageData(path):
             return "Couldn't encode screenshot for upload: \(path)"
-        case let .httpFailure(statusCode, message, rawBody):
-            return "OpenRouter request failed (\(statusCode)): \(message) | raw body: \(rawBody)"
-        case .emptyResponse:
-            return "OpenRouter returned no message content."
-        case .malformedResponse:
-            return "OpenRouter returned an unexpected response."
+        case let .httpFailure(provider, statusCode, message, rawBody):
+            return "\(provider.displayName) request failed (\(statusCode)): \(message) | raw body: \(rawBody)"
+        case let .emptyResponse(provider):
+            return "\(provider.displayName) returned no message content."
+        case let .malformedResponse(provider):
+            return "\(provider.displayName) returned an unexpected response."
         case let .allRequestsFailed(messages):
             let detail = messages.suffix(3).joined(separator: " | ")
             return detail.isEmpty
-                ? "All OpenRouter backup requests failed."
-                : "All OpenRouter backup requests failed: \(detail)"
+                ? "All online backup requests failed."
+                : "All online backup requests failed: \(detail)"
         }
-    }
-}
-
-enum OnlineModelCredentialStore {
-    nonisolated private static let service = "dev.accountycat.credentials"
-    nonisolated private static let account = "openrouter_api_key"
-
-    nonisolated static func loadAPIKey() -> String? {
-        guard !ACTestEnvironment.isRunning else { return nil }
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return value
-    }
-
-    @discardableResult
-    nonisolated static func saveAPIKey(_ value: String?) -> Bool {
-        guard !ACTestEnvironment.isRunning else { return false }
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-        ]
-
-        if trimmed.isEmpty {
-            SecItemDelete(query as CFDictionary)
-            return true
-        }
-
-        let data = Data(trimmed.utf8)
-        let updateStatus = SecItemUpdate(
-            query as CFDictionary,
-            [kSecValueData: data] as CFDictionary
-        )
-        if updateStatus == errSecSuccess {
-            return true
-        }
-
-        var createQuery = query
-        createQuery[kSecValueData] = data
-        return SecItemAdd(createQuery as CFDictionary, nil) == errSecSuccess
     }
 }
 
@@ -187,7 +164,7 @@ struct OpenRouterKeyInfo: Codable {
 
 
 actor OnlineModelService: OnlineModelServing {
-    nonisolated static let endpointURLString = "https://openrouter.ai/api/v1/chat/completions"
+    nonisolated static let endpointURLString = OnlineModelProvider.openRouter.endpointURLString
     nonisolated static let premiumFallbackModelIdentifier = "google/gemini-3-flash-preview"
     nonisolated static let maxOpenRouterModelsArrayCount = 3
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
@@ -252,18 +229,28 @@ actor OnlineModelService: OnlineModelServing {
         _ request: OnlineModelRequest,
         parentInteractionID: String?
     ) async throws -> RuntimeProcessOutput {
-        let isPremium = isPremiumPath(for: request.source)
-        let fallbackModelIdentifiers = await Self.requestFallbackModelIdentifiers(
-            for: request.modelIdentifier,
-            includesImage: request.imagePath != nil,
-            isPremium: isPremium
+        let route = OnlineProviderRouting.route(
+            for: request.source,
+            requestedModelIdentifier: request.modelIdentifier
         )
-        let maxAttempts = Self.maxAttempts(for: request.source, isPremium: isPremium)
+        let provider = route.provider
+        let usesOpenRouter = provider == .openRouter
+        let requestedModelIdentifier = route.modelIdentifier
+        let isPremium = usesOpenRouter ? isPremiumPath(for: request.source) : false
+        let fallbackModelIdentifiers = usesOpenRouter
+            ? await Self.requestFallbackModelIdentifiers(
+                for: request.modelIdentifier,
+                includesImage: request.imagePath != nil,
+                isPremium: isPremium
+            )
+            : []
+        let maxAttempts = usesOpenRouter ? Self.maxAttempts(for: request.source, isPremium: isPremium) : 1
         var attempt = 0
         var lastError: Error?
-        var primaryModelIdentifier = request.modelIdentifier
+        var primaryModelIdentifier = requestedModelIdentifier
         var secondaryFallbacks = fallbackModelIdentifiers
-        if await OpenRouterHealthStatsService.shared.isModelBanned(primaryModelIdentifier),
+        if usesOpenRouter,
+           await OpenRouterHealthStatsService.shared.isModelBanned(primaryModelIdentifier),
            let promotedModel = secondaryFallbacks.first {
             primaryModelIdentifier = promotedModel
             secondaryFallbacks.removeAll { $0 == promotedModel }
@@ -273,23 +260,26 @@ actor OnlineModelService: OnlineModelServing {
 
         await ActivityLogService.shared.append(level: .verbose,
             category: "api:\(request.source.rawValue)",
-            message: "─── Calling OpenRouter \(request.requestID) ───\n"
-                + "model: \(request.modelIdentifier) | source: \(request.source.rawValue)"
+            message: "─── Calling \(provider.displayName) \(request.requestID) ───\n"
+                + "model: \(primaryModelIdentifier) | source: \(request.source.rawValue)"
                 + (fallbackModelIdentifiers.isEmpty ? "" : " | fallbacks: \(fallbackModelIdentifiers.joined(separator: ", "))")
                 + (isPremium ? " | premium-path" : "")
+                + (provider == .openAI ? " | direct-openai" : "")
         )
 
         while attempt < maxAttempts {
             attempt += 1
             do {
                 if attempt > 1 {
-                    let retryDetail = primaryModelIdentifier == request.modelIdentifier
+                    let retryDetail = primaryModelIdentifier == requestedModelIdentifier
                         ? "after transient failure"
                         : "using backup model \(primaryModelIdentifier)"
-                    await OpenRouterHealthStatsService.shared.recordRetry(requestedModel: request.modelIdentifier)
+                    if usesOpenRouter {
+                        await OpenRouterHealthStatsService.shared.recordRetry(requestedModel: request.modelIdentifier)
+                    }
                     await ActivityLogService.shared.append(
-                        category: "openrouter-retry",
-                        message: "[\(request.source.rawValue) \(request.requestID)] Retrying OpenRouter request \(retryDetail) (attempt \(attempt)/\(maxAttempts))."
+                        category: usesOpenRouter ? "openrouter-retry" : "openai-retry",
+                        message: "[\(request.source.rawValue) \(request.requestID)] Retrying \(provider.displayName) request \(retryDetail) (attempt \(attempt)/\(maxAttempts))."
                     )
                     await ActivityLogService.shared.append(level: .verbose,
                         category: "api:\(request.source.rawValue)",
@@ -298,23 +288,27 @@ actor OnlineModelService: OnlineModelServing {
                 }
                 var result = try await runInference(
                     request,
+                    provider: provider,
                     modelIdentifier: primaryModelIdentifier,
                     fallbackModelIdentifiers: Self.openRouterModelsArray(from: secondaryFallbacks),
-                    enforceZDR: true,
+                    enforceZDR: usesOpenRouter,
                     startTime: startTime
                 )
-                recordSuccessIfNeeded(for: request.source)
+                if usesOpenRouter {
+                    recordSuccessIfNeeded(for: request.source)
+                }
                 let interactionID = await LLMTelemetryRecorder.shared.record(
                     LLMTelemetryCall(
                         kind: LLMInteractionKind(request.source),
                         parentInteractionID: parentInteractionID,
-                        runtime: .openrouter,
+                        runtime: provider.telemetryRuntime,
                         modelIdentifier: result.usedModelIdentifier ?? primaryModelIdentifier,
                         promptMode: request.source.rawValue,
                         systemPrompt: request.systemPrompt,
                         userPrompt: request.userPrompt,
                         requestPayloadJSON: Self.makeRequestPayloadJSON(
                             request: request,
+                            provider: provider,
                             modelIdentifier: primaryModelIdentifier,
                             fallbacks: secondaryFallbacks,
                             attempt: attempt
@@ -360,7 +354,8 @@ actor OnlineModelService: OnlineModelServing {
                 guard attempt < maxAttempts, Self.isRetryable(error: error) else {
                     throw error
                 }
-                if let promotedModel = secondaryFallbacks.first,
+                if usesOpenRouter,
+                   let promotedModel = secondaryFallbacks.first,
                    promotedModel != primaryModelIdentifier {
                     primaryModelIdentifier = promotedModel
                     secondaryFallbacks.removeAll { $0 == promotedModel }
@@ -370,18 +365,19 @@ actor OnlineModelService: OnlineModelServing {
             }
         }
 
-        let terminal = lastError ?? OnlineModelError.malformedResponse
+        let terminal = lastError ?? OnlineModelError.malformedResponse(provider: provider)
         await LLMTelemetryRecorder.shared.record(
             LLMTelemetryCall(
                 kind: LLMInteractionKind(request.source),
                 parentInteractionID: parentInteractionID,
-                runtime: .openrouter,
+                runtime: provider.telemetryRuntime,
                 modelIdentifier: primaryModelIdentifier,
                 promptMode: request.source.rawValue,
                 systemPrompt: request.systemPrompt,
                 userPrompt: request.userPrompt,
                 requestPayloadJSON: Self.makeRequestPayloadJSON(
                     request: request,
+                    provider: provider,
                     modelIdentifier: primaryModelIdentifier,
                     fallbacks: secondaryFallbacks,
                     attempt: attempt
@@ -474,11 +470,13 @@ actor OnlineModelService: OnlineModelServing {
 
     nonisolated private static func makeRequestPayloadJSON(
         request: OnlineModelRequest,
+        provider: OnlineModelProvider,
         modelIdentifier: String,
         fallbacks: [String],
         attempt: Int
     ) -> String? {
         let payload: [String: Any] = [
+            "provider": provider.rawValue,
             "source": request.source.rawValue,
             "requestID": request.requestID,
             "model": modelIdentifier,
@@ -507,7 +505,7 @@ actor OnlineModelService: OnlineModelServing {
     /// Cancelled losers are ignored by model health recording inside `runInference`.
     func runFirstSuccessfulInference(from requests: [OnlineModelRequest]) async throws -> RuntimeProcessOutput {
         guard !requests.isEmpty else {
-            throw OnlineModelError.malformedResponse
+            throw OnlineModelError.malformedResponse(provider: .openRouter)
         }
         return try await withThrowingTaskGroup(of: ParallelInferenceResult.self) { group in
             for request in requests {
@@ -534,18 +532,19 @@ actor OnlineModelService: OnlineModelServing {
     }
     private func runInference(
         _ request: OnlineModelRequest,
+        provider: OnlineModelProvider,
         modelIdentifier: String,
         fallbackModelIdentifiers: [String],
         enforceZDR: Bool,
         startTime: Date = Date()
     ) async throws -> RuntimeProcessOutput {
-        let apiKey = (OnlineModelCredentialStore.loadAPIKey() ?? "")
+        let apiKey = (OnlineProviderRouting.apiKey(for: provider) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !apiKey.isEmpty else {
-            throw OnlineModelError.missingAPIKey
+            throw OnlineModelError.missingAPIKey(provider: provider)
         }
-        guard let endpointURL = URL(string: Self.endpointURLString) else {
-            throw OnlineModelError.invalidEndpoint
+        guard let endpointURL = URL(string: provider.endpointURLString) else {
+            throw OnlineModelError.invalidEndpoint(provider: provider)
         }
 
         var userContent: [[String: Any]] = [
@@ -565,7 +564,9 @@ actor OnlineModelService: OnlineModelServing {
             )
         }
 
-        let providerFallbackModelIdentifiers = Self.openRouterModelsArray(from: fallbackModelIdentifiers)
+        let providerFallbackModelIdentifiers = provider == .openRouter
+            ? Self.openRouterModelsArray(from: fallbackModelIdentifiers)
+            : []
         var body: [String: Any] = [
             "model": modelIdentifier,
             "messages": [
@@ -578,21 +579,26 @@ actor OnlineModelService: OnlineModelServing {
                     "content": userContent,
                 ],
             ],
-            "max_tokens": request.options.maxTokens,
             "temperature": request.options.temperature,
             "top_p": request.options.topP,
-            "top_k": request.options.topK,
             "stream": false,
             "response_format": [
                 "type": "json_object",
             ],
-            "provider": Self.providerPreferences(
+        ]
+        if provider == .openRouter {
+            body["max_tokens"] = request.options.maxTokens
+            body["top_k"] = request.options.topK
+            body["provider"] = Self.providerPreferences(
                 enforceZDR: enforceZDR,
                 includesModelFallbacks: !providerFallbackModelIdentifiers.isEmpty,
                 source: request.source
-            ),
-        ]
-        if !request.options.thinkingEnabled {
+            )
+        } else {
+            body["max_completion_tokens"] = request.options.maxTokens
+            body["reasoning_effort"] = request.options.thinkingEnabled ? "low" : "none"
+        }
+        if provider == .openRouter && !request.options.thinkingEnabled {
             body["reasoning"] = ["max_reasoning_tokens": 0] as [String: Any]
         }
         if !providerFallbackModelIdentifiers.isEmpty {
@@ -604,19 +610,22 @@ actor OnlineModelService: OnlineModelServing {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("AccountyCat", forHTTPHeaderField: "X-OpenRouter-Title")
+        if provider == .openRouter {
+            urlRequest.setValue("AccountyCat", forHTTPHeaderField: "X-OpenRouter-Title")
+        }
         urlRequest.timeoutInterval = Self.timeoutInterval(for: request.source, options: request.options, isPremium: isPremium)
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         let (data, response) = try await session.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw OnlineModelError.malformedResponse
+            throw OnlineModelError.malformedResponse(provider: provider)
         }
 
         let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
         if !(200...299).contains(httpResponse.statusCode) {
             let errorMessage = Self.errorMessage(from: json) ?? String(decoding: data, as: UTF8.self)
             throw OnlineModelError.httpFailure(
+                provider: provider,
                 statusCode: httpResponse.statusCode,
                 message: errorMessage.cleanedSingleLine,
                 rawBody: String(decoding: data, as: UTF8.self).cleanedSingleLine
@@ -624,12 +633,12 @@ actor OnlineModelService: OnlineModelServing {
         }
 
         guard let json else {
-            throw OnlineModelError.malformedResponse
+            throw OnlineModelError.malformedResponse(provider: provider)
         }
 
         guard let content = Self.messageContent(from: json),
               !content.cleanedSingleLine.isEmpty else {
-            throw OnlineModelError.emptyResponse
+            throw OnlineModelError.emptyResponse(provider: provider)
         }
 
         let usedModelIdentifier = Self.responseModelIdentifier(from: json) ?? modelIdentifier
@@ -639,15 +648,22 @@ actor OnlineModelService: OnlineModelServing {
         let tokenSummary = usage.map { "\($0.promptTokens)p/\($0.completionTokens)c" } ?? "— tok"
         let costStr = usage?.costUSD.map { String(format: "$%.5f", $0) }
 
-        await OpenRouterHealthStatsService.shared.recordSuccess(
-            requestedModel: request.modelIdentifier,
-            servedModel: usedModelIdentifier,
-            source: request.source
-        )
-        if !Self.modelIdentifiersEquivalent(usedModelIdentifier, modelIdentifier) {
+        if provider == .openRouter {
+            await OpenRouterHealthStatsService.shared.recordSuccess(
+                requestedModel: request.modelIdentifier,
+                servedModel: usedModelIdentifier,
+                source: request.source
+            )
+            if !Self.modelIdentifiersEquivalent(usedModelIdentifier, modelIdentifier) {
+                await ActivityLogService.shared.append(
+                    category: "openrouter-fallback",
+                    message: "[\(request.source.rawValue) \(request.requestID)] OpenRouter served \(usedModelIdentifier) instead of \(modelIdentifier) after provider/model fallback (ZDR enforced)."
+                )
+            }
+        } else {
             await ActivityLogService.shared.append(
-                category: "openrouter-fallback",
-                message: "[\(request.source.rawValue) \(request.requestID)] OpenRouter served \(usedModelIdentifier) instead of \(modelIdentifier) after provider/model fallback (ZDR enforced)."
+                category: "openai-direct",
+                message: "[\(request.source.rawValue) \(request.requestID)] Direct OpenAI routing used \(usedModelIdentifier)."
             )
         }
 
@@ -663,6 +679,20 @@ actor OnlineModelService: OnlineModelServing {
             stderr: Self.usageSummary(from: json),
             usedModelIdentifier: usedModelIdentifier,
             tokenUsage: usage
+        )
+    }
+
+    nonisolated static func provider(for source: OnlineModelRequestSource) -> OnlineModelProvider {
+        OnlineProviderRouting.provider(for: source)
+    }
+
+    nonisolated static func effectiveModelIdentifier(
+        for source: OnlineModelRequestSource,
+        requestedModelIdentifier: String
+    ) -> String {
+        OnlineProviderRouting.effectiveModelIdentifier(
+            for: source,
+            requestedModelIdentifier: requestedModelIdentifier
         )
     }
 
@@ -878,10 +908,11 @@ actor OnlineModelService: OnlineModelServing {
         }
         if let onlineError = error as? OnlineModelError {
             switch onlineError {
-            case let .httpFailure(statusCode, _, _):
+            case let .httpFailure(provider, statusCode, _, _):
+                guard provider == .openRouter else { return false }
                 return retryableStatusCodes.contains(statusCode)
-            case .emptyResponse, .malformedResponse:
-                return true
+            case let .emptyResponse(provider), let .malformedResponse(provider):
+                return provider == .openRouter
             case .missingAPIKey, .invalidEndpoint, .invalidImageData, .allRequestsFailed:
                 return false
             }
@@ -895,10 +926,11 @@ actor OnlineModelService: OnlineModelServing {
         }
         if let onlineError = error as? OnlineModelError {
             switch onlineError {
-            case let .httpFailure(statusCode, _, _):
+            case let .httpFailure(provider, statusCode, _, _):
+                guard provider == .openRouter else { return false }
                 return retryableStatusCodes.contains(statusCode)
-            case .emptyResponse, .malformedResponse:
-                return true
+            case let .emptyResponse(provider), let .malformedResponse(provider):
+                return provider == .openRouter
             case .missingAPIKey, .invalidEndpoint, .invalidImageData, .allRequestsFailed:
                 return false
             }
@@ -912,7 +944,7 @@ actor OnlineModelService: OnlineModelServing {
         }
         if let onlineError = error as? OnlineModelError {
             switch onlineError {
-            case let .httpFailure(statusCode, _, _):
+            case let .httpFailure(_, statusCode, _, _):
                 return retryableStatusCodes.contains(statusCode)
             case .malformedResponse, .emptyResponse:
                 return true
@@ -935,7 +967,8 @@ actor OnlineModelService: OnlineModelServing {
 
     /// Extracts a server-suggested retry delay from the raw error body if present.
     nonisolated private static func retryAfterSeconds(from error: OnlineModelError?) -> TimeInterval? {
-        guard case let .httpFailure(statusCode, _, rawBody) = error,
+        guard case let .httpFailure(provider, statusCode, _, rawBody) = error,
+              provider == .openRouter,
               retryableStatusCodes.contains(statusCode) else { return nil }
         guard let data = rawBody.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -956,12 +989,13 @@ actor OnlineModelService: OnlineModelServing {
     }
 
     nonisolated private static func statusCode(from error: OnlineModelError?) -> Int? {
-        guard case let .httpFailure(statusCode, _, _) = error else { return nil }
+        guard case let .httpFailure(_, statusCode, _, _) = error else { return nil }
         return statusCode
     }
 
     nonisolated private static func providerName(from error: OnlineModelError?) -> String? {
-        guard case let .httpFailure(_, _, rawBody) = error,
+        guard case let .httpFailure(provider, _, _, rawBody) = error,
+              provider == .openRouter,
               let data = rawBody.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let error = json["error"] as? [String: Any],
@@ -1035,7 +1069,7 @@ actor OnlineModelService: OnlineModelServing {
 
     func fetchKeyInfo(apiKey: String) async throws -> OpenRouterKeyInfo {
         guard let url = URL(string: "https://openrouter.ai/api/v1/key") else {
-            throw OnlineModelError.invalidEndpoint
+            throw OnlineModelError.invalidEndpoint(provider: .openRouter)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -1045,11 +1079,12 @@ actor OnlineModelService: OnlineModelServing {
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw OnlineModelError.malformedResponse
+            throw OnlineModelError.malformedResponse(provider: .openRouter)
         }
         guard httpResponse.statusCode == 200 else {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw OnlineModelError.httpFailure(
+                provider: .openRouter,
                 statusCode: httpResponse.statusCode,
                 message: "Failed to fetch key info",
                 rawBody: body

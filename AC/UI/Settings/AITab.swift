@@ -412,6 +412,50 @@ struct AITab: View {
 
             OpenRouterKeyField(compact: true)
                 .environmentObject(controller)
+
+            Divider().opacity(0.2)
+
+            sectionLabel("direct openai")
+            Text("When enabled, every online LLM request goes directly to OpenAI with no OpenRouter routing and no OpenRouter fallback chain.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+                .padding(.top, -10)
+
+            Toggle(
+                "Route all online traffic through OpenAI only",
+                isOn: Binding(
+                    get: { controller.directOpenAIEnabled },
+                    set: { controller.updateDirectOpenAIEnabled($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(accent)
+
+            SecureField(
+                "Paste your OpenAI API key for direct \(OnlineProviderRouting.directOpenAIModelIdentifier) routing",
+                text: Binding(
+                    get: { controller.directOpenAIAPIKeyDraft },
+                    set: { controller.updateDirectOpenAIAPIKey($0) }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 11, design: .monospaced))
+
+            if controller.hasDirectOpenAIAPIKeyConfigured {
+                HStack(spacing: 5) {
+                    Image(systemName: "flask.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(accent)
+                    Text(
+                        controller.directOpenAIEnabled
+                        ? "Saved to macOS Keychain. All online traffic now uses \(AppController.shortModelName(for: OnlineProviderRouting.directOpenAIModelIdentifier)) directly from OpenAI."
+                        : "Saved to macOS Keychain. Turn the switch on to bypass OpenRouter and use direct OpenAI routing."
+                    )
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 

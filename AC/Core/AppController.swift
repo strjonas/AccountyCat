@@ -51,6 +51,8 @@ final class AppController: ObservableObject {
     @Published var onboardingDismissed = false
     @Published var telemetrySessionID: String?
     @Published var onlineAPIKeyDraft: String
+    @Published var directOpenAIAPIKeyDraft: String
+    @Published var directOpenAIEnabled: Bool
     @Published var openRouterKeyInfo: OpenRouterKeyInfo?
     @Published var openRouterKeyInfoError: String?
     /// Set by BrainService when repeated API failures suggest a provider-side issue.
@@ -136,7 +138,9 @@ final class AppController: ObservableObject {
         var state = loadedState
         Self.seedDefaultSafelistIfNeeded(into: &state)
         self.state = state
-        self.onlineAPIKeyDraft = OnlineModelCredentialStore.loadAPIKey() ?? ""
+        self.onlineAPIKeyDraft = OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? ""
+        self.directOpenAIAPIKeyDraft = OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? ""
+        self.directOpenAIEnabled = OnlineProviderRoutingStore.loadDirectOpenAIEnabled()
         self.setupDiagnostics = RuntimeSetupService.inspect(
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
@@ -187,7 +191,9 @@ final class AppController: ObservableObject {
         var state = loadedState
         Self.seedDefaultSafelistIfNeeded(into: &state)
         self.state = state
-        self.onlineAPIKeyDraft = OnlineModelCredentialStore.loadAPIKey() ?? ""
+        self.onlineAPIKeyDraft = OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? ""
+        self.directOpenAIAPIKeyDraft = OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? ""
+        self.directOpenAIEnabled = OnlineProviderRoutingStore.loadDirectOpenAIEnabled()
         self.setupDiagnostics = RuntimeSetupService.inspect(
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
@@ -288,7 +294,7 @@ final class AppController: ObservableObject {
         } else if !state.permissions.satisfies(permissionRequirements) {
             state.setupStatus = .needsPermissions
         } else if usesOnlineInference {
-            state.setupStatus = hasOnlineAPIKeyConfigured ? .ready : .needsRuntime
+            state.setupStatus = hasActiveOnlineAPIKeyConfigured ? .ready : .needsRuntime
         } else if setupDiagnostics.isReady {
             state.setupStatus = .ready
         } else if !setupDiagnostics.canInstall {
@@ -1123,6 +1129,22 @@ final class AppController: ObservableObject {
         !onlineAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var hasDirectOpenAIAPIKeyConfigured: Bool {
+        !directOpenAIAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasActiveOnlineAPIKeyConfigured: Bool {
+        OnlineProviderRouting.hasActiveAPIKeyConfigured(
+            openRouterAPIKey: onlineAPIKeyDraft,
+            directOpenAIAPIKey: directOpenAIAPIKeyDraft,
+            directOpenAIEnabled: directOpenAIEnabled
+        )
+    }
+
+    var activeOnlineProvider: OnlineModelProvider {
+        OnlineProviderRouting.activeProvider(directOpenAIEnabled: directOpenAIEnabled)
+    }
+
     var usingOnlineMonitoring: Bool {
         state.monitoringConfiguration.usesOnlineInference
     }
@@ -1143,6 +1165,10 @@ final class AppController: ObservableObject {
     /// compact display in the header or settings footnote.
     var activeModelShortName: String {
         let config = state.monitoringConfiguration
+
+        if config.usesOnlineInference, directOpenAIEnabled {
+            return Self.shortModelName(for: OnlineProviderRouting.directOpenAIModelIdentifier)
+        }
         
         let textModel: String?
         let imageModel: String?
@@ -1172,6 +1198,7 @@ final class AppController: ObservableObject {
 
         // Known models → friendly names
         switch base {
+        case "gpt-5.4-nano":                       return "GPT-5.4 Nano"
         case "google/gemma-4-31b-it":              return "Gemma 4 31B"
         case "google/gemma-4-26b-a4b-it":          return "Gemma 4 26B"
         case "mistralai/mistral-small-3.1-24b-instruct": return "Mistral Small 3.1"
@@ -1214,6 +1241,7 @@ final class AppController: ObservableObject {
 
         // Specific overrides for split view — prioritized over generic replacements
         switch base {
+        case "gpt-5.4-nano":                       return "GPT-5.4N"
         case "deepseek/deepseek-v4-flash":         return "DS V4"
         case "google/gemma-4-31b-it":              return "Gema 31B"
         case "google/gemma-4-26b-a4b-it":          return "Gema 26B"
@@ -1308,14 +1336,29 @@ final class AppController: ObservableObject {
 
     func updateOnlineAPIKey(_ value: String) {
         onlineAPIKeyDraft = value
-        _ = OnlineModelCredentialStore.saveAPIKey(value)
+        _ = OnlineProviderCredentialStore.saveOpenRouterAPIKey(value)
         refreshSystemState()
         refreshOpenRouterKeyInfo()
+    }
+
+    func updateDirectOpenAIAPIKey(_ value: String) {
+        directOpenAIAPIKeyDraft = value
+        _ = OnlineProviderCredentialStore.saveDirectOpenAIAPIKey(value)
+        refreshSystemState()
+    }
+
+    func updateDirectOpenAIEnabled(_ enabled: Bool) {
+        directOpenAIEnabled = enabled
+        OnlineProviderRoutingStore.saveDirectOpenAIEnabled(enabled)
+        refreshSystemState()
     }
 
     /// Non-nil when the most recently served model differs from the one currently
     /// selected in Settings. Used to show a transparent notice in the AI tab.
     var modelMismatchNotice: String? {
+        if state.monitoringConfiguration.usesOnlineInference, directOpenAIEnabled {
+            return "Direct OpenAI mode active: all online LLM traffic uses \(OnlineProviderRouting.directOpenAIModelIdentifier)."
+        }
         guard let lastUsed = lastUsedModelIdentifier else { return nil }
         let config = state.monitoringConfiguration
         let configured: String
@@ -2101,7 +2144,8 @@ final class AppController: ObservableObject {
                         self.appendMemoryLine("• AC released hard escalation on \(presentation.appName) after \(denialCount) denials. User appeal: \"\(trimmedAppeal)\"")
                         self.schedulePolicyMemoryUpdate(
                             eventSummary: "AC gave up on hard escalation for \(presentation.appName) after \(denialCount) denied appeals. User's last explanation: \(trimmedAppeal).",
-                            context: SnapshotService.frontmostContext()
+                            context: SnapshotService.frontmostContext(),
+                            allowMemoryOperations: false
                         )
                         self.state.hardEscalation = nil
                         self.activeOverlay = nil
@@ -2131,7 +2175,8 @@ final class AppController: ObservableObject {
                     self.appendMemoryLine("• User appealed hard escalation on \(presentation.appName): \"\(trimmedAppeal)\" — denied")
                     self.schedulePolicyMemoryUpdate(
                         eventSummary: "User appealed hard escalation on \(presentation.appName) saying: \(trimmedAppeal). AC denied the appeal.",
-                        context: SnapshotService.frontmostContext()
+                        context: SnapshotService.frontmostContext(),
+                        allowMemoryOperations: false
                     )
                     self.activeOverlay = OverlayPresentation(
                         headline: "I'm not convinced.",
@@ -2157,7 +2202,8 @@ final class AppController: ObservableObject {
                     ))
                     self.schedulePolicyMemoryUpdate(
                         eventSummary: "User convinced AC to allow \(presentation.appName): \(trimmedAppeal). Safe to let them continue.",
-                        context: SnapshotService.frontmostContext()
+                        context: SnapshotService.frontmostContext(),
+                        allowMemoryOperations: false
                     )
                     self.activeOverlay = nil
                     self.overlayVisible = false
@@ -2174,7 +2220,8 @@ final class AppController: ObservableObject {
                     ))
                     self.schedulePolicyMemoryUpdate(
                         eventSummary: "User explained that \(presentation.appName) was okay and AC accepted the appeal: \(trimmedAppeal). Learn this as a correction and avoid nudging similar legitimate activity.",
-                        context: SnapshotService.frontmostContext()
+                        context: SnapshotService.frontmostContext(),
+                        allowMemoryOperations: false
                     )
                     self.brainService?.recordUserReaction(
                         UserReactionRecord(
@@ -2504,7 +2551,9 @@ final class AppController: ObservableObject {
             if !chatReady {
                 result = CompanionChatResult(
                     reply: usingOnline
-                        ? "Add your OpenRouter API key in Settings, then I can chat."
+                        ? (directOpenAIEnabled
+                            ? "Enable direct OpenAI mode with an OpenAI API key in Settings, then I can chat."
+                            : "Add your OpenRouter API key in Settings, then I can chat.")
                         : "Finish local setup first, or switch to online mode in Settings.",
                     actions: [],
                     schedule: nil
@@ -2530,7 +2579,9 @@ final class AppController: ObservableObject {
             } else {
                 result = CompanionChatResult(
                     reply: usingOnline
-                        ? "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
+                        ? (directOpenAIEnabled
+                            ? "Couldn't reach OpenAI. Check the API key, your connection, and the model name."
+                            : "Couldn't reach OpenRouter. Check the API key, your connection, and the model name.")
                         : "I couldn't answer just now. Check the logs and local runtime status.",
                     actions: [],
                     schedule: nil
@@ -2729,7 +2780,8 @@ final class AppController: ObservableObject {
 
     private func schedulePolicyMemoryUpdate(
         eventSummary: String,
-        context: FrontmostContext?
+        context: FrontmostContext?,
+        allowMemoryOperations: Bool = true
     ) {
         let now = Date()
         let request = PolicyMemoryUpdateRequest(
@@ -2763,7 +2815,12 @@ final class AppController: ObservableObject {
                 let beforeIDs = Set(self.state.policyMemory.rules.map(\.id))
                 self.state.policyMemory.apply(scopedResponse, now: request.now)
                 self.applyProfileOperations(scopedResponse.operations)
-                self.routeProposalOperations(scopedResponse.operations, now: request.now, context: context)
+                self.routeProposalOperations(
+                    scopedResponse.operations,
+                    now: request.now,
+                    context: context,
+                    allowMemoryOperations: allowMemoryOperations
+                )
                 self.surfaceAutoLearnedRules(addedSince: beforeIDs)
                 self.persistState()
             }
@@ -2863,7 +2920,8 @@ final class AppController: ObservableObject {
     private func routeProposalOperations(
         _ operations: [PolicyMemoryOperation],
         now: Date,
-        context: FrontmostContext?
+        context: FrontmostContext?,
+        allowMemoryOperations: Bool = true
     ) {
         state.proposedChanges.removeAll { $0.isStale(at: now) }
 
@@ -2888,6 +2946,7 @@ final class AppController: ObservableObject {
                 )
 
             case .proposeMemory:
+                guard allowMemoryOperations else { continue }
                 let trimmed = op.memoryNote?.cleanedSingleLine ?? ""
                 guard !trimmed.isEmpty else { continue }
                 let proposal = ProposedPolicyChange(
@@ -2901,6 +2960,7 @@ final class AppController: ObservableObject {
                 logActivity("policy-memory", "Proposed memory: \(trimmed)")
 
             case .addMemory:
+                guard allowMemoryOperations else { continue }
                 let trimmed = op.memoryNote?.cleanedSingleLine ?? ""
                 guard !trimmed.isEmpty else { continue }
                 let line = trimmed.hasPrefix("• ") ? trimmed : "• " + trimmed
@@ -4116,9 +4176,12 @@ private enum AppControllerSetupSupport {
     ) -> String {
         let requirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
         let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
-        let hasOnlineAPIKey = !(OnlineModelCredentialStore.loadAPIKey() ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty
+        let directOpenAIEnabled = OnlineProviderRoutingStore.loadDirectOpenAIEnabled()
+        let hasOnlineAPIKey = OnlineProviderRouting.hasActiveAPIKeyConfigured(
+            openRouterAPIKey: OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? "",
+            directOpenAIAPIKey: OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? "",
+            directOpenAIEnabled: directOpenAIEnabled
+        )
         if installingDependencies {
             return "Installing missing dependencies."
         } else if installingRuntime {
@@ -4132,13 +4195,16 @@ private enum AppControllerSetupSupport {
             }
             return "Waiting for Accessibility permission."
         } else if usesOnlineInference && !hasOnlineAPIKey {
-            return "Add your OpenRouter API key in Settings before AC can monitor online."
+            return directOpenAIEnabled
+                ? "Add your OpenAI API key in Settings before AC can monitor online."
+                : "Add your OpenRouter API key in Settings before AC can monitor online."
         } else if usesOnlineInference && state.isPaused {
             return "Monitoring is paused."
         } else if usesOnlineInference {
+            let providerName = OnlineProviderRouting.activeProvider(directOpenAIEnabled: directOpenAIEnabled).displayName
             return requirements.requiresScreenRecording
-                ? "Monitoring is active via OpenRouter with screenshot upload."
-                : "Monitoring is active via OpenRouter without screenshot upload."
+                ? "Monitoring is active via \(providerName) with screenshot upload."
+                : "Monitoring is active via \(providerName) without screenshot upload."
         } else if !diagnostics.missingTools.isEmpty {
             return "Install the missing build tools before AC can finish setup."
         } else if !diagnostics.runtimePresent || !diagnostics.modelCachePresent {

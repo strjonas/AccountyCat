@@ -135,6 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             await self?.controller.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
+        // Backstop: if async shutdown stalls, force-exit so the process doesn't
+        // linger invisibly in the background (LSUIElement apps have no Dock icon
+        // to signal that they're still alive).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { exit(0) }
         return .terminateLater
     }
 

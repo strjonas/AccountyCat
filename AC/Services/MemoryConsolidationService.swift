@@ -51,9 +51,14 @@ actor MemoryConsolidationService {
         do {
             if inferenceBackend == .openRouter {
                 let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
+                let provider = OnlineModelService.provider(for: .memoryConsolidation)
+                let effectiveModelIdentifier = OnlineModelService.effectiveModelIdentifier(
+                    for: .memoryConsolidation,
+                    requestedModelIdentifier: resolvedOnlineModelIdentifier
+                )
                 await ActivityLogService.shared.append(level: .verbose,
                     category: "llm:memory",
-                    message: "─── Request → openrouter/\(resolvedOnlineModelIdentifier) · consolidating \(entries.count) entries ───"
+                    message: "─── Request → \(provider.rawValue)/\(effectiveModelIdentifier) · consolidating \(entries.count) entries ───"
                 )
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(

@@ -71,12 +71,17 @@ actor CompanionChatService {
     }
 
     nonisolated static func fallbackReply(for error: Error) -> String {
+        let provider = OnlineProviderRouting.provider(for: .chat)
         if let onlineError = error as? OnlineModelError,
-           case let .httpFailure(statusCode, _, rawBody) = onlineError,
+           case let .httpFailure(_, statusCode, _, rawBody) = onlineError,
            statusCode == 429 || rawBody.localizedCaseInsensitiveContains("rate-limit") || rawBody.localizedCaseInsensitiveContains("rate limited") {
-            return "OpenRouter is overloaded right now. I tried the backup path, but this turn still failed. Send that again in a moment."
+            return provider == .openAI
+                ? "OpenAI is overloaded right now. Send that again in a moment."
+                : "OpenRouter is overloaded right now. I tried the backup path, but this turn still failed. Send that again in a moment."
         }
-        return "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
+        return provider == .openAI
+            ? "Couldn't reach OpenAI. Check the API key, your connection, and the model name."
+            : "Couldn't reach OpenRouter. Check the API key, your connection, and the model name."
     }
 
     func chat(
@@ -116,8 +121,13 @@ actor CompanionChatService {
         do {
             if inferenceBackend == .openRouter {
                 let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
+                let provider = OnlineModelService.provider(for: .chat)
+                let effectiveModelIdentifier = OnlineModelService.effectiveModelIdentifier(
+                    for: .chat,
+                    requestedModelIdentifier: resolvedOnlineModelIdentifier
+                )
                 let hadSuccessfulChat = await onlineModelService.hasHadSuccessfulChat()
-                if !hadSuccessfulChat {
+                if provider == .openRouter && !hadSuccessfulChat {
                     // Parallel safety net for the very first chat message
                     var seen: Set<String> = []
                     let parallelModels = [resolvedOnlineModelIdentifier, OnlineModelService.premiumFallbackModelIdentifier, AITier.smartest.byokModelIdentifierText]
@@ -144,7 +154,7 @@ actor CompanionChatService {
                 } else {
                     await ActivityLogService.shared.append(level: .verbose,
                         category: "llm:chat",
-                        message: "─── Request → openrouter/\(resolvedOnlineModelIdentifier) ───\n"
+                        message: "─── Request → \(provider.rawValue)/\(effectiveModelIdentifier) ───\n"
                             + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
                             + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
                     )

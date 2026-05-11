@@ -37,6 +37,7 @@ nonisolated enum LLMInteractionKind: String, Codable, CaseIterable, Sendable {
 }
 
 nonisolated enum LLMInteractionRuntime: String, Codable, Sendable {
+    case openAI = "openai"
     case openrouter
     case llamaCpp = "llama_cpp"
 }

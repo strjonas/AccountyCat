@@ -1270,7 +1270,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let output: RuntimeProcessOutput
             let runtimeLabel: String
             if configuration.usesOnlineInference {
-                runtimeLabel = "openrouter"
+                let provider = OnlineModelService.provider(for: .monitoringText)
+                runtimeLabel = provider.rawValue
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .monitoringText,
@@ -1297,7 +1298,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let stdoutPreview = output.stdout.cleanedSingleLine.truncatedForPrompt(maxLength: 400)
 
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
-                message: "─── Request → \(runtimeLabel)/\(modelIdentifier) ───\n"
+                message: "─── Request → \(runtimeLabel)/\(configuration.usesOnlineInference ? OnlineModelService.effectiveModelIdentifier(for: .monitoringText, requestedModelIdentifier: modelIdentifier) : modelIdentifier) ───\n"
                     + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))\n"
                     + "user: \(userPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))"
             )
@@ -1317,7 +1318,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
             attempts[attemptIndex].isAPIFailure = true
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
-                message: "✗ \(configuration.usesOnlineInference ? "openrouter" : "llama.cpp") · \(elapsedMs)ms · error: \(error.localizedDescription)"
+                message: "✗ \((configuration.usesOnlineInference ? OnlineModelService.provider(for: .monitoringText).rawValue : "llama.cpp")) · \(elapsedMs)ms · error: \(error.localizedDescription)"
             )
             return nil
         }
@@ -1369,7 +1370,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let output: RuntimeProcessOutput
             let runtimeLabel: String
             if configuration.usesOnlineInference {
-                runtimeLabel = "openrouter"
+                let provider = OnlineModelService.provider(for: .monitoringVision)
+                runtimeLabel = provider.rawValue
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .monitoringVision,
@@ -1397,7 +1399,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let stdoutPreview = output.stdout.cleanedSingleLine.truncatedForPrompt(maxLength: 400)
 
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
-                message: "─── Request → \(runtimeLabel)/\(modelIdentifier) ───\n"
+                message: "─── Request → \(runtimeLabel)/\(configuration.usesOnlineInference ? OnlineModelService.effectiveModelIdentifier(for: .monitoringVision, requestedModelIdentifier: modelIdentifier) : modelIdentifier) ───\n"
                     + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))\n"
                     + "user: \(userPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 2000))"
             )
@@ -1417,7 +1419,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
             attempts[attemptIndex].isAPIFailure = true
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
-                message: "✗ \(configuration.usesOnlineInference ? "openrouter" : "llama.cpp") · \(elapsedMs)ms · error: \(error.localizedDescription)"
+                message: "✗ \((configuration.usesOnlineInference ? OnlineModelService.provider(for: .monitoringVision).rawValue : "llama.cpp")) · \(elapsedMs)ms · error: \(error.localizedDescription)"
             )
             return nil
         }

@@ -211,11 +211,8 @@ struct ChatPanelView: View {
 
     private var panelBackground: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-
             if controller.state.useLiquidGlass {
-                // Liquid glass: pronounced specular highlights, radial glow,
-                // soft edge refraction, and a subtle tint shift.
+                Rectangle().fill(.ultraThinMaterial)
                 RadialGradient(
                     colors: [
                         Color.white.opacity(colorScheme == .dark ? 0.28 : 0.55),
@@ -236,7 +233,6 @@ struct ChatPanelView: View {
                     startRadius: 20,
                     endRadius: 360
                 )
-                // Specular top edge
                 LinearGradient(
                     colors: [
                         Color.white.opacity(colorScheme == .dark ? 0.32 : 0.48),
@@ -246,7 +242,6 @@ struct ChatPanelView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                // Soft bottom depth
                 LinearGradient(
                     colors: [
                         Color.clear,
@@ -255,48 +250,15 @@ struct ChatPanelView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
+            } else {
+                Rectangle().fill(Color(nsColor: NSColor(name: nil) { appearance in
+                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                        ? NSColor(white: 0.15, alpha: 1.0)
+                        : NSColor(white: 0.95, alpha: 1.0)
+                }))
             }
 
             switch controller.state.selectedSkin {
-            case .liquid where !controller.state.useLiquidGlass:
-                // Preserve legacy liquid-skin styling when liquid-glass toggle is off
-                RadialGradient(
-                    colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.28 : 0.55),
-                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.22),
-                        Color.clear
-                    ],
-                    center: .topLeading,
-                    startRadius: 0,
-                    endRadius: 380
-                )
-                RadialGradient(
-                    colors: [
-                        accent.opacity(colorScheme == .dark ? 0.18 : 0.14),
-                        accent.opacity(colorScheme == .dark ? 0.08 : 0.06),
-                        Color.clear
-                    ],
-                    center: .bottomTrailing,
-                    startRadius: 20,
-                    endRadius: 360
-                )
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.32 : 0.48),
-                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.14),
-                        Color.clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        Color.black.opacity(colorScheme == .dark ? 0.28 : 0.04)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
             case .pixel:
                 LinearGradient(
                     colors: [

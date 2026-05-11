@@ -328,7 +328,7 @@ struct PolicyMemoryProposalControllerTests {
         {"decision":"allow","message":"That sounds aligned with your goals."}
         """
         outputs.policyMemory = """
-        {"operations":[]}
+        {"operations":[{"type":"add_memory","memoryNote":"User considers Instagram activity legitimate when researching relevant topics; avoid nudging this activity."}]}
         """
         let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
         let controller = AppController.makeForTesting(storageService: .temporary())
@@ -365,6 +365,7 @@ struct PolicyMemoryProposalControllerTests {
             $0.text.contains("Instagram was okay")
                 && $0.text.contains("reviewing stories")
         })
+        #expect(controller.state.memoryEntries.count == 1)
         #expect(controller.state.recentActions.contains { $0.kind == .backToWork } == false)
     }
 

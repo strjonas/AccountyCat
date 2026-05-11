@@ -359,12 +359,13 @@ enum SnapshotService {
     }
 
     private static func cgWindowTitle(for pid: pid_t) -> String? {
-        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], CGWindowID(pid)) as? [[CFString: Any]] else {
+        guard CGPreflightScreenCaptureAccess() else { return nil }
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] else {
             return nil
         }
 
-        guard let matchingWindow = windows.first else { return nil }
-        return (matchingWindow[kCGWindowName] as? String)?.cleanedSingleLine
+        let match = windows.first { ($0[kCGWindowOwnerPID] as? pid_t) == pid }
+        return (match?[kCGWindowName] as? String)?.cleanedSingleLine
     }
 
     private static func browserTabTitle(for app: NSRunningApplication) -> String? {

@@ -59,6 +59,7 @@ struct OnlineModelServiceTests {
         #expect(
             OnlineModelService.isRetryable(
                 error: OnlineModelError.httpFailure(
+                    provider: .openRouter,
                     statusCode: 429,
                     message: "Provider returned error",
                     rawBody: "temporarily rate-limited upstream"
@@ -69,8 +70,10 @@ struct OnlineModelServiceTests {
 
     @Test
     func chatFallbackReplyExplainsTransientOverload() {
+        let provider = OnlineProviderRouting.provider(for: .chat)
         let reply = CompanionChatService.fallbackReply(
             for: OnlineModelError.httpFailure(
+                provider: .openRouter,
                 statusCode: 429,
                 message: "Provider returned error",
                 rawBody: "temporarily rate-limited upstream"
@@ -78,7 +81,11 @@ struct OnlineModelServiceTests {
         )
 
         #expect(reply.contains("overloaded"))
-        #expect(reply.contains("backup path"))
+        if provider == .openRouter {
+            #expect(reply.contains("backup path"))
+        } else {
+            #expect(!reply.contains("backup path"))
+        }
     }
 
     @Test
@@ -199,14 +206,14 @@ struct OnlineModelServiceTests {
     @Test
     func classifiesEmptyResponseAsRetryable() {
         #expect(
-            OnlineModelService.isRetryable(error: OnlineModelError.emptyResponse)
+            OnlineModelService.isRetryable(error: OnlineModelError.emptyResponse(provider: .openRouter))
         )
     }
 
     @Test
     func classifiesMalformedResponseAsRetryable() {
         #expect(
-            OnlineModelService.isRetryable(error: OnlineModelError.malformedResponse)
+            OnlineModelService.isRetryable(error: OnlineModelError.malformedResponse(provider: .openRouter))
         )
     }
 
@@ -214,8 +221,66 @@ struct OnlineModelServiceTests {
     func classifies401AsNotRetryable() {
         #expect(
             !OnlineModelService.isRetryable(
-                error: OnlineModelError.httpFailure(statusCode: 401, message: "Unauthorized", rawBody: "")
+                error: OnlineModelError.httpFailure(provider: .openRouter, statusCode: 401, message: "Unauthorized", rawBody: "")
             )
+        )
+    }
+
+    @Test
+    func providerAwareErrorDescriptionsReflectOpenAI() {
+        let message = OnlineModelError.missingAPIKey(provider: .openAI).localizedDescription
+
+        #expect(message.contains("OpenAI"))
+        #expect(!message.contains("OpenRouter"))
+    }
+
+    @Test
+    func directOpenAIToggleRoutesAllOnlineSourcesToOpenAI() {
+        #expect(
+            OnlineProviderRouting.route(
+                for: .chat,
+                requestedModelIdentifier: "deepseek/deepseek-v4-flash",
+                directOpenAIEnabled: true
+            ).provider == .openAI
+        )
+        #expect(
+            OnlineProviderRouting.route(
+                for: .monitoringVision,
+                requestedModelIdentifier: "google/gemma-4-31b-it",
+                directOpenAIEnabled: true
+            ).provider == .openAI
+        )
+        #expect(
+            OnlineProviderRouting.route(
+                for: .safelistAppeal,
+                requestedModelIdentifier: "google/gemma-4-31b-it",
+                directOpenAIEnabled: true
+            ).provider == .openAI
+        )
+        #expect(
+            OnlineProviderRouting.route(
+                for: .chat,
+                requestedModelIdentifier: "deepseek/deepseek-v4-flash",
+                directOpenAIEnabled: true
+            ).modelIdentifier == OnlineProviderRouting.directOpenAIModelIdentifier
+        )
+    }
+
+    @Test
+    func openAIKeyAloneDoesNotChangeProviderWithoutToggle() {
+        #expect(
+            OnlineProviderRouting.route(
+                for: .monitoringText,
+                requestedModelIdentifier: "deepseek/deepseek-v4-flash",
+                directOpenAIEnabled: false
+            ).provider == .openRouter
+        )
+        #expect(
+            OnlineProviderRouting.route(
+                for: .monitoringText,
+                requestedModelIdentifier: "deepseek/deepseek-v4-flash",
+                directOpenAIEnabled: false
+            ).modelIdentifier == "deepseek/deepseek-v4-flash"
         )
     }
 }
