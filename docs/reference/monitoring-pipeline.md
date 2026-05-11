@@ -47,6 +47,7 @@ Important fast paths:
 
 - explicit active `allow` rules can skip evaluation entirely
 - recently cached focused decisions can skip re-evaluation in the same context
+- a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
 - cadence delays defer evaluation until a context has been stable long enough
 - title-only context can suppress screenshots for non-ambiguous apps
 
@@ -119,6 +120,7 @@ The monitoring payload is profile-aware.
 - `BrainService` converts those reactions into normalized reward signals and passes them back into the active algorithm.
 - Hard escalations can reopen if the user returns to the blocked app.
 - Overlay appeals go back through `LLMMonitorAlgorithm.reviewAppeal(...)`.
+- An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` widens the scope to whole-app for browsers (research spans adjacent tabs) and keeps it window-scoped for everything else. Duration is set per cadence mode.
 
 ## Safelist Promotion
 

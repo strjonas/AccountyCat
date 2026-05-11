@@ -25,6 +25,7 @@ The product is not a blocker or a rules engine first. It is a context-aware comp
 - AC should learn over time from user interaction, corrections, appeals, and repeated patterns. (Every user interaction should potentially become memory -> AC should seem like its listening to the user. There is nothing more annoying than having to correct AC continuously)
 - AC should have what it needs and nothing more.
 - AC shouldn't just nag, but also celerate with the user. (non-intrusive)
+- "Customer is King". Listen to the user. If he correct you, change your behavior. Prompts and Algorithm provide the frame, but AC adapts to what the user needs.
 
 ## Engineering Principles
 

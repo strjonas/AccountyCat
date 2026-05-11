@@ -684,6 +684,11 @@ struct AppSnapshot: Codable, Sendable {
     var screenshotPath: String?
     var idle: Bool
     var timestamp: Date
+
+    nonisolated var contextKey: String {
+        [bundleIdentifier ?? "unknown", windowTitle?.normalizedForContextKey ?? ""]
+            .joined(separator: "|")
+    }
 }
 
 struct ChatContext: Sendable {
@@ -703,6 +708,76 @@ struct FrontmostContext: Hashable, Sendable, Codable {
     nonisolated var contextKey: String {
         [bundleIdentifier ?? "unknown", windowTitle?.normalizedForContextKey ?? ""]
             .joined(separator: "|")
+    }
+}
+
+struct RecentInteractionAllowance: Codable, Hashable, Sendable {
+    var createdAt: Date
+    var expiresAt: Date
+    var contextKey: String?
+    var bundleIdentifier: String?
+    var appName: String?
+    var windowTitle: String?
+    var reason: String
+
+    func isExpired(at now: Date) -> Bool {
+        now >= expiresAt
+    }
+
+    /// Canonical builder. For browsers we drop `contextKey` and `windowTitle` so the
+    /// allowance spans adjacent tabs of the same research session. For everything else
+    /// we keep the exact window — distinct windows in a native app usually mean distinct
+    /// activities (e.g. two Slack channels, two Notes notes) and shouldn't be conflated.
+    static func make(
+        bundleIdentifier: String?,
+        appName: String?,
+        windowTitle: String?,
+        contextKey: String?,
+        now: Date,
+        duration: TimeInterval,
+        reason: String
+    ) -> RecentInteractionAllowance? {
+        let cleanedAppName = appName?.cleanedSingleLine
+        guard bundleIdentifier != nil || (cleanedAppName?.isEmpty == false) else {
+            return nil
+        }
+        let browserLike = MonitoringHeuristics.isBrowser(bundleIdentifier: bundleIdentifier)
+        return RecentInteractionAllowance(
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(duration),
+            contextKey: browserLike ? nil : contextKey,
+            bundleIdentifier: bundleIdentifier,
+            appName: cleanedAppName,
+            windowTitle: browserLike ? nil : windowTitle?.cleanedSingleLine,
+            reason: reason.cleanedSingleLine
+        )
+    }
+
+    func matches(snapshot: AppSnapshot) -> Bool {
+        // A contextKey on the allowance is an exact-activity claim ("this app + this window title").
+        // If it's set, it's authoritative — don't fall back to fuzzier app-level checks.
+        if let contextKey {
+            return contextKey == snapshot.contextKey
+        }
+
+        if let bundleIdentifier,
+           snapshot.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) != .orderedSame {
+            return false
+        }
+
+        if let appName,
+           snapshot.appName.cleanedSingleLine.caseInsensitiveCompare(appName.cleanedSingleLine) != .orderedSame {
+            return false
+        }
+
+        if let windowTitle {
+            guard let snapshotTitle = snapshot.windowTitle?.cleanedSingleLine, !snapshotTitle.isEmpty else {
+                return false
+            }
+            return snapshotTitle.caseInsensitiveCompare(windowTitle.cleanedSingleLine) == .orderedSame
+        }
+
+        return bundleIdentifier != nil || appName != nil
     }
 }
 

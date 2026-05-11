@@ -303,6 +303,47 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func recentInteractionAllowanceOverrideShortCircuitsDecision() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = try #require(makeLocalPromptDate("2026-04-25 14:35"))
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.recentInteractionAllowances = [
+            RecentInteractionAllowance(
+                createdAt: now.addingTimeInterval(-60),
+                expiresAt: now.addingTimeInterval(10 * 60),
+                contextKey: nil,
+                bundleIdentifier: "dev.jon.ACInspector",
+                appName: "ACInspector",
+                windowTitle: nil,
+                reason: "user correction"
+            )
+        ]
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-recent-interaction-override",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: makeSnapshot(
+                    now: now,
+                    appName: "ACInspector",
+                    windowTitle: "Google Chrome",
+                    bundleIdentifier: "dev.jon.ACInspector"
+                )
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.decision.assessment == .focused)
+        #expect(result.decision.reasonTags == ["recent_user_feedback_override"])
+        #expect(result.policy.record.blockReason == "recent_user_feedback_override")
+        #expect(result.evaluation.attempts.isEmpty)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
+    }
+
+    @Test
     func repeatedMatchingNudgesEscalateDistractedNudgeDecisionToOverlay() async throws {
         let runtimeFixture = try FakeRuntimeFixture()
         let algorithm = makeAlgorithm()
@@ -658,8 +699,14 @@ struct LLMMonitorAlgorithmTests {
         #expect(result?.evaluation.attempts.map(\.promptMode) == ["appeal_review"])
         #expect(result?.updatedPolicyMemory.rules.contains(where: { $0.id == "appeal-allow" }) == true)
         #expect(result?.updatedAlgorithmState.llmPolicy.activeAppeal == nil)
-        #expect(result?.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .unclear)
+        #expect(result?.updatedAlgorithmState.llmPolicy.currentContextKey == "com.google.Chrome|docs")
+        #expect(result?.updatedAlgorithmState.llmPolicy.distraction.contextKey == "com.google.Chrome|docs")
+        #expect(result?.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
         #expect(result?.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(45))
+        #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.count == 1)
+        #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.appName == "Google Chrome")
+        #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.contextKey == nil)
+        #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.windowTitle == nil)
     }
 
     private func makeAlgorithm(

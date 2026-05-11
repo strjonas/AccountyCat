@@ -10,7 +10,6 @@ import ApplicationServices
 import CoreGraphics
 import EventKit
 import Foundation
-import ScreenCaptureKit
 
 enum PermissionService {
     static func currentSnapshot() -> PermissionsSnapshot {
@@ -58,20 +57,13 @@ enum PermissionService {
     @discardableResult
     static func requestScreenRecording() -> Bool {
         let granted = CGRequestScreenCaptureAccess()
-        
+
         if !granted {
-            // Force macOS to register the app in the privacy list by attempting a dummy capture
-            Task {
-                // Ignore any error; this is purely to trigger the system daemon to register the app.
-                _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            }
-            
-            // Open System Settings directly
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                 NSWorkspace.shared.open(url)
             }
         }
-        
+
         return granted
     }
 

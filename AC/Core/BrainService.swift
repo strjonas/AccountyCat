@@ -1385,7 +1385,7 @@ final class BrainService: NSObject {
                         interval: state.monitoringConfiguration.periodicFullScreenInterval,
                         now: now
                     ) {
-                        screenshotURL = try await SnapshotService.captureScreenshot()
+                        screenshotURL = try await SnapshotService.captureScreenshotIfPermitted()
                         state.lastFullScreenCheckAt = now
                     } else {
                         screenshotURL = try await SnapshotService.captureActiveWindowScreenshot()
@@ -1394,7 +1394,7 @@ final class BrainService: NSObject {
                         }
                     }
                 case .fullScreen:
-                    screenshotURL = try await SnapshotService.captureScreenshot()
+                    screenshotURL = try await SnapshotService.captureScreenshotIfPermitted()
                 }
             }
         } else {

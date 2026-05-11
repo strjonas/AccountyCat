@@ -24,8 +24,8 @@ enum MonitoringPromptContextBudget {
     nonisolated static let recentNudgeCount = 3
     /// Last user chat messages passed into decision + nudge stages as a safety net
     /// against memory extraction lag.
-    nonisolated static let recentUserChatCount = 3
-    nonisolated static let recentUserChatCharacters = 240
+    nonisolated static let recentUserChatCount = 5
+    nonisolated static let recentUserChatCharacters = 320
 }
 
 nonisolated struct MonitoringPromptHeuristicSummary: Codable, Hashable, Sendable {
@@ -256,6 +256,7 @@ nonisolated struct MonitoringAppealPromptPayload: Encodable, Sendable {
     var appealText: String
     var goals: String
     var freeFormMemory: String
+    var recentUserMessages: [String]
     var policySummary: String
     var snapshotAppName: String?
     var snapshotWindowTitle: String?

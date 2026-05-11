@@ -81,4 +81,10 @@ struct SnapshotServiceTests {
         #expect(SnapshotService.indicatesScreenCapturePermissionLoss(permissionError))
         #expect(!SnapshotService.indicatesScreenCapturePermissionLoss(unrelatedError))
     }
+
+    @Test
+    func detectsExplicitPermissionDeniedError() {
+        #expect(SnapshotService.indicatesScreenCapturePermissionLoss(SnapshotError.screenCapturePermissionDenied))
+        #expect(SnapshotError.screenCapturePermissionDenied.errorDescription?.isEmpty == false)
+    }
 }

@@ -269,6 +269,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         var attempts: [LLMEvaluationAttempt] = []
+        var workingState = input.algorithmState
+        workingState.llmPolicy.pruneRecentInteractionAllowances(at: input.now)
         let relevantActions = MonitoringLLMClient.monitoringRelevantActions(
             from: input.recentActions,
             at: input.now
@@ -295,18 +297,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             recentUserMessages: requestScope.recentUserMessages,
             freeFormMemory: requestScope.freeFormMemory
         ) {
-            var updatedState = input.algorithmState
-            updatedState.llmPolicy.activeAppeal = nil
-            updatedState.llmPolicy.distraction.contextKey = updatedState.llmPolicy.currentContextKey
-            updatedState.llmPolicy.distraction.lastAssessment = .focused
-            updatedState.llmPolicy.distraction.consecutiveDistractedCount = 0
-            updatedState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(
-                cadence.adjustedDelay(cadence.focusedFollowUp, isDefaultProfile: isDefaultProfile)
-            )
-            updatedState.llmPolicy.focusSignal.record(
-                assessment: .focused,
-                confidence: 1.0,
-                at: input.now
+            applyFocusedOverrideState(
+                to: &workingState,
+                now: input.now,
+                cadence: cadence,
+                isDefaultProfile: isDefaultProfile,
+                snapshot: input.snapshot
             )
 
             let decision = LLMDecision(
@@ -331,8 +327,48 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 ),
                 decision: decision,
                 action: .none,
-                updatedState: updatedState,
+                updatedState: workingState,
                 blockReason: "recent_allow_override"
+            )
+        }
+
+        if hasRecentInteractionAllowanceOverride(
+            snapshot: input.snapshot,
+            now: input.now,
+            state: workingState
+        ) {
+            applyFocusedOverrideState(
+                to: &workingState,
+                now: input.now,
+                cadence: cadence,
+                isDefaultProfile: isDefaultProfile,
+                snapshot: input.snapshot
+            )
+
+            let decision = LLMDecision(
+                assessment: .focused,
+                suggestedAction: .none,
+                confidence: 1.0,
+                reasonTags: ["recent_user_feedback_override"],
+                nudge: nil,
+                abstainReason: nil
+            )
+            return makeResult(
+                input: input,
+                execution: execution,
+                evaluation: LLMEvaluationResult(
+                    runtimePath: runtimeLocation,
+                    modelIdentifier: effectiveModelIdentifier,
+                    promptProfileID: descriptor.id,
+                    promptProfileVersion: descriptor.version,
+                    attempts: [],
+                    finalDecision: decision,
+                    failureMessage: nil
+                ),
+                decision: decision,
+                action: .none,
+                updatedState: workingState,
+                blockReason: "recent_user_feedback_override"
             )
         }
 
@@ -477,7 +513,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             failureMessage: Self.failureMessage(from: attempts, decision: decision)
         )
 
-        var updatedState = input.algorithmState
+        var updatedState = workingState
         var policyState = updatedState.llmPolicy
         var distraction = policyState.distraction
         distraction.contextKey = policyState.currentContextKey
@@ -953,6 +989,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                 ),
+                recentUserMessages: Self.compactRecentUserMessages(input.recentUserMessages),
                 policySummary: Self.makePolicySummary(
                     policyMemory: input.policyMemory,
                     snapshot: input.snapshot,
@@ -1015,12 +1052,36 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         var updatedAlgorithmState = input.algorithmState
+        updatedAlgorithmState.llmPolicy.pruneRecentInteractionAllowances(at: input.now)
         updatedAlgorithmState.llmPolicy.activeAppeal?.lastSubmittedAt = input.now
         updatedAlgorithmState.llmPolicy.activeAppeal?.lastResult = result
         if result.decision == AppealReviewDecision.allow {
+            let approvedContextKey = input.snapshot?.contextKey
+                ?? updatedAlgorithmState.llmPolicy.activeAppeal?.contextKey
+                ?? updatedAlgorithmState.llmPolicy.currentContextKey
             updatedAlgorithmState.llmPolicy.activeAppeal = nil
-            updatedAlgorithmState.llmPolicy.distraction.lastAssessment = .unclear
+            if let snapshot = input.snapshot,
+               let allowance = RecentInteractionAllowance.make(
+                bundleIdentifier: snapshot.bundleIdentifier,
+                appName: snapshot.appName,
+                windowTitle: snapshot.windowTitle,
+                contextKey: snapshot.contextKey,
+                now: input.now,
+                duration: input.configuration.cadenceMode.recentInteractionAllowanceDuration,
+                reason: "appeal_allow"
+               ) {
+                updatedAlgorithmState.llmPolicy.upsertRecentInteractionAllowance(allowance)
+            }
+            updatedAlgorithmState.llmPolicy.currentContextKey = approvedContextKey
+            updatedAlgorithmState.llmPolicy.distraction.contextKey = approvedContextKey
+            updatedAlgorithmState.llmPolicy.distraction.lastAssessment = .focused
+            updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount = 0
             updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(45)
+            updatedAlgorithmState.llmPolicy.focusSignal.record(
+                assessment: .focused,
+                confidence: 1.0,
+                at: input.now
+            )
         }
 
         return MonitoringAppealReviewOutput(
@@ -1602,6 +1663,38 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let aliases = Self.contextAliases(for: snapshot)
         return aliases.contains { alias in
             alias.count > 1 && message.contains(alias)
+        }
+    }
+
+    private func applyFocusedOverrideState(
+        to state: inout AlgorithmStateEnvelope,
+        now: Date,
+        cadence: MonitoringCadenceMode,
+        isDefaultProfile: Bool,
+        snapshot: AppSnapshot
+    ) {
+        state.llmPolicy.activeAppeal = nil
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.distraction.contextKey = snapshot.contextKey
+        state.llmPolicy.distraction.lastAssessment = .focused
+        state.llmPolicy.distraction.consecutiveDistractedCount = 0
+        state.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
+            cadence.adjustedDelay(cadence.focusedFollowUp, isDefaultProfile: isDefaultProfile)
+        )
+        state.llmPolicy.focusSignal.record(
+            assessment: .focused,
+            confidence: 1.0,
+            at: now
+        )
+    }
+
+    private func hasRecentInteractionAllowanceOverride(
+        snapshot: AppSnapshot,
+        now: Date,
+        state: AlgorithmStateEnvelope
+    ) -> Bool {
+        state.llmPolicy.recentInteractionAllowances.contains { allowance in
+            !allowance.isExpired(at: now) && allowance.matches(snapshot: snapshot)
         }
     }
 

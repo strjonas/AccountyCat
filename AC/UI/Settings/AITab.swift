@@ -194,6 +194,7 @@ struct AITab: View {
         else if pct < 0.66 { mode = .balanced }
         else { mode = .sharp }
         controller.updateMonitoringCadenceMode(mode)
+        controller.updateTitleLengthForTextOnly(mode.recommendedTitleLengthForTextOnly)
     }
 
     // MARK: - Mode pills

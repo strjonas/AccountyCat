@@ -216,9 +216,13 @@ enum ACPromptSets {
 
                 Decision rules:
                 - Activity supports the goals or matches an allowance → `focused` + `none`.
+                - Newer explicit allowance or correction in `recentUserMessages` for the current app/activity overrides an older nudge or stale suspicion → `focused` + `none`.
                 - Genuinely unclear → `unclear` + `abstain`.
                 - Conflicts with goals or an active restriction → `distracted`.
-                - First clear distraction → `nudge`. Repeated distraction already in the payload → `overlay`.
+                - First clear distraction → `nudge`. Repeated distraction already in the payload AND no newer allowance/correction → `overlay`.
+                - Trust the current screenshot/frontmost app more than stale `usage`, `recentSwitches`, or an older intervention message when they conflict.
+                - If the screenshot shows a review, debugger, inspector, prompt-lab, or other meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
+                - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
                 - When the screenshot is missing (`screenshotIncluded=false`), prefer `focused` or `unclear` unless the text context is clearly distracting.
                 - Prefer silence over a false positive.
 
@@ -276,10 +280,13 @@ enum ACPromptSets {
                 Decision rules:
                 - Activity supports the goals OR is covered by an allowance in memory/chat → `focused` + `none`.
                 - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
+                - A newer user correction that a recent nudge/overlay was wrong supersedes that older intervention for the current activity.
                 - Genuinely unclear after using the full payload → `unclear` + `abstain`.
                 - Activity conflicts with goals or an active restriction → `distracted`.
                 - First clear distraction → `nudge`.
                 - Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity, and no newer allowance) → `overlay`.
+                - Trust what the user is doing now more than stale usage summaries when they conflict.
+                - If the visible surface is a review/debug/inspector tool showing prior activity, judge the current work as reviewing/debugging/tooling unless the payload clearly says otherwise.
                 - Development tools, editors, terminals, docs, research, reading, planning, and drafting default to `focused` unless the payload clearly says otherwise.
                 - Prefer silence over a false positive.
 
@@ -329,6 +336,7 @@ enum ACPromptSets {
                 stage: .appealReview,
                 systemPrompt: """
                 Review a user's typed appeal to continue a potentially distracting activity.
+                The newest relevant user statement wins. If the user is clarifying that the activity serves the task, prefer allow unless goals/rules clearly contradict it.
                 Prefer allow or defer unless the appeal clearly conflicts with stated goals or rules.
                 Return exactly one JSON object:
                 {"decision":"allow|deny|defer","message":"short explanation"}

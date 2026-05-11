@@ -21,6 +21,10 @@ enum SnapshotService {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: Self.anyInputEventType)
     }
 
+    static func hasScreenCapturePermission() -> Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
     private static let anyInputEventType: CGEventType = CGEventType(rawValue: ~0)!
 
     // MARK: - Browser tab title cache
@@ -92,14 +96,23 @@ enum SnapshotService {
     }
 
     static func captureActiveWindowScreenshot() async throws -> URL {
-        if CGPreflightScreenCaptureAccess() {
-            if let window = try? await activeShareableWindow() {
-                return try await captureScreenshot(of: window)
-            }
+        guard CGPreflightScreenCaptureAccess() else {
+            throw SnapshotError.screenCapturePermissionDenied
+        }
+
+        if let window = try? await activeShareableWindow() {
+            return try await captureScreenshot(of: window)
         }
 
         if let windowRect = activeWindowRect() {
             return try await captureScreenshot(in: windowRect)
+        }
+        return try await captureScreenshot()
+    }
+
+    static func captureScreenshotIfPermitted() async throws -> URL {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw SnapshotError.screenCapturePermissionDenied
         }
         return try await captureScreenshot()
     }
@@ -109,6 +122,9 @@ enum SnapshotService {
     /// failures as permission loss so the UI can stop retrying screenshots
     /// until the user re-grants access.
     static func indicatesScreenCapturePermissionLoss(_ error: Error) -> Bool {
+        if case SnapshotError.screenCapturePermissionDenied = error {
+            return true
+        }
         let nsError = error as NSError
         return nsError.domain == screenCapturePermissionErrorDomain
             && nsError.code == screenCapturePermissionDeniedCode
@@ -437,6 +453,7 @@ enum SnapshotError: LocalizedError {
     case failedToWriteImage
     case captureReturnedNoImage
     case captureTimedOut
+    case screenCapturePermissionDenied
 
     var errorDescription: String? {
         switch self {
@@ -448,6 +465,8 @@ enum SnapshotError: LocalizedError {
             return "Screen capture returned no image."
         case .captureTimedOut:
             return "Screen capture timed out."
+        case .screenCapturePermissionDenied:
+            return "Screen Recording permission is not granted."
         }
     }
 }

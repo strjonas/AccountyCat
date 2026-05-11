@@ -81,6 +81,29 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     /// extending all gates by half. Tunable here, not user-facing.
     nonisolated static let everydayDelayMultiplier: Double = 1.5
 
+    /// Recommended window-title length threshold for the vision gate at this cadence.
+    /// The threshold is the *minimum* title length required to skip a screenshot.
+    /// Higher = harder to skip → more screenshots (sharper detection).
+    /// Lower  = easier to skip → fewer screenshots (calmer / lower cost).
+    var recommendedTitleLengthForTextOnly: Int {
+        switch self {
+        case .sharp: return 45
+        case .balanced: return 30
+        case .gentle: return 12
+        }
+    }
+
+    /// Cooldown applied after a user correction or approved appeal: AC stops re-evaluating
+    /// the same activity for this long. Sharp returns to vigilance faster; gentle stays
+    /// out of the way longer because the user picked a calmer mode in the first place.
+    var recentInteractionAllowanceDuration: TimeInterval {
+        switch self {
+        case .sharp: return 10 * 60
+        case .balanced: return 15 * 60
+        case .gentle: return 25 * 60
+        }
+    }
+
     /// Apply the everyday multiplier when no named profile is active.
     /// Internal helper for `LLMMonitorAlgorithm` — keeps the multiplier in one place
     /// rather than scattering ternaries at every cadence call site.
@@ -488,6 +511,8 @@ struct FocusSignalState: Codable, Sendable, Equatable {
 }
 
 struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
+    nonisolated static let recentInteractionAllowanceCap = 12
+
     var distraction = DistractionMetadata()
     var currentContextKey: String?
     var currentContextEnteredAt: Date?
@@ -496,6 +521,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
     var lastOverlayAt: Date?
     var recentNudgeMessages: [String] = []
     var activeAppeal: MonitoringAppealSession?
+    var recentInteractionAllowances: [RecentInteractionAllowance] = []
     var focusedObservations: [String: FocusedObservationStat] = [:]
     var decisionCacheByContext: [String: CachedDecision] = [:]
     var focusSignal = FocusSignalState()
@@ -509,6 +535,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         case lastOverlayAt
         case recentNudgeMessages
         case activeAppeal
+        case recentInteractionAllowances
         case focusedObservations
         case decisionCacheByContext
         case focusSignal
@@ -526,6 +553,10 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         lastOverlayAt = try c.decodeIfPresent(Date.self, forKey: .lastOverlayAt)
         recentNudgeMessages = try c.decodeIfPresent([String].self, forKey: .recentNudgeMessages) ?? []
         activeAppeal = try c.decodeIfPresent(MonitoringAppealSession.self, forKey: .activeAppeal)
+        recentInteractionAllowances = (try c.decodeIfPresent([RecentInteractionAllowance].self, forKey: .recentInteractionAllowances) ?? [])
+            .filter { !$0.isExpired(at: Date()) }
+            .suffix(Self.recentInteractionAllowanceCap)
+            .map { $0 }
         focusedObservations = try c.decodeIfPresent([String: FocusedObservationStat].self, forKey: .focusedObservations) ?? [:]
         decisionCacheByContext = try c.decodeIfPresent([String: CachedDecision].self, forKey: .decisionCacheByContext) ?? [:]
         focusSignal = try c.decodeIfPresent(FocusSignalState.self, forKey: .focusSignal) ?? FocusSignalState()
@@ -541,9 +572,41 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         try c.encodeIfPresent(lastOverlayAt, forKey: .lastOverlayAt)
         try c.encode(recentNudgeMessages, forKey: .recentNudgeMessages)
         try c.encodeIfPresent(activeAppeal, forKey: .activeAppeal)
+        try c.encode(recentInteractionAllowances, forKey: .recentInteractionAllowances)
         try c.encode(focusedObservations, forKey: .focusedObservations)
         try c.encode(decisionCacheByContext, forKey: .decisionCacheByContext)
         try c.encode(focusSignal, forKey: .focusSignal)
+    }
+
+    // MARK: - Recent interaction allowances
+
+    /// Drop expired entries and enforce the cap. Cheap; safe to call on any read path.
+    mutating func pruneRecentInteractionAllowances(at now: Date) {
+        recentInteractionAllowances.removeAll { $0.isExpired(at: now) }
+        if recentInteractionAllowances.count > Self.recentInteractionAllowanceCap {
+            recentInteractionAllowances = Array(
+                recentInteractionAllowances
+                    .sorted { $0.expiresAt > $1.expiresAt }
+                    .prefix(Self.recentInteractionAllowanceCap)
+            )
+        }
+    }
+
+    /// Insert (or refresh) an allowance, replacing any prior entry for the same
+    /// app+window identity. Newest is kept at index 0.
+    mutating func upsertRecentInteractionAllowance(_ allowance: RecentInteractionAllowance) {
+        recentInteractionAllowances.removeAll { existing in
+            existing.contextKey == allowance.contextKey
+                && existing.bundleIdentifier == allowance.bundleIdentifier
+                && existing.appName == allowance.appName
+                && existing.windowTitle == allowance.windowTitle
+        }
+        recentInteractionAllowances.insert(allowance, at: 0)
+        if recentInteractionAllowances.count > Self.recentInteractionAllowanceCap {
+            recentInteractionAllowances = Array(
+                recentInteractionAllowances.prefix(Self.recentInteractionAllowanceCap)
+            )
+        }
     }
 }
 

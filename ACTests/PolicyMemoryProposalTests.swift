@@ -370,6 +370,72 @@ struct PolicyMemoryProposalControllerTests {
     }
 
     @Test
+    func chatCorrectionBroadensBrowserOverrideBeyondExactTitle() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        let now = Date()
+        var state = ACState()
+        state.setupStatus = .needsRuntime
+        state.recentActions = [
+            ActionRecord(
+                id: UUID().uuidString,
+                kind: .nudge,
+                message: "That pricing page doesn't look like coding.",
+                timestamp: now.addingTimeInterval(-60),
+                contextKey: "com.google.Chrome|openrouter api pricing",
+                appName: "Google Chrome",
+                windowTitle: "OpenRouter API Pricing"
+            )
+        ]
+        controller.state = state
+
+        controller.sendChatMessage("but i need this for my project")
+
+        let browserAllowance = controller.state.algorithmState.llmPolicy.recentInteractionAllowances.first {
+            $0.appName == "Google Chrome"
+        }
+        #expect(browserAllowance != nil)
+        #expect(browserAllowance?.contextKey == nil)
+        #expect(browserAllowance?.windowTitle == nil)
+        #expect(controller.state.memoryEntries.contains {
+            $0.text.contains("Google Chrome")
+                && $0.text.contains("not a distraction")
+        })
+    }
+
+    @Test
+    func genericWorkMessageDoesNotRewriteOldInterventionAsCorrection() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        let now = Date()
+        var state = ACState()
+        state.setupStatus = .needsRuntime
+        state.recentActions = [
+            ActionRecord(
+                id: UUID().uuidString,
+                kind: .nudge,
+                message: "That thread doesn't look on-task.",
+                timestamp: now.addingTimeInterval(-(10 * 60)),
+                contextKey: "com.google.Chrome|codex review thread",
+                appName: "Google Chrome",
+                windowTitle: "Codex code review thread"
+            )
+        ]
+        controller.state = state
+
+        controller.sendChatMessage("this is work")
+
+        #expect(controller.state.memoryEntries.contains {
+            $0.text.contains("was not a distraction")
+        } == false)
+        #expect(controller.state.algorithmState.llmPolicy.recentInteractionAllowances.isEmpty)
+    }
+
+    @Test
     func acceptProposedRuleAddsItToPolicyMemoryAndRemovesFromQueue() {
         let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state

@@ -2095,7 +2095,7 @@ final class AppController: ObservableObject {
             let reviewInput = MonitoringAppealReviewInput(
                 now: reviewNow,
                 appealText: trimmedAppeal,
-                snapshot: nil,
+                snapshot: currentMonitoringPromptSnapshot(now: reviewNow),
                 goals: state.goalsText,
                 recentActions: state.recentActions,
                 memory: state.memoryForPrompt(now: reviewNow),
@@ -2194,6 +2194,10 @@ final class AppController: ObservableObject {
                     // User convinced AC — save to memory, clear hard escalation
                     self.state.hardEscalation = nil
                     self.appendMemoryLine("• User convinced AC to allow \(presentation.appName): \"\(trimmedAppeal)\"")
+                    self.installRecentInteractionAllowanceOverride(
+                        reason: "appeal approved: \(trimmedAppeal)",
+                        fallbackAppName: presentation.appName
+                    )
                     self.recordBehavioralSignal(BehavioralSignalSummary(
                         kind: "appealApproved",
                         observedAt: Date(),
@@ -2212,6 +2216,10 @@ final class AppController: ObservableObject {
                     self.companionMood = .watching
                 } else if output.result.decision == .allow {
                     self.appendMemoryLine("• Correction: \(presentation.appName) was okay. User said: \"\(trimmedAppeal)\"")
+                    self.installRecentInteractionAllowanceOverride(
+                        reason: "appeal approved: \(trimmedAppeal)",
+                        fallbackAppName: presentation.appName
+                    )
                     self.recordBehavioralSignal(BehavioralSignalSummary(
                         kind: "appealApproved",
                         observedAt: Date(),
@@ -2502,9 +2510,10 @@ final class AppController: ObservableObject {
                     details: trimmedDraft.cleanedSingleLine
                 )
             )
+            appendMemoryLine("• User disliked AC behavior: \"\(trimmedDraft.cleanedSingleLine)\"", notify: false)
         }
-        if AppControllerChatSupport.looksLikeDistractionCorrection(trimmedDraft) {
-            recordDistractionCorrection(trimmedDraft)
+        if let correctionMatch = distractionCorrectionMatch(for: trimmedDraft) {
+            recordDistractionCorrection(trimmedDraft, match: correctionMatch)
         }
 
         let cappedDraft = AppControllerChatSupport.cappedChatText(
@@ -2744,10 +2753,152 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func recordDistractionCorrection(_ text: String) {
+    /// Activity identity for an allowance install. When the user is correcting a recent
+    /// nudge by typing in the AC chat, the frontmost app is AC itself — the allowance
+    /// must target the *intervened* activity, not the chat window. Callers pass an
+    /// explicit `target` when they know which activity to allow.
+    private struct AllowanceTarget {
+        var bundleIdentifier: String?
+        var appName: String?
+        var windowTitle: String?
+        var contextKey: String?
+    }
+
+    /// After a user correction or approved appeal, install a short cooldown so AC
+    /// doesn't immediately re-evaluate (and re-flag) the same activity.
+    /// `RecentInteractionAllowance.make` widens to the whole app for browsers
+    /// (tab-hopping research) and stays window-specific elsewhere.
+    private func installRecentInteractionAllowanceOverride(
+        reason: String,
+        now: Date = Date(),
+        target: AllowanceTarget? = nil,
+        fallbackAppName: String? = nil
+    ) {
+        let cadenceMode = state.monitoringConfiguration.cadenceMode
+        let duration = cadenceMode.recentInteractionAllowanceDuration
+
+        let resolvedTarget: AllowanceTarget?
+        if let target {
+            resolvedTarget = target
+        } else if let current = SnapshotService.frontmostContext() {
+            resolvedTarget = AllowanceTarget(
+                bundleIdentifier: current.bundleIdentifier,
+                appName: current.appName,
+                windowTitle: current.windowTitle,
+                contextKey: current.contextKey
+            )
+            state.algorithmState.llmPolicy.currentContextKey = current.contextKey
+            state.algorithmState.llmPolicy.distraction.contextKey = current.contextKey
+        } else if let fallbackAppName {
+            resolvedTarget = AllowanceTarget(appName: fallbackAppName)
+        } else {
+            resolvedTarget = nil
+        }
+
+        state.algorithmState.llmPolicy.pruneRecentInteractionAllowances(at: now)
+        if let resolvedTarget,
+           let allowance = RecentInteractionAllowance.make(
+            bundleIdentifier: resolvedTarget.bundleIdentifier,
+            appName: resolvedTarget.appName,
+            windowTitle: resolvedTarget.windowTitle,
+            contextKey: resolvedTarget.contextKey,
+            now: now,
+            duration: duration,
+            reason: reason
+           ) {
+            state.algorithmState.llmPolicy.upsertRecentInteractionAllowance(allowance)
+        }
+
+        let isDefaultProfile = state.activeProfileID == PolicyRule.defaultProfileID
+        state.algorithmState.llmPolicy.activeAppeal = nil
+        state.algorithmState.llmPolicy.distraction.lastAssessment = .focused
+        state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount = 0
+        state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
+            cadenceMode.adjustedDelay(
+                cadenceMode.focusedFollowUp,
+                isDefaultProfile: isDefaultProfile
+            )
+        )
+        state.algorithmState.llmPolicy.focusSignal.record(
+            assessment: .focused,
+            confidence: 1.0,
+            at: now
+        )
+    }
+
+    /// `ActionRecord.contextKey` is `"<bundleIdentifier>|<normalized windowTitle>"`.
+    /// Recover the bundle so we can route through the browser-widening branch of
+    /// `RecentInteractionAllowance.make` even though `ActionRecord` doesn't store it.
+    private static func bundleIdentifier(fromContextKey contextKey: String?) -> String? {
+        guard let contextKey, let separator = contextKey.firstIndex(of: "|") else { return nil }
+        let prefix = String(contextKey[..<separator])
+        guard !prefix.isEmpty, prefix != "unknown" else { return nil }
+        return prefix
+    }
+
+    private func currentMonitoringPromptSnapshot(now: Date) -> AppSnapshot? {
+        guard let context = SnapshotService.frontmostContext() else {
+            return nil
+        }
+
+        let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
+        let perAppDurations = dayUsage
+            .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
+            .sorted { $0.seconds > $1.seconds }
+
+        return AppSnapshot(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            windowTitle: context.windowTitle,
+            recentSwitches: Array(state.recentSwitches.prefix(4)),
+            perAppDurations: Array(perAppDurations.prefix(6)),
+            screenshotArtifact: nil,
+            screenshotThumbnail: nil,
+            screenshotPath: nil,
+            idle: false,
+            timestamp: now
+        )
+    }
+
+    private enum DistractionCorrectionMatch {
+        case explicit
+        case contextualJustification
+
+        var recentInterventionWindow: TimeInterval {
+            switch self {
+            case .explicit:
+                return 30 * 60
+            case .contextualJustification:
+                return 5 * 60
+            }
+        }
+    }
+
+    private func distractionCorrectionMatch(
+        for text: String,
+        now: Date = Date()
+    ) -> DistractionCorrectionMatch? {
+        if AppControllerChatSupport.looksLikeExplicitDistractionCorrection(text) {
+            return .explicit
+        }
+        guard AppControllerChatSupport.looksLikeWorkJustificationCorrection(text) else {
+            return nil
+        }
+        let hasVeryRecentIntervention = state.recentActions.contains { action in
+            (action.kind == .nudge || action.kind == .overlay)
+                && now.timeIntervalSince(action.timestamp) <= DistractionCorrectionMatch.contextualJustification.recentInterventionWindow
+        }
+        return hasVeryRecentIntervention ? .contextualJustification : nil
+    }
+
+    private func recordDistractionCorrection(
+        _ text: String,
+        match: DistractionCorrectionMatch
+    ) {
         let now = Date()
         guard let action = state.recentActions.first(where: {
-            ($0.kind == .nudge || $0.kind == .overlay) && now.timeIntervalSince($0.timestamp) <= 30 * 60
+            ($0.kind == .nudge || $0.kind == .overlay)
+                && now.timeIntervalSince($0.timestamp) <= match.recentInterventionWindow
         }) else {
             return
         }
@@ -2771,6 +2922,17 @@ final class AppController: ObservableObject {
         state.algorithmState.llmPolicy.distraction.lastAssessment = .focused
         state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount = 0
         state.algorithmState.llmPolicy.focusSignal.resetFlow(at: now)
+        installRecentInteractionAllowanceOverride(
+            reason: "user correction: \(text.cleanedSingleLine)",
+            now: now,
+            target: AllowanceTarget(
+                bundleIdentifier: Self.bundleIdentifier(fromContextKey: action.contextKey),
+                appName: action.appName,
+                windowTitle: action.windowTitle,
+                contextKey: action.contextKey
+            ),
+            fallbackAppName: action.appName
+        )
         schedulePolicyMemoryUpdate(
             eventSummary: "User corrected a recent intervention: \(text.cleanedSingleLine)",
             context: SnapshotService.frontmostContext()
@@ -4304,6 +4466,9 @@ private enum AppControllerChatSupport {
         let lowered = text.cleanedSingleLine.lowercased()
         let markers = [
             "annoying",
+            "dislike",
+            "didn't like",
+            "did not like",
             "stop nudging",
             "too much",
             "interrupt",
@@ -4314,7 +4479,7 @@ private enum AppControllerChatSupport {
         return markers.contains { lowered.contains($0) }
     }
 
-    static func looksLikeDistractionCorrection(_ text: String) -> Bool {
+    static func looksLikeExplicitDistractionCorrection(_ text: String) -> Bool {
         let lowered = text.cleanedSingleLine.lowercased()
         let markers = [
             "wasn't a distraction",
@@ -4326,6 +4491,23 @@ private enum AppControllerChatSupport {
             "that was work",
             "that was focused",
             "actually productive",
+        ]
+        return markers.contains { lowered.contains($0) }
+    }
+
+    static func looksLikeWorkJustificationCorrection(_ text: String) -> Bool {
+        let lowered = text.cleanedSingleLine.lowercased()
+        let markers = [
+            "part of my project",
+            "part of my task",
+            "belongs to my project",
+            "belongs to the project",
+            "belongs to it",
+            "for my project",
+            "for the project",
+            "needed for my project",
+            "need this for my project",
+            "this is work",
         ]
         return markers.contains { lowered.contains($0) }
     }

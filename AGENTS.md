@@ -36,11 +36,13 @@ If this file and a canonical doc disagree, the canonical doc wins. `north-star.m
 - Never use `AppController.shared` in tests.
 - Never use `StorageService()` in tests. It writes to the real state file at `~/Library/Application Support/AC/state.json`. Use `AppController.makeForTesting(storageService: .temporary())` or `StorageService.temporary()` for isolated state in tests.
 - Verbose telemetry is effectively Debug-build only. Do not assume release builds have the same artifacts available.
+- Avoid to scan the whole filesystem so that MacOS permission popups appear en mass. Similarly avoid to do anything that requires permission or keychain popups (especially relevant in tests).
+- Never call `CGRequestScreenCaptureAccess()` or `SCShareableContent` to "register" the app. These trigger the system permission dialog. Use `CGPreflightScreenCaptureAccess()` (read-only check) instead, and gate all capture calls behind it.
 
 ## Build & Test
 
 ```bash
-# Run unit tests (no code signing needed)
+# Run unit tests (no code signing needed — tests mock capture and runtime)
 xcodebuild test -project AC.xcodeproj -scheme AC -destination 'platform=macOS' -only-testing:ACTests CODE_SIGNING_ALLOWED=NO
 
 # Build the inspector companion

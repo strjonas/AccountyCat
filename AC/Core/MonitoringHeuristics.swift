@@ -23,6 +23,8 @@ enum MonitoringHeuristics {
     nonisolated static let periodicVisualCheckInterval: TimeInterval = 120
 
     nonisolated static let clearlyProductiveBundleIdentifiers: Set<String> = [
+        "dev.jon.ACInspector",
+        "com.openai.codex",
         "com.apple.dt.Xcode",
         "com.microsoft.VSCode",
         "com.jetbrains.intellij",

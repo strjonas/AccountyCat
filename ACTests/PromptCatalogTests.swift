@@ -13,6 +13,7 @@ struct PromptCatalogTests {
     @Test
     func policyDecisionPromptUsesSharedDecisionRules() {
         let systemPrompt = ACPromptSets.systemPrompt(for: .decision)
+        let onlineDecisionPrompt = ACPromptSets.systemPrompt(for: .onlineDecision)
         let perceptionPrompt = ACPromptSets.systemPrompt(for: .perceptionVision)
         let runtimeProfile = LLMPolicyCatalog.defaultRuntimeProfile
 
@@ -20,6 +21,9 @@ struct PromptCatalogTests {
         #expect(systemPrompt.contains("Prefer silence over a false positive."))
         #expect(systemPrompt.contains("policySummary"))
         #expect(systemPrompt.contains("the newest relevant user statement wins"))
+        #expect(systemPrompt.contains("review/debug/inspector tool"))
+        #expect(onlineDecisionPrompt.contains("Trust the current screenshot/frontmost app more than stale `usage`"))
+        #expect(onlineDecisionPrompt.contains("review, debugger, inspector, prompt-lab"))
         #expect(perceptionPrompt.contains("Do not decide whether the activity matches the user's goals or policy rules yet."))
         #expect(runtimeProfile.options(for: .decision).ctxSize == 4096)
     }

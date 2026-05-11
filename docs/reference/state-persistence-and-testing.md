@@ -78,6 +78,8 @@ The real default storage path is the user's actual state file, so test isolation
 
 Also avoid to trigger permission requests or keychain access in tests.
 
+Tests use `CODE_SIGNING_ALLOWED=NO`, which produces an ad-hoc binary. macOS TCC keys Screen Recording and Accessibility grants to the binary's code signature, so ad-hoc test builds do not inherit those grants. This is fine because tests mock capture calls (`BrainService.screenshotCapture`) and runtime providers (`FakeRuntimeFixture`). The live app should always run with proper signing (via Xcode's Run action, which uses `LocalOverrides.xcconfig`).
+
 ## Useful Test Areas
 
 - `LLMMonitorAlgorithmTests.swift`
