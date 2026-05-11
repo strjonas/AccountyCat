@@ -23,6 +23,8 @@ final class BrainService: NSObject {
     var hardEscalationReopenSink: ((String) -> Void)?
     /// Called on every tick that reaches evaluation (or skip) so the UI can show "last check" ago.
     var lastCheckSink: ((Date) -> Void)?
+    /// Lets AppController tear down long-lived runtime resources when monitoring enters standby.
+    var runtimeStandbySink: (() async -> Void)?
 
     /// Override for testing: substitute a real `SnapshotService.frontmostContext()` call.
     var contextProvider: (() -> FrontmostContext?)?
@@ -416,24 +418,11 @@ final class BrainService: NSObject {
     }
 
     @objc private func handleWillSleep() {
-        cancelActiveEvaluationIfNeeded(reason: "system_sleep")
-        isSessionAvailable = false
-        appendLifecycleHeartbeat(reason: "system_will_sleep")
-        Task {
-            await ActivityLogService.shared.append(category: "app", message: "System will sleep. Monitoring is standing by.")
-        }
-        Task { @MainActor in
-            guard let state = self.stateProvider?() else { return }
-            await self.endActiveEpisode(
-                reason: .sessionInactive,
-                context: self.lastObservedContext,
-                state: state,
-                idleSeconds: SnapshotService.idleSeconds(),
-                at: Date()
-            )
-        }
-        resetDistractionState()
-        moodSink?(.idle)
+        transitionToStandby(
+            cancellationReason: "system_sleep",
+            heartbeatReason: "system_will_sleep",
+            logMessage: "System will sleep. Monitoring is standing by."
+        )
     }
 
     @objc private func handleDidWake() {
@@ -446,24 +435,11 @@ final class BrainService: NSObject {
     }
 
     @objc private func handleSessionInactive() {
-        cancelActiveEvaluationIfNeeded(reason: "session_inactive")
-        isSessionAvailable = false
-        appendLifecycleHeartbeat(reason: "session_inactive")
-        Task {
-            await ActivityLogService.shared.append(category: "app", message: "User session became inactive. Monitoring is standing by.")
-        }
-        Task { @MainActor in
-            guard let state = self.stateProvider?() else { return }
-            await self.endActiveEpisode(
-                reason: .sessionInactive,
-                context: self.lastObservedContext,
-                state: state,
-                idleSeconds: SnapshotService.idleSeconds(),
-                at: Date()
-            )
-        }
-        resetDistractionState()
-        moodSink?(.idle)
+        transitionToStandby(
+            cancellationReason: "session_inactive",
+            heartbeatReason: "session_inactive",
+            logMessage: "User session became inactive. Monitoring is standing by."
+        )
     }
 
     @objc private func handleSessionActive() {
@@ -484,6 +460,55 @@ final class BrainService: NSObject {
             defer { self.isTickScheduled = false }
             await self.tick()
         }
+    }
+
+    private func transitionToStandby(
+        cancellationReason: String,
+        heartbeatReason: String,
+        logMessage: String
+    ) {
+        cancelActiveEvaluationIfNeeded(reason: cancellationReason)
+        isSessionAvailable = false
+        consecutiveAPIFailures = 0
+        wasInCallLastTick = false
+        connectionProblemSink?(nil)
+        appendLifecycleHeartbeat(reason: heartbeatReason)
+
+        Task {
+            await ActivityLogService.shared.append(category: "app", message: logMessage)
+        }
+
+        if let runtimeStandbySink {
+            Task {
+                await runtimeStandbySink()
+            }
+        }
+
+        let observedContext = lastObservedContext
+        let idleSeconds = SnapshotService.idleSeconds()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let state = self.stateProvider?() {
+                await self.endActiveEpisode(
+                    reason: .sessionInactive,
+                    context: observedContext,
+                    state: state,
+                    idleSeconds: idleSeconds,
+                    at: Date()
+                )
+            }
+            self.resetMonitoringBaselineForStandby()
+            self.moodSink?(.idle)
+        }
+    }
+
+    private func resetMonitoringBaselineForStandby() {
+        resetDistractionState()
+        pendingReactionsByEvaluationID = [:]
+        activeEpisode = nil
+        lastObservedContext = nil
+        lastObservedAt = Date()
+        recentSwitches = []
     }
 
     private func probeForContextChange() {
@@ -1455,6 +1480,7 @@ final class BrainService: NSObject {
             return
         }
 
+        state.pruneUsageHistory(now: now)
         var usageForDay = state.usageByDay[now.acDayKey] ?? [:]
         usageForDay[previousContext.appName, default: 0] += delta
         state.usageByDay[now.acDayKey] = usageForDay

@@ -836,6 +836,7 @@ struct ACState: Codable, Sendable {
     static let defaultGoalsText = """
     I want to spend most of my time studying, building, and gaining experience. Short social check-ins are okay, but not long scrolling sessions.
     """
+    static let usageHistoryRetentionDays = 35
 
     var character: ACCharacter = .mochi
     var selectedSkin: ACSkin = .bubble
@@ -1114,6 +1115,7 @@ struct ACState: Codable, Sendable {
                 }
             }
         }
+        pruneUsageHistory(now: now)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1189,6 +1191,25 @@ struct ACState: Codable, Sendable {
         recentlyEndedSession = nil
         proposedChanges = []
         recentBehavioralSignals = []
+    }
+
+    mutating func pruneUsageHistory(now: Date = Date()) {
+        let calendar = Calendar(identifier: .gregorian)
+        guard let cutoffDate = calendar.date(
+            byAdding: .day,
+            value: -(Self.usageHistoryRetentionDays - 1),
+            to: calendar.startOfDay(for: now)
+        ) else {
+            return
+        }
+
+        let cutoffKey = cutoffDate.acDayKey
+        usageByDay = usageByDay.reduce(into: [:]) { partial, entry in
+            guard entry.key >= cutoffKey else { return }
+            let positiveUsage = entry.value.filter { $0.value > 0 }
+            guard !positiveUsage.isEmpty else { return }
+            partial[entry.key] = positiveUsage
+        }
     }
 
     // MARK: - Memory helpers

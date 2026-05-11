@@ -16,7 +16,8 @@ struct CatRendererPlush: CatRenderer {
         in context: GraphicsContext,
         size: CGSize,
         character: ACCharacter,
-        expression: ACCatExpression
+        expression: ACCatExpression,
+        accent: Color
     ) {
         let s = min(size.width, size.height) / 64
         let ox = size.width / 2 - 32 * s

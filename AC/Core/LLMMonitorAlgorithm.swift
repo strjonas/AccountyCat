@@ -78,6 +78,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     func resetTransientState(_ state: inout AlgorithmStateEnvelope) {
         state.llmPolicy.distraction = DistractionMetadata()
+        state.llmPolicy.currentContextKey = nil
+        state.llmPolicy.currentContextEnteredAt = nil
         state.llmPolicy.activeAppeal = nil
         state.llmPolicy.focusSignal = FocusSignalState()
     }

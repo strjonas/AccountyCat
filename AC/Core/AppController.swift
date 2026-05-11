@@ -3710,11 +3710,16 @@ final class AppController: ObservableObject {
     /// a stale monitoring copy.
     func mergeBrainState(base: ACState, updated: ACState) {
         var merged = state
+        merged.permissions = updated.permissions
         merged.algorithmState = updated.algorithmState
         merged.recentSwitches = updated.recentSwitches
         merged.recentActions = updated.recentActions
         merged.usageByDay = updated.usageByDay
         merged.focusSegments = updated.focusSegments
+        merged.recurringNudges = updated.recurringNudges
+        merged.lastFullScreenCheckAt = updated.lastFullScreenCheckAt
+        merged.hardEscalation = updated.hardEscalation
+        merged.recentlyEndedSession = updated.recentlyEndedSession
         merged.policyMemory = Self.mergePolicyMemory(
             base: base.policyMemory,
             current: merged.policyMemory,
@@ -4038,6 +4043,10 @@ final class AppController: ObservableObject {
             brainService.connectionProblemSink = { [weak self] notice in
                 self?.connectionProblemNotice = notice
             }
+            brainService.runtimeStandbySink = { [weak self] in
+                guard let self else { return }
+                await self.suspendMonitoringRuntime()
+            }
 
             self.brainService = brainService
             brainService.start()
@@ -4055,6 +4064,10 @@ final class AppController: ObservableObject {
         return configuration.localModelIdentifierImage
             ?? configuration.localModelIdentifierText
             ?? AITier.balanced.localModelIdentifierText
+    }
+
+    private func suspendMonitoringRuntime() async {
+        await localModelRuntime.shutdown()
     }
 
     func noteUsedModel(_ identifier: String?) {

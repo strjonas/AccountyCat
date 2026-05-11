@@ -2,11 +2,14 @@
 //  CatRendererBubble.swift
 //  AC
 //
-//  Bubble skin: a warm, refined soft cat — the daily-driver slot. Sits
-//  between Mono's minimalism and Plush's expressiveness. Uses a subtle
-//  vertical body gradient for depth (read as "soft paper", not gloss),
-//  delicate strokes, and small features so it never tips into sticker-pack
-//  territory.
+//  Bubble skin — reinvented as a fill-based "modern app icon" cat. No
+//  outlines (outlines reveal every imperfect curve and read as hand-drawn);
+//  the body is a single confident shape with a subtle vertical gradient, a
+//  soft outer shadow for separation, and a faint top sheen for dimension.
+//
+//  The body tints from the user's accent: warm accents read peachy, cool
+//  accents read lavender, green accents read sage. Reads like a Things-3 /
+//  Setapp icon rather than a sticker.
 //
 
 import SwiftUI
@@ -16,12 +19,13 @@ struct CatRendererBubble: CatRenderer {
         in context: GraphicsContext,
         size: CGSize,
         character: ACCharacter,
-        expression: ACCatExpression
+        expression: ACCatExpression,
+        accent: Color
     ) {
         let s = min(size.width, size.height) / 64
         let ox = size.width / 2 - 32 * s
         let oy = size.height / 2 - 32 * s
-        let p = CatPalette(character)
+        let p = BubblePalette(accent: accent)
 
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
             CGPoint(x: ox + x * s, y: oy + y * s)
@@ -30,181 +34,200 @@ struct CatRendererBubble: CatRenderer {
             CGRect(x: ox + x * s, y: oy + y * s, width: w * s, height: h * s)
         }
 
-        let stroke = StrokeStyle(lineWidth: 0.9 * s, lineCap: .round, lineJoin: .round)
-        let thin = StrokeStyle(lineWidth: 1.2 * s, lineCap: .round, lineJoin: .round)
+        // ─── Soft outer shadow (sells "object floating on a surface", a macOS
+        //     icon cue). Three faint passes at decreasing opacity / increasing
+        //     spread → cheap but convincing penumbra. ───
+        for (spread, alpha) in [(2.0, 0.06), (4.0, 0.05), (7.0, 0.04)] {
+            let r = CGRect(
+                x: ox + (12 - spread) * s,
+                y: oy + (52 - spread / 2) * s,
+                width: (40 + spread * 2) * s,
+                height: (5 + spread) * s
+            )
+            context.fill(Path(ellipseIn: r), with: .color(p.shadow.opacity(alpha)))
+        }
 
-        // Soft contact shadow.
-        context.fill(Path(ellipseIn: rect(20, 52.6, 24, 3.4)), with: .color(p.shadow.opacity(0.24)))
-
-        // ─── Ears (delicate stroke, softer triangles) ───
-        let leftEar = softEar(points: [pt(14.5, 22), pt(22, 9), pt(26, 22)])
-        let rightEar = softEar(points: [pt(49.5, 22), pt(42, 9), pt(38, 22)])
+        // ─── Ears (drawn first so the head sits on top and hides the ear bases) ───
+        let leftEar = softTri(pt(13.5, 19), pt(21, 6.5), pt(27, 19))
+        let rightEar = softTri(pt(50.5, 19), pt(43, 6.5), pt(37, 19))
         context.fill(leftEar, with: .linearGradient(
             Gradient(colors: [p.bodyTop, p.bodyBottom]),
-            startPoint: pt(22, 9),
-            endPoint: pt(22, 22)
+            startPoint: pt(21, 6.5),
+            endPoint: pt(21, 19)
         ))
         context.fill(rightEar, with: .linearGradient(
             Gradient(colors: [p.bodyTop, p.bodyBottom]),
-            startPoint: pt(42, 9),
-            endPoint: pt(42, 22)
+            startPoint: pt(43, 6.5),
+            endPoint: pt(43, 19)
         ))
-        context.stroke(leftEar, with: .color(p.outline), style: stroke)
-        context.stroke(rightEar, with: .color(p.outline), style: stroke)
+        // Inner ear: a darker shade of the body — no extra hue, just depth.
+        context.fill(softTri(pt(17.5, 14), pt(21, 8.5), pt(24.5, 16)), with: .color(p.earInner))
+        context.fill(softTri(pt(46.5, 14), pt(43, 8.5), pt(39.5, 16)), with: .color(p.earInner))
 
-        // Inner ear — small, low-contrast triangles. Whisper, don't shout.
-        context.fill(softEar(points: [pt(18.5, 18), pt(21, 13), pt(23, 19)]), with: .color(p.innerEar))
-        context.fill(softEar(points: [pt(45.5, 18), pt(43, 13), pt(41, 19)]), with: .color(p.innerEar))
-
-        // ─── Head silhouette ───
+        // ─── Head: a near-circle, slightly squashed. Single confident shape. ───
         var head = Path()
-        head.move(to: pt(12, 34))
-        head.addQuadCurve(to: pt(32, 18), control: pt(12, 18))
-        head.addQuadCurve(to: pt(52, 34), control: pt(52, 18))
-        head.addQuadCurve(to: pt(32, 50), control: pt(52, 50))
-        head.addQuadCurve(to: pt(12, 34), control: pt(12, 50))
+        head.move(to: pt(10, 32))
+        head.addQuadCurve(to: pt(32, 14), control: pt(10, 16))   // up-left to brow
+        head.addQuadCurve(to: pt(54, 32), control: pt(54, 16))   // brow to right cheek
+        head.addQuadCurve(to: pt(32, 53), control: pt(54, 52))   // right cheek to chin
+        head.addQuadCurve(to: pt(10, 32), control: pt(10, 52))   // chin to left cheek
         head.closeSubpath()
-
-        // Subtle vertical gradient — depth without gloss. Read as "soft paper".
         context.fill(head, with: .linearGradient(
             Gradient(colors: [p.bodyTop, p.bodyBottom]),
-            startPoint: pt(32, 18),
-            endPoint: pt(32, 50)
+            startPoint: pt(32, 14),
+            endPoint: pt(32, 53)
         ))
-        context.stroke(head, with: .color(p.outline), style: stroke)
 
-        // Very faint top catch-light — adds a hint of dimension, kept minimal.
-        context.fill(Path(ellipseIn: rect(18, 22, 14, 3.2)), with: .color(.white.opacity(0.24)))
+        // ─── Top sheen (the gloss highlight every Mac icon has). Soft, subtle. ───
+        context.fill(Path(ellipseIn: rect(16, 17, 32, 6)), with: .color(.white.opacity(0.30)))
+        context.fill(Path(ellipseIn: rect(22, 18, 20, 3.2)), with: .color(.white.opacity(0.22)))
 
+        // ─── Eyes — sit slightly above center, small enough to feel mature ───
         drawEyes(context, pt: pt, rect: rect, scale: s, palette: p, expression: expression)
 
+        // ─── Cheek blush — fades softly into the body, never a hard sticker dot ───
         if expression == .happy || expression == .celebrate || expression == .neutral || expression == .alert {
-            // Refined cheek blush — smaller, more transparent, lower on the face.
-            context.fill(Path(ellipseIn: rect(18, 38, 4.0, 2.2)), with: .color(p.accent.opacity(0.42)))
-            context.fill(Path(ellipseIn: rect(42, 38, 4.0, 2.2)), with: .color(p.accent.opacity(0.42)))
+            context.fill(Path(ellipseIn: rect(15, 37, 7, 3.2)), with: .color(p.blush.opacity(0.55)))
+            context.fill(Path(ellipseIn: rect(42, 37, 7, 3.2)), with: .color(p.blush.opacity(0.55)))
         }
 
-        // Nose — small filled triangle, slightly tighter than before.
+        // ─── Nose (small filled triangle, color is darker accent — feels intentional) ───
         var nose = Path()
-        nose.move(to: pt(30.6, 38))
-        nose.addLine(to: pt(33.4, 38))
-        nose.addLine(to: pt(32, 40.0))
+        nose.move(to: pt(30.5, 38.6))
+        nose.addLine(to: pt(33.5, 38.6))
+        nose.addLine(to: pt(32, 40.5))
         nose.closeSubpath()
         context.fill(nose, with: .color(p.nose))
 
+        // ─── Mouth ───
         drawMouth(context, pt: pt, scale: s, palette: p, expression: expression)
 
         if expression == .celebrate {
-            drawSpark(context, center: pt(8, 13), scale: s * 0.95, color: p.accent)
-            drawSpark(context, center: pt(56, 12), scale: s * 0.65, color: p.accent.opacity(0.85))
+            drawSpark(context, center: pt(6, 13), scale: s * 1.0, color: p.spark)
+            drawSpark(context, center: pt(58, 12), scale: s * 0.72, color: p.spark.opacity(0.78))
         }
         if expression == .sleep {
-            drawCrescent(context, center: pt(54, 12), scale: s, color: p.shadow.opacity(0.62))
+            drawCrescent(context, center: pt(56, 12), scale: s, color: p.eye.opacity(0.55))
         }
     }
 }
 
+// MARK: - Palette derived from accent
+
+private struct BubblePalette {
+    let bodyTop: Color
+    let bodyBottom: Color
+    let earInner: Color
+    let blush: Color
+    let eye: Color
+    let nose: Color
+    let shadow: Color
+    let spark: Color
+
+    init(accent: Color) {
+        let rgb = accent.acRGB
+
+        // Light body: 25% accent + 75% warm cream. Reads as "warm pastel" for
+        // any accent — orange becomes peach, blue becomes lavender-tinged blue.
+        let cream = (r: 0.985, g: 0.945, b: 0.870)
+        let topR = cream.r * 0.75 + rgb.r * 0.25
+        let topG = cream.g * 0.75 + rgb.g * 0.25
+        let topB = cream.b * 0.75 + rgb.b * 0.25
+        bodyTop = Color(.sRGB, red: topR, green: topG, blue: topB, opacity: 1)
+
+        // Body bottom: a touch more saturated than top, slightly darker. Gives
+        // genuine depth without needing a glossy specular.
+        let botR = topR * 0.86 + rgb.r * 0.10
+        let botG = topG * 0.86 + rgb.g * 0.10
+        let botB = topB * 0.86 + rgb.b * 0.10
+        bodyBottom = Color(.sRGB, red: botR, green: botG, blue: botB, opacity: 1)
+
+        // Inner ear: darker variant of body bottom, slight accent push for warmth.
+        earInner = Color(.sRGB, red: botR * 0.82 + rgb.r * 0.12,
+                         green: botG * 0.82 + rgb.g * 0.12,
+                         blue: botB * 0.82 + rgb.b * 0.12, opacity: 1)
+
+        // Blush: pure-ish accent blended with pink — works for cool accents too.
+        let pink = (r: 0.949, g: 0.659, b: 0.627)
+        blush = Color(.sRGB,
+                      red: rgb.r * 0.55 + pink.r * 0.45,
+                      green: rgb.g * 0.55 + pink.g * 0.45,
+                      blue: rgb.b * 0.55 + pink.b * 0.45,
+                      opacity: 1)
+
+        // Eye: deep slate from the accent — never pure black (looks crude).
+        eye = Color(.sRGB,
+                    red: rgb.r * 0.18 + 0.08,
+                    green: rgb.g * 0.18 + 0.10,
+                    blue: rgb.b * 0.18 + 0.15,
+                    opacity: 1)
+
+        // Nose: 60% darken of accent, biased toward warm.
+        nose = Color(.sRGB,
+                     red: rgb.r * 0.65,
+                     green: rgb.g * 0.55,
+                     blue: rgb.b * 0.50,
+                     opacity: 1)
+
+        shadow = Color(.sRGB,
+                       red: rgb.r * 0.28,
+                       green: rgb.g * 0.28,
+                       blue: rgb.b * 0.32,
+                       opacity: 1)
+
+        spark = Color(.sRGB,
+                      red: min(1.0, rgb.r * 1.05),
+                      green: min(1.0, rgb.g * 1.05),
+                      blue: min(1.0, rgb.b * 1.05),
+                      opacity: 1)
+    }
+}
+
+// MARK: - Face
+
 private extension CatRendererBubble {
-    struct CatPalette {
-        let bodyTop: Color       // top of the head gradient (lighter)
-        let bodyBottom: Color    // bottom (slightly warmer / more saturated)
-        let outline: Color
-        let shadow: Color
-        let accent: Color
-        let innerEar: Color
-        let nose: Color
-        let eye: Color
-
-        init(_ character: ACCharacter) {
-            switch character {
-            case .mochi:
-                bodyTop = Color(hex: 0xF8E3C4)
-                bodyBottom = Color(hex: 0xECCB9B)
-                outline = Color(hex: 0xB8916A)   // softer than the old shadow stroke
-                shadow = Color(hex: 0xD9B188)
-                accent = Color(hex: 0xE89B7A)
-                innerEar = Color(hex: 0xE6B099)
-                nose = Color(hex: 0xC07959)
-                eye = Color(hex: 0x2A1B12)
-            case .nova:
-                bodyTop = Color(hex: 0x8A7FB0)
-                bodyBottom = Color(hex: 0x6C6394)
-                outline = Color(hex: 0x4B4366)
-                shadow = Color(hex: 0x574E78)
-                accent = Color(hex: 0xC7B6FF)
-                innerEar = Color(hex: 0xA294C0)
-                nose = Color(hex: 0x352E4A)
-                eye = Color(hex: 0xF4FF8B)
-            case .sage:
-                bodyTop = Color(hex: 0xB4C198)
-                bodyBottom = Color(hex: 0x96A479)
-                outline = Color(hex: 0x6F7C5C)
-                shadow = Color(hex: 0x7E8C68)
-                accent = Color(hex: 0xD9C48E)
-                innerEar = Color(hex: 0xBEC598)
-                nose = Color(hex: 0x534B31)
-                eye = Color(hex: 0x2A2418)
-            }
-        }
-    }
-
-    func softEar(points: [CGPoint]) -> Path {
-        var path = Path()
-        guard points.count == 3 else { return path }
-        path.move(to: points[0])
-        path.addQuadCurve(to: points[1], control: midpoint(points[0], points[1]))
-        path.addQuadCurve(to: points[2], control: midpoint(points[1], points[2]))
-        path.addQuadCurve(to: points[0], control: midpoint(points[2], points[0]))
-        path.closeSubpath()
-        return path
-    }
-
     func drawEyes(
         _ context: GraphicsContext,
         pt: (CGFloat, CGFloat) -> CGPoint,
         rect: (CGFloat, CGFloat, CGFloat, CGFloat) -> CGRect,
         scale s: CGFloat,
-        palette p: CatPalette,
+        palette p: BubblePalette,
         expression: ACCatExpression
     ) {
         if expression == .sleep || expression == .happy {
-            // Smaller, more delicate closed-arc eyes.
+            let style = StrokeStyle(lineWidth: 1.6 * s, lineCap: .round)
             var left = Path()
-            left.move(to: pt(23, 32.6))
-            left.addQuadCurve(to: pt(28, 32.6), control: pt(25.5, 35.6))
+            left.move(to: pt(22, 31.2))
+            left.addQuadCurve(to: pt(28, 31.2), control: pt(25, 34.6))
             var right = Path()
-            right.move(to: pt(36, 32.6))
-            right.addQuadCurve(to: pt(41, 32.6), control: pt(38.5, 35.6))
-            let style = StrokeStyle(lineWidth: 1.5 * s, lineCap: .round)
+            right.move(to: pt(36, 31.2))
+            right.addQuadCurve(to: pt(42, 31.2), control: pt(39, 34.6))
             context.stroke(left, with: .color(p.eye), style: style)
             context.stroke(right, with: .color(p.eye), style: style)
             return
         }
 
         if expression == .celebrate {
-            drawSpark(context, center: pt(25.5, 33), scale: s * 1.05, color: p.eye)
-            drawSpark(context, center: pt(38.5, 33), scale: s * 1.05, color: p.eye)
+            drawSpark(context, center: pt(25, 31.5), scale: s * 1.15, color: p.eye)
+            drawSpark(context, center: pt(39, 31.5), scale: s * 1.15, color: p.eye)
             return
         }
 
-        // Refined open eyes — ~12% smaller than before, with a tighter catch-light.
-        let y: CGFloat = expression == .concern ? 31.8 : 33
-        let offset: CGFloat = expression == .drift ? 1.2 : 0
-        let w: CGFloat = 4.2
-        context.fill(Path(ellipseIn: rect(23.8 + offset, y - 2.1, w, w)), with: .color(p.eye))
-        context.fill(Path(ellipseIn: rect(36.0 + offset, y - 2.1, w, w)), with: .color(p.eye))
-        // Single tight catch-light — modest sheen.
-        context.fill(Path(ellipseIn: rect(25.2 + offset, y - 1.5, 1.4, 1.4)), with: .color(p.bodyTop))
-        context.fill(Path(ellipseIn: rect(37.4 + offset, y - 1.5, 1.4, 1.4)), with: .color(p.bodyTop))
+        // Open eyes — slightly oval (taller than wide), small + mature.
+        let dy: CGFloat = expression == .concern ? -1.0 : 0
+        let dx: CGFloat = expression == .drift ? 1.0 : 0
+        let w: CGFloat = expression == .alert ? 3.6 : 3.2
+        let h: CGFloat = expression == .alert ? 4.0 : 3.8
+        context.fill(Path(ellipseIn: rect(23.8 + dx, 29.4 + dy, w, h)), with: .color(p.eye))
+        context.fill(Path(ellipseIn: rect(37.0 + dx, 29.4 + dy, w, h)), with: .color(p.eye))
+        // Single tight catch-light per eye.
+        context.fill(Path(ellipseIn: rect(24.8 + dx, 29.8 + dy, 1.2, 1.2)), with: .color(p.bodyTop))
+        context.fill(Path(ellipseIn: rect(38.0 + dx, 29.8 + dy, 1.2, 1.2)), with: .color(p.bodyTop))
 
         if expression == .concern {
-            var browL = Path()
-            browL.move(to: pt(22, 28))
-            browL.addQuadCurve(to: pt(29, 29), control: pt(25.5, 24.5))
-            var browR = Path()
-            browR.move(to: pt(42, 28))
-            browR.addQuadCurve(to: pt(35, 29), control: pt(38.5, 24.5))
-            let style = StrokeStyle(lineWidth: 1.05 * s, lineCap: .round)
+            let style = StrokeStyle(lineWidth: 1.1 * s, lineCap: .round)
+            var browL = Path(); browL.move(to: pt(21, 25)); browL.addQuadCurve(to: pt(28, 26.5), control: pt(24.5, 22.5))
+            var browR = Path(); browR.move(to: pt(43, 25)); browR.addQuadCurve(to: pt(36, 26.5), control: pt(39.5, 22.5))
             context.stroke(browL, with: .color(p.eye), style: style)
             context.stroke(browR, with: .color(p.eye), style: style)
         }
@@ -214,27 +237,47 @@ private extension CatRendererBubble {
         _ context: GraphicsContext,
         pt: (CGFloat, CGFloat) -> CGPoint,
         scale s: CGFloat,
-        palette p: CatPalette,
+        palette p: BubblePalette,
         expression: ACCatExpression
     ) {
-        var mouth = Path()
+        let style = StrokeStyle(lineWidth: 1.3 * s, lineCap: .round)
         switch expression {
         case .happy, .celebrate:
-            mouth.move(to: pt(27, 42))
-            mouth.addQuadCurve(to: pt(37, 42), control: pt(32, 46.6))
+            var smile = Path()
+            smile.move(to: pt(28, 42.2))
+            smile.addQuadCurve(to: pt(36, 42.2), control: pt(32, 46.4))
+            context.stroke(smile, with: .color(p.nose), style: style)
         case .concern:
-            mouth.move(to: pt(29.5, 43))
-            mouth.addQuadCurve(to: pt(34.5, 43), control: pt(32, 41.5))
+            var path = Path()
+            path.move(to: pt(29.5, 43.4))
+            path.addQuadCurve(to: pt(34.5, 43.4), control: pt(32, 42))
+            context.stroke(path, with: .color(p.nose), style: style)
         case .drift:
-            mouth.move(to: pt(29, 43))
-            mouth.addLine(to: pt(35, 43))
+            var path = Path()
+            path.move(to: pt(29.5, 43.4))
+            path.addLine(to: pt(34.5, 43.4))
+            context.stroke(path, with: .color(p.nose), style: style)
         default:
-            // Delicate "ω" — gentler than before so it doesn't dominate the face.
-            mouth.move(to: pt(29, 42))
-            mouth.addQuadCurve(to: pt(35, 42), control: pt(32, 44.2))
+            // Gentle "ω".
+            var left = Path()
+            left.move(to: pt(29, 41.6))
+            left.addQuadCurve(to: pt(32, 43.4), control: pt(30.5, 43.6))
+            var right = Path()
+            right.move(to: pt(32, 43.4))
+            right.addQuadCurve(to: pt(35, 41.6), control: pt(33.5, 43.6))
+            context.stroke(left, with: .color(p.nose), style: style)
+            context.stroke(right, with: .color(p.nose), style: style)
         }
-        let style = StrokeStyle(lineWidth: 1.15 * s, lineCap: .round)
-        context.stroke(mouth, with: .color(p.nose), style: style)
+    }
+
+    func softTri(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> Path {
+        var path = Path()
+        path.move(to: a)
+        path.addQuadCurve(to: b, control: CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2))
+        path.addQuadCurve(to: c, control: CGPoint(x: (b.x + c.x) / 2, y: (b.y + c.y) / 2))
+        path.addQuadCurve(to: a, control: CGPoint(x: (c.x + a.x) / 2, y: (c.y + a.y) / 2))
+        path.closeSubpath()
+        return path
     }
 
     func drawSpark(_ context: GraphicsContext, center: CGPoint, scale s: CGFloat, color: Color) {
@@ -258,9 +301,5 @@ private extension CatRendererBubble {
         var crescent = outer
         crescent.addPath(inner)
         context.fill(crescent, with: .color(color), style: FillStyle(eoFill: true))
-    }
-
-    func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
-        CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
     }
 }

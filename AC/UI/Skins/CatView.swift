@@ -2,8 +2,9 @@
 //  CatView.swift
 //  AC
 //
-//  Dispatches to the correct skin renderer and caches the resulting CGImage
-//  for performance.
+//  Dispatches to the correct skin renderer. Reads the user's accent color
+//  from the environment so all three skins respond to character / custom
+//  accent changes in a single place.
 //
 
 import SwiftUI
@@ -14,15 +15,13 @@ struct CatView: View {
     let expression: ACCatExpression
     var size: CGFloat = 72
     var animating: Bool = true
+    /// Optional explicit override; nil = use environment accent (or character's).
+    var accentOverride: Color? = nil
 
-    /// Cache keyed by (character, skin, expression, size bucket)
-    @State private var cachedImage: CGImage?
-
-    private var cacheKey: String {
-        "\(character.rawValue)-\(skin.rawValue)-\(expression.rawValue)-\(Int(size))"
-    }
+    @Environment(\.acAccent) private var envAccent
 
     var body: some View {
+        let accent = accentOverride ?? envAccent
         Canvas { ctx, canvasSize in
             let renderer: CatRenderer = {
                 switch skin {
@@ -31,7 +30,7 @@ struct CatView: View {
                 case .plush:  return CatRendererPlush()
                 }
             }()
-            renderer.render(in: ctx, size: canvasSize, character: character, expression: expression)
+            renderer.render(in: ctx, size: canvasSize, character: character, expression: expression, accent: accent)
         }
         .frame(width: size, height: size)
     }
@@ -52,7 +51,8 @@ extension CatView {
             skin: skin,
             expression: expression,
             size: size,
-            animating: false
+            animating: false,
+            accentOverride: character.accentColor
         )
         .colorInvert()
         let renderer = ImageRenderer(content: content)
