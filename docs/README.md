@@ -1,6 +1,19 @@
 # AccountyCat Docs
 
+This file is the docs map: it explains which document owns what and what to read for a given task.
+
 This folder is split by how often a doc should be read and how often it is expected to change. The goal is to keep default session context lean: start with `AGENTS.md`, then `core/`, and load `reference/` or `experiments/` only when the task actually touches them.
+
+## Ownership
+
+| File | Owns |
+| --- | --- |
+| `../AGENTS.md` | Agent entrypoint, routing, and a few non-negotiable guardrails |
+| `core/north-star.md` | Source of truth for product principles, engineering principles, taste, and the current quality bar |
+| `core/codebase-map.md` | Source of truth for architecture map, ownership seams, and where major behavior lives |
+| `reference/*` | Area-specific implementation details that should track the live code |
+| `experiments/*` | Temporary notes for active experiments or transitions |
+| `../README.md` | Public repo readme for humans visiting the repository |
 
 ## Read Order
 
