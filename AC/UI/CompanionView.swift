@@ -106,6 +106,14 @@ struct CompanionView: View {
                 Divider()
 
                 Button {
+                    controller.updateDisplayMode(.menuBar)
+                } label: {
+                    Label("Hide AC", systemImage: "menubar.rectangle")
+                }
+
+                Divider()
+
+                Button {
                     NSApp.terminate(nil)
                 } label: {
                     Label("Quit AccountyCat", systemImage: "xmark.circle")

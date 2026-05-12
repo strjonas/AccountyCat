@@ -303,6 +303,7 @@ extension AppController {
         state.activeProfileID = PolicyRule.defaultProfileID
         if let endedSnapshot {
             state.recentlyEndedSession = endedSnapshot
+            state.sessionCelebrationPending = true
         }
         persistState()
         logActivity("profile", "Ended active profile, back to default")
@@ -597,9 +598,13 @@ extension AppController {
         let trimmedReason = reason?.cleanedSingleLine ?? ""
         let message: String
         if active.isDefault {
-            message = trimmedReason.isEmpty
-                ? "Switched back to your Everyday profile."
-                : "Switched back to Everyday — \(trimmedReason)"
+            if trimmedReason == "ended", let sessionName = state.recentlyEndedSession?.name {
+                message = "You wrapped \(sessionName) — nice work. Back to Everyday mode now."
+            } else if trimmedReason.isEmpty {
+                message = "Switched back to your Everyday profile."
+            } else {
+                message = "Switched back to Everyday — \(trimmedReason)"
+            }
         } else {
             let untilText: String
             if let exp = active.expiresAt {

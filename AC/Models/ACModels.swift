@@ -968,6 +968,9 @@ struct ACState: Codable, Sendable {
     /// older than `RecentlyEndedSession.retentionWindow`) or when a new
     /// non-default profile activates.
     var recentlyEndedSession: RecentlyEndedSession?
+    /// Ephemeral flag — not persisted. Set when a focus session ends so the chat
+    /// panel can show a one-shot celebration the next time the user opens it.
+    var sessionCelebrationPending: Bool = false
     /// Suggestions the LLM emitted via `propose_rule` / `propose_memory` that need explicit
     /// user approval before they land in `policyMemory.rules` / `memoryEntries`. Pruned of
     /// stale entries on access.

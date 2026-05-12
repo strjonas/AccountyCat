@@ -15,6 +15,8 @@ struct ChatPanelView: View {
 
     @State private var showSettings = false
     @State private var showProfilePicker = false
+    @State private var showCelebration = false
+    @State private var celebrationSessionName = ""
 
     #if DEBUG
     @State private var showDebug = false
@@ -61,8 +63,11 @@ struct ChatPanelView: View {
             }
 
             if showSettings {
-                SettingsView(embeddedInPanel: true)
-                    .environmentObject(controller)
+                SettingsView(
+                    embeddedInPanel: true,
+                    onBackToChat: { withAnimation(.acSnap) { showSettings = false } }
+                )
+                .environmentObject(controller)
                     .transition(.asymmetric(
                         insertion: .opacity.combined(with: .offset(x: 24)),
                         removal: .opacity.combined(with: .offset(x: -24))
@@ -110,7 +115,16 @@ struct ChatPanelView: View {
         .animation(.acFade, value: controller.learnedToast?.id)
         .acAccent(for: controller.state)
         .animation(.acFade, value: controller.state.character)
-        .onAppear { controller.refreshSystemState() }
+        .onAppear {
+            controller.refreshSystemState()
+            checkAndShowCelebration()
+        }
+        .onChange(of: showSettings) { _, isSettings in
+            if !isSettings { checkAndShowCelebration() }
+        }
+        .onChange(of: controller.state.sessionCelebrationPending) { _, isPending in
+            if isPending { checkAndShowCelebration() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .acOpenSettings)) { _ in
             withAnimation(.acSnap) { showSettings = true }
         }
@@ -137,8 +151,29 @@ struct ChatPanelView: View {
         .background(shortcutButtons)
     }
 
+    private func checkAndShowCelebration() {
+        guard controller.state.sessionCelebrationPending, !showSettings else { return }
+        celebrationSessionName = controller.state.recentlyEndedSession?.name ?? "Focus"
+        controller.state.sessionCelebrationPending = false
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) { showCelebration = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            withAnimation(.easeOut(duration: 0.5)) { showCelebration = false }
+        }
+    }
+
     private var chatContent: some View {
         VStack(spacing: 0) {
+            if showCelebration {
+                SessionCelebrationCard(sessionName: celebrationSessionName)
+                    .environmentObject(controller)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.88, anchor: .top).combined(with: .opacity),
+                        removal: .opacity
+                    ))
+            }
+
             if let problem = controller.connectionProblemNotice {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -318,6 +353,54 @@ struct ChatPanelView: View {
             .opacity(0)
             .frame(width: 0, height: 0)
         }
+    }
+}
+
+// MARK: - Session celebration card
+
+private struct SessionCelebrationCard: View {
+    let sessionName: String
+    @EnvironmentObject private var controller: AppController
+    @Environment(\.acAccent) private var accent
+
+    @State private var catScale: CGFloat = 0.5
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CatView(
+                character: controller.state.character,
+                expression: .happy,
+                size: 50,
+                animating: true
+            )
+            .scaleEffect(catScale)
+            .onAppear {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.58)) {
+                    catScale = 1.0
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(sessionName) complete!")
+                    .font(.ac(13, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary)
+                Text("Really proud of you. That's what it takes.")
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.6))
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(accent.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(accent.opacity(0.24), lineWidth: 0.5)
+                )
+        )
     }
 }
 
