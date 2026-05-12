@@ -31,8 +31,7 @@ struct SpeechBubble: View {
 
                     CatView(
                         character: controller.state.character,
-                        skin: controller.state.selectedSkin,
-                        expression: .concern,
+                        expression: .concerned,
                         size: 24,
                         animating: false
                     )
@@ -172,7 +171,7 @@ struct SpeechBubble: View {
 
     private var bubbleBackground: some View {
         ZStack {
-            if controller.state.useLiquidGlass {
+            if controller.state.glassEffectActive {
                 // Opaque backing guarantees text contrast over any wallpaper/app
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(tailColor.opacity(colorScheme == .dark ? 0.45 : 0.55))
@@ -248,8 +247,7 @@ struct StatusBarNudgeView: View {
 
                     CatView(
                         character: controller.state.character,
-                        skin: controller.state.selectedSkin,
-                        expression: .concern,
+                        expression: .concerned,
                         size: 24,
                         animating: false
                     )
@@ -338,7 +336,7 @@ struct StatusBarNudgeView: View {
 
     private var bubbleBackground: some View {
         ZStack {
-            if controller.state.useLiquidGlass {
+            if controller.state.glassEffectActive {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(tailColor.opacity(colorScheme == .dark ? 0.45 : 0.55))
                 RoundedRectangle(cornerRadius: 14, style: .continuous)

@@ -164,7 +164,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let img = CatView.menuBarTemplateImage(
                 size: 18,
                 character: controller.state.character,
-                skin: controller.state.selectedSkin,
                 expression: .neutral
             )
             button.image = img
@@ -235,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             .store(in: &cancellables)
         controller.$state
-            .map { "\($0.character.rawValue)-\($0.selectedSkin.rawValue)" }
+            .map(\.character)
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in

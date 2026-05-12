@@ -2,7 +2,9 @@
 //  LookTab.swift
 //  AC
 //
-//  Skin grid + expression preview + accent note.
+//  Character picker (paired portrait + personality + palette) plus glass
+//  mode control and an expression preview strip. Replaces the previous
+//  Look + Persona tabs — visual identity and personality are inseparable.
 //
 
 import SwiftUI
@@ -13,93 +15,90 @@ struct LookTab: View {
 
     @State private var previewExpression: ACCatExpression = .neutral
 
-    private let skins: [ACSkin] = [.mono, .bubble, .plush]
-    private let expressions: [ACCatExpression] = [.neutral, .happy, .celebrate, .concern, .drift, .sleep, .alert]
+    private let characters: [ACCharacter] = [.mochi, .misty, .onyx]
+    private let expressions: [ACCatExpression] = [.neutral, .blink, .happy, .sleep, .concerned]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionLabel("cat style")
-            Text("style is separate from character — mix and match any combo.")
+            sectionLabel("character")
+            Text("each cat ships a personality and palette — pick the one that fits how you want AC to feel.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
 
-            skinGrid
+            characterGrid
 
             sectionLabel("preview expression")
+            Text("see how the active cat looks across moods.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+                .padding(.top, -12)
             expressionRow
 
             Divider().opacity(0.3)
 
             sectionLabel("glass")
-            Text("liquid glass makes panels and overlays translucent with specular highlights.")
+            Text("translucent panels with specular highlights. auto follows your macOS Reduce Transparency setting.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
-
-            Toggle("liquid glass", isOn: Binding(
-                get: { controller.state.useLiquidGlass },
-                set: { controller.updateLiquidGlass($0) }
-            ))
-            .toggleStyle(.switch)
-            .font(.ac(12, weight: .medium))
-
-            Divider().opacity(0.3)
-
-            sectionLabel("accent")
-            Text("use the selected cat's default color, or pin the whole UI to a custom accent.")
-                .font(.acCaption)
-                .foregroundStyle(.secondary)
-                .padding(.top, -12)
-            accentControls
+            glassPicker
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Skin grid
+    // MARK: - Character grid
 
-    private var skinGrid: some View {
+    private var characterGrid: some View {
         HStack(spacing: 10) {
-            ForEach(skins, id: \.self) { skin in
-                let isSelected = controller.state.selectedSkin == skin
-                Button {
-                    controller.updateSkin(skin)
-                } label: {
-                    VStack(spacing: 10) {
-                        CatView(
-                            character: controller.state.character,
-                            skin: skin,
-                            expression: previewExpression,
-                            size: 52,
-                            animating: false
-                        )
-
-                        VStack(spacing: 2) {
-                            Text(skin.displayName)
-                                .font(.ac(12, weight: isSelected ? .semibold : .medium))
-                                .foregroundStyle(isSelected ? accent : Color.acTextPrimary)
-                            Text(skin.blurb)
-                                .font(.ac(10))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                        }
-                    }
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                            .fill(isSelected ? accent.opacity(0.08) : Color.acSurface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                                    .stroke(isSelected ? accent.opacity(0.35) : Color.acHairline, lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
+            ForEach(characters, id: \.self) { character in
+                characterCard(character)
             }
         }
+    }
+
+    private func characterCard(_ character: ACCharacter) -> some View {
+        let isSelected = controller.state.character == character
+        let cardAccent = character.accentColor
+        return Button {
+            controller.updateCharacter(character)
+        } label: {
+            VStack(spacing: 10) {
+                CatView(
+                    character: character,
+                    expression: previewExpression,
+                    size: 64,
+                    animating: false
+                )
+
+                VStack(spacing: 2) {
+                    Text(character.displayName)
+                        .font(.ac(13, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? cardAccent : Color.acTextPrimary)
+                    Text(character.moodLabel)
+                        .font(.ac(10))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                    Text(character.tagline)
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.top, 2)
+                }
+            }
+            .padding(.vertical, 14)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(isSelected ? cardAccent.opacity(0.08) : Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(isSelected ? cardAccent.opacity(0.45) : Color.acHairline, lineWidth: isSelected ? 1.5 : 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Expression row
@@ -111,7 +110,7 @@ struct LookTab: View {
                 Button {
                     withAnimation(.acSnap) { previewExpression = expr }
                 } label: {
-                    Text(expr.rawValue)
+                    Text(expr.displayName)
                         .font(.ac(11, weight: isSelected ? .semibold : .medium))
                         .foregroundStyle(isSelected ? accent : Color.acTextPrimary.opacity(0.7))
                         .padding(.horizontal, 10)
@@ -130,79 +129,40 @@ struct LookTab: View {
         }
     }
 
-    // MARK: - Accent
+    // MARK: - Glass picker
 
-    private var accentControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Toggle("use cat default", isOn: Binding(
-                    get: { controller.state.accentFollowsCharacter },
-                    set: { controller.updateAccent(usesDefault: $0) }
-                ))
-                .toggleStyle(.switch)
-                .font(.ac(12, weight: .medium))
-
-                Spacer()
-
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(accent)
-                    .frame(width: 30, height: 20)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.acBubbleStroke, lineWidth: 0.5)
-                    )
-            }
-
-            HStack(spacing: 6) {
-                ForEach(accentSwatches, id: \.self) { hex in
-                    let color = Color(acHexString: hex) ?? accent
-                    let selected = !controller.state.accentFollowsCharacter
-                        && controller.state.customAccentHex.uppercased() == hex
-                    Button {
-                        controller.updateAccent(usesDefault: false, customHex: hex)
-                    } label: {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 20, height: 20)
-                            .overlay(
-                                Circle()
-                                    .stroke(selected ? Color.acTextPrimary.opacity(0.62) : Color.acBubbleStroke, lineWidth: selected ? 2 : 0.5)
-                            )
-                            .shadow(color: selected ? color.opacity(0.26) : .clear, radius: 4, y: 2)
+    private var glassPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(ACGlassMode.allCases, id: \.self) { mode in
+                let isSelected = controller.state.glassMode == mode
+                Button {
+                    controller.updateGlassMode(mode)
+                } label: {
+                    VStack(spacing: 3) {
+                        Text(mode.displayName)
+                            .font(.ac(12, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? accent : Color.acTextPrimary.opacity(0.78))
+                        Text(mode.blurb)
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
                     }
-                    .buttonStyle(.plain)
-                    .help("Use \(hex)")
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .fill(isSelected ? accent.opacity(0.10) : Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                                    .stroke(isSelected ? accent.opacity(0.35) : Color.acHairline, lineWidth: 1)
+                            )
+                    )
                 }
+                .buttonStyle(.plain)
             }
-            .disabled(controller.state.accentFollowsCharacter)
-            .opacity(controller.state.accentFollowsCharacter ? 0.45 : 1)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                .fill(Color.acSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
-                        .stroke(Color.acHairline, lineWidth: 1)
-                )
-        )
-    }
-
-    private var accentSwatches: [String] {
-        [
-            "#7BA3D9", // calm blue
-            "#5B8DB8", // slate blue
-            "#A88BFF", // lavender
-            "#C7B6FF", // soft lilac (nova)
-            "#E89B7A", // warm coral (mochi)
-            "#D9C48E", // warm gold (sage)
-            "#A8B58E", // sage green
-            "#8BB5A0", // seafoam
-            "#D9A8C7", // dusty rose
-            "#B8A8D9", // muted violet
-            "#9AA1A8", // neutral gray
-            "#C9B8A0", // warm sand
-        ]
     }
 
     private func sectionLabel(_ text: String) -> some View {

@@ -99,8 +99,7 @@ struct OverlayView: View {
 
             CatView(
                 character: character,
-                skin: controller.state.selectedSkin,
-                expression: .concern,
+                expression: .concerned,
                 size: 160,
                 animating: false
             )
@@ -214,7 +213,7 @@ struct OverlayView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(dialogSolidBacking)
 
-            if controller.state.useLiquidGlass {
+            if controller.state.glassEffectActive {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.thinMaterial)
 

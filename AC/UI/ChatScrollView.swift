@@ -160,7 +160,6 @@ private struct ChatMessageRow: View {
                 )
             CatView(
                 character: controller.state.character,
-                skin: controller.state.selectedSkin,
                 expression: .neutral,
                 size: 29,
                 animating: false
@@ -270,7 +269,7 @@ private struct NudgeCard: View {
 
     private var nudgeCardBackground: some View {
         ZStack {
-            if controller.state.useLiquidGlass {
+            if controller.state.glassEffectActive {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(.ultraThinMaterial)
 
@@ -340,7 +339,6 @@ private struct EmptyV2ChatState: View {
             HStack(alignment: .top, spacing: 8) {
                 CatView(
                     character: controller.state.character,
-                    skin: controller.state.selectedSkin,
                     expression: .happy,
                     size: 29,
                     animating: false

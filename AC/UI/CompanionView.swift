@@ -17,8 +17,8 @@ struct CompanionView: View {
     /// Called on a clean tap — opens the popover from the orb.
     var onTap: (() -> Void)?
 
-    // Animation state
-    @State private var breathScale: CGFloat = 1.0
+    // Animation state — CatView owns its own breathing/blink; CompanionView
+    // adds the orb-level nudge scale (head lunge) and head-tilt on top.
     @State private var nudgeScale: CGFloat = 1.0
     @State private var headTilt: Double = 0
 
@@ -77,7 +77,6 @@ struct CompanionView: View {
 
                 CatView(
                     character: controller.state.character,
-                    skin: controller.state.selectedSkin,
                     expression: controller.companionMood.catExpression,
                     size: orbDiameter,
                     animating: true
@@ -91,7 +90,7 @@ struct CompanionView: View {
                 visionBadge
                     .animation(.acFade, value: controller.visionEnabled)
             }
-            .scaleEffect(breathScale * nudgeScale)
+            .scaleEffect(nudgeScale)
             .opacity(controller.companionMood == .paused ? 0.42 : 1.0)
             .animation(.easeInOut(duration: 0.5), value: controller.companionMood == .paused)
             // Tap opens popover — placed here so speech bubble buttons are NOT intercepted
@@ -132,7 +131,6 @@ struct CompanionView: View {
             }
         }
         .onAppear {
-            startBreathing()
             maybeShowTooltip()
         }
         .onChange(of: controller.companionMood) { _, mood in
@@ -199,14 +197,6 @@ struct CompanionView: View {
     }
 
     // MARK: - Animations
-
-    private func startBreathing() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            withAnimation(.easeInOut(duration: 3.8).repeatForever(autoreverses: true)) {
-                breathScale = 1.026
-            }
-        }
-    }
 
     private func updateAnimations(for mood: CompanionMood) {
         withAnimation(.acSpring) {

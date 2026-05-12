@@ -296,52 +296,29 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// Inject the accent palette into this view subtree.
-    /// Skin defaults and custom user accents stay consistent across the app.
+    /// Inject the accent palette into this view subtree. The palette is paired
+    /// one-to-one with the selected character — no custom-accent override.
     func acAccent(for state: ACState) -> some View {
         return self
-            .environment(\.acAccent, state.effectiveAccentColor)
-            .environment(\.acAccentLight, state.effectiveAccentLight)
-            .environment(\.acAccentSoft, state.effectiveAccentSoft)
-            .tint(state.effectiveAccentColor)
+            .environment(\.acAccent, state.character.accentColor)
+            .environment(\.acAccentLight, state.character.accentLight)
+            .environment(\.acAccentSoft, state.character.accentSoft)
+            .tint(state.character.accentColor)
     }
 }
 
-extension ACSkin {
-    var defaultAccentColor: Color {
-        switch self {
-        case .mono:   return Color(hex: 0x6F84A8) // logo slate blue
-        case .bubble: return Color(hex: 0xE89B7A) // warm peach
-        case .plush:  return Color(hex: 0xB99DFF) // soft lilac
-        }
-    }
-
-    var defaultAccentLight: Color {
-        defaultAccentColor.acMixed(with: .white, amount: 0.46)
-    }
-
-    var defaultAccentSoft: Color {
-        defaultAccentColor.acMixed(with: .white, amount: 0.78)
-    }
-}
+// MARK: - Glass mode resolver
 
 extension ACState {
-    var effectiveAccentColor: Color {
-        accentFollowsCharacter
-            ? selectedSkin.defaultAccentColor
-            : (Color(acHexString: customAccentHex) ?? selectedSkin.defaultAccentColor)
-    }
-
-    var effectiveAccentLight: Color {
-        accentFollowsCharacter
-            ? selectedSkin.defaultAccentLight
-            : effectiveAccentColor.acMixed(with: .white, amount: 0.42)
-    }
-
-    var effectiveAccentSoft: Color {
-        accentFollowsCharacter
-            ? selectedSkin.defaultAccentSoft
-            : effectiveAccentColor.acMixed(with: .white, amount: 0.76)
+    /// Whether the glass effect should currently be active. `.auto` checks the
+    /// macOS "Reduce Transparency" accessibility setting and disables glass
+    /// when the user has asked the system to reduce transparency.
+    var glassEffectActive: Bool {
+        switch glassMode {
+        case .on:   return true
+        case .off:  return false
+        case .auto: return !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        }
     }
 }
 
@@ -436,58 +413,61 @@ struct ACIconButton: ButtonStyle {
 }
 
 // MARK: - Character Palette
+//
+// Each character ships a fixed palette tuned to its coat color. No mix-and-match,
+// no custom accent override — picking the cat picks the entire visual identity.
 
 extension ACCharacter {
     // MARK: Orb gradient
     var orbTopColor: Color {
         switch self {
         case .mochi: return Color(red: 1.00, green: 0.96, blue: 0.89)
-        case .nova:  return Color(red: 0.87, green: 0.89, blue: 1.00)
-        case .sage:  return Color(red: 0.88, green: 0.97, blue: 0.90)
+        case .misty: return Color(red: 0.96, green: 0.97, blue: 0.99)
+        case .onyx:  return Color(red: 0.99, green: 0.96, blue: 0.88)
         }
     }
     var orbBottomColor: Color {
         switch self {
         case .mochi: return Color(red: 0.98, green: 0.88, blue: 0.72)
-        case .nova:  return Color(red: 0.72, green: 0.76, blue: 0.98)
-        case .sage:  return Color(red: 0.70, green: 0.89, blue: 0.76)
+        case .misty: return Color(red: 0.82, green: 0.87, blue: 0.92)
+        case .onyx:  return Color(red: 0.94, green: 0.83, blue: 0.58)
         }
     }
     var nudgingOrbTopColor: Color {
         switch self {
         case .mochi: return Color(red: 1.00, green: 0.95, blue: 0.78)
-        case .nova:  return Color(red: 0.80, green: 0.84, blue: 1.00)
-        case .sage:  return Color(red: 0.82, green: 0.97, blue: 0.85)
+        case .misty: return Color(red: 0.88, green: 0.92, blue: 0.97)
+        case .onyx:  return Color(red: 0.98, green: 0.91, blue: 0.70)
         }
     }
     var nudgingOrbBottomColor: Color {
         switch self {
         case .mochi: return Color(red: 0.98, green: 0.82, blue: 0.52)
-        case .nova:  return Color(red: 0.55, green: 0.62, blue: 0.97)
-        case .sage:  return Color(red: 0.48, green: 0.82, blue: 0.60)
+        case .misty: return Color(red: 0.58, green: 0.68, blue: 0.83)
+        case .onyx:  return Color(red: 0.85, green: 0.62, blue: 0.25)
         }
     }
 
-    // MARK: Accent — replaces acCaramel / acCaramelLight / acCaramelSoft
+    // MARK: Accent — the primary character-driven tint used everywhere
     var accentColor: Color {
         switch self {
-        case .mochi: return Color(red: 0.91, green: 0.66, blue: 0.35)
-        case .nova:  return Color(red: 0.44, green: 0.48, blue: 0.92)
-        case .sage:  return Color(red: 0.26, green: 0.65, blue: 0.46)
+        case .mochi: return Color(red: 0.91, green: 0.66, blue: 0.35) // warm caramel
+        case .misty: return Color(red: 0.48, green: 0.58, blue: 0.72) // slate blue
+        case .onyx:  return Color(red: 0.80, green: 0.60, blue: 0.22) // deep amber
         }
     }
     var accentLight: Color {
         switch self {
         case .mochi: return Color(red: 0.97, green: 0.83, blue: 0.63)
-        case .nova:  return Color(red: 0.78, green: 0.80, blue: 0.98)
-        case .sage:  return Color(red: 0.72, green: 0.90, blue: 0.78)
+        case .misty: return Color(red: 0.76, green: 0.83, blue: 0.90)
+        case .onyx:  return Color(red: 0.94, green: 0.81, blue: 0.55)
         }
     }
     var accentSoft: Color {
         switch self {
         case .mochi: return Color(red: 0.98, green: 0.90, blue: 0.75)
-        case .nova:  return Color(red: 0.90, green: 0.91, blue: 0.99)
-        case .sage:  return Color(red: 0.89, green: 0.97, blue: 0.91)
+        case .misty: return Color(red: 0.90, green: 0.93, blue: 0.96)
+        case .onyx:  return Color(red: 0.97, green: 0.91, blue: 0.78)
         }
     }
 
@@ -495,22 +475,22 @@ extension ACCharacter {
     var ringColor: Color {
         switch self {
         case .mochi: return Color(red: 0.98, green: 0.76, blue: 0.35)
-        case .nova:  return Color(red: 0.55, green: 0.60, blue: 0.97)
-        case .sage:  return Color(red: 0.30, green: 0.72, blue: 0.52)
+        case .misty: return Color(red: 0.56, green: 0.66, blue: 0.80)
+        case .onyx:  return Color(red: 0.88, green: 0.66, blue: 0.28)
         }
     }
     var escalatedRingColor: Color {
         switch self {
         case .mochi: return Color(red: 0.97, green: 0.60, blue: 0.35)
-        case .nova:  return Color(red: 0.75, green: 0.40, blue: 0.95)
-        case .sage:  return Color(red: 0.85, green: 0.55, blue: 0.30)
+        case .misty: return Color(red: 0.62, green: 0.50, blue: 0.78)
+        case .onyx:  return Color(red: 0.62, green: 0.30, blue: 0.45) // deep plum
         }
     }
     var shadowColor: Color {
         switch self {
         case .mochi: return Color(red: 0.75, green: 0.60, blue: 0.40)
-        case .nova:  return Color(red: 0.44, green: 0.48, blue: 0.75)
-        case .sage:  return Color(red: 0.26, green: 0.55, blue: 0.38)
+        case .misty: return Color(red: 0.40, green: 0.46, blue: 0.55)
+        case .onyx:  return Color(red: 0.45, green: 0.32, blue: 0.15)
         }
     }
 
@@ -518,29 +498,29 @@ extension ACCharacter {
     var headerLightTop: Color {
         switch self {
         case .mochi: return Color(red: 1.00, green: 0.97, blue: 0.93)
-        case .nova:  return Color(red: 0.93, green: 0.94, blue: 1.00)
-        case .sage:  return Color(red: 0.93, green: 0.99, blue: 0.94)
+        case .misty: return Color(red: 0.96, green: 0.97, blue: 0.99)
+        case .onyx:  return Color(red: 0.99, green: 0.97, blue: 0.92)
         }
     }
     var headerLightBottom: Color {
         switch self {
         case .mochi: return Color(red: 0.99, green: 0.94, blue: 0.87)
-        case .nova:  return Color(red: 0.87, green: 0.89, blue: 0.99)
-        case .sage:  return Color(red: 0.87, green: 0.97, blue: 0.89)
+        case .misty: return Color(red: 0.88, green: 0.92, blue: 0.96)
+        case .onyx:  return Color(red: 0.96, green: 0.90, blue: 0.78)
         }
     }
     var headerDarkTop: Color {
         switch self {
         case .mochi: return Color(red: 0.22, green: 0.18, blue: 0.13)
-        case .nova:  return Color(red: 0.13, green: 0.14, blue: 0.24)
-        case .sage:  return Color(red: 0.11, green: 0.19, blue: 0.15)
+        case .misty: return Color(red: 0.13, green: 0.16, blue: 0.20)
+        case .onyx:  return Color(red: 0.16, green: 0.13, blue: 0.10)
         }
     }
     var headerDarkBottom: Color {
         switch self {
         case .mochi: return Color(red: 0.18, green: 0.14, blue: 0.09)
-        case .nova:  return Color(red: 0.09, green: 0.10, blue: 0.19)
-        case .sage:  return Color(red: 0.08, green: 0.14, blue: 0.11)
+        case .misty: return Color(red: 0.09, green: 0.12, blue: 0.16)
+        case .onyx:  return Color(red: 0.11, green: 0.09, blue: 0.06)
         }
     }
 
@@ -550,39 +530,27 @@ extension ACCharacter {
     var moodLabel: String {
         switch self {
         case .mochi: return "warm"
-        case .nova:  return "sharp"
-        case .sage:  return "calm"
+        case .misty: return "thoughtful"
+        case .onyx:  return "sharp"
         }
     }
 
     /// A subtle personality-aware tint used for section headers and accent
-    /// highlights that should feel warmer / cooler / calmer without being
+    /// highlights that should feel warmer / cooler / sharper without being
     /// as vivid as the full accent color.
     var personalityHue: Color {
         switch self {
         case .mochi: return Color(red: 0.94, green: 0.78, blue: 0.52)
-        case .nova:  return Color(red: 0.58, green: 0.60, blue: 0.92)
-        case .sage:  return Color(red: 0.42, green: 0.74, blue: 0.56)
+        case .misty: return Color(red: 0.55, green: 0.65, blue: 0.78)
+        case .onyx:  return Color(red: 0.85, green: 0.66, blue: 0.30)
         }
     }
 
-    // MARK: Character pixel-art images
+    // MARK: Cat portrait assets
 
-    /// Asset catalog name for the large character image (~600×500, used in the orb).
-    var largeImageName: String {
-        switch self {
-        case .mochi: return "mochi_l"
-        case .nova:  return "nova_l"
-        case .sage:  return "sage_l"
-        }
-    }
-
-    /// Asset catalog name for the small character image (24×20, used in menu bar / header).
-    var smallImageName: String {
-        switch self {
-        case .mochi: return "mochi_s"
-        case .nova:  return "nova_s"
-        case .sage:  return "sage_s"
-        }
+    /// Asset catalog name for a cat portrait at a given expression. Matches
+    /// the imagesets generated under `Assets.xcassets/cat_<name>_<expr>`.
+    func portraitAssetName(for expression: ACCatExpression) -> String {
+        "cat_\(rawValue)_\(expression.rawValue)"
     }
 }

@@ -98,7 +98,6 @@ struct CompactHeaderView: View {
         return ZStack {
             CatView(
                 character: controller.state.character,
-                skin: controller.state.selectedSkin,
                 expression: controller.companionMood.catExpression,
                 size: 29,
                 animating: false

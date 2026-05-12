@@ -149,7 +149,6 @@ struct OnboardingWizardView: View {
                         .frame(width: 58, height: 58)
                     CatView(
                         character: controller.state.character,
-                        skin: controller.state.selectedSkin,
                         expression: .happy,
                         size: 48,
                         animating: false

@@ -2,33 +2,32 @@
 //  ACCatExpression.swift
 //  AC
 //
-//  Expression states for the cat skin renderer. Decoupled from CompanionMood
-//  so the UI can show intermediate expressions (e.g. "celebrate") that the
-//  monitoring loop does not explicitly emit.
+//  Expression states for the cat portrait. One per shipped pose:
+//  neutral (default), blink (idle wink), happy (celebrate / session win),
+//  sleep (paused / idle), concerned (overlay / hard escalation).
+//
+//  Decoupled from CompanionMood so the UI can swap to expressions the
+//  monitoring loop does not explicitly emit (e.g. one-shot celebrate).
 //
 
 import Foundation
 
 enum ACCatExpression: String, Codable, CaseIterable, Sendable {
     case neutral
+    case blink
     case happy
     case sleep
-    case alert
-    case drift
-    case celebrate
-    case concern
+    case concerned
 }
 
 extension ACCatExpression {
     var displayName: String {
         switch self {
         case .neutral:   return "neutral"
+        case .blink:     return "blink"
         case .happy:     return "happy"
         case .sleep:     return "sleep"
-        case .alert:     return "alert"
-        case .drift:     return "drift"
-        case .celebrate: return "celebrate"
-        case .concern:   return "concern"
+        case .concerned: return "concerned"
         }
     }
 }
@@ -40,10 +39,10 @@ extension CompanionMood {
         switch self {
         case .setup:         return .neutral
         case .idle:          return .sleep
-        case .watching:      return .alert
-        case .nudging:       return .drift
-        case .escalated:     return .concern
-        case .escalatedHard: return .concern
+        case .watching:      return .neutral
+        case .nudging:       return .neutral
+        case .escalated:     return .concerned
+        case .escalatedHard: return .concerned
         case .paused:        return .sleep
         }
     }

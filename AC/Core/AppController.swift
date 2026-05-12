@@ -1001,17 +1001,10 @@ final class AppController: ObservableObject {
         persistState()
     }
 
-    func updateSkin(_ skin: ACSkin) {
-        guard state.selectedSkin != skin else { return }
-        state.selectedSkin = skin
-        logActivity("app", "Selected skin: \(skin.rawValue)")
-        persistState()
-    }
-
-    func updateLiquidGlass(_ enabled: Bool) {
-        guard state.useLiquidGlass != enabled else { return }
-        state.useLiquidGlass = enabled
-        logActivity("app", "Liquid glass: \(enabled)")
+    func updateGlassMode(_ mode: ACGlassMode) {
+        guard state.glassMode != mode else { return }
+        state.glassMode = mode
+        logActivity("app", "Glass mode: \(mode.rawValue)")
         persistState()
     }
 
@@ -1033,27 +1026,6 @@ final class AppController: ObservableObject {
         guard state.statusBarStyle != style else { return }
         state.statusBarStyle = style
         logActivity("app", "Status bar style: \(style.displayName)")
-        persistState()
-    }
-
-    func updateAccent(usesDefault: Bool, customHex: String? = nil) {
-        let normalizedHex: String? = customHex.flatMap { raw in
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            let digits = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
-            guard digits.count == 6, UInt(digits, radix: 16) != nil else { return nil }
-            return "#\(digits.uppercased())"
-        }
-        var changed = false
-        if state.accentFollowsCharacter != usesDefault {
-            state.accentFollowsCharacter = usesDefault
-            changed = true
-        }
-        if let normalizedHex, state.customAccentHex != normalizedHex {
-            state.customAccentHex = normalizedHex
-            changed = true
-        }
-        guard changed else { return }
-        logActivity("app", "Updated accent: \(state.accentFollowsCharacter ? "skin default" : state.customAccentHex)")
         persistState()
     }
 
@@ -4116,11 +4088,11 @@ final class AppController: ObservableObject {
         let best = formatCompactDuration(stats.longestFocusedBlockSeconds)
         switch state.character {
         case .mochi:
-            message = "You’ve already protected \(focused) of focus today. Best block: \(best). I’m proud of that."
-        case .nova:
-            message = "\(focused) focused today. Best block: \(best). Strong signal; keep the line."
-        case .sage:
+            message = "You've already protected \(focused) of focus today. Best block: \(best). I'm proud of that."
+        case .misty:
             message = "\(focused) of focused work today. Your best block is \(best). Notice the steadiness."
+        case .onyx:
+            message = "\(focused) focused today. Best block: \(best). Strong signal; keep the line."
         }
 
         chatMessages.append(ChatMessage(role: .assistant, text: message, timestamp: now, style: .celebration))

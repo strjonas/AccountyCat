@@ -111,7 +111,7 @@ final class WindowCoordinator {
             height: size
         )
 
-        let accent = controller.state.effectiveAccentColor
+        let accent = controller.state.character.accentColor
 
         let hosting = NSHostingController(
             rootView: CompanionEntranceView(accent: accent, onComplete: { [weak self] in

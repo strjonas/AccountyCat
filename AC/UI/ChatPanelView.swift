@@ -110,8 +110,6 @@ struct ChatPanelView: View {
         .animation(.acFade, value: controller.learnedToast?.id)
         .acAccent(for: controller.state)
         .animation(.acFade, value: controller.state.character)
-        .animation(.acFade, value: controller.state.customAccentHex)
-        .animation(.acFade, value: controller.state.accentFollowsCharacter)
         .onAppear { controller.refreshSystemState() }
         .onReceive(NotificationCenter.default.publisher(for: .acOpenSettings)) { _ in
             withAnimation(.acSnap) { showSettings = true }
@@ -211,7 +209,7 @@ struct ChatPanelView: View {
 
     private var panelBackground: some View {
         ZStack {
-            if controller.state.useLiquidGlass {
+            if controller.state.glassEffectActive {
                 Rectangle().fill(.ultraThinMaterial)
                 RadialGradient(
                     colors: [

@@ -2254,18 +2254,7 @@ private extension OverlayPresentation {
                 secondaryButtonTitle: "You're right, back to work",
                 isHardEscalation: true
             )
-        case .nova:
-            return OverlayPresentation(
-                headline: "Accountability check.",
-                body: "You're on \(appName) again. Two nudges haven't helped, and no feedback from your side. Tell me why I should let this slide.",
-                prompt: "Is \(appName) actually serving your goals right now? Convince me.",
-                appName: appName,
-                evaluationID: evaluationID,
-                submitButtonTitle: "Make your case",
-                secondaryButtonTitle: "Fine, get me back to work",
-                isHardEscalation: true
-            )
-        case .sage:
+        case .misty:
             return OverlayPresentation(
                 headline: "A moment of reflection.",
                 body: "You've returned to \(appName) several times. Rather than nudging again, I'd like to understand — does this serve your deeper goals?",
@@ -2274,6 +2263,17 @@ private extension OverlayPresentation {
                 evaluationID: evaluationID,
                 submitButtonTitle: "Reflect",
                 secondaryButtonTitle: "Return to work",
+                isHardEscalation: true
+            )
+        case .onyx:
+            return OverlayPresentation(
+                headline: "Accountability check.",
+                body: "You're on \(appName) again. Two nudges haven't helped, and no feedback from your side. Tell me why I should let this slide.",
+                prompt: "Is \(appName) actually serving your goals right now? Convince me.",
+                appName: appName,
+                evaluationID: evaluationID,
+                submitButtonTitle: "Make your case",
+                secondaryButtonTitle: "Fine, get me back to work",
                 isHardEscalation: true
             )
         }

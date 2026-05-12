@@ -12,24 +12,27 @@ import Foundation
 /// Selectable companion personality. Stored in ACState and persisted across launches.
 /// The character injects a 1–2 sentence style prefix into every system prompt;
 /// the companion always identifies itself as "AccountyCat" / "AC" regardless of character.
-enum ACCharacter: String, Codable, CaseIterable, Sendable {
-    case mochi  // default — warm, cozy
-    case nova   // sharp, energetic
-    case sage   // calm, minimal
+///
+/// The cat's visual identity (portrait + palette) is paired one-to-one with personality —
+/// the character picker is the only place look + tone are chosen, no mix-and-match.
+enum ACCharacter: String, CaseIterable, Sendable {
+    case mochi  // warm orange tabby — encouraging
+    case misty  // soft gray — thoughtful
+    case onyx   // sharp black — decisive
 
     var displayName: String {
         switch self {
         case .mochi: return "Mochi"
-        case .nova:  return "Nova"
-        case .sage:  return "Sage"
+        case .misty: return "Misty"
+        case .onyx:  return "Onyx"
         }
     }
 
     var tagline: String {
         switch self {
         case .mochi: return "Your cozy focus buddy"
-        case .nova:  return "Your sharp-minded co-pilot"
-        case .sage:  return "Your calm inner guide"
+        case .misty: return "Your thoughtful focus companion"
+        case .onyx:  return "Your no-nonsense co-pilot"
         }
     }
 
@@ -38,11 +41,50 @@ enum ACCharacter: String, Codable, CaseIterable, Sendable {
     nonisolated var personalityPrefix: String {
         switch self {
         case .mochi:
-            return "You are AC, the user's warm and cozy focus companion. Check in gently like a caring friend who's always in their corner."
-        case .nova:
-            return "You are AC, the user's sharp-minded, energetic focus co-pilot. Nudge with confident, punchy energy — you believe they can do it."
-        case .sage:
-            return "You are AC, the user's calm and grounded focus guide. Use spacious, mindful words that invite reflection without pressure."
+            return "You are AC, the user's warm and encouraging focus companion. Cheer them on like a close friend who's always rooting for them — kind, playful, never lecturing."
+        case .misty:
+            return "You are AC, the user's thoughtful focus companion. Stay quietly attentive — speak with care, listen for what they actually need, and only step in when it genuinely helps."
+        case .onyx:
+            return "You are AC, the user's sharp and decisive focus co-pilot. Cut through the noise — short, direct, dry-witted. Push them when they need it, drop the chit-chat when they don't."
+        }
+    }
+}
+
+// Codable with legacy-key migration:
+//   "nova" → .onyx, "sage" → .misty so existing state files don't reset users.
+extension ACCharacter: Codable {
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "nova": self = .onyx
+        case "sage": self = .misty
+        default:
+            self = ACCharacter(rawValue: raw) ?? .mochi
+        }
+    }
+}
+
+/// Glass effect mode for panels, overlays, and nudges.
+/// `.auto` honors the macOS "Reduce Transparency" accessibility setting —
+/// glass off when the user has asked the system to reduce transparency.
+enum ACGlassMode: String, Codable, CaseIterable, Sendable {
+    case auto
+    case on
+    case off
+
+    var displayName: String {
+        switch self {
+        case .auto: return "auto"
+        case .on:   return "on"
+        case .off:  return "off"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .auto: return "follows macOS Reduce Transparency"
+        case .on:   return "always translucent"
+        case .off:  return "always solid"
         }
     }
 }
@@ -839,12 +881,9 @@ struct ACState: Codable, Sendable {
     static let usageHistoryRetentionDays = 35
 
     var character: ACCharacter = .mochi
-    var selectedSkin: ACSkin = .bubble
-    var useLiquidGlass: Bool = false
-    /// Legacy persisted key name. True now means "use the selected cat skin's
-    /// default accent"; false means "use customAccentHex".
-    var accentFollowsCharacter: Bool = true
-    var customAccentHex: String = "#7BA3D9"
+    /// Glass effect mode for panels/overlays. `.auto` follows the system Reduce
+    /// Transparency accessibility setting (glass off when system says reduce).
+    var glassMode: ACGlassMode = .auto
     var aiTier: AITier = .balanced
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
@@ -941,8 +980,10 @@ struct ACState: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case character
-        case selectedSkin
+        case glassMode
+        // Legacy keys — decoded for migration, never re-encoded:
         case useLiquidGlass
+        case selectedSkin
         case accentFollowsCharacter
         case customAccentHex
         case aiTier
@@ -1006,20 +1047,20 @@ struct ACState: Codable, Sendable {
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
         character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
-        // Skin migration: decode raw string so legacy "pixel" / "liquid" values
-        // from older state files remap cleanly instead of throwing.
-        if let rawSkin = try container.decodeIfPresent(String.self, forKey: .selectedSkin) {
-            switch rawSkin {
-            case "pixel":  selectedSkin = .mono
-            case "liquid", "chibi": selectedSkin = .plush
-            default:       selectedSkin = ACSkin(rawValue: rawSkin) ?? .bubble
-            }
-        } else {
-            selectedSkin = .bubble
+        // Glass mode migration: prefer the new 3-state key; otherwise inherit
+        // from the legacy `useLiquidGlass` Bool (true → .on, false → .off so
+        // returning users see no surprise change). Fresh installs default to
+        // .auto via the property initializer.
+        if let decoded = try container.decodeIfPresent(ACGlassMode.self, forKey: .glassMode) {
+            glassMode = decoded
+        } else if let legacy = try container.decodeIfPresent(Bool.self, forKey: .useLiquidGlass) {
+            glassMode = legacy ? .on : .off
         }
-        useLiquidGlass = try container.decodeIfPresent(Bool.self, forKey: .useLiquidGlass) ?? false
-        accentFollowsCharacter = try container.decodeIfPresent(Bool.self, forKey: .accentFollowsCharacter) ?? true
-        customAccentHex = try container.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#7BA3D9"
+        // Legacy skin/custom-accent keys are intentionally read-and-discard:
+        // the visual identity now flows from `character` alone.
+        _ = try container.decodeIfPresent(String.self, forKey: .selectedSkin)
+        _ = try container.decodeIfPresent(Bool.self, forKey: .accentFollowsCharacter)
+        _ = try container.decodeIfPresent(String.self, forKey: .customAccentHex)
         aiTier = try container.decodeIfPresent(AITier.self, forKey: .aiTier) ?? .balanced
         permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
         setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
@@ -1123,10 +1164,7 @@ struct ACState: Codable, Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(character, forKey: .character)
-        try container.encode(selectedSkin, forKey: .selectedSkin)
-        try container.encode(useLiquidGlass, forKey: .useLiquidGlass)
-        try container.encode(accentFollowsCharacter, forKey: .accentFollowsCharacter)
-        try container.encode(customAccentHex, forKey: .customAccentHex)
+        try container.encode(glassMode, forKey: .glassMode)
         try container.encode(aiTier, forKey: .aiTier)
         try container.encode(permissions, forKey: .permissions)
         try container.encode(setupStatus, forKey: .setupStatus)
@@ -1168,10 +1206,7 @@ struct ACState: Codable, Sendable {
     mutating func resetAlgorithmProfile() {
         goalsText = Self.defaultGoalsText
         userName = ""
-        selectedSkin = .bubble
-        useLiquidGlass = false
-        accentFollowsCharacter = true
-        customAccentHex = "#7BA3D9"
+        glassMode = .auto
         aiTier = .balanced
         recentActions = []
         recentSwitches = []

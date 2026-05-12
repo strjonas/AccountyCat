@@ -2,8 +2,10 @@
 //  SettingsView.swift
 //  AC
 //
-//  6-tab settings embedded in the main panel.
-//  Tabs: look · profiles · ai · controls · persona · you
+//  5-tab settings embedded in the main panel.
+//  Tabs: profiles · look · ai · controls · you
+//  (look merges the old look + persona tabs — character picks pair the
+//  portrait, palette, and personality, so there's nothing to separate.)
 //
 
 import SwiftUI
@@ -15,7 +17,7 @@ struct SettingsView: View {
     @Environment(\.acAccentLight) private var accentLight
 
     var embeddedInPanel = false
-    @State private var selectedTab: SettingsTab = .look
+    @State private var selectedTab: SettingsTab = .profiles
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,11 +30,10 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     switch selectedTab {
-                    case .look:     LookTab()
                     case .profiles: ProfilesTab()
+                    case .look:     LookTab()
                     case .ai:       AITab()
                     case .controls: ControlsTab()
-                    case .persona:  PersonaTab()
                     case .you:      YouTab()
                     }
                 }
@@ -118,10 +119,9 @@ struct SettingsView: View {
 // MARK: - Tabs
 
 enum SettingsTab: String, CaseIterable {
-    case look     = "look"
     case profiles = "profiles"
+    case look     = "look"
     case ai       = "ai"
     case controls = "controls"
-    case persona  = "persona"
     case you      = "you"
 }

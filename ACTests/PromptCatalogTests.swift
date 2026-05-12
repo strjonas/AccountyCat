@@ -30,13 +30,13 @@ struct PromptCatalogTests {
 
     @Test
     func chatAndNudgePromptsReferenceCharacterVoice() {
-        let chatPrompt = ACPromptSets.chatSystemPrompt(withPersonality: ACCharacter.nova.personalityPrefix)
+        let chatPrompt = ACPromptSets.chatSystemPrompt(withPersonality: ACCharacter.onyx.personalityPrefix)
         let nudgePrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt
         let decisionPrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .onlineDecision).systemPrompt
 
         // Chat injects the personality directly into the system prompt.
         #expect(chatPrompt.contains("Character voice:"))
-        #expect(chatPrompt.contains("sharp-minded, energetic focus co-pilot"))
+        #expect(chatPrompt.contains("sharp and decisive focus co-pilot"))
         #expect(chatPrompt.contains("\"actions\":[]"))
         #expect(chatPrompt.contains("Action kinds:"))
 
