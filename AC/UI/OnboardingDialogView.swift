@@ -198,7 +198,7 @@ struct OnboardingDialogView: View {
                     bullets: [
                         "Better models understand your context more accurately",
                         "No download — just an API key",
-                        "Low cost: typically under $1/month"
+                        "Low cost: roughly $1–$5/month depending on tier"
                     ],
                     isSelected: controller.usingOnlineMonitoring,
                     accent: accent,

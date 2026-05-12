@@ -188,7 +188,7 @@ struct OnboardingWizardView: View {
                     title: "Bring Your Own Key",
                     badge: AITier.byokRecommendedOverLocal ? "Recommended" : nil,
                     description:
-                        "Connect your OpenRouter account for the best experience. You pay only for what you use — typically under $1/month. Smarter models understand your context better, with fewer false nudges.",
+                        "Connect your OpenRouter account for the best experience. You pay only for what you use — roughly $1–$5/month depending on tier and usage. Smarter models understand your context better, with fewer false nudges.",
                     isSelected: selectedMode == .byok,
                     isDisabled: false,
                     onSelect: { selectedMode = .byok }

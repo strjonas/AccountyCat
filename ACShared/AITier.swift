@@ -48,11 +48,11 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     var onlineDescription: String {
         switch self {
         case .economy:
-            return "DeepSeek V4 Flash (text), Qwen 3.5 9B (images). ~$0.10–$0.25/mo."
+            return "DeepSeek V4 Flash (text), Qwen 3.5 9B (images). ~$0.80–$1.50/mo."
         case .balanced:
-            return "DeepSeek V4 Flash (text), Qwen 3.6 35B (images). ~$0.20–$0.50/mo."
+            return "DeepSeek V4 Flash (text), Qwen 3.6 35B (images). ~$1.50–$3.00/mo."
         case .smartest:
-            return "Kimi K2.6 (text + images). ~$0.50–$1.00/mo."
+            return "Kimi K2.6 (text + images). ~$3.00–$5.00/mo."
         }
     }
 
@@ -86,9 +86,9 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
 
     var byokCostEstimate: String {
         switch self {
-        case .economy:  return "~$0.10-0.40/mo"
-        case .balanced: return "~$0.20-0.80/mo"
-        case .smartest: return "~$0.95–1.90/mo"
+        case .economy:  return "~$0.80–1.50/mo"
+        case .balanced: return "~$1.50–3.00/mo"
+        case .smartest: return "~$3.00–5.00/mo"
         }
     }
 

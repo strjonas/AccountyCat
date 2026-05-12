@@ -60,19 +60,19 @@ The app detects your available memory and suggests the right tier automatically.
 
 ### Bring your own API key (OpenRouter)
 
-Connect your own [OpenRouter](https://openrouter.ai) account. You control the spend — typical usage runs well under a dollar a month. All requests use OpenRouter's Zero Data Retention (ZDR) enforcement, meaning providers contractually cannot log or train on your data.
+Connect your own [OpenRouter](https://openrouter.ai) account. You control the spend. All requests use OpenRouter's Zero Data Retention (ZDR) enforcement, meaning providers contractually cannot log or train on your data.
 
 AccountyCat intelligently selects the right model based on what you're doing:
 - **Text-only decisions**: Uses optimized text-only models for speed and cost when the app/title/profile context is enough
 - **Screenshot checks**: Uses a vision-capable model for ambiguous apps, missing or weak titles, and one-shot retries when a text-only decision is unclear
 
-| Tier | Text-only model | Image model | Approx. cost/month |
+| Tier | Text-only model | Image model | Approx. cost/month\* |
 |------|-----------------|-------------|----------------------|
-| Economy | DeepSeek V4 Flash | Qwen 3.5 9B | $0.10–$0.25 |
-| Default | DeepSeek V4 Flash | Qwen 3.6 35B | $0.20–$0.50 |
-| Smartest | Kimi K2.6 | Kimi K2.6 | $0.50–$1.00 |
+| Economy | DeepSeek V4 Flash | Qwen 3.5 9B | $0.80–$1.50 |
+| Default | DeepSeek V4 Flash | Qwen 3.6 35B | $1.50–$3.00 |
+| Smartest | Kimi K2.6 | Kimi K2.6 | $3.00–$5.00 |
 
-Cost range reflects normal to heavy usage. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
+\* Varies with how much you actually use your Mac. Model selection and prices are kept current as OpenRouter's catalog evolves. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
 
 > **Managed mode (waitlist):** A fully hosted option is in planning — pay a flat monthly fee, no OpenRouter account needed, just works out of the box. [Join the waitlist](https://www.accountycat.com/#waitlist) to signal demand and get early access.
 
