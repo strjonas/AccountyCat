@@ -312,6 +312,7 @@ actor PromptLabRunner {
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                     ),
+                    recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
                     policySummary: compactPolicySummary,
                     snapshotAppName: compactAppName,
                     snapshotWindowTitle: compactWindowTitle,
