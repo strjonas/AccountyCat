@@ -69,14 +69,14 @@ final class BrainService: NSObject {
     /// Returns nil for reactions unrelated to nudge quality (e.g. negativeChatFeedback).
     private static func rewardValue(for kind: UserReactionKind) -> Double? {
         switch kind {
-        case .nudgeRatedPositive:    return +1.0
-        case .nudgeRatedNegative:    return -0.8
-        case .postNudgeAppSwitch:    return +0.6
+        case .nudgeRatedPositive: return +1.0
+        case .nudgeRatedNegative: return -0.8
+        case .postNudgeAppSwitch: return +0.6
         case .postNudgeRescueReturn: return +0.6
-        case .backToWorkSelected:    return +0.6
-        case .nudgeIgnored:          return -0.3
-        case .overlayDismissed:      return -1.5
-        case .negativeChatFeedback:  return nil
+        case .backToWorkSelected: return +0.6
+        case .nudgeIgnored: return -0.3
+        case .overlayDismissed: return -1.5
+        case .negativeChatFeedback: return nil
         }
     }
 
@@ -111,20 +111,23 @@ final class BrainService: NSObject {
         guard !activeProfile.isDefault else { return .idle }
 
         if let secondsLeft = activeProfile.secondsUntilExpiry(at: now),
-           secondsLeft > 0,
-           secondsLeft <= 5 * 60,
-           activeProfile.prewarnSentAt == nil {
+            secondsLeft > 0,
+            secondsLeft <= 5 * 60,
+            activeProfile.prewarnSentAt == nil
+        {
             if let i = state.profiles.firstIndex(where: { $0.id == activeProfile.id }) {
                 state.profiles[i].prewarnSentAt = now
             }
             let minutesLeft = max(1, Int((secondsLeft / 60).rounded(.up)))
-            let warning = "Heads up — your \(activeProfile.name) session ends in \(minutesLeft) min. Want to extend?"
-            state.chatHistory.append(ChatMessage(
-                role: .assistant,
-                text: warning,
-                timestamp: now,
-                interruptionPolicy: .deferred
-            ))
+            let warning =
+                "Heads up — your \(activeProfile.name) session ends in \(minutesLeft) min. Want to extend?"
+            state.chatHistory.append(
+                ChatMessage(
+                    role: .assistant,
+                    text: warning,
+                    timestamp: now,
+                    interruptionPolicy: .deferred
+                ))
             return .preWarned(profileName: activeProfile.name, minutesLeft: minutesLeft)
         }
 
@@ -139,11 +142,13 @@ final class BrainService: NSObject {
             }
             return activeProfile.name
         }()
-        let titleStillRelevant = MonitoringHeuristics.titleRelatesToFocus(
-            lastObservedContext?.windowTitle,
-            focusGoal: focusGoalForExpiry
-        ) == true
-        let stillOnTask = allowAutoExtend
+        let titleStillRelevant =
+            MonitoringHeuristics.titleRelatesToFocus(
+                lastObservedContext?.windowTitle,
+                focusGoal: focusGoalForExpiry
+            ) == true
+        let stillOnTask =
+            allowAutoExtend
             && lastAssessment == .focused
             && titleStillRelevant
 
@@ -158,12 +163,14 @@ final class BrainService: NSObject {
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "HH:mm"
             let untilText = formatter.string(from: extendedExpiry)
-            state.chatHistory.append(ChatMessage(
-                role: .assistant,
-                text: "Still in the zone — extending \(activeProfile.name) to \(untilText). Wrap up when you're ready.",
-                timestamp: now,
-                interruptionPolicy: .deferred
-            ))
+            state.chatHistory.append(
+                ChatMessage(
+                    role: .assistant,
+                    text:
+                        "Still in the zone — extending \(activeProfile.name) to \(untilText). Wrap up when you're ready.",
+                    timestamp: now,
+                    interruptionPolicy: .deferred
+                ))
             return .autoExtended(profileName: activeProfile.name, until: extendedExpiry)
         }
 
@@ -181,20 +188,23 @@ final class BrainService: NSObject {
             goalSummary: activeProfile.createdReason
         )
         state.sessionCelebrationPending = true
-        let modeChange = "You did it — \(activeProfile.name) wrapped. You're back in everyday mode now. Take a well-earned break."
-        state.chatHistory.append(ChatMessage(
-            role: .assistant,
-            text: modeChange,
-            timestamp: now,
-            interruptionPolicy: .deferred
-        ))
+        let modeChange =
+            "You did it — \(activeProfile.name) wrapped. Really proud of you. Take a well-earned break."
+        state.chatHistory.append(
+            ChatMessage(
+                role: .assistant,
+                text: modeChange,
+                timestamp: now,
+                interruptionPolicy: .deferred
+            ))
         return .ended(profileName: activeProfile.name)
     }
 
     /// Pull the last `limit` user chat messages (oldest→newest) from the stored history.
     /// Safety net so fresh intent reaches the decision stage even if memory extraction lags.
     static func recentUserMessages(chatHistory: [ChatMessage], limit: Int) -> [String] {
-        let userMessages = chatHistory
+        let userMessages =
+            chatHistory
             .filter { $0.role == .user }
             .suffix(limit)
             .compactMap(\.promptStampedLine)
@@ -235,7 +245,9 @@ final class BrainService: NSObject {
         }
 
         state.permissions = PermissionService.currentSnapshot()
-        statusSink?("Screen Recording access appears unavailable. Re-enable it in System Settings to restore screenshots.")
+        statusSink?(
+            "Screen Recording access appears unavailable. Re-enable it in System Settings to restore screenshots."
+        )
         stateSink?(baseState, state)
 
         Task {
@@ -247,7 +259,9 @@ final class BrainService: NSObject {
         return true
     }
 
-    private func ensureTelemetrySessionIfNeeded(for state: ACState) async -> TelemetrySessionDescriptor? {
+    private func ensureTelemetrySessionIfNeeded(for state: ACState) async
+        -> TelemetrySessionDescriptor?
+    {
         guard shouldPersistVerboseTelemetry(state: state) else {
             return nil
         }
@@ -256,7 +270,8 @@ final class BrainService: NSObject {
 
     private func cleanupEphemeralScreenshotIfNeeded(_ snapshot: AppSnapshot) {
         guard let screenshotPath = snapshot.screenshotPath,
-              !screenshotPath.isEmpty else {
+            !screenshotPath.isEmpty
+        else {
             return
         }
 
@@ -273,17 +288,28 @@ final class BrainService: NSObject {
         guard timer == nil, contextProbeTimer == nil else { return }
 
         let notificationCenter = NSWorkspace.shared.notificationCenter
-        notificationCenter.addObserver(self, selector: #selector(handleWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
-        notificationCenter.addObserver(self, selector: #selector(handleDidWake), name: NSWorkspace.didWakeNotification, object: nil)
-        notificationCenter.addObserver(self, selector: #selector(handleSessionInactive), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
-        notificationCenter.addObserver(self, selector: #selector(handleSessionActive), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        notificationCenter.addObserver(
+            self, selector: #selector(handleWillSleep), name: NSWorkspace.willSleepNotification,
+            object: nil)
+        notificationCenter.addObserver(
+            self, selector: #selector(handleDidWake), name: NSWorkspace.didWakeNotification,
+            object: nil)
+        notificationCenter.addObserver(
+            self, selector: #selector(handleSessionInactive),
+            name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        notificationCenter.addObserver(
+            self, selector: #selector(handleSessionActive),
+            name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
 
-        timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) {
+            [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.scheduleTickIfNeeded()
             }
         }
-        contextProbeTimer = Timer.scheduledTimer(withTimeInterval: contextChangeProbeInterval, repeats: true) { [weak self] _ in
+        contextProbeTimer = Timer.scheduledTimer(
+            withTimeInterval: contextChangeProbeInterval, repeats: true
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.probeForContextChange()
             }
@@ -338,10 +364,13 @@ final class BrainService: NSObject {
         resetRuntimeContext()
     }
 
-    func recordUserReaction(_ reaction: UserReactionRecord, endEpisodeReason: EpisodeEndReason? = nil) {
+    func recordUserReaction(
+        _ reaction: UserReactionRecord, endEpisodeReason: EpisodeEndReason? = nil
+    ) {
         if shouldPersistVerboseTelemetry() {
             Task {
-                let sessionID = (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
+                let sessionID =
+                    (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
                 if let sessionID {
                     try? await telemetryStore.appendEvent(
                         TelemetryEvent(
@@ -372,8 +401,9 @@ final class BrainService: NSObject {
         // Feed reward signal to the active algorithm. The current LLM monitor ignores it,
         // but the seam remains in place if learning-based variants return later.
         if let reward = Self.rewardValue(for: reaction.kind),
-           let captured = matchingPendingReaction(for: reaction),
-           let baseState = stateProvider?() {
+            let captured = matchingPendingReaction(for: reaction),
+            let baseState = stateProvider?()
+        {
             var state = baseState
             let signal = MonitoringRewardSignal(
                 evaluationID: captured.evaluationID,
@@ -422,7 +452,8 @@ final class BrainService: NSObject {
         isSessionAvailable = true
         appendLifecycleHeartbeat(reason: "system_did_wake")
         Task {
-            await ActivityLogService.shared.append(category: "app", message: "System woke up. Monitoring resumed.")
+            await ActivityLogService.shared.append(
+                category: "app", message: "System woke up. Monitoring resumed.")
         }
         scheduleTickIfNeeded()
     }
@@ -439,7 +470,8 @@ final class BrainService: NSObject {
         isSessionAvailable = true
         appendLifecycleHeartbeat(reason: "session_active")
         Task {
-            await ActivityLogService.shared.append(category: "app", message: "User session became active. Monitoring resumed.")
+            await ActivityLogService.shared.append(
+                category: "app", message: "User session became active. Monitoring resumed.")
         }
         scheduleTickIfNeeded()
     }
@@ -506,10 +538,11 @@ final class BrainService: NSObject {
 
     private func probeForContextChange() {
         guard isEvaluating == false,
-              let state = stateProvider?(),
-              state.setupStatus == .ready,
-              state.isPaused == false,
-              isSessionAvailable else {
+            let state = stateProvider?(),
+            state.setupStatus == .ready,
+            state.isPaused == false,
+            isSessionAvailable
+        else {
             return
         }
 
@@ -548,7 +581,9 @@ final class BrainService: NSObject {
             return
         }
 
-        if !state.permissions.satisfies(LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)) {
+        if !state.permissions.satisfies(
+            LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration))
+        {
             cancelActiveEvaluationIfNeeded(reason: "permissions_missing")
             moodSink?(.setup)
             statusSink?("Required permissions are still missing.")
@@ -616,7 +651,8 @@ final class BrainService: NSObject {
             !profile.isDefault
                 && profile.recurringSchedule?.matches(now: now, calendar: calendar) == true
                 && profile.id != state.activeProfileID
-                && (profile.lastScheduleFireDate.map { !calendar.isDate($0, inSameDayAs: now) } ?? true)
+                && (profile.lastScheduleFireDate.map { !calendar.isDate($0, inSameDayAs: now) }
+                    ?? true)
         }) {
             if let i = state.profiles.firstIndex(where: { $0.id == scheduledProfile.id }) {
                 state.profiles[i].activatedAt = now
@@ -627,12 +663,14 @@ final class BrainService: NSObject {
                 )
             }
             state.activeProfileID = scheduledProfile.id
-            state.chatHistory.append(ChatMessage(
-                role: .assistant,
-                text: "\(scheduledProfile.name) activated (\(scheduledProfile.recurringSchedule?.scheduleDescription() ?? "scheduled")).",
-                timestamp: now,
-                interruptionPolicy: .deferred
-            ))
+            state.chatHistory.append(
+                ChatMessage(
+                    role: .assistant,
+                    text:
+                        "\(scheduledProfile.name) activated (\(scheduledProfile.recurringSchedule?.scheduleDescription() ?? "scheduled")).",
+                    timestamp: now,
+                    interruptionPolicy: .deferred
+                ))
             stateSink?(baseState, state)
             await appendMonitoringMetric(
                 kind: .profileChanged,
@@ -646,9 +684,11 @@ final class BrainService: NSObject {
         for nudgeIndex in state.recurringNudges.indices {
             let nudge = state.recurringNudges[nudgeIndex]
             guard nudge.enabled,
-                  nudge.matches(now: now, calendar: calendar) else { continue }
+                nudge.matches(now: now, calendar: calendar)
+            else { continue }
             if let lastFired = nudge.lastFiredAt,
-               calendar.isDate(lastFired, inSameDayAs: now) {
+                calendar.isDate(lastFired, inSameDayAs: now)
+            {
                 continue
             }
             state.recurringNudges[nudgeIndex].lastFiredAt = now
@@ -703,17 +743,20 @@ final class BrainService: NSObject {
         // Hard escalation: if the user re-opened an app that was force-minimized,
         // minimize it again immediately before doing any evaluation.
         if let escalation = state.hardEscalation,
-           context.bundleIdentifier == escalation.bundleIdentifier || context.appName == escalation.appName {
+            context.bundleIdentifier == escalation.bundleIdentifier
+                || context.appName == escalation.appName
+        {
             executiveArm.hideApp(bundleIdentifier: context.bundleIdentifier)
             state.hardEscalation?.timesMinimized += 1
             state.hardEscalation?.lastMinimizedAt = now
-            state.recentActions.insert(ActionRecord(
-                kind: .autoMinimizeApp,
-                message: "Auto-minimized \(context.appName)",
-                timestamp: now,
-                contextKey: context.contextKey,
-                appName: context.appName
-            ), at: 0)
+            state.recentActions.insert(
+                ActionRecord(
+                    kind: .autoMinimizeApp,
+                    message: "Auto-minimized \(context.appName)",
+                    timestamp: now,
+                    contextKey: context.contextKey,
+                    appName: context.appName
+                ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             stateSink?(baseState, state)
             moodSink?(.escalatedHard)
@@ -820,17 +863,19 @@ final class BrainService: NSObject {
         }
         // Inject active profile blocklist as temporary disallow rules for this tick.
         if let activeProfile = state.profile(withID: activeProfileID),
-           !activeProfile.blocklist.isEmpty {
+            !activeProfile.blocklist.isEmpty
+        {
             for entry in activeProfile.blocklist {
                 let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { continue }
-                scopedPolicyMemory.rules.append(PolicyRule(
-                    kind: .disallow,
-                    summary: "Block \(trimmed)",
-                    source: .system,
-                    scope: PolicyRuleScope(appName: trimmed, titleContains: [trimmed]),
-                    profileID: activeProfileID
-                ))
+                scopedPolicyMemory.rules.append(
+                    PolicyRule(
+                        kind: .disallow,
+                        summary: "Block \(trimmed)",
+                        source: .system,
+                        scope: PolicyRuleScope(appName: trimmed, titleContains: [trimmed]),
+                        profileID: activeProfileID
+                    ))
             }
         }
 
@@ -885,7 +930,8 @@ final class BrainService: NSObject {
                 idleSeconds: idleSeconds,
                 heuristics: heuristics,
                 shouldEvaluateNow: true,
-                transition: activeEpisode?.contextKey == context.contextKey ? .continuedObserving : .started,
+                transition: activeEpisode?.contextKey == context.contextKey
+                    ? .continuedObserving : .started,
                 endReason: nil
             )
             await appendFailureIfNeeded(
@@ -894,17 +940,20 @@ final class BrainService: NSObject {
                 evaluationID: nil
             )
         } else {
-            statusSink?(evaluationPlan.requiresScreenshot
-                ? "Evaluating \(context.appName) with a local snapshot."
-                : "Evaluating \(context.appName) from title and usage context.")
+            statusSink?(
+                evaluationPlan.requiresScreenshot
+                    ? "Evaluating \(context.appName) with a local snapshot."
+                    : "Evaluating \(context.appName) from title and usage context.")
         }
 
         let session = await ensureTelemetrySessionIfNeeded(for: state)
-        let episodeTransition = ensureEpisode(for: context, sessionID: session?.id ?? "unknown", at: now)
+        let episodeTransition = ensureEpisode(
+            for: context, sessionID: session?.id ?? "unknown", at: now)
         let evaluationEpisode = activeEpisode
         let algorithmDescriptor: MonitoringAlgorithmDescriptor
         do {
-            algorithmDescriptor = try monitoringAlgorithmRegistry.descriptor(for: state.monitoringConfiguration.algorithmID)
+            algorithmDescriptor = try monitoringAlgorithmRegistry.descriptor(
+                for: state.monitoringConfiguration.algorithmID)
         } catch {
             handleMonitoringConfigurationError(error)
             return
@@ -931,9 +980,11 @@ final class BrainService: NSObject {
         let evaluationID = UUID().uuidString
         let inferBackend = state.monitoringConfiguration.inferenceBackend.rawValue
         let reason = evaluationPlan.reason ?? "stable_context"
-        await ActivityLogService.shared.append(level: .more,
+        await ActivityLogService.shared.append(
+            level: .more,
             category: "eval",
-            message: "tick #\(evaluationID.prefix(8)) · reason: \(reason) · backend: \(inferBackend) · profile: \(state.activeProfileID)"
+            message:
+                "tick #\(evaluationID.prefix(8)) · reason: \(reason) · backend: \(inferBackend) · profile: \(state.activeProfileID)"
         )
         await appendEvaluationRequestedEvent(
             sessionID: session?.id,
@@ -968,7 +1019,8 @@ final class BrainService: NSObject {
                 statusSink?("Snapshot capture failed. Trying again later.")
             }
             stateSink?(baseState, state)
-            await ActivityLogService.shared.append(category: "snapshot-error", message: error.localizedDescription)
+            await ActivityLogService.shared.append(
+                category: "snapshot-error", message: error.localizedDescription)
             await appendFailureIfNeeded(
                 domain: "snapshot",
                 message: error.localizedDescription,
@@ -989,7 +1041,8 @@ final class BrainService: NSObject {
         // falls back to memory + chat as before.
         let calendarContext: String?
         if state.calendarIntelligenceEnabled,
-           state.permissions.calendar == .granted {
+            state.permissions.calendar == .granted
+        {
             calendarContext = await CalendarService.shared.currentEventContext(
                 now: now,
                 enabledCalendarIdentifiers: state.enabledCalendarIdentifiers
@@ -1005,10 +1058,15 @@ final class BrainService: NSObject {
         // back to Everyday; without this, the goal anchor evaporates at expiry.
         let recentlyEndedForPayload: RecentlyEndedSessionSummary? = {
             guard let recentlyEnded = state.recentlyEndedSession,
-                  !recentlyEnded.isStale(at: now) else { return nil }
+                !recentlyEnded.isStale(at: now)
+            else { return nil }
             return recentlyEnded.promptSummary
         }()
-        let evaluationTask = Task { [monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile, recentlyEndedForPayload] in
+        let evaluationTask = Task {
+            [
+                monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile,
+                recentlyEndedForPayload
+            ] in
             try await monitoringAlgorithmRegistry.evaluate(
                 input: MonitoringDecisionInput(
                     now: now,
@@ -1016,24 +1074,24 @@ final class BrainService: NSObject {
                     snapshot: snapshot,
                     goals: state.goalsText,
                     recentActions: state.recentActions,
-                heuristics: heuristics,
-                memory: state.memoryForPrompt(now: now),
-                recentUserMessages: Self.recentUserMessages(
-                    chatHistory: state.chatHistory,
-                    limit: MonitoringPromptContextBudget.recentUserChatCount
-                ),
-                policyMemory: scopedPolicyMemory,
-                runtimeOverride: state.runtimePathOverride,
-                configuration: state.monitoringConfiguration,
-                algorithmState: state.algorithmState,
-                characterPersonalityPrefix: state.character.personalityPrefix,
-                character: state.character,
-                calendarContext: calendarContext,
-                activeProfileID: currentProfile.id,
-                activeProfileName: currentProfile.name,
-                activeProfileDescription: currentProfile.description,
-                activeProfileExpiresAt: currentProfile.expiresAt,
-                recentlyEndedSession: recentlyEndedForPayload
+                    heuristics: heuristics,
+                    memory: state.memoryForPrompt(now: now),
+                    recentUserMessages: Self.recentUserMessages(
+                        chatHistory: state.chatHistory,
+                        limit: MonitoringPromptContextBudget.recentUserChatCount
+                    ),
+                    policyMemory: scopedPolicyMemory,
+                    runtimeOverride: state.runtimePathOverride,
+                    configuration: state.monitoringConfiguration,
+                    algorithmState: state.algorithmState,
+                    characterPersonalityPrefix: state.character.personalityPrefix,
+                    character: state.character,
+                    calendarContext: calendarContext,
+                    activeProfileID: currentProfile.id,
+                    activeProfileName: currentProfile.name,
+                    activeProfileDescription: currentProfile.description,
+                    activeProfileExpiresAt: currentProfile.expiresAt,
+                    recentlyEndedSession: recentlyEndedForPayload
                 )
             )
         }
@@ -1048,9 +1106,11 @@ final class BrainService: NSObject {
             let attemptsSummary = decisionResult.evaluation.attempts
                 .map { "\($0.promptMode):\($0.parsedDecision?.assessment.rawValue ?? "?")" }
                 .joined(separator: ", ")
-            await ActivityLogService.shared.append(level: .more,
+            await ActivityLogService.shared.append(
+                level: .more,
                 category: "eval",
-                message: "verdict: \(decisionResult.decision.assessment.rawValue) · attempts: [\(attemptsSummary)]"
+                message:
+                    "verdict: \(decisionResult.decision.assessment.rawValue) · attempts: [\(attemptsSummary)]"
             )
         } catch is CancellationError {
             moodSink?(.watching)
@@ -1062,7 +1122,8 @@ final class BrainService: NSObject {
             return
         }
 
-        let pipelineSupportsScreenshot = LLMPolicyCatalog
+        let pipelineSupportsScreenshot =
+            LLMPolicyCatalog
             .pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
             .descriptor
             .requiresScreenshot
@@ -1071,9 +1132,10 @@ final class BrainService: NSObject {
         // tick can support vision, try the configured image model once before
         // backing off globally.
         if decisionResult.evaluation.failureMessage == "all_attempts_failed",
-           state.monitoringConfiguration.usesOnlineInference,
-           snapshot.screenshotPath == nil,
-           pipelineSupportsScreenshot {
+            state.monitoringConfiguration.usesOnlineInference,
+            snapshot.screenshotPath == nil,
+            pipelineSupportsScreenshot
+        {
             do {
                 let escalatedSnapshot = try await buildSnapshot(
                     from: context,
@@ -1116,7 +1178,8 @@ final class BrainService: NSObject {
                     decisionResult = retried
                     await ActivityLogService.shared.append(
                         category: "vision-retry",
-                        message: "Text-path API failed; retried with screenshot. New verdict: \(retried.decision.assessment.rawValue)"
+                        message:
+                            "Text-path API failed; retried with screenshot. New verdict: \(retried.decision.assessment.rawValue)"
                     )
                     await appendMonitoringMetric(
                         kind: .visionRetried,
@@ -1149,10 +1212,12 @@ final class BrainService: NSObject {
         if decisionResult.evaluation.failureMessage == "all_attempts_failed" {
             consecutiveAPIFailures += 1
             let backoff = min(10 * pow(2.0, Double(consecutiveAPIFailures - 1)), 300)
-            state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(backoff)
+            state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
+                backoff)
             moodSink?(.watching)
             if consecutiveAPIFailures >= 3 {
-                let banner = "AC is having trouble reaching the model provider. Retrying with backup models…"
+                let banner =
+                    "AC is having trouble reaching the model provider. Retrying with backup models…"
                 statusSink?(banner)
                 connectionProblemSink?(banner)
             } else {
@@ -1173,8 +1238,9 @@ final class BrainService: NSObject {
         // One-shot vision escalation: if text-only returned `unclear` and the pipeline supports
         // a screenshot, capture one and retry. Bound to a single retry per tick.
         if decisionResult.decision.assessment == .unclear,
-           snapshot.screenshotPath == nil,
-           pipelineSupportsScreenshot {
+            snapshot.screenshotPath == nil,
+            pipelineSupportsScreenshot
+        {
             do {
                 let escalatedSnapshot = try await buildSnapshot(
                     from: context,
@@ -1206,7 +1272,7 @@ final class BrainService: NSObject {
                         configuration: state.monitoringConfiguration,
                         algorithmState: state.algorithmState,
                         characterPersonalityPrefix: state.character.personalityPrefix,
-                character: state.character,
+                        character: state.character,
                         calendarContext: calendarContext,
                         activeProfileID: currentProfile.id,
                         activeProfileName: currentProfile.name,
@@ -1217,7 +1283,8 @@ final class BrainService: NSObject {
                     decisionResult = retried
                     await ActivityLogService.shared.append(
                         category: "vision-retry",
-                        message: "Text-only returned unclear; retried with screenshot. New verdict: \(retried.decision.assessment.rawValue)"
+                        message:
+                            "Text-only returned unclear; retried with screenshot. New verdict: \(retried.decision.assessment.rawValue)"
                     )
                     await appendMonitoringMetric(
                         kind: .visionRetried,
@@ -1260,7 +1327,8 @@ final class BrainService: NSObject {
         state.algorithmState = decisionResult.updatedAlgorithmState
 
         if let policyMemoryUpdate = decisionResult.policyMemoryUpdate,
-           !policyMemoryUpdate.operations.isEmpty {
+            !policyMemoryUpdate.operations.isEmpty
+        {
             // Rules carry their own profile scoping (nil = global, value = profile-scoped).
             // Don't stamp them here — the LLM or safelist builder decides the scope.
             state.policyMemory.apply(policyMemoryUpdate, now: now)
@@ -1278,7 +1346,8 @@ final class BrainService: NSObject {
             stateSink?(baseState, state)
             await appendFailureIfNeeded(
                 domain: "policy",
-                message: "stale_context: evaluation started in \(context.appName) but user has since moved away",
+                message:
+                    "stale_context: evaluation started in \(context.appName) but user has since moved away",
                 evaluationID: evaluationID,
                 episode: evaluationEpisode
             )
@@ -1294,19 +1363,20 @@ final class BrainService: NSObject {
         }
 
         switch decisionResult.policy.action {
-        case let .showNudge(message):
+        case .showNudge(let message):
             modelUsageSink?(decisionResult.evaluation.lastUsedModelIdentifier)
             let actionID = UUID().uuidString
-            state.recentActions.insert(ActionRecord(
-                id: actionID,
-                kind: .nudge,
-                message: message,
-                timestamp: now,
-                evaluationID: evaluationID,
-                contextKey: context.contextKey,
-                appName: context.appName,
-                windowTitle: context.windowTitle
-            ), at: 0)
+            state.recentActions.insert(
+                ActionRecord(
+                    id: actionID,
+                    kind: .nudge,
+                    message: message,
+                    timestamp: now,
+                    evaluationID: evaluationID,
+                    contextKey: context.contextKey,
+                    appName: context.appName,
+                    windowTitle: context.windowTitle
+                ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             attachIntervention(actionID, toLatestSegmentIn: &state)
             stateSink?(baseState, state)
@@ -1321,19 +1391,20 @@ final class BrainService: NSObject {
                 sourceContextKey: context.contextKey
             )
 
-        case let .showOverlay(presentation):
+        case .showOverlay(let presentation):
             modelUsageSink?(decisionResult.evaluation.lastUsedModelIdentifier)
             let actionID = UUID().uuidString
-            state.recentActions.insert(ActionRecord(
-                id: actionID,
-                kind: .overlay,
-                message: [presentation.headline, presentation.body].joined(separator: " — "),
-                timestamp: now,
-                evaluationID: evaluationID,
-                contextKey: context.contextKey,
-                appName: context.appName,
-                windowTitle: context.windowTitle
-            ), at: 0)
+            state.recentActions.insert(
+                ActionRecord(
+                    id: actionID,
+                    kind: .overlay,
+                    message: [presentation.headline, presentation.body].joined(separator: " — "),
+                    timestamp: now,
+                    evaluationID: evaluationID,
+                    contextKey: context.contextKey,
+                    appName: context.appName,
+                    windowTitle: context.windowTitle
+                ), at: 0)
             state.recentActions = Array(state.recentActions.prefix(12))
             attachIntervention(actionID, toLatestSegmentIn: &state)
             if presentation.isHardEscalation {
@@ -1346,9 +1417,10 @@ final class BrainService: NSObject {
             }
             stateSink?(baseState, state)
             moodSink?(presentation.isHardEscalation ? .escalatedHard : .escalated)
-            statusSink?(presentation.isHardEscalation
-                ? "Hard escalation — asking why \(context.appName) serves your goals."
-                : "Escalated after repeated distraction signals.")
+            statusSink?(
+                presentation.isHardEscalation
+                    ? "Hard escalation — asking why \(context.appName) serves your goals."
+                    : "Escalated after repeated distraction signals.")
             executiveArm.perform(.showOverlay(presentation))
             pendingReactionsByEvaluationID[evaluationID] = PendingReaction(
                 episodeID: evaluationEpisode?.id ?? activeEpisode?.id ?? "",
@@ -1367,7 +1439,8 @@ final class BrainService: NSObject {
         await ActivityLogService.shared.append(
             level: .verbose,
             category: "monitoring",
-            message: "eval: \(decisionResult.decision.assessment.rawValue) · \(context.appName) · action: \(decisionResult.policy.action.telemetryLabel)"
+            message:
+                "eval: \(decisionResult.decision.assessment.rawValue) · \(context.appName) · action: \(decisionResult.policy.action.telemetryLabel)"
         )
 
         await appendActionExecutedEvent(
@@ -1420,7 +1493,8 @@ final class BrainService: NSObject {
         }
 
         let dayUsage = state.usageByDay[now.acDayKey] ?? [:]
-        let perAppDurations = dayUsage
+        let perAppDurations =
+            dayUsage
             .map { AppUsageRecord(appName: $0.key, seconds: $0.value) }
             .sorted { $0.seconds > $1.seconds }
 
@@ -1465,7 +1539,9 @@ final class BrainService: NSObject {
         )
     }
 
-    private func updateUsageDurations(state: inout ACState, with context: FrontmostContext, now: Date) {
+    private func updateUsageDurations(
+        state: inout ACState, with context: FrontmostContext, now: Date
+    ) {
         let delta = now.timeIntervalSince(lastObservedAt)
         defer { lastObservedAt = now }
 
@@ -1498,24 +1574,26 @@ final class BrainService: NSObject {
         let driftScore = state.algorithmState.llmPolicy.focusSignal.clampedDrift
 
         if var last = state.focusSegments.last,
-           last.assessment == assessment,
-           last.appName == context.appName,
-           last.bundleIdentifier == context.bundleIdentifier,
-           last.windowTitle == context.windowTitle,
-           start.timeIntervalSince(last.endAt) <= 5 {
+            last.assessment == assessment,
+            last.appName == context.appName,
+            last.bundleIdentifier == context.bundleIdentifier,
+            last.windowTitle == context.windowTitle,
+            start.timeIntervalSince(last.endAt) <= 5
+        {
             last.endAt = end
             last.driftScore = driftScore
             state.focusSegments[state.focusSegments.count - 1] = last
         } else {
-            state.focusSegments.append(FocusTimelineSegment(
-                startAt: start,
-                endAt: end,
-                appName: context.appName,
-                bundleIdentifier: context.bundleIdentifier,
-                windowTitle: context.windowTitle,
-                assessment: assessment,
-                driftScore: driftScore
-            ))
+            state.focusSegments.append(
+                FocusTimelineSegment(
+                    startAt: start,
+                    endAt: end,
+                    appName: context.appName,
+                    bundleIdentifier: context.bundleIdentifier,
+                    windowTitle: context.windowTitle,
+                    assessment: assessment,
+                    driftScore: driftScore
+                ))
         }
 
         pruneFocusSegments(state: &state, now: end)
@@ -1563,7 +1641,9 @@ final class BrainService: NSObject {
         lastPersistAt = now
     }
 
-    private func ensureEpisode(for context: FrontmostContext, sessionID: String, at now: Date) -> ObservationTransition {
+    private func ensureEpisode(for context: FrontmostContext, sessionID: String, at now: Date)
+        -> ObservationTransition
+    {
         if let activeEpisode, activeEpisode.contextKey == context.contextKey {
             return .continuedObserving
         }
@@ -1596,14 +1676,15 @@ final class BrainService: NSObject {
         if let pendingReaction = mostRecentPendingReaction(
             where: { pending in
                 pending.episodeID == activeEpisode?.id
-                && now.timeIntervalSince(pending.issuedAt) <= 150
-                && context.bundleIdentifier == state.rescueApp.bundleIdentifier
+                    && now.timeIntervalSince(pending.issuedAt) <= 150
+                    && context.bundleIdentifier == state.rescueApp.bundleIdentifier
             }
         ) {
             await recordImplicitReaction(
                 UserReactionRecord(
                     kind: .postNudgeRescueReturn,
-                    relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
+                    relatedAction: CompanionPolicy.telemetryActionRecord(
+                        for: pendingReaction.action),
                     positive: true,
                     details: context.appName
                 ),
@@ -1614,17 +1695,18 @@ final class BrainService: NSObject {
         } else if let pendingReaction = mostRecentPendingReaction(
             where: { pending in
                 pending.episodeID == activeEpisode?.id
-                && now.timeIntervalSince(pending.issuedAt) <= 150
-                && MonitoringHeuristics.isClearlyProductive(
-                    bundleIdentifier: context.bundleIdentifier,
-                    appName: context.appName
-                )
+                    && now.timeIntervalSince(pending.issuedAt) <= 150
+                    && MonitoringHeuristics.isClearlyProductive(
+                        bundleIdentifier: context.bundleIdentifier,
+                        appName: context.appName
+                    )
             }
         ) {
             await recordImplicitReaction(
                 UserReactionRecord(
                     kind: .postNudgeAppSwitch,
-                    relatedAction: CompanionPolicy.telemetryActionRecord(for: pendingReaction.action),
+                    relatedAction: CompanionPolicy.telemetryActionRecord(
+                        for: pendingReaction.action),
                     positive: true,
                     details: context.appName
                 ),
@@ -1681,7 +1763,9 @@ final class BrainService: NSObject {
                 transition: .ended,
                 endReason: reason
             )
-            let sessionID = (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id) ?? episode.sessionID
+            let sessionID =
+                (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
+                ?? episode.sessionID
             try? await telemetryStore.appendEvent(
                 TelemetryEvent(
                     id: UUID().uuidString,
@@ -1711,7 +1795,8 @@ final class BrainService: NSObject {
         moodSink?(.setup)
         statusSink?("Monitoring configuration is invalid. Reset it in the app settings.")
         Task {
-            await ActivityLogService.shared.append(category: "monitoring-config", message: error.localizedDescription)
+            await ActivityLogService.shared.append(
+                category: "monitoring-config", message: error.localizedDescription)
         }
     }
 
@@ -1776,8 +1861,10 @@ final class BrainService: NSObject {
         guard let relatedAction = reaction.relatedAction else { return true }
 
         switch (action, relatedAction.kind) {
-        case let (.showNudge(message), .nudge):
-            if let relatedMessage = relatedAction.message?.cleanedSingleLine, !relatedMessage.isEmpty {
+        case (.showNudge(let message), .nudge):
+            if let relatedMessage = relatedAction.message?.cleanedSingleLine,
+                !relatedMessage.isEmpty
+            {
                 return message.cleanedSingleLine == relatedMessage
             }
             return true
