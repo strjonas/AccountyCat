@@ -3,8 +3,8 @@
 //  AC
 //
 //  The single companion-cat view. Renders a character portrait at the
-//  requested expression, owns its own breathing + blink animations, and
-//  crossfades between expressions when the mood changes.
+//  requested expression and owns its own gentle pulsating animation
+//  that keeps the orb feeling alive without any image-swap jitter.
 //
 
 import SwiftUI
@@ -15,74 +15,34 @@ struct CatView: View {
     var size: CGFloat = 72
     var animating: Bool = true
 
-    @State private var breath: CGFloat = 1.0
-    @State private var isBlinking: Bool = false
-    @State private var blinkTask: Task<Void, Never>?
+    @State private var pulse: CGFloat = 1.0
 
     var body: some View {
-        // Crossfade between expression assets so mood changes feel smooth.
-        // While idle on .neutral, briefly swap to the blink frame.
-        let visible: ACCatExpression = {
-            if expression == .neutral && isBlinking { return .blink }
-            return expression
-        }()
-
-        Image(character.portraitAssetName(for: visible))
+        Image(character.portraitAssetName(for: expression))
             .resizable()
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
-            .scaleEffect(breath)
-            .animation(.easeInOut(duration: 0.22), value: visible)
-            .onAppear {
-                startBreathing()
-                startBlinking()
-            }
+            .scaleEffect(pulse)
+            .onAppear { startPulsating() }
             .onDisappear { stopAnimations() }
-            .onChange(of: expression) { _, _ in
-                // Restart blink scheduling when leaving / entering neutral.
-                isBlinking = false
-                startBlinking()
-            }
     }
 
-    // MARK: - Breathing
+    // MARK: - Pulsating
     //
-    // Subtle 1.0 ↔ 1.03 oscillation, ~3s period. Disabled when `animating`
-    // is false (settings previews, menu bar). Idle expression only — keeps
-    // the orb feeling alive without making nudge / overlay states wobble.
+    // Gentle 1.0 ↔ 1.05 oscillation, ~2s period. Disabled when `animating`
+    // is false (settings previews, menu bar). Keeps the orb feeling alive
+    // without any image-swap transitions.
 
-    private func startBreathing() {
+    private func startPulsating() {
         guard animating else { return }
-        withAnimation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true)) {
-            breath = 1.03
-        }
-    }
-
-    // MARK: - Blink
-    //
-    // Random 4–7s jittered interval. ~140ms hold. Hard swap (no fade) reads
-    // as a real blink. Only fires when the underlying expression is `.neutral`.
-
-    private func startBlinking() {
-        blinkTask?.cancel()
-        guard animating, expression == .neutral else { return }
-        blinkTask = Task { @MainActor in
-            while !Task.isCancelled {
-                let wait = Double.random(in: 4.0...7.0)
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                guard !Task.isCancelled, expression == .neutral else { return }
-                isBlinking = true
-                try? await Task.sleep(nanoseconds: 140_000_000)
-                guard !Task.isCancelled else { return }
-                isBlinking = false
-            }
+        withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+            pulse = 1.05
         }
     }
 
     private func stopAnimations() {
-        blinkTask?.cancel()
-        blinkTask = nil
+        pulse = 1.0
     }
 }
 

@@ -10,21 +10,21 @@ struct OnlineModelServiceTests {
         #expect(
             fallbacks
             == [
-                "google/gemma-4-31b-it",
-                "nvidia/nemotron-3-super-120b-a12b",
+                "qwen/qwen3.6-35b-a3b",
+                "moonshotai/kimi-k2.6",
             ]
         )
     }
 
     @Test
     func freeModelPrefersPaidVariantBeforeCrossModelFallback() async {
-        let fallbacks = await fallbackModelIdentifiers(for: "google/gemma-4-31b-it:free")
+        let fallbacks = await fallbackModelIdentifiers(for: "qwen/qwen3.6-35b-a3b:free")
         #expect(
             fallbacks
             == [
-                "google/gemma-4-31b-it",
-                "nvidia/nemotron-3-super-120b-a12b",
+                "qwen/qwen3.6-35b-a3b",
                 "deepseek/deepseek-v4-flash",
+                "moonshotai/kimi-k2.6",
             ]
         )
     }
@@ -92,14 +92,14 @@ struct OnlineModelServiceTests {
     func deepseekPrimaryFallsBackToTierAlternativesOnRetry() async {
         let fallbacks = await fallbackModelIdentifiers(for: "deepseek/deepseek-v4-flash")
 
-        #expect(fallbacks.first == "google/gemma-4-31b-it")
+        #expect(fallbacks.first == "qwen/qwen3.6-35b-a3b")
         #expect(fallbacks.count == 2)
     }
 
     @Test
     func visionRequestsFallBackToVisionCapableTierAlternatives() async {
         let fallbacks = await fallbackModelIdentifiers(
-            for: "google/gemma-4-31b-it",
+            for: "qwen/qwen3.6-35b-a3b",
             includesImage: true
         )
         #expect(
@@ -142,8 +142,8 @@ struct OnlineModelServiceTests {
     func datedOpenRouterAliasesAreNotCountedAsDifferentModels() {
         #expect(
             OnlineModelService.modelIdentifiersEquivalent(
-                "google/gemma-4-31b-it",
-                "google/gemma-4-31b-it-20260402"
+                "qwen/qwen3.6-35b-a3b",
+                "qwen/qwen3.6-35b-a3b-20260402"
             )
         )
         #expect(
@@ -155,28 +155,31 @@ struct OnlineModelServiceTests {
         #expect(
             !OnlineModelService.modelIdentifiersEquivalent(
                 "deepseek/deepseek-v4-flash",
-                "nvidia/nemotron-3-super-120b-a12b"
+                "moonshotai/kimi-k2.6"
             )
         )
     }
 
     @Test
-    func premiumPathPrependsReliableFallbackModel() async {
+    func premiumPathExtendsTextChainWithImageCapableModels() async {
         let fallbacks = await fallbackModelIdentifiers(
             for: "deepseek/deepseek-v4-flash",
             isPremium: true
         )
-        #expect(fallbacks.contains("google/gemma-4-31b-it"))
+        // Image-capable balanced & smartest models are folded in for extra runway.
+        #expect(fallbacks.contains("qwen/qwen3.6-35b-a3b"))
         #expect(fallbacks.contains("moonshotai/kimi-k2.6"))
-        #expect(fallbacks.contains("google/gemini-3-flash-preview"))
+        // The terminal Gemini rescue was dropped: it never actually rescued a
+        // request and produced spurious 404s under ZDR + latency constraints.
+        #expect(!fallbacks.contains("google/gemini-3-flash-preview"))
     }
 
     @Test
     func openRouterModelsArrayIsCappedToProviderLimit() {
         let providerModels = OnlineModelService.openRouterModelsArray(
             from: [
-                "google/gemma-4-31b-it",
-                "nvidia/nemotron-3-super-120b-a12b",
+                "qwen/qwen3.6-35b-a3b",
+                "qwen/qwen3.5-9b",
                 "deepseek/deepseek-v4-flash",
                 "moonshotai/kimi-k2.6",
                 "google/gemini-3-flash-preview",
@@ -186,21 +189,22 @@ struct OnlineModelServiceTests {
         #expect(providerModels.count == OnlineModelService.maxOpenRouterModelsArrayCount)
         #expect(
             providerModels == [
-                "google/gemma-4-31b-it",
-                "nvidia/nemotron-3-super-120b-a12b",
+                "qwen/qwen3.6-35b-a3b",
+                "qwen/qwen3.5-9b",
                 "deepseek/deepseek-v4-flash",
             ]
         )
     }
 
     @Test
-    func nonPremiumPathOmitsPremiumFallbackModel() async {
+    func nonPremiumPathOmitsPremiumExtras() async {
         let fallbacks = await fallbackModelIdentifiers(
             for: "deepseek/deepseek-v4-flash",
             isPremium: false
         )
-        #expect(!fallbacks.contains("google/gemini-3-flash-preview"))
-        #expect(!fallbacks.contains("moonshotai/kimi-k2.6"))
+        // Text fallbacks include the balanced+smartest image models as the
+        // ZDR-friendly latency-sorted chain, even outside premium mode.
+        #expect(fallbacks == ["qwen/qwen3.6-35b-a3b", "moonshotai/kimi-k2.6"])
     }
 
     @Test
@@ -246,14 +250,14 @@ struct OnlineModelServiceTests {
         #expect(
             OnlineProviderRouting.route(
                 for: .monitoringVision,
-                requestedModelIdentifier: "google/gemma-4-31b-it",
+                requestedModelIdentifier: "qwen/qwen3.6-35b-a3b",
                 directOpenAIEnabled: true
             ).provider == .openAI
         )
         #expect(
             OnlineProviderRouting.route(
                 for: .safelistAppeal,
-                requestedModelIdentifier: "google/gemma-4-31b-it",
+                requestedModelIdentifier: "qwen/qwen3.6-35b-a3b",
                 directOpenAIEnabled: true
             ).provider == .openAI
         )

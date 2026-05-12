@@ -31,11 +31,14 @@ extension AppController {
         guard !installed.isEmpty else { return nil }
 
         if let selectedInstalledModelCachePath,
-           let exact = installed.first(where: { $0.cachePath == selectedInstalledModelCachePath }) {
+            let exact = installed.first(where: { $0.cachePath == selectedInstalledModelCachePath })
+        {
             return exact
         }
 
-        if let current = installed.first(where: { $0.modelIdentifier == selectedLocalModelIdentifier }) {
+        if let current = installed.first(where: {
+            $0.modelIdentifier == selectedLocalModelIdentifier
+        }) {
             return current
         }
 
@@ -87,7 +90,8 @@ extension AppController {
                 let removed = try RuntimeSetupService.deleteCachesCreatedByAC(
                     for: selectedInstalledModel.modelIdentifier,
                     selectedCachePath: selectedInstalledModel.cachePath,
-                    runtimePath: RuntimeSetupService.normalizedRuntimePath(from: self.state.runtimePathOverride)
+                    runtimePath: RuntimeSetupService.normalizedRuntimePath(
+                        from: self.state.runtimePathOverride)
                 )
                 self.pendingLocalModelChange = nil
                 self.modelDownloadNotice = nil
@@ -95,7 +99,8 @@ extension AppController {
                 self.refreshSystemState()
                 let remaining = self.installedManagedModels
                 self.selectedInstalledModelCachePath = remaining.first?.cachePath
-                self.localModelStorageMessage = removed > 0
+                self.localModelStorageMessage =
+                    removed > 0
                     ? "Deleted \(Self.shortModelName(for: selectedInstalledModel.modelIdentifier))."
                     : "That AC-downloaded local model was already gone."
             } catch {
@@ -130,7 +135,8 @@ extension AppController {
                     modelPath: selectedInstalledModel.modelPath,
                     modelName: ollamaModelName
                 )
-                self.localModelStorageMessage = "Imported to Ollama as \(ollamaModelName). Ollama stores its own copy; check `ollama list`."
+                self.localModelStorageMessage =
+                    "Imported to Ollama as \(ollamaModelName). Ollama stores its own copy; check `ollama list`."
             } catch {
                 self.localModelStorageError = error.localizedDescription
             }
@@ -144,10 +150,10 @@ extension AppController {
         if config.usesOnlineInference, directOpenAIEnabled {
             return Self.shortModelName(for: OnlineProviderRouting.directOpenAIModelIdentifier)
         }
-        
+
         let textModel: String?
         let imageModel: String?
-        
+
         if config.usesOnlineInference {
             textModel = config.onlineModelIdentifierText
             imageModel = config.onlineModelIdentifierImage
@@ -155,13 +161,14 @@ extension AppController {
             textModel = config.localModelIdentifierText
             imageModel = config.localModelIdentifierImage
         }
-        
+
         if let text = textModel, !text.isEmpty,
-           let image = imageModel, !image.isEmpty,
-           text != image {
+            let image = imageModel, !image.isEmpty,
+            text != image
+        {
             return "\(Self.veryShortModelName(for: text)) / \(Self.veryShortModelName(for: image))"
         }
-        
+
         let id = lastUsedModelIdentifier ?? Self.effectiveSetupModelIdentifier(for: config)
         return Self.shortModelName(for: id)
     }
@@ -173,26 +180,27 @@ extension AppController {
 
         // Known models → friendly names
         switch base {
-        case "gpt-5.4-nano":                       return "GPT-5.4 Nano"
-        case "google/gemma-4-31b-it":              return "Gemma 4 31B"
-        case "google/gemma-4-26b-a4b-it":          return "Gemma 4 26B"
+        case "gpt-5.4-nano": return "GPT-5.4 Nano"
+        case "google/gemma-4-31b-it": return "Gemma 4 31B"
+        case "google/gemma-4-26b-a4b-it": return "Gemma 4 26B"
         case "mistralai/mistral-small-3.1-24b-instruct": return "Mistral Small 3.1"
         case "mistralai/mistral-small-24b-instruct-2501": return "Mistral Small"
-        case "meta-llama/llama-4-scout":           return "Llama 4 Scout"
-        case "meta-llama/llama-4-maverick":        return "Llama 4 Maverick"
-        case "anthropic/claude-3.5-haiku":         return "Claude 3.5 Haiku"
-        case "anthropic/claude-3.5-sonnet":        return "Claude 3.5 Sonnet"
-        case "anthropic/claude-3-haiku":           return "Claude 3 Haiku"
-        case "google/gemini-flash-1.5":            return "Gemini Flash 1.5"
-        case "google/gemini-2.0-flash-001":        return "Gemini 2 Flash"
-        case "google/gemini-2.5-flash":            return "Gemini 2.5 Flash"
-        case "google/gemini-2.5-flash-preview":    return "Gemini 2.5 Flash"
-        case "moonshotai/kimi-k2.6":               return "Kimi K2.6"
-        case "qwen/qwen2.5-vl-72b-instruct":       return "Qwen 2.5 VL"
-        case "qwen/qwen3.5-9b":                    return "Qwen 3.5 9B"
-        case "nvidia/nemotron-3-super-120b-a12b":  return "Nemotron 3"
-        case "deepseek/deepseek-v4-flash":         return "DeepSeek V4"
-        case "unsloth/gemma-4-E2B-it-GGUF:Q4_0":   return "Gemma 4 2B"
+        case "meta-llama/llama-4-scout": return "Llama 4 Scout"
+        case "meta-llama/llama-4-maverick": return "Llama 4 Maverick"
+        case "anthropic/claude-3.5-haiku": return "Claude 3.5 Haiku"
+        case "anthropic/claude-3.5-sonnet": return "Claude 3.5 Sonnet"
+        case "anthropic/claude-3-haiku": return "Claude 3 Haiku"
+        case "google/gemini-flash-1.5": return "Gemini Flash 1.5"
+        case "google/gemini-2.0-flash-001": return "Gemini 2 Flash"
+        case "google/gemini-2.5-flash": return "Gemini 2.5 Flash"
+        case "google/gemini-2.5-flash-preview": return "Gemini 2.5 Flash"
+        case "moonshotai/kimi-k2.6": return "Kimi K2.6"
+        case "qwen/qwen2.5-vl-72b-instruct": return "Qwen 2.5 VL"
+        case "qwen/qwen3.5-9b": return "Qwen 3.5 9B"
+        case "qwen/qwen3.6-35b-a3b": return "Qwen 3.6 35B"
+        case "nvidia/nemotron-3-super-120b-a12b": return "Nemotron 3"
+        case "deepseek/deepseek-v4-flash": return "DeepSeek V4"
+        case "unsloth/gemma-4-E2B-it-GGUF:Q4_0": return "Gemma 4 2B"
         case "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M": return "Gemma 4 4B"
         case "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL": return "Qwen 3.5 4B"
         case "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL": return "Qwen 3.5 9B"
@@ -203,7 +211,8 @@ extension AppController {
 
         // Generic fallback: strip provider prefix, truncate version noise
         let modelPart = base.components(separatedBy: "/").last ?? base
-        let cleaned = modelPart
+        let cleaned =
+            modelPart
             .replacingOccurrences(of: "-instruct", with: "")
             .replacingOccurrences(of: "-it", with: "")
         return cleaned
@@ -216,14 +225,15 @@ extension AppController {
 
         // Specific overrides for split view — prioritized over generic replacements
         switch base {
-        case "gpt-5.4-nano":                       return "GPT-5.4N"
-        case "deepseek/deepseek-v4-flash":         return "DS V4"
-        case "google/gemma-4-31b-it":              return "Gema 31B"
-        case "google/gemma-4-26b-a4b-it":          return "Gema 26B"
-        case "moonshotai/kimi-k2.6":               return "Kimi K2.6"
-        case "google/gemini-2.0-flash-001":        return "Gem 2"
-        case "nvidia/nemotron-3-super-120b-a12b":  return "Nemot 3"
-        case "qwen/qwen3.5-9b":                    return "Qwen 9B"
+        case "gpt-5.4-nano": return "GPT-5.4N"
+        case "deepseek/deepseek-v4-flash": return "DS V4"
+        case "google/gemma-4-31b-it": return "Gema 31B"
+        case "google/gemma-4-26b-a4b-it": return "Gema 26B"
+        case "moonshotai/kimi-k2.6": return "Kimi K2.6"
+        case "google/gemini-2.0-flash-001": return "Gem 2"
+        case "nvidia/nemotron-3-super-120b-a12b": return "Nemot 3"
+        case "qwen/qwen3.5-9b": return "Qwen 9B"
+        case "qwen/qwen3.6-35b-a3b": return "Qwen 35B"
         case "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL": return "Qwen 4B"
         case "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL": return "Qwen 9B"
         default: break
@@ -232,19 +242,60 @@ extension AppController {
         let short = shortModelName(for: identifier)
         // If it's already reasonably short, keep it as is
         if short.count <= 8 { return short }
-        
+
         // Otherwise apply common abbreviations
-        return short
+        return
+            short
             .replacingOccurrences(of: "DeepSeek", with: "DS")
             .replacingOccurrences(of: "Gemini", with: "Gem")
             .replacingOccurrences(of: "Gemma", with: "Gema")
             .replacingOccurrences(of: "Mistral", with: "Mist")
     }
 
+    /// On launch, rewrite persisted online model identifiers that map to models we no
+    /// longer ship as defaults. The user's tier choice is authoritative; the tier-to-model
+    /// mapping changed in v1, so we follow the tier and update the stored identifier.
+    ///
+    /// Only well-known deprecated identifiers are touched — custom models entered via
+    /// Advanced mode are preserved untouched.
+    static func migrateDeprecatedOnlineModelIdentifiers(in state: inout ACState) -> Bool {
+        let deprecated: Set<String> = [
+            "google/gemma-4-31b-it",
+            "google/gemma-4-31b-it:free",
+            "google/gemma-4-26b-a4b-it",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+        ]
+        let tier = state.aiTier
+        var changed = false
+
+        if let identifier = state.monitoringConfiguration.onlineModelIdentifierText,
+           deprecated.contains(identifier) {
+            state.monitoringConfiguration.onlineModelIdentifierText = tier.byokModelIdentifierText
+            changed = true
+        }
+        if let identifier = state.monitoringConfiguration.onlineModelIdentifierImage,
+           deprecated.contains(identifier) {
+            state.monitoringConfiguration.onlineModelIdentifierImage = tier.byokModelIdentifierImage
+            changed = true
+        }
+        return changed
+    }
+
+    /// Best-effort: delete the OpenRouter health-stats file so any bans/consecutive-
+    /// failure counters from a model we just migrated away from don't poison the
+    /// fresh model's first few requests.
+    static func clearStaleOpenRouterHealthBans() {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AC/openrouter-health.json")
+        try? FileManager.default.removeItem(at: url)
+    }
+
     func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
         guard state.monitoringConfiguration.inferenceBackend != backend else { return }
         state.monitoringConfiguration.inferenceBackend = backend
-        state.monitoringConfiguration.pipelineProfileID = backend == .openRouter
+        state.monitoringConfiguration.pipelineProfileID =
+            backend == .openRouter
             ? (visionEnabled
                 ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
                 : MonitoringConfiguration.defaultOnlineTextPipelineProfileID)
@@ -258,19 +309,6 @@ extension AppController {
         refreshSystemState(persist: false)
         persistState()
         logActivity("monitoring", "Inference backend: \(backend.rawValue)")
-    }
-
-    func updateOnlineModelIdentifier(_ identifier: String) {
-        let normalized = MonitoringConfiguration.normalizedOnlineModelIdentifier(identifier)
-        guard state.monitoringConfiguration.onlineModelIdentifier != normalized else { return }
-        state.monitoringConfiguration.onlineModelIdentifier = normalized
-        if state.monitoringConfiguration.usesOnlineInference {
-            lastUsedModelIdentifier = normalized
-        }
-        brainService?.handleMonitoringConfigurationChange()
-        refreshSystemState(persist: false)
-        persistState()
-        logActivity("monitoring", "Online model: \(normalized)")
     }
 
     func updateOnlineModelIdentifierText(_ identifier: String?) {
@@ -332,21 +370,26 @@ extension AppController {
     /// selected in Settings. Used to show a transparent notice in the AI tab.
     var modelMismatchNotice: String? {
         if state.monitoringConfiguration.usesOnlineInference, directOpenAIEnabled {
-            return "Direct OpenAI mode active: all online LLM traffic uses \(OnlineProviderRouting.directOpenAIModelIdentifier)."
+            return
+                "Direct OpenAI mode active: all online LLM traffic uses \(OnlineProviderRouting.directOpenAIModelIdentifier)."
         }
         guard let lastUsed = lastUsedModelIdentifier else { return nil }
         let config = state.monitoringConfiguration
         let configured: String
         if config.usesOnlineInference {
-            configured = config.onlineModelIdentifierText
+            configured =
+                config.onlineModelIdentifierText
                 ?? config.onlineModelIdentifierImage
                 ?? config.onlineModelIdentifier
         } else {
-            configured = config.localModelIdentifierText
+            configured =
+                config.localModelIdentifierText
                 ?? config.localModelIdentifierImage
                 ?? AITier.balanced.localModelIdentifierText
         }
-        guard !OnlineModelService.modelIdentifiersEquivalent(lastUsed, configured) else { return nil }
+        guard !OnlineModelService.modelIdentifiersEquivalent(lastUsed, configured) else {
+            return nil
+        }
         let usedShort = Self.shortModelName(for: lastUsed)
         let configShort = Self.shortModelName(for: configured)
         return "Using \(usedShort) while \(configShort) is temporarily unavailable."
@@ -410,12 +453,17 @@ extension AppController {
     func applyTierToActiveBackend() {
         switch state.monitoringConfiguration.inferenceBackend {
         case .openRouter:
-            state.monitoringConfiguration.onlineModelIdentifier = state.aiTier.byokModelIdentifierImage
-            state.monitoringConfiguration.onlineModelIdentifierText = state.aiTier.byokModelIdentifierText
-            state.monitoringConfiguration.onlineModelIdentifierImage = state.aiTier.byokModelIdentifierImage
+            state.monitoringConfiguration.onlineModelIdentifierText =
+                state.aiTier.byokModelIdentifierText  // Legacy. Still hear to since its still used in a few places. Deprecated. Will be removed in the future.
+            state.monitoringConfiguration.onlineModelIdentifierText =
+                state.aiTier.byokModelIdentifierText
+            state.monitoringConfiguration.onlineModelIdentifierImage =
+                state.aiTier.byokModelIdentifierImage
         case .local:
-            state.monitoringConfiguration.localModelIdentifierText = state.aiTier.localModelIdentifierText
-            state.monitoringConfiguration.localModelIdentifierImage = state.aiTier.localModelIdentifierImage
+            state.monitoringConfiguration.localModelIdentifierText =
+                state.aiTier.localModelIdentifierText
+            state.monitoringConfiguration.localModelIdentifierImage =
+                state.aiTier.localModelIdentifierImage
             if !queueLocalModelDownloadIfNeeded(
                 targetModelIdentifier: state.aiTier.localModelIdentifierText,
                 fallbackIdentifier: activeLocalModelIdentifier()
@@ -439,18 +487,24 @@ extension AppController {
     }
 
     func updateDisplayedModelIdentifier() {
-        lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(
+            for: state.monitoringConfiguration)
     }
 
     func runtimeProfileModelIdentifier() -> String {
-        state.monitoringConfiguration.localModelIdentifierText ?? state.aiTier.localModelIdentifierText
+        state.monitoringConfiguration.localModelIdentifierText
+            ?? state.aiTier.localModelIdentifierText
     }
 
     func activeLocalModelIdentifier() -> String {
-        if let imageModel = state.monitoringConfiguration.localModelIdentifierImage, !imageModel.isEmpty {
+        if let imageModel = state.monitoringConfiguration.localModelIdentifierImage,
+            !imageModel.isEmpty
+        {
             return imageModel
         }
-        if let textModel = state.monitoringConfiguration.localModelIdentifierText, !textModel.isEmpty {
+        if let textModel = state.monitoringConfiguration.localModelIdentifierText,
+            !textModel.isEmpty
+        {
             return textModel
         }
         return runtimeProfileModelIdentifier()
@@ -461,7 +515,9 @@ extension AppController {
         state.monitoringConfiguration.localModelIdentifierImage = imageModel ?? textModel
         let effectiveModel = activeLocalModelIdentifier()
         let lowerModel = effectiveModel.lowercased()
-        let isTextOnly = lowerModel.contains("phi") && !lowerModel.contains("vision") && !lowerModel.contains("multimodal")
+        let isTextOnly =
+            lowerModel.contains("phi") && !lowerModel.contains("vision")
+            && !lowerModel.contains("multimodal")
         if isTextOnly && visionEnabled {
             state.monitoringConfiguration.pipelineProfileID = "title_only_default"
         }
@@ -540,12 +596,14 @@ extension AppController {
         installingDependencies = true
         setupErrorMessage = nil
         appendSetupLog("Preparing dependency install for: \(missingTools.joined(separator: ", "))")
-        logActivity("setup", "Installing missing dependencies: \(missingTools.joined(separator: ", "))")
+        logActivity(
+            "setup", "Installing missing dependencies: \(missingTools.joined(separator: ", "))")
         refreshSystemState()
 
         Task {
             do {
-                try await DependencyInstallerService.installMissingTools(missingTools) { [weak self] chunk in
+                try await DependencyInstallerService.installMissingTools(missingTools) {
+                    [weak self] chunk in
                     self?.appendSetupLog(chunk)
                 }
                 logActivity("setup", "Dependency install finished")
@@ -564,7 +622,8 @@ extension AppController {
 
         refreshSystemState()
         guard setupDiagnostics.canInstall else {
-            setupErrorMessage = "Missing tools: \(setupDiagnostics.missingTools.joined(separator: ", "))"
+            setupErrorMessage =
+                "Missing tools: \(setupDiagnostics.missingTools.joined(separator: ", "))"
             dependencyInstallPromptVisible = true
             return
         }
@@ -581,13 +640,16 @@ extension AppController {
         let task = Task {
             var cancelledDuringInstall = false
             do {
-                let setupModelIdentifier = modelIdentifier ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+                let setupModelIdentifier =
+                    modelIdentifier
+                    ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
                 let diagnosticsBeforeInstall = RuntimeSetupService.inspect(
                     runtimeOverride: state.runtimePathOverride,
                     modelIdentifier: setupModelIdentifier
                 )
                 if diagnosticsBeforeInstall.runtimePresent {
-                    appendSetupLog("Runtime already installed. Skipping build and warming selected model.")
+                    appendSetupLog(
+                        "Runtime already installed. Skipping build and warming selected model.")
                 } else {
                     try await RuntimeSetupService.installRuntime { [weak self] chunk in
                         self?.appendSetupLog(chunk)
@@ -650,7 +712,8 @@ extension AppController {
     }
 
     func updateSetupProgress(from chunk: String) {
-        let line = chunk
+        let line =
+            chunk
             .split(whereSeparator: { $0.isNewline })
             .last
             .map(String.init) ?? chunk
@@ -677,7 +740,8 @@ extension AppController {
         let looksLikeProgress = progressKeywords.contains(where: lowered.contains)
 
         if looksLikeProgress,
-           let range = trimmedLine.range(of: #"\b(\d{1,3})%"#, options: .regularExpression) {
+            let range = trimmedLine.range(of: #"\b(\d{1,3})%"#, options: .regularExpression)
+        {
             let percentString = String(trimmedLine[range]).replacingOccurrences(of: "%", with: "")
             if let percent = Double(percentString), (0...100).contains(percent) {
                 setupProgressValue = max(0, min(1, percent / 100))
@@ -691,7 +755,9 @@ extension AppController {
         }
     }
 
-    func waitForRuntimeReadinessAfterWarmUp(modelIdentifier: String, timeoutSeconds: TimeInterval) async {
+    func waitForRuntimeReadinessAfterWarmUp(modelIdentifier: String, timeoutSeconds: TimeInterval)
+        async
+    {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             let diagnostics = RuntimeSetupService.inspect(
@@ -705,79 +771,89 @@ extension AppController {
         }
     }
 
-struct PendingLocalModelChange: Equatable, Sendable {
-    let modelIdentifier: String
-}
+    struct PendingLocalModelChange: Equatable, Sendable {
+        let modelIdentifier: String
+    }
 
-enum LocalModelStorageActionError: LocalizedError {
-    case commandFailed(command: String, status: Int32, output: String)
+    enum LocalModelStorageActionError: LocalizedError {
+        case commandFailed(command: String, status: Int32, output: String)
 
-    var errorDescription: String? {
-        switch self {
-        case let .commandFailed(command, status, output):
-            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                return "Command failed (\(status)): \(command)"
+        var errorDescription: String? {
+            switch self {
+            case .commandFailed(let command, let status, let output):
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    return "Command failed (\(status)): \(command)"
+                }
+                return "Command failed (\(status)): \(trimmed)"
             }
-            return "Command failed (\(status)): \(trimmed)"
         }
     }
-}
 
-final class ProcessOutputBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    nonisolated(unsafe) private var data = Data()
+    final class ProcessOutputBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        nonisolated(unsafe) private var data = Data()
 
-    nonisolated init() {}
+        nonisolated init() {}
 
-    nonisolated func append(_ chunk: Data) {
-        lock.lock()
-        data.append(chunk)
-        lock.unlock()
+        nonisolated func append(_ chunk: Data) {
+            lock.lock()
+            data.append(chunk)
+            lock.unlock()
+        }
+
+        nonisolated func snapshot() -> Data {
+            lock.lock()
+            let snapshot = data
+            lock.unlock()
+            return snapshot
+        }
     }
 
-    nonisolated func snapshot() -> Data {
-        lock.lock()
-        let snapshot = data
-        lock.unlock()
-        return snapshot
+    struct ModelDownloadNotice: Identifiable, Sendable {
+        let id = UUID()
+        let modelIdentifier: String
+        let modelDisplayName: String
+        let fallbackDisplayName: String
     }
-}
 
-struct ModelDownloadNotice: Identifiable, Sendable {
-    let id = UUID()
-    let modelIdentifier: String
-    let modelDisplayName: String
-    let fallbackDisplayName: String
-}
-
-struct ModelDownloadSuccess: Identifiable, Sendable {
-    let id = UUID()
-    let modelIdentifier: String
-    let modelDisplayName: String
-}
+    struct ModelDownloadSuccess: Identifiable, Sendable {
+        let id = UUID()
+        let modelIdentifier: String
+        let modelDisplayName: String
+    }
 
     func repairInvalidMonitoringConfigurationIfNeeded() {
         let algorithmID = state.monitoringConfiguration.algorithmID
         if !state.hasMigratedPolicyAlgorithmDefault,
-           MonitoringConfiguration.shouldAutoMigrateDeprecatedDefaultAlgorithm(algorithmID) {
-            state.monitoringConfiguration.algorithmID = MonitoringConfiguration.currentLLMMonitorAlgorithmID
+            MonitoringConfiguration.shouldAutoMigrateDeprecatedDefaultAlgorithm(algorithmID)
+        {
+            state.monitoringConfiguration.algorithmID =
+                MonitoringConfiguration.currentLLMMonitorAlgorithmID
             state.algorithmState = AlgorithmStateEnvelope()
             state.hasMigratedPolicyAlgorithmDefault = true
-            logActivity("monitoring", "Migrated saved monitoring algorithm from \(algorithmID) to \(MonitoringConfiguration.currentLLMMonitorAlgorithmID)")
+            logActivity(
+                "monitoring",
+                "Migrated saved monitoring algorithm from \(algorithmID) to \(MonitoringConfiguration.currentLLMMonitorAlgorithmID)"
+            )
         }
 
         guard !monitoringAlgorithmRegistry.containsAlgorithm(id: algorithmID) else {
-            if !LLMPolicyCatalog.availablePipelineProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID }) {
-                state.monitoringConfiguration.pipelineProfileID = state.monitoringConfiguration.usesOnlineInference
+            if !LLMPolicyCatalog.availablePipelineProfiles.contains(where: {
+                $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID
+            }) {
+                state.monitoringConfiguration.pipelineProfileID =
+                    state.monitoringConfiguration.usesOnlineInference
                     ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
                     : MonitoringConfiguration.defaultPipelineProfileID
             }
             if let pipeline = LLMPolicyCatalog.availablePipelineProfiles.first(
                 where: { $0.descriptor.id == state.monitoringConfiguration.pipelineProfileID }
             ),
-               pipeline.inferenceBackend != state.monitoringConfiguration.inferenceBackend {
-                state.monitoringConfiguration.pipelineProfileID = state.monitoringConfiguration.usesOnlineInference
+                pipeline.inferenceBackend != state.monitoringConfiguration.inferenceBackend
+            {
+                state.monitoringConfiguration.pipelineProfileID =
+                    state.monitoringConfiguration.usesOnlineInference
                     ? (pipeline.descriptor.requiresScreenshot
                         ? MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
                         : MonitoringConfiguration.defaultOnlineTextPipelineProfileID)
@@ -785,12 +861,12 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
                         ? MonitoringConfiguration.defaultPipelineProfileID
                         : "title_only_default")
             }
-            if !LLMPolicyCatalog.availableRuntimeProfiles.contains(where: { $0.descriptor.id == state.monitoringConfiguration.runtimeProfileID }) {
-                state.monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
+            if !LLMPolicyCatalog.availableRuntimeProfiles.contains(where: {
+                $0.descriptor.id == state.monitoringConfiguration.runtimeProfileID
+            }) {
+                state.monitoringConfiguration.runtimeProfileID =
+                    MonitoringConfiguration.defaultRuntimeProfileID
             }
-            state.monitoringConfiguration.onlineModelIdentifier = MonitoringConfiguration.normalizedOnlineModelIdentifier(
-                state.monitoringConfiguration.onlineModelIdentifier
-            )
             state.hasMigratedPolicyAlgorithmDefault = true
             return
         }
@@ -798,7 +874,8 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
         state.monitoringConfiguration.algorithmID = MonitoringConfiguration.defaultAlgorithmID
         state.algorithmState = AlgorithmStateEnvelope()
         state.hasMigratedPolicyAlgorithmDefault = true
-        setupErrorMessage = "Saved monitoring algorithm '\(algorithmID)' was invalid. AC reset it to '\(MonitoringConfiguration.defaultAlgorithmID)'."
+        setupErrorMessage =
+            "Saved monitoring algorithm '\(algorithmID)' was invalid. AC reset it to '\(MonitoringConfiguration.defaultAlgorithmID)'."
         logActivity("monitoring", "Reset invalid monitoring algorithm: \(algorithmID)")
     }
 
@@ -806,7 +883,8 @@ struct ModelDownloadSuccess: Identifiable, Sendable {
         defer { hasPerformedInitialRefresh = true }
 
         guard previousStatus != newStatus else { return }
-        logActivity("setup", "Setup state changed: \(previousStatus.rawValue) -> \(newStatus.rawValue)")
+        logActivity(
+            "setup", "Setup state changed: \(previousStatus.rawValue) -> \(newStatus.rawValue)")
 
         guard hasPerformedInitialRefresh else { return }
 

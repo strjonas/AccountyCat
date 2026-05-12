@@ -68,9 +68,9 @@ AccountyCat intelligently selects the right model based on what you're doing:
 
 | Tier | Text-only model | Image model | Approx. cost/month |
 |------|-----------------|-------------|----------------------|
-| Economy | Nemotron-3 Super 120B | Qwen 3.5 9B | $0.10–$0.25 |
-| Default | DeepSeek V4 Flash | Gemma 4 31B | $0.20–$0.50 |
-| Smartest | DeepSeek V4 Flash | Kimi K2.6 | $0.50–$1.00 |
+| Economy | DeepSeek V4 Flash | Qwen 3.5 9B | $0.10–$0.25 |
+| Default | DeepSeek V4 Flash | Qwen 3.6 35B | $0.20–$0.50 |
+| Smartest | Kimi K2.6 | Kimi K2.6 | $0.50–$1.00 |
 
 Cost range reflects normal to heavy usage. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
 

@@ -143,11 +143,19 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
     var selectionMode: MonitoringSelectionMode
     var cadenceMode: MonitoringCadenceMode
     var experimentArmOverride: String?
-    var onlineModelIdentifier: String
     /// Separate model identifier for text-only prompts (online)
     var onlineModelIdentifierText: String?
     /// Separate model identifier for image/vision prompts (online)
     var onlineModelIdentifierImage: String?
+
+    /// Legacy — kept as computed property for backward-compatible reads from old
+    /// state files and code paths that haven't been migrated to Text/Image yet.
+    /// Returns the image model when available, then text, then the hard-coded
+    /// default — matching the old behaviour where the single field held the
+    /// vision-capable model.
+    var onlineModelIdentifier: String {
+        onlineModelIdentifierImage ?? onlineModelIdentifierText ?? AITier.balanced.byokModelIdentifierImage
+    }
     /// Separate model identifier for text-only prompts (local)
     var localModelIdentifierText: String?
     /// Separate model identifier for image/vision prompts (local)
@@ -205,7 +213,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         self.cadenceMode = cadenceMode
         self.experimentArmOverride = experimentArmOverride
         let normalizedOnlineModel = Self.normalizedOnlineModelIdentifier(onlineModelIdentifier)
-        self.onlineModelIdentifier = normalizedOnlineModel
         self.onlineModelIdentifierText = Self.normalizedOptionalOnlineModelIdentifier(
             onlineModelIdentifierText
         ) ?? normalizedOnlineModel
@@ -309,15 +316,15 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         let legacyModelOverride = Self.normalizedOptionalLocalModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .modelOverride)
         )
-        onlineModelIdentifier = Self.normalizedOnlineModelIdentifier(
+        let decodedLegacyOnlineModel = Self.normalizedOnlineModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifier) ?? AITier.balanced.byokModelIdentifierImage
         )
         onlineModelIdentifierText = Self.normalizedOptionalOnlineModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifierText)
-        ) ?? onlineModelIdentifier
+        ) ?? decodedLegacyOnlineModel
         onlineModelIdentifierImage = Self.normalizedOptionalOnlineModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .onlineModelIdentifierImage)
-        ) ?? onlineModelIdentifier
+        ) ?? decodedLegacyOnlineModel
         localModelIdentifierText = Self.normalizedOptionalLocalModelIdentifier(
             try c.decodeIfPresent(String.self, forKey: .localModelIdentifierText)
         ) ?? legacyModelOverride ?? AITier.balanced.localModelIdentifierText
@@ -342,7 +349,6 @@ struct MonitoringConfiguration: Codable, Hashable, Sendable {
         try c.encode(selectionMode, forKey: .selectionMode)
         try c.encode(cadenceMode, forKey: .cadenceMode)
         try c.encodeIfPresent(experimentArmOverride, forKey: .experimentArmOverride)
-        try c.encode(onlineModelIdentifier, forKey: .onlineModelIdentifier)
         try c.encodeIfPresent(onlineModelIdentifierText, forKey: .onlineModelIdentifierText)
         try c.encodeIfPresent(onlineModelIdentifierImage, forKey: .onlineModelIdentifierImage)
         try c.encodeIfPresent(localModelIdentifierText, forKey: .localModelIdentifierText)

@@ -14,6 +14,9 @@ struct AITab: View {
     @State private var showVisionInfo = false
     @State private var showAdvanced = false
     @State private var showEconomyInfo = false
+    @State private var showZDRInfo = false
+    @State private var showZDRDisableConfirm = false
+    @State private var zdrEnabled = OnlineProviderRouting.isZDREnforced()
     @State private var showDeleteModelConfirm = false
     @State private var modelToDelete: InstalledLocalModel?
     @State private var advancedTextModelID = ""
@@ -381,6 +384,12 @@ struct AITab: View {
                             Text(tier.description)
                                 .font(.ac(10))
                                 .foregroundStyle(.secondary)
+                            if config.inferenceBackend == .openRouter {
+                                Text(tierModelSummary(for: tier))
+                                    .font(.ac(10, weight: .medium))
+                                    .foregroundStyle(Color.acTextPrimary.opacity(0.65))
+                                    .padding(.top, 1)
+                            }
                         }
                         Spacer()
                     }
@@ -623,12 +632,85 @@ struct AITab: View {
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
+
+            if config.inferenceBackend == .openRouter {
+                Divider().opacity(0.3)
+                zdrToggleRow
+            }
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                 .fill(Color.acSurfaceInset)
         )
+    }
+
+    private var zdrToggleRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text("Zero Data Retention")
+                            .font(.ac(12, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary)
+                        Text("(recommended)")
+                            .font(.acCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(zdrEnabled
+                         ? "Routes only to providers that don't log or retain your prompts."
+                         : "Off — providers may log prompts. Use only if a model you need isn't on a ZDR endpoint.")
+                        .font(.acCaption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { zdrEnabled },
+                    set: { newValue in
+                        if newValue {
+                            zdrEnabled = true
+                            OnlineProviderRouting.setZDREnforced(true)
+                        } else {
+                            showZDRDisableConfirm = true
+                        }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(accent)
+                Button {
+                    withAnimation(.acSnap) { showZDRInfo.toggle() }
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(accent)
+                }
+                .buttonStyle(.plain)
+            }
+            if showZDRInfo {
+                Text("ZDR (Zero Data Retention) tells OpenRouter to route your requests only to upstream providers contractually bound to not log or retain prompts and responses. This is AC's default for privacy. A handful of less common models are only available on non-ZDR providers — turn this off in that case.")
+                    .font(.acCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .alert("Turn off Zero Data Retention?", isPresented: $showZDRDisableConfirm) {
+            Button("Turn off", role: .destructive) {
+                zdrEnabled = false
+                OnlineProviderRouting.setZDREnforced(false)
+            }
+            Button("Keep on", role: .cancel) { }
+        } message: {
+            Text("Without ZDR, upstream providers chosen by OpenRouter may log your prompts and screenshots. AC's defaults work great with ZDR on — only disable this if you've picked an advanced model that isn't offered on a ZDR endpoint.")
+        }
+    }
+
+    /// Compact "text · image" model summary shown under each tier in the BYOK picker.
+    /// Keeps users honest about exactly which OpenRouter models a tier maps to.
+    private func tierModelSummary(for tier: AITier) -> String {
+        let text = AppController.shortModelName(for: tier.byokModelIdentifierText)
+        let image = AppController.shortModelName(for: tier.byokModelIdentifierImage)
+        return text == image ? "Models: \(text)" : "Models: \(text) · \(image)"
     }
 
     private func saveAdvancedModels() {

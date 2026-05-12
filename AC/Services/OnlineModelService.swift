@@ -165,8 +165,12 @@ struct OpenRouterKeyInfo: Codable {
 
 actor OnlineModelService: OnlineModelServing {
     nonisolated static let endpointURLString = OnlineModelProvider.openRouter.endpointURLString
-    nonisolated static let premiumFallbackModelIdentifier = "google/gemini-3-flash-preview"
     nonisolated static let maxOpenRouterModelsArrayCount = 3
+    /// Floor for OpenRouter `max_tokens`. Stage configs are tuned for local llama.cpp
+    /// (where the cap pre-allocates memory). Online billing is per-actual-token, so a
+    /// generous floor avoids `finish_reason=length` when a provider emits hidden
+    /// reasoning before the JSON body — see Together-served Kimi for the canonical case.
+    nonisolated static let openRouterMinMaxTokens = 1500
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
     nonisolated private static let premiumMaxSuccessCount = 5
 
@@ -291,7 +295,7 @@ actor OnlineModelService: OnlineModelServing {
                     provider: provider,
                     modelIdentifier: primaryModelIdentifier,
                     fallbackModelIdentifiers: Self.openRouterModelsArray(from: secondaryFallbacks),
-                    enforceZDR: usesOpenRouter,
+                    enforceZDR: usesOpenRouter && OnlineProviderRouting.isZDREnforced(),
                     startTime: startTime
                 )
                 if usesOpenRouter {
@@ -587,7 +591,10 @@ actor OnlineModelService: OnlineModelServing {
             ],
         ]
         if provider == .openRouter {
-            body["max_tokens"] = request.options.maxTokens
+            // Online requests are billed per actual output token, not the cap. We
+            // raise the floor so providers that emit hidden reasoning before content
+            // can still finish the JSON body within the budget.
+            body["max_tokens"] = max(request.options.maxTokens, Self.openRouterMinMaxTokens)
             body["top_k"] = request.options.topK
             body["provider"] = Self.providerPreferences(
                 enforceZDR: enforceZDR,
@@ -599,7 +606,11 @@ actor OnlineModelService: OnlineModelServing {
             body["reasoning_effort"] = request.options.thinkingEnabled ? "low" : "none"
         }
         if provider == .openRouter && !request.options.thinkingEnabled {
-            body["reasoning"] = ["max_reasoning_tokens": 0] as [String: Any]
+            // `enabled: false` is OpenRouter's standard reasoning-off flag. The earlier
+            // `max_reasoning_tokens: 0` form was silently ignored by some providers
+            // (notably Together when serving Kimi/Qwen), which then burned the entire
+            // max_tokens budget on hidden reasoning and returned empty content.
+            body["reasoning"] = ["enabled": false] as [String: Any]
         }
         if !providerFallbackModelIdentifiers.isEmpty {
             body["models"] = providerFallbackModelIdentifiers
@@ -746,14 +757,15 @@ actor OnlineModelService: OnlineModelServing {
             chain.append(fallback)
         }
 
-        // 3) Premium fallback. Intermediate image-quality models absorb routine
-        // instability before the last-resort Gemini rescue — the user expects a
-        // comparable experience even when the primary model is unavailable.
+        // 3) Premium fallback widens the chain with the balanced+smartest image
+        // models so the first few requests of a session have extra runway if the
+        // primary provider is briefly unreachable. The terminal Gemini rescue was
+        // dropped — its ZDR endpoints fail latency-window filtering and never
+        // actually rescued a request.
         if isPremium {
             let premiumExtras: [String] = [
                 AITier.balanced.byokModelIdentifierImage,
                 AITier.smartest.byokModelIdentifierImage,
-                Self.premiumFallbackModelIdentifier,
             ]
             for fallback in premiumExtras
             where modelIdentifier != fallback && !chain.contains(fallback) {
@@ -871,18 +883,9 @@ actor OnlineModelService: OnlineModelServing {
 
     nonisolated private static func nonFreeModelIdentifier(from modelIdentifier: String) -> String? {
         let trimmed = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return nil
-        }
-
-        if trimmed == "google/gemma-4-31b-it:free" {
-            return AITier.balanced.byokModelIdentifierImage
-        }
-
         guard trimmed.hasSuffix(":free") else {
             return nil
         }
-
         return String(trimmed.dropLast(5))
     }
 

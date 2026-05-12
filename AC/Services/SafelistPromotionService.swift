@@ -308,7 +308,8 @@ actor SafelistAppealService: SafelistAppealEvaluating {
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .safelistAppeal,
-                        modelIdentifier: configuration.onlineModelIdentifier,
+                        // imagePath is set below, so use vision-capable model
+                        modelIdentifier: configuration.onlineModelIdentifierImage ?? configuration.onlineModelIdentifierText ?? AITier.balanced.byokModelIdentifierImage,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: screenshotPath,

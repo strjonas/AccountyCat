@@ -137,7 +137,12 @@ final class AppController: ObservableObject {
         let loadedState = storageService.loadState()
         var state = loadedState
         Self.seedDefaultSafelistIfNeeded(into: &state)
+        let migrated = Self.migrateDeprecatedOnlineModelIdentifiers(in: &state)
         self.state = state
+        if migrated {
+            storageService.saveState(state)
+            Self.clearStaleOpenRouterHealthBans()
+        }
         self.onlineAPIKeyDraft = OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? ""
         self.directOpenAIAPIKeyDraft = OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? ""
         self.directOpenAIEnabled = OnlineProviderRoutingStore.loadDirectOpenAIEnabled()
@@ -190,7 +195,12 @@ final class AppController: ObservableObject {
         let loadedState = storageService.loadState()
         var state = loadedState
         Self.seedDefaultSafelistIfNeeded(into: &state)
+        let migrated = Self.migrateDeprecatedOnlineModelIdentifiers(in: &state)
         self.state = state
+        if migrated {
+            storageService.saveState(state)
+            Self.clearStaleOpenRouterHealthBans()
+        }
         self.onlineAPIKeyDraft = OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? ""
         self.directOpenAIAPIKeyDraft = OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? ""
         self.directOpenAIEnabled = OnlineProviderRoutingStore.loadDirectOpenAIEnabled()

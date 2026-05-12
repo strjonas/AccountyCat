@@ -48,11 +48,11 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     var onlineDescription: String {
         switch self {
         case .economy:
-            return "Nemotron-3 Super 120B (text), Qwen 3.5 9B (images). ~$0.10–$0.25/mo."
+            return "DeepSeek V4 Flash (text), Qwen 3.5 9B (images). ~$0.10–$0.25/mo."
         case .balanced:
-            return "DeepSeek V4 Flash (text), Gemma 4 31B (images). ~$0.20–$0.50/mo."
+            return "DeepSeek V4 Flash (text), Qwen 3.6 35B (images). ~$0.20–$0.50/mo."
         case .smartest:
-            return "DeepSeek V4 Flash (text), Kimi K2.6 (images). ~$0.50–$1.00/mo."
+            return "Kimi K2.6 (text + images). ~$0.50–$1.00/mo."
         }
     }
 
@@ -61,7 +61,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     var byokModelIdentifier: String {
         switch self {
         case .economy:  return "qwen/qwen3.5-9b"
-        case .balanced: return "google/gemma-4-31b-it"
+        case .balanced: return "qwen/qwen3.6-35b-a3b"
         case .smartest: return "moonshotai/kimi-k2.6"
         }
     }
@@ -69,9 +69,9 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     /// Text-only optimized model for OpenRouter
     var byokModelIdentifierText: String {
         switch self {
-        case .economy:  return "nvidia/nemotron-3-super-120b-a12b"
+        case .economy:  return "deepseek/deepseek-v4-flash"
         case .balanced: return "deepseek/deepseek-v4-flash"
-        case .smartest: return "deepseek/deepseek-v4-flash"
+        case .smartest: return "moonshotai/kimi-k2.6"
         }
     }
 
@@ -79,7 +79,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     var byokModelIdentifierImage: String {
         switch self {
         case .economy:  return "qwen/qwen3.5-9b"
-        case .balanced: return "google/gemma-4-31b-it"
+        case .balanced: return "qwen/qwen3.6-35b-a3b"
         case .smartest: return "moonshotai/kimi-k2.6"
         }
     }

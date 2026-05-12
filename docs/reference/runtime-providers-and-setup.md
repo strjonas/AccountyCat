@@ -72,6 +72,7 @@ Model selection is split by text vs image where supported:
 
 - active provider selection
 - direct-OpenAI toggle lookup
+- ZDR (Zero Data Retention) toggle lookup
 - provider-specific API-key lookup
 - effective model identifier when direct OpenAI is enabled
 
@@ -80,9 +81,41 @@ Current behavior:
 - default online path: OpenRouter
 - temporary experiment: direct OpenAI for all online traffic
 - API keys live in macOS Keychain via `OnlineProviderCredentialStore`
-- direct-OpenAI toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`
+- direct-OpenAI and ZDR toggles live in `UserDefaults` via `OnlineProviderRoutingStore`
+- ZDR is on by default; users can opt out from the AI tab's advanced section after an explicit confirmation alert
 
 The direct-OpenAI experiment is documented separately in `docs/experiments/direct-openai-routing.md`.
+
+### OpenRouter request shape
+
+Each OpenRouter request sets:
+
+- `response_format: {"type": "json_object"}`
+- `reasoning: {"enabled": false}` whenever `options.thinkingEnabled` is false. This is the documented OpenRouter shape; the older `{"max_reasoning_tokens": 0}` form was silently ignored by some providers (notably Together-served Kimi) and produced empty completions.
+- `max_tokens`: the larger of `options.maxTokens` and `OnlineModelService.openRouterMinMaxTokens` (currently 1500). Local stage configs are tuned for `llama.cpp` memory pre-allocation; online billing is per-actual-token, so the floor avoids `finish_reason=length` when a provider emits hidden reasoning before content.
+- `provider`: ZDR flag (per `OnlineProviderRouting.isZDREnforced()`), `allow_fallbacks: true`, `require_parameters: true`, `sort: "latency"`, and a `preferred_max_latency` profile per request source.
+
+### Fallback chain
+
+`OnlineModelService.requestFallbackModelIdentifiers` builds the per-request chain in three layers, then filters by `OpenRouterHealthStatsService.sortedHealthyModels`:
+
+1. The non-`:free` variant of the requested model, when applicable.
+2. Tier alternatives. Image requests fall back to `AITier.economy.byokModelIdentifierImage` then `AITier.smartest.byokModelIdentifierImage`. Text requests interleave the balanced image model first (it handles text well) then the economy and smartest text models.
+3. For premium-path requests (the first few successful monitoring/chat calls of a session), the balanced and smartest image models are appended as extra runway.
+
+The chain is capped to `maxOpenRouterModelsArrayCount` (currently 3) and passed to OpenRouter via the `models` array.
+
+### Tier → model identifiers
+
+Defaults live in `ACShared/AITier.swift`. As of v1.0:
+
+| Tier | Text | Image |
+|------|------|-------|
+| Economy | `deepseek/deepseek-v4-flash` | `qwen/qwen3.5-9b` |
+| Balanced (Default) | `deepseek/deepseek-v4-flash` | `qwen/qwen3.6-35b-a3b` |
+| Smartest | `moonshotai/kimi-k2.6` | `moonshotai/kimi-k2.6` |
+
+If you change a tier's model, also update the friendly-name lookups in `AppController.shortModelName` and `AppController.veryShortModelName` (`AC/Core/AppController+RuntimeSetup.swift`) so the menu bar, settings, and onboarding render the new model.
 
 ## Request Sources
 

@@ -75,6 +75,16 @@ enum OnlineProviderRouting {
         OnlineProviderRoutingStore.loadDirectOpenAIEnabled()
     }
 
+    /// Whether OpenRouter requests should advertise `provider.zdr=true` (Zero Data
+    /// Retention). On by default. Stored as an opt-out so fresh installs are private.
+    nonisolated static func isZDREnforced() -> Bool {
+        OnlineProviderRoutingStore.loadOpenRouterZDREnabled()
+    }
+
+    nonisolated static func setZDREnforced(_ enabled: Bool) {
+        OnlineProviderRoutingStore.saveOpenRouterZDREnabled(enabled)
+    }
+
     nonisolated static func hasActiveAPIKeyConfigured(
         openRouterAPIKey: String,
         directOpenAIAPIKey: String,
@@ -172,6 +182,7 @@ enum OnlineProviderCredentialStore {
 
 enum OnlineProviderRoutingStore {
     nonisolated private static let directOpenAIKey = "acDirectOpenAIAllTraffic"
+    nonisolated private static let zdrDisabledKey = "acOpenRouterZDRDisabled"
 
     nonisolated static func loadDirectOpenAIEnabled() -> Bool {
         UserDefaults.standard.bool(forKey: directOpenAIKey)
@@ -179,5 +190,17 @@ enum OnlineProviderRoutingStore {
 
     nonisolated static func saveDirectOpenAIEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: directOpenAIKey)
+    }
+
+    /// ZDR (Zero Data Retention) is on by default. The store records the opt-out so a
+    /// missing key (fresh install) still defaults to ZDR-enforced. Users who pick a
+    /// non-ZDR-compliant model in advanced settings can disable it after an explicit
+    /// confirmation in the AI tab.
+    nonisolated static func loadOpenRouterZDREnabled() -> Bool {
+        !UserDefaults.standard.bool(forKey: zdrDisabledKey)
+    }
+
+    nonisolated static func saveOpenRouterZDREnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(!enabled, forKey: zdrDisabledKey)
     }
 }

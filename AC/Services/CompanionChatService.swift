@@ -130,7 +130,7 @@ actor CompanionChatService {
                 if provider == .openRouter && !hadSuccessfulChat {
                     // Parallel safety net for the very first chat message
                     var seen: Set<String> = []
-                    let parallelModels = [resolvedOnlineModelIdentifier, OnlineModelService.premiumFallbackModelIdentifier, AITier.smartest.byokModelIdentifierText]
+                    let parallelModels = [resolvedOnlineModelIdentifier, AITier.balanced.byokModelIdentifierText, AITier.smartest.byokModelIdentifierText]
                         .filter { seen.insert($0).inserted }
                         .prefix(3)
                         .map { $0 }

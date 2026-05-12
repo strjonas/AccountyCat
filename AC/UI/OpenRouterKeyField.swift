@@ -59,18 +59,22 @@ struct OpenRouterKeyField: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(.green)
-                        Text("Key saved to macOS Keychain · Model: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifier))")
-                            .font(.ac(10))
-                            .foregroundStyle(.secondary)
+                        Text(
+                            "Key saved to macOS Keychain · Models: \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifierText ?? controller.state.monitoringConfiguration.onlineModelIdentifier)) · \(AppController.shortModelName(for: controller.state.monitoringConfiguration.onlineModelIdentifierImage ?? controller.state.monitoringConfiguration.onlineModelIdentifier))"
+                        )
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
                     }
                     if let info = controller.openRouterKeyInfo {
                         HStack(spacing: 5) {
                             Image(systemName: "creditcard.fill")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
-                            Text("Used \(String(format: "%.2f", info.data.usage)) / remaining \(info.data.limitRemaining.map { String(format: "%.2f", $0) } ?? "unlimited") USD")
-                                .font(.ac(10))
-                                .foregroundStyle(.secondary)
+                            Text(
+                                "Used \(String(format: "%.2f", info.data.usage)) / remaining \(info.data.limitRemaining.map { String(format: "%.2f", $0) } ?? "unlimited") USD"
+                            )
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
                         }
                     } else if let error = controller.openRouterKeyInfoError {
                         HStack(spacing: 5) {
