@@ -102,13 +102,30 @@ Tests use `CODE_SIGNING_ALLOWED=NO`, which produces an ad-hoc binary. macOS TCC 
 ## Build / Test Commands
 
 ```bash
+# Required verification before finishing meaningful changes:
+# 1) run ACTests
 xcodebuild test -project AC.xcodeproj -scheme AC -destination 'platform=macOS' -only-testing:ACTests CODE_SIGNING_ALLOWED=NO
+
+# 2) build ACInspector
 xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=NO
 ```
 
 ## Xcode Test Runner Hygiene
 
-Avoid overlapping `xcodebuild test` runs. The macOS test host is `AC.app`, and interrupted runs can leave `xcodebuild`, `debugserver`, or the `AC.app` test host alive while XCTest is still finalizing logs. Starting another run in that state can make the next run look hung or can report the in-flight test as canceled.
+Avoid overlapping `xcodebuild test` runs that share build/test paths. The macOS test host is `AC.app`, and interrupted runs can leave `xcodebuild`, `debugserver`, or the `AC.app` test host alive while XCTest is still finalizing logs. Starting another run in that state can make the next run look hung or can report the in-flight test as canceled.
+
+If you need concurrent test runs (for example two agents/worktrees), isolate the build/test/package paths per runner:
+
+```bash
+scripts/test-isolated.sh agent1
+scripts/test-isolated.sh agent2
+```
+
+`scripts/test-isolated.sh` keeps each runner separate via:
+
+- `-derivedDataPath ~/Library/Developer/Xcode/DerivedData/AC-<runner-id>`
+- `-clonedSourcePackagesDirPath ~/.xcode-cloned-sources/<runner-id>`
+- `SWIFTPM_PACKAGE_CACHE_PATH=~/.swiftpm-cache/<runner-id>`
 
 If a run appears stuck after tests have mostly finished:
 
