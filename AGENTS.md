@@ -49,4 +49,4 @@ xcodebuild test -project AC.xcodeproj -scheme AC -destination 'platform=macOS' -
 xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=NO
 ```
 
-No formatter/linter/CI is configured. Run tests before finishing meaningful code changes. For architecture, use `docs/core/codebase-map.md`. For testing/storage details, use `docs/reference/state-persistence-and-testing.md`.
+No formatter/linter/CI is configured. Run tests before finishing meaningful code changes. Do not start overlapping `xcodebuild test` runs; if a run is interrupted or appears stuck during finalization, check for stale `xcodebuild`, `debugserver`, or `AC.app` test-host processes before rerunning. For architecture, use `docs/core/codebase-map.md`. For testing/storage details, use `docs/reference/state-persistence-and-testing.md`.

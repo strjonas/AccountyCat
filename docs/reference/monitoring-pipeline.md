@@ -5,8 +5,10 @@ This doc explains the live monitoring path. It is narrower and more volatile tha
 ## Primary Files
 
 - `AC/Core/BrainService.swift`
+- `AC/Core/BrainService+Telemetry.swift`
 - `AC/Core/MonitoringAlgorithm.swift`
 - `AC/Core/LLMMonitorAlgorithm.swift`
+- `AC/Core/LLMMonitorAlgorithm+ExplicitDirectives.swift`
 - `AC/Core/CompanionPolicy.swift`
 - `AC/Core/DistractionLadder.swift`
 - `AC/Core/MonitoringHeuristics.swift`
@@ -74,6 +76,7 @@ Biases:
 
 - evaluation planning
 - per-context decision caching
+- explicit allow/block directive parsing
 - distraction metadata updates
 - prompt-stage execution
 - appeal review

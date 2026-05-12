@@ -4,6 +4,7 @@ This doc covers first-run setup, local runtime management, and online-provider r
 
 ## Primary Files
 
+- `AC/Core/AppController+RuntimeSetup.swift`
 - `AC/Services/RuntimeSetupService.swift`
 - `AC/Services/DependencyInstallerService.swift`
 - `AC/Services/LocalModelRuntime.swift`
@@ -101,7 +102,7 @@ This matters because fallback behavior and telemetry are source-aware.
 
 If the change is about:
 
-- install/build/download behavior: start in `RuntimeSetupService`
+- install/build/download behavior: start in `RuntimeSetupService` and `AC/Core/AppController+RuntimeSetup.swift`
 - local inference execution or runtime stdout/stderr handling: start in `LocalModelRuntime`
 - remote HTTP failures or fallback chains: start in `OnlineModelService`
 - provider toggles or key lookup: start in `OnlineProviderRouting`
