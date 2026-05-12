@@ -454,8 +454,6 @@ extension AppController {
         switch state.monitoringConfiguration.inferenceBackend {
         case .openRouter:
             state.monitoringConfiguration.onlineModelIdentifierText =
-                state.aiTier.byokModelIdentifierText  // Legacy. Still hear to since its still used in a few places. Deprecated. Will be removed in the future.
-            state.monitoringConfiguration.onlineModelIdentifierText =
                 state.aiTier.byokModelIdentifierText
             state.monitoringConfiguration.onlineModelIdentifierImage =
                 state.aiTier.byokModelIdentifierImage

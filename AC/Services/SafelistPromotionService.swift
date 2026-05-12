@@ -305,11 +305,16 @@ actor SafelistAppealService: SafelistAppealEvaluating {
         let output: RuntimeProcessOutput
         do {
             if configuration.usesOnlineInference {
+                let modelID: String
+                if screenshotPath != nil {
+                    modelID = configuration.onlineModelIdentifierImage ?? configuration.onlineModelIdentifierText ?? AITier.balanced.byokModelIdentifierImage
+                } else {
+                    modelID = configuration.onlineModelIdentifierText ?? configuration.onlineModelIdentifierImage ?? AITier.balanced.byokModelIdentifierText
+                }
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .safelistAppeal,
-                        // imagePath is set below, so use vision-capable model
-                        modelIdentifier: configuration.onlineModelIdentifierImage ?? configuration.onlineModelIdentifierText ?? AITier.balanced.byokModelIdentifierImage,
+                        modelIdentifier: modelID,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: screenshotPath,
