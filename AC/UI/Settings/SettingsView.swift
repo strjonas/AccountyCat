@@ -17,6 +17,7 @@ struct SettingsView: View {
     @Environment(\.acAccentLight) private var accentLight
 
     var embeddedInPanel = false
+    var onBackToChat: (() -> Void)? = nil
     @State private var selectedTab: SettingsTab = .profiles
 
     var body: some View {
@@ -87,6 +88,29 @@ struct SettingsView: View {
 
     private var tabBar: some View {
         HStack(spacing: 8) {
+            if let back = onBackToChat {
+                Button {
+                    back()
+                } label: {
+                    Image(systemName: "bubble.left")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(accent.opacity(0.11))
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(accent.opacity(0.28), lineWidth: 0.5)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Back to chat")
+            }
+
             ForEach(SettingsTab.allCases, id: \.self) { tab in
                 Button {
                     withAnimation(.acSnap) { selectedTab = tab }
