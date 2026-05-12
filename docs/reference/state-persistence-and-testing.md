@@ -62,7 +62,7 @@ Examples:
 - legacy chat history shapes are upgraded
 - missing default profile is repaired on decode
 - stale proposed changes / recent behavioral signals are pruned on load
-- temporary fake runtime overrides are stripped during decode
+- temporary fake runtime overrides are stripped during decodegit 
 
 When changing persisted models, keep decode-time migration logic instead of assuming a clean slate.
 
