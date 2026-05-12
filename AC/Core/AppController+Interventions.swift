@@ -50,6 +50,27 @@ extension AppController {
                 : "User explicitly disliked this nudge: \(nudgeText.cleanedSingleLine)",
             context: SnapshotService.frontmostContext()
         )
+        if !positive {
+            let now = Date()
+            let recentNudge = state.recentActions.first {
+                $0.kind == .nudge
+                    && now.timeIntervalSince($0.timestamp) <= 30 * 60
+                    && ($0.message == nil || $0.message == nudgeText)
+            }
+            installRecentInteractionAllowanceOverride(
+                reason: "user tapped it's fine: \(nudgeText.cleanedSingleLine)",
+                now: now,
+                target: recentNudge.map {
+                    AllowanceTarget(
+                        bundleIdentifier: Self.bundleIdentifier(fromContextKey: $0.contextKey),
+                        appName: $0.appName,
+                        windowTitle: $0.windowTitle,
+                        contextKey: $0.contextKey
+                    )
+                },
+                fallbackAppName: recentNudge?.appName
+            )
+        }
         logActivity("feedback", positive ? "👍 nudge: \(nudgeText)" : "👎 nudge: \(nudgeText)")
 
         // Dismiss the nudge after rating

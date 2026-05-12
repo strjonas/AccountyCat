@@ -45,7 +45,9 @@ struct LLMMonitorAlgorithmTests {
             input: makeDecisionInput(
                 now: now,
                 evaluationID: "eval-overlay",
-                runtimeOverride: runtimeFixture.runtimePath
+                runtimeOverride: runtimeFixture.runtimePath,
+                activeProfileID: "coding",
+                activeProfileName: "Coding"
             )
         )
 
@@ -82,7 +84,9 @@ struct LLMMonitorAlgorithmTests {
             input: makeDecisionInput(
                 now: now,
                 evaluationID: "eval-overlay-cooldown",
-                runtimeOverride: runtimeFixture.runtimePath
+                runtimeOverride: runtimeFixture.runtimePath,
+                activeProfileID: "coding",
+                activeProfileName: "Coding"
             )
         )
 
@@ -128,6 +132,40 @@ struct LLMMonitorAlgorithmTests {
         )
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(expectedFollowUp))
         #expect(result.updatedAlgorithmState.llmPolicy.focusSignal.driftEMA < 0.2)
+    }
+
+    @Test
+    func everydayRecentlyEndedSessionSuppressesOverlaySuggestion() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"distracted","suggested_action":"overlay","confidence":0.96,"reason_tags":["shopping_after_ended_session"],"overlay_headline":"Still shopping?","overlay_body":"Your writing session ended, but this looks off-track.","overlay_prompt":"Why continue?"}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_250)
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-everyday-expired-overlay",
+                runtimeOverride: runtimeFixture.runtimePath,
+                snapshot: makeSnapshot(
+                    now: now,
+                    windowTitle: "Sonnencreme Gesicht | dm"
+                ),
+                recentlyEndedSession: RecentlyEndedSessionSummary(
+                    name: "Writing",
+                    endedAt: now.addingTimeInterval(-9 * 60),
+                    goalSummary: "essay writing: can machines think"
+                )
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.policy.record.blockReason == "everyday_overlay_requires_stronger_evidence")
+        #expect(result.updatedAlgorithmState.llmPolicy.activeAppeal == nil)
+        #expect(result.updatedAlgorithmState.llmPolicy.lastOverlayAt == nil)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 1)
     }
 
     @Test
@@ -737,7 +775,8 @@ struct LLMMonitorAlgorithmTests {
         activeProfileID: String = PolicyRule.defaultProfileID,
         activeProfileName: String = FocusProfile.defaultDisplayName,
         activeProfileDescription: String? = nil,
-        activeProfileExpiresAt: Date? = nil
+        activeProfileExpiresAt: Date? = nil,
+        recentlyEndedSession: RecentlyEndedSessionSummary? = nil
     ) -> MonitoringDecisionInput {
         var configuration = configuration ?? MonitoringConfiguration()
         if configuration == MonitoringConfiguration() {
@@ -761,7 +800,8 @@ struct LLMMonitorAlgorithmTests {
             activeProfileID: activeProfileID,
             activeProfileName: activeProfileName,
             activeProfileDescription: activeProfileDescription,
-            activeProfileExpiresAt: activeProfileExpiresAt
+            activeProfileExpiresAt: activeProfileExpiresAt,
+            recentlyEndedSession: recentlyEndedSession
         )
     }
 

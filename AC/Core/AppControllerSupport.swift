@@ -188,6 +188,44 @@ enum AppControllerChatSupport {
         return markers.contains { lowered.contains($0) }
     }
 
+    static func looksLikeImmediateMonitoringAllowance(_ text: String) -> Bool {
+        let lowered = text.cleanedSingleLine.lowercased()
+        let markers = [
+            "it's fine",
+            "its fine",
+            "that is fine",
+            "that's fine",
+            "thats fine",
+            "leave me alone",
+            "chill",
+            "stop nudging",
+            "don't nudge",
+            "dont nudge",
+            "do not nudge",
+            "pause nudges",
+            "taking a break",
+            "i'm taking a break",
+            "im taking a break",
+            "i need to do something else",
+            "let me do something else",
+            "session ended",
+            "session expired",
+            "session is over",
+            "session's over",
+            "that session is done",
+            "finished that session",
+            "i finished the session",
+            "i am done with this session",
+            "i'm done with this session",
+            "im done with this session",
+            "not active anymore",
+            "back in everyday",
+            "everyday mode now",
+            "normal mode now",
+        ]
+        return markers.contains { lowered.contains($0) }
+    }
+
     static func makeProfileContextForChatPrompt(
         activeProfile: FocusProfile,
         availableProfiles: [FocusProfile]

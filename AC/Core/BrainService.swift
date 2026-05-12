@@ -181,7 +181,7 @@ final class BrainService: NSObject {
             goalSummary: activeProfile.createdReason
         )
         state.sessionCelebrationPending = true
-        let modeChange = "You did it — \(activeProfile.name) wrapped. Really proud of you. Take a well-earned break."
+        let modeChange = "You did it — \(activeProfile.name) wrapped. You're back in everyday mode now. Take a well-earned break."
         state.chatHistory.append(ChatMessage(
             role: .assistant,
             text: modeChange,

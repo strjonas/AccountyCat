@@ -599,7 +599,7 @@ extension AppController {
         let message: String
         if active.isDefault {
             if trimmedReason == "ended", let sessionName = state.recentlyEndedSession?.name {
-                message = "You wrapped \(sessionName) — nice work. Back to Everyday mode now."
+                message = "Switched back to Everyday — you wrapped \(sessionName). Nice work."
             } else if trimmedReason.isEmpty {
                 message = "Switched back to your Everyday profile."
             } else {

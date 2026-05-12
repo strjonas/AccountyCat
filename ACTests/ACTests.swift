@@ -119,4 +119,12 @@ struct ACTests {
         ])
     }
 
+    @Test
+    func chatSupportRecognizesImmediateMonitoringAllowances() {
+        #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("but I finished that session no?"))
+        #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("hey chill for now, I need to do something else"))
+        #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("it's fine"))
+        #expect(!AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("what should I write next?"))
+    }
+
 }

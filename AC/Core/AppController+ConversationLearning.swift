@@ -107,6 +107,9 @@ extension AppController {
         if let correctionMatch = distractionCorrectionMatch(for: trimmedDraft) {
             recordDistractionCorrection(trimmedDraft, match: correctionMatch)
         }
+        if AppControllerChatSupport.looksLikeImmediateMonitoringAllowance(trimmedDraft) {
+            recordImmediateMonitoringAllowance(trimmedDraft)
+        }
 
         let cappedDraft = AppControllerChatSupport.cappedChatText(
             trimmedDraft,
@@ -436,6 +439,51 @@ extension AppController {
         schedulePolicyMemoryUpdate(
             eventSummary: "User corrected a recent intervention: \(text.cleanedSingleLine)",
             context: SnapshotService.frontmostContext()
+        )
+        persistState()
+    }
+
+    private func recordImmediateMonitoringAllowance(_ text: String) {
+        let now = Date()
+        let recentIntervention = state.recentActions.first {
+            ($0.kind == .nudge || $0.kind == .overlay)
+                && now.timeIntervalSince($0.timestamp) <= 30 * 60
+        }
+
+        if overlayVisible {
+            executiveArm?.dismissOverlay()
+            overlayVisible = false
+            activeOverlay = nil
+            overlayAppealDraft = ""
+        }
+        latestNudge = nil
+        state.hardEscalation = nil
+        companionMood = state.isPaused ? .paused : .watching
+        state.algorithmState.llmPolicy.focusSignal.resetFlow(at: now)
+
+        if let recentIntervention {
+            installRecentInteractionAllowanceOverride(
+                reason: "user asked AC to back off: \(text.cleanedSingleLine)",
+                now: now,
+                target: AllowanceTarget(
+                    bundleIdentifier: Self.bundleIdentifier(fromContextKey: recentIntervention.contextKey),
+                    appName: recentIntervention.appName,
+                    windowTitle: recentIntervention.windowTitle,
+                    contextKey: recentIntervention.contextKey
+                ),
+                fallbackAppName: recentIntervention.appName
+            )
+        } else {
+            installRecentInteractionAllowanceOverride(
+                reason: "user asked AC to back off: \(text.cleanedSingleLine)",
+                now: now
+            )
+        }
+
+        schedulePolicyMemoryUpdate(
+            eventSummary: "User asked AC to back off or clarified the focus session is no longer active: \(text.cleanedSingleLine). Treat this as an immediate temporary allowance, not as evidence the user is distracted.",
+            context: SnapshotService.frontmostContext(),
+            allowMemoryOperations: false
         )
         persistState()
     }

@@ -379,7 +379,7 @@ actor CompanionChatService {
 
     nonisolated private static func onlineChatOptions() -> RuntimeInferenceOptions {
         RuntimeInferenceOptions(
-            maxTokens: 320,
+            maxTokens: 768,
             temperature: 0.5,
             topP: 0.95,
             topK: 64,

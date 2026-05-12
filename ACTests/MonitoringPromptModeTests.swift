@@ -53,6 +53,17 @@ struct MonitoringPromptModeTests {
         #expect(online.contains("errands") || online.contains("life admin"))
         #expect(online.contains("opted in to being checked"))
         #expect(online.contains("Prefer `unclear` + `abstain` over `nudge`"))
+        #expect(online.contains("`recentlyEndedSession` is NOT active"))
+        #expect(online.contains("Never enforce it as a current obligation"))
+    }
+
+    @Test
+    func onlineDecisionPromptIncludesSessionExpiryExamples() {
+        let online = systemPrompt(for: .onlineDecision)
+        #expect(online.contains("Everyday after expiry"))
+        #expect(online.contains("Sonnencreme Gesicht"))
+        #expect(online.contains("session_already_ended"))
+        #expect(online.contains("User correction wins"))
     }
 
     @Test

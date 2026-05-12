@@ -277,6 +277,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             from: input.recentActions,
             at: input.now
         )
+        let hasActiveRestrictiveRule = Self.hasActiveRestrictiveRule(input: input)
         let requestScope = MonitoringRequestScopeContext(input: input)
         let compactAppName = input.snapshot.appName.truncatedForPrompt(
             maxLength: MonitoringPromptContextBudget.appNameCharacters
@@ -553,42 +554,53 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
             switch decision.suggestedAction {
             case .overlay:
-                let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
-                let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
-                    appName: input.snapshot.appName,
-                    evaluationID: input.evaluationID
-                ) ?? OverlayPresentation(
-                    headline: "Pause for a second.",
-                    body: "This still looks off-track in \(input.snapshot.appName).",
-                    prompt: "This looks a bit off-track — what's going on?",
-                    appName: input.snapshot.appName,
-                    evaluationID: input.evaluationID,
-                    submitButtonTitle: "Explain",
-                    secondaryButtonTitle: "Back to work"
-                )
-                let finalPresentation = isHard
-                    ? presentation.withHardEscalation(character: input.character)
-                    : presentation
-                policyState.lastOverlayAt = input.now
-                policyState.lastInterventionAt = input.now
-                policyState.activeAppeal = MonitoringAppealSession(
-                    evaluationID: input.evaluationID,
-                    contextKey: distraction.contextKey ?? "unknown",
-                    appName: input.snapshot.appName,
-                    prompt: finalPresentation.prompt ?? "This looks a bit off-track — what's going on?",
-                    createdAt: input.now,
-                    lastSubmittedAt: nil,
-                    lastResult: nil
-                )
-                action = .showOverlay(finalPresentation)
-                blockReason = nil
+                if !shouldAllowOverlaySuggestion(
+                    input: input,
+                    relevantActions: relevantActions,
+                    distraction: distraction,
+                    hasActiveRestrictiveRule: hasActiveRestrictiveRule
+                ) {
+                    action = .none
+                    blockReason = "everyday_overlay_requires_stronger_evidence"
+                } else {
+                    let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
+                    let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
+                        appName: input.snapshot.appName,
+                        evaluationID: input.evaluationID
+                    ) ?? OverlayPresentation(
+                        headline: "Pause for a second.",
+                        body: "This still looks off-track in \(input.snapshot.appName).",
+                        prompt: "This looks a bit off-track — what's going on?",
+                        appName: input.snapshot.appName,
+                        evaluationID: input.evaluationID,
+                        submitButtonTitle: "Explain",
+                        secondaryButtonTitle: "Back to work"
+                    )
+                    let finalPresentation = isHard
+                        ? presentation.withHardEscalation(character: input.character)
+                        : presentation
+                    policyState.lastOverlayAt = input.now
+                    policyState.lastInterventionAt = input.now
+                    policyState.activeAppeal = MonitoringAppealSession(
+                        evaluationID: input.evaluationID,
+                        contextKey: distraction.contextKey ?? "unknown",
+                        appName: input.snapshot.appName,
+                        prompt: finalPresentation.prompt ?? "This looks a bit off-track — what's going on?",
+                        createdAt: input.now,
+                        lastSubmittedAt: nil,
+                        lastResult: nil
+                    )
+                    action = .showOverlay(finalPresentation)
+                    blockReason = nil
+                }
 
             case .nudge:
                 if shouldEscalateRepeatedNudgeToOverlay(
                     input: input,
                     relevantActions: relevantActions,
                     distraction: distraction,
-                    decision: decision
+                    decision: decision,
+                    hasActiveRestrictiveRule: hasActiveRestrictiveRule
                 ) {
                     let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
                     let basePresentation = OverlayPresentation.defaultRepeatedDistraction(
@@ -1610,7 +1622,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         input: MonitoringDecisionInput,
         relevantActions: [ActionRecord],
         distraction: DistractionMetadata,
-        decision: LLMDecision
+        decision: LLMDecision,
+        hasActiveRestrictiveRule: Bool
     ) -> Bool {
         guard decision.assessment == .distracted,
               decision.suggestedAction == .nudge,
@@ -1627,17 +1640,75 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         // Escalate if already 2+ consecutive distractions in this context
+        let matchingRecentNudges = matchingRecentNudgeCount(
+            input: input,
+            relevantActions: relevantActions
+        )
+
+        if input.activeProfileID == PolicyRule.defaultProfileID,
+           !hasActiveRestrictiveRule {
+            guard input.recentlyEndedSession == nil else {
+                return false
+            }
+            return distraction.consecutiveDistractedCount >= 3 || matchingRecentNudges >= 3
+        }
+
         if distraction.consecutiveDistractedCount >= 2 {
             return true
         }
 
-        // Escalate if 3+ recent nudges for the same context in 30 mins (was 2 before)
-        let matchingRecentNudges = relevantActions
+        // Escalate if 3+ recent nudges for the same context in 30 mins.
+        return matchingRecentNudges >= 3
+    }
+
+    private func shouldAllowOverlaySuggestion(
+        input: MonitoringDecisionInput,
+        relevantActions: [ActionRecord],
+        distraction: DistractionMetadata,
+        hasActiveRestrictiveRule: Bool
+    ) -> Bool {
+        guard input.activeProfileID == PolicyRule.defaultProfileID else {
+            return true
+        }
+
+        let matchingRecentNudges = matchingRecentNudgeCount(
+            input: input,
+            relevantActions: relevantActions
+        )
+
+        if hasActiveRestrictiveRule {
+            return distraction.consecutiveDistractedCount >= 2 || matchingRecentNudges >= 2
+        }
+
+        // A recently ended focus session is explanatory context, not a live contract.
+        // In Everyday mode it should never be enough to force an overlay by itself.
+        guard input.recentlyEndedSession == nil else {
+            return false
+        }
+
+        return distraction.consecutiveDistractedCount >= 3 || matchingRecentNudges >= 3
+    }
+
+    private func matchingRecentNudgeCount(
+        input: MonitoringDecisionInput,
+        relevantActions: [ActionRecord]
+    ) -> Int {
+        relevantActions
             .filter { $0.kind == .nudge }
             .filter { input.now.timeIntervalSince($0.timestamp) <= 30 * 60 }
             .filter { actionMentionsCurrentContext($0, snapshot: input.snapshot) }
             .count
-        return matchingRecentNudges >= 3
+    }
+
+    private static func hasActiveRestrictiveRule(input: MonitoringDecisionInput) -> Bool {
+        let context = FrontmostContext(
+            bundleIdentifier: input.snapshot.bundleIdentifier,
+            appName: input.snapshot.appName,
+            windowTitle: input.snapshot.windowTitle
+        )
+        return input.policyMemory.activeRules(at: input.now, matching: context).contains {
+            $0.kind == .disallow || $0.kind == .discourage || $0.kind == .limit
+        }
     }
 
     private func shouldTriggerHardEscalation(

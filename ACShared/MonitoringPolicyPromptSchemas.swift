@@ -90,9 +90,9 @@ nonisolated struct MonitoringPromptUsageRecord: Codable, Hashable, Sendable {
 }
 
 /// Compact snapshot of a focus session that just ended within the last ~30 minutes.
-/// Carried in the monitoring payload so the model still sees what the user was just
-/// doing after the session expires (and the active profile drops to Everyday). Without
-/// this, the "Writing essay X" anchor evaporates the moment expiresAt is reached.
+/// Carried in the monitoring payload as reference-only context after the active
+/// profile drops to Everyday. The model should use it to avoid false positives
+/// around adjacent wrap-up work, not to keep enforcing an expired session.
 nonisolated struct RecentlyEndedSessionSummary: Codable, Hashable, Sendable {
     var name: String
     var description: String?

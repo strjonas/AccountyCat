@@ -114,7 +114,10 @@ enum ACPromptSets {
     - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
     - Only flag activity that has been clearly going on for a while AND conflicts with the user's stated long-term goals OR with a `disallow`/`discourage` rule listed in `policySummary`.
     - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
-    - `recentlyEndedSession` (when present) tells you what the user was just doing — research adjacent to that topic likely still counts as on-task even if the formal session ended.
+    - `recentlyEndedSession` is NOT active. It means the focus session already ended and the user is back in Everyday mode. Never enforce it as a current obligation.
+    - Use `recentlyEndedSession` only to avoid false positives: adjacent wrap-up/research is likely okay, and unrelated life/admin after expiry is usually okay too.
+    - If the newest user message says the session is done/expired/over, says "it's fine", asks AC to chill/leave them alone, or says they need a break/errand, treat that as an allowance for now unless `policySummary` contains a current restrictive rule.
+    - An overlay in Everyday mode requires overwhelming evidence: a current restrictive rule, or a long repeated same-context pattern with no newer user allowance/correction. Otherwise nudge at most; often abstain.
     """
 
     /// Mode-specific instruction block for an active named focus session.
@@ -126,6 +129,17 @@ enum ACPromptSets {
     - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
     - Productive work that doesn't fit the session scope can still be a distraction (e.g. coding during "Presentation prep").
     - `recentlyEndedSession` is rarely set when a session is already active; if it is, treat it as background context only.
+    """
+
+    /// Few-shot examples shared by the online and staged decision prompts. These are
+    /// intentionally concrete because the live monitor relies on the model doing the
+    /// right thing with ranked context, not merely parroting abstract policy text.
+    private static let monitoringDecisionExamples = """
+    Worked examples:
+    - Everyday after expiry: activeProfile.isDefault=true, recentlyEndedSession=Writing essay, current title="Sonnencreme Gesicht | dm", newest user message="but I finished that session no?" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","session_already_ended","life_admin_allowed"]}
+    - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
+    - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
+    - Everyday with a real rule: activeProfile.isDefault=true, policySummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
     """
 
     // MARK: - Policy stage prompt set
@@ -217,8 +231,10 @@ enum ACPromptSets {
                 Decision rules:
                 - Activity supports the goals or matches an allowance → `focused` + `none`.
                 - Newer explicit allowance or correction in `recentUserMessages` for the current app/activity overrides an older nudge or stale suspicion → `focused` + `none`.
+                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
                 - Genuinely unclear → `unclear` + `abstain`.
                 - Conflicts with goals or an active restriction → `distracted`.
+                - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
                 - First clear distraction → `nudge`. Repeated distraction already in the payload AND no newer allowance/correction → `overlay`.
                 - Trust the current screenshot/frontmost app more than stale `usage`, `recentSwitches`, or an older intervention message when they conflict.
                 - If the screenshot shows a review, debugger, inspector, prompt-lab, or other meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
@@ -236,6 +252,8 @@ enum ACPromptSets {
                 - Do not emit `submit_button_title` or `secondary_button_title` unless you must override AC's defaults.
                 - Never emit keys with `null`, empty strings, or placeholder values.
                 - Never mention hidden fields, counters, or that you are reading memory/history.
+
+                \(monitoringDecisionExamples)
                 """
             ,
                 userTemplate: """
@@ -281,10 +299,12 @@ enum ACPromptSets {
                 - Activity supports the goals OR is covered by an allowance in memory/chat → `focused` + `none`.
                 - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
                 - A newer user correction that a recent nudge/overlay was wrong supersedes that older intervention for the current activity.
+                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
                 - Genuinely unclear after using the full payload → `unclear` + `abstain`.
                 - Activity conflicts with goals or an active restriction → `distracted`.
                 - First clear distraction → `nudge`.
                 - Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity, and no newer allowance) → `overlay`.
+                - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
                 - Trust what the user is doing now more than stale usage summaries when they conflict.
                 - If the visible surface is a review/debug/inspector tool showing prior activity, judge the current work as reviewing/debugging/tooling unless the payload clearly says otherwise.
                 - Development tools, editors, terminals, docs, research, reading, planning, and drafting default to `focused` unless the payload clearly says otherwise.
@@ -295,11 +315,7 @@ enum ACPromptSets {
                 - If `nudge`: under 18 words, specific to this activity, distinct from recent nudges.
                 - Never mention counters, hidden fields, or that you are reading memory/history.
 
-                Worked example — ambiguous case:
-                - Goals: "make a YouTube video about productivity tools".
-                - App: "Google Chrome", title: "AI productivity tools - YouTube".
-                - Memory: empty. Calendar: empty.
-                - Verdict: `focused`/`none`. The goals describe content research; the title supports it. Do not flag because YouTube is "usually" leisure.
+                \(monitoringDecisionExamples)
                 """
             ,
                 userTemplate: """
@@ -519,7 +535,7 @@ enum ACPromptSets {
             optionsByStage: [
                 ACRuntimeStageDefinition(stage: .perceptionTitle, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 220, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 9216, batchSize: 4608, ubatchSize: 2048, timeoutSeconds: 45)),
-                ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 120, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 240, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 ACRuntimeStageDefinition(stage: .decision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
                 ACRuntimeStageDefinition(stage: .nudgeCopy, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
                 ACRuntimeStageDefinition(stage: .appealReview, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
@@ -611,6 +627,11 @@ enum ACPromptSets {
     over silently dropping it.
 
     \(workflowText)
+
+    If the user asks to start, switch, extend, or end a focus profile/session, emit a
+    `profile` action. Do not say you started/switched/ended a session unless that action
+    is present in `actions`. When actions are present, keep `reply` short so the JSON
+    cannot waste output on prose before the side effect lands.
 
     Action kinds:
     - `profile`: start, switch, end, create, or update focus profiles and timed focus sessions.

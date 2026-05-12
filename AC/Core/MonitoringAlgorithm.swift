@@ -69,10 +69,9 @@ struct MonitoringDecisionInput: Sendable {
     var activeProfileName: String = FocusProfile.defaultDisplayName
     var activeProfileDescription: String? = nil
     var activeProfileExpiresAt: Date? = nil
-    /// Snapshot of a session that ended within the last ~30 minutes. The
-    /// monitoring algorithm passes this verbatim into the prompt payload so
-    /// the model retains the "what was the user just doing" anchor across
-    /// profile transitions.
+    /// Snapshot of a session that ended within the last ~30 minutes. This is
+    /// reference-only context after the profile transition; it should prevent
+    /// false positives around wrap-up work, not enforce the expired session.
     var recentlyEndedSession: RecentlyEndedSessionSummary? = nil
 }
 
