@@ -18,21 +18,21 @@ import Foundation
 enum ACCharacter: String, CaseIterable, Sendable {
     case mochi  // warm orange tabby — encouraging
     case misty  // soft gray — thoughtful
-    case onyx   // sharp black — decisive
+    case onyx  // sharp black — decisive
 
     var displayName: String {
         switch self {
         case .mochi: return "Mochi"
         case .misty: return "Misty"
-        case .onyx:  return "Onyx"
+        case .onyx: return "Onyx"
         }
     }
 
     var tagline: String {
         switch self {
         case .mochi: return "Your cozy focus buddy"
-        case .misty: return "Your thoughtful focus companion"
-        case .onyx:  return "Your no-nonsense co-pilot"
+        case .misty: return "Your attentive focus companion"
+        case .onyx: return "Your no-nonsense co-pilot"
         }
     }
 
@@ -41,11 +41,14 @@ enum ACCharacter: String, CaseIterable, Sendable {
     nonisolated var personalityPrefix: String {
         switch self {
         case .mochi:
-            return "You are AC, the user's warm and encouraging focus companion. Cheer them on like a close friend who's always rooting for them — kind, playful, never lecturing."
+            return
+                "You are AC, the user's warm and encouraging focus companion. Cheer them on like a close friend who's always rooting for them — kind, playful, never lecturing."
         case .misty:
-            return "You are AC, the user's thoughtful focus companion. Stay quietly attentive — speak with care, listen for what they actually need, and only step in when it genuinely helps."
+            return
+                "You are AC, the user's thoughtful focus companion. Stay quietly attentive — speak with care, listen for what they actually need, and only step in when it genuinely helps."
         case .onyx:
-            return "You are AC, the user's sharp and decisive focus co-pilot. Cut through the noise — short, direct, dry-witted. Push them when they need it, drop the chit-chat when they don't."
+            return
+                "You are AC, the user's sharp and decisive focus co-pilot. Cut through the noise — short, direct, dry-witted. Push them when they need it, drop the chit-chat when they don't."
         }
     }
 }
@@ -75,16 +78,16 @@ enum ACGlassMode: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .auto: return "auto"
-        case .on:   return "on"
-        case .off:  return "off"
+        case .on: return "on"
+        case .off: return "off"
         }
     }
 
     var blurb: String {
         switch self {
-        case .auto: return "follows macOS Reduce Transparency"
-        case .on:   return "always translucent"
-        case .off:  return "always solid"
+        case .auto: return "follows macOS"
+        case .on: return "always translucent"
+        case .off: return "always solid"
         }
     }
 }
@@ -92,13 +95,13 @@ enum ACGlassMode: String, Codable, CaseIterable, Sendable {
 enum ACBuild {
     /// True for Debug configuration builds; false for Release.
     nonisolated
-    static let isDebug: Bool = {
-        #if DEBUG
-        true
-        #else
-        false
-        #endif
-    }()
+        static let isDebug: Bool = {
+            #if DEBUG
+                true
+            #else
+                false
+            #endif
+        }()
 }
 
 enum LogLevel: String, CaseIterable, Codable {
@@ -134,15 +137,15 @@ enum LogLevel: String, CaseIterable, Codable {
 
 /// Controls where the AccountyCat UI is visible: floating orb, menu bar chip, or both.
 enum ACDisplayMode: String, Codable, CaseIterable, Sendable {
-    case orb       // floating companion only
-    case menuBar   // menu bar chip only
-    case both      // both visible (default)
+    case orb  // floating companion only
+    case menuBar  // menu bar chip only
+    case both  // both visible (default)
 
     var displayName: String {
         switch self {
-        case .orb:      return "Orb"
-        case .menuBar:  return "Menu Bar"
-        case .both:     return "Both"
+        case .orb: return "Orb"
+        case .menuBar: return "Menu Bar"
+        case .both: return "Both"
         }
     }
 
@@ -154,15 +157,15 @@ enum ACDisplayMode: String, Codable, CaseIterable, Sendable {
 
 /// Controls what the menu bar status item displays.
 enum ACStatusBarStyle: String, Codable, CaseIterable, Sendable {
-    case profile   // profile name + remaining timer (default)
-    case ac        // compact "AC" label
-    case icon      // cat SF Symbol
+    case profile  // profile name + remaining timer (default)
+    case ac  // compact "AC" label
+    case icon  // cat SF Symbol
 
     var displayName: String {
         switch self {
         case .profile: return "Profile"
-        case .ac:      return "\"AC\""
-        case .icon:    return "Cat"
+        case .ac: return "\"AC\""
+        case .icon: return "Cat"
         }
     }
 }
@@ -214,11 +217,15 @@ struct PermissionsSnapshot: Codable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        screenRecording = try container.decodeIfPresent(PermissionState.self, forKey: .screenRecording) ?? .unknown
-        accessibility = try container.decodeIfPresent(PermissionState.self, forKey: .accessibility) ?? .unknown
+        screenRecording =
+            try container.decodeIfPresent(PermissionState.self, forKey: .screenRecording)
+            ?? .unknown
+        accessibility =
+            try container.decodeIfPresent(PermissionState.self, forKey: .accessibility) ?? .unknown
         // Older persisted snapshots predate calendar support — default to
         // `.unknown` so the UI treats it as "not yet decided" rather than denied.
-        calendar = try container.decodeIfPresent(PermissionState.self, forKey: .calendar) ?? .unknown
+        calendar =
+            try container.decodeIfPresent(PermissionState.self, forKey: .calendar) ?? .unknown
     }
 }
 
@@ -507,7 +514,9 @@ nonisolated struct RecurringSchedule: Codable, Hashable, Sendable {
         guard let nowHour = components.hour, let nowMinute = components.minute else { return false }
         let nowTotalMinutes = nowHour * 60 + nowMinute
         let scheduledTotalMinutes = hour * 60 + minute
-        guard nowTotalMinutes >= scheduledTotalMinutes && nowTotalMinutes <= scheduledTotalMinutes + 2 else { return false }
+        guard
+            nowTotalMinutes >= scheduledTotalMinutes && nowTotalMinutes <= scheduledTotalMinutes + 2
+        else { return false }
         if let weekdays, let weekday = components.weekday {
             return weekdays.contains(weekday)
         }
@@ -589,7 +598,9 @@ nonisolated struct RecurringNudge: Identifiable, Codable, Hashable, Sendable {
         guard let nowHour = components.hour, let nowMinute = components.minute else { return false }
         let nowTotalMinutes = nowHour * 60 + nowMinute
         let scheduledTotalMinutes = hour * 60 + minute
-        guard nowTotalMinutes >= scheduledTotalMinutes && nowTotalMinutes <= scheduledTotalMinutes + 2 else { return false }
+        guard
+            nowTotalMinutes >= scheduledTotalMinutes && nowTotalMinutes <= scheduledTotalMinutes + 2
+        else { return false }
         if let weekdays, let weekday = components.weekday {
             return weekdays.contains(weekday)
         }
@@ -699,9 +710,12 @@ struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         text = try container.decode(String.self, forKey: .text)
         timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
         style = try container.decodeIfPresent(ChatMessageStyle.self, forKey: .style) ?? .standard
-        interruptionPolicy = try container.decodeIfPresent(ChatInterruptionPolicy.self, forKey: .interruptionPolicy) ?? .immediate
+        interruptionPolicy =
+            try container.decodeIfPresent(ChatInterruptionPolicy.self, forKey: .interruptionPolicy)
+            ?? .immediate
         isUnread = try container.decodeIfPresent(Bool.self, forKey: .isUnread) ?? false
-        suggestionData = try container.decodeIfPresent(ChatSuggestionData.self, forKey: .suggestionData)
+        suggestionData = try container.decodeIfPresent(
+            ChatSuggestionData.self, forKey: .suggestionData)
     }
 
     nonisolated var promptTimestampLabel: String {
@@ -803,20 +817,26 @@ struct RecentInteractionAllowance: Codable, Hashable, Sendable {
         }
 
         if let bundleIdentifier,
-           snapshot.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) != .orderedSame {
+            snapshot.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) != .orderedSame
+        {
             return false
         }
 
         if let appName,
-           snapshot.appName.cleanedSingleLine.caseInsensitiveCompare(appName.cleanedSingleLine) != .orderedSame {
+            snapshot.appName.cleanedSingleLine.caseInsensitiveCompare(appName.cleanedSingleLine)
+                != .orderedSame
+        {
             return false
         }
 
         if let windowTitle {
-            guard let snapshotTitle = snapshot.windowTitle?.cleanedSingleLine, !snapshotTitle.isEmpty else {
+            guard let snapshotTitle = snapshot.windowTitle?.cleanedSingleLine,
+                !snapshotTitle.isEmpty
+            else {
                 return false
             }
-            return snapshotTitle.caseInsensitiveCompare(windowTitle.cleanedSingleLine) == .orderedSame
+            return snapshotTitle.caseInsensitiveCompare(windowTitle.cleanedSingleLine)
+                == .orderedSame
         }
 
         return bundleIdentifier != nil || appName != nil
@@ -857,10 +877,13 @@ struct DistractionMetadata: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         contextKey = try container.decodeIfPresent(String.self, forKey: .contextKey)
         stableSince = try container.decodeIfPresent(Date.self, forKey: .stableSince)
-        let decodedAssessment = try container.decodeIfPresent(MonitoringVerdict.self, forKey: .lastAssessment)
-        let legacyAssessment = try container.decodeIfPresent(MonitoringVerdict.self, forKey: .lastVerdict)
+        let decodedAssessment = try container.decodeIfPresent(
+            MonitoringVerdict.self, forKey: .lastAssessment)
+        let legacyAssessment = try container.decodeIfPresent(
+            MonitoringVerdict.self, forKey: .lastVerdict)
         lastAssessment = decodedAssessment ?? legacyAssessment
-        consecutiveDistractedCount = try container.decodeIfPresent(Int.self, forKey: .consecutiveDistractedCount) ?? 0
+        consecutiveDistractedCount =
+            try container.decodeIfPresent(Int.self, forKey: .consecutiveDistractedCount) ?? 0
         nextEvaluationAt = try container.decodeIfPresent(Date.self, forKey: .nextEvaluationAt)
     }
 
@@ -876,8 +899,8 @@ struct DistractionMetadata: Codable, Sendable, Equatable {
 
 struct ACState: Codable, Sendable {
     static let defaultGoalsText = """
-    I want to spend most of my time studying, building, and gaining experience. Short social check-ins are okay, but not long scrolling sessions.
-    """
+        I want to spend most of my time studying, building, and gaining experience. Short social check-ins are okay, but not long scrolling sessions.
+        """
     static let usageHistoryRetentionDays = 35
 
     var character: ACCharacter = .mochi
@@ -1025,7 +1048,6 @@ struct ACState: Codable, Sendable {
         case recentBehavioralSignals
     }
 
-
     /// Telemetry-friendly accessor for the active monitor's distraction metadata.
     var distraction: DistractionMetadata {
         get {
@@ -1062,34 +1084,64 @@ struct ACState: Codable, Sendable {
         _ = try container.decodeIfPresent(Bool.self, forKey: .accentFollowsCharacter)
         _ = try container.decodeIfPresent(String.self, forKey: .customAccentHex)
         aiTier = try container.decodeIfPresent(AITier.self, forKey: .aiTier) ?? .balanced
-        permissions = try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions) ?? PermissionsSnapshot()
-        setupStatus = try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
+        permissions =
+            try container.decodeIfPresent(PermissionsSnapshot.self, forKey: .permissions)
+            ?? PermissionsSnapshot()
+        setupStatus =
+            try container.decodeIfPresent(SetupStatus.self, forKey: .setupStatus) ?? .checking
         isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
-        autoQuietOnCalls = try container.decodeIfPresent(Bool.self, forKey: .autoQuietOnCalls) ?? true
-        displayMode = try container.decodeIfPresent(ACDisplayMode.self, forKey: .displayMode) ?? .both
-        statusBarStyle = try container.decodeIfPresent(ACStatusBarStyle.self, forKey: .statusBarStyle) ?? .profile
+        autoQuietOnCalls =
+            try container.decodeIfPresent(Bool.self, forKey: .autoQuietOnCalls) ?? true
+        displayMode =
+            try container.decodeIfPresent(ACDisplayMode.self, forKey: .displayMode) ?? .both
+        statusBarStyle =
+            try container.decodeIfPresent(ACStatusBarStyle.self, forKey: .statusBarStyle)
+            ?? .profile
         debugMode = try container.decodeIfPresent(Bool.self, forKey: .debugMode) ?? ACBuild.isDebug
-        minimumLogLevel = try container.decodeIfPresent(LogLevel.self, forKey: .minimumLogLevel) ?? LogLevel.defaultForBuild
-        goalsText = try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
+        minimumLogLevel =
+            try container.decodeIfPresent(LogLevel.self, forKey: .minimumLogLevel)
+            ?? LogLevel.defaultForBuild
+        goalsText =
+            try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
         userName = try container.decodeIfPresent(String.self, forKey: .userName) ?? ""
-        rescueApp = try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
-        let decodedOverride = try container.decodeIfPresent(String.self, forKey: .runtimePathOverride)
+        rescueApp =
+            try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
+        let decodedOverride = try container.decodeIfPresent(
+            String.self, forKey: .runtimePathOverride)
         runtimePathOverride = Self.sanitizeRuntimePathOverride(decodedOverride)
-        monitoringConfiguration = try container.decodeIfPresent(MonitoringConfiguration.self, forKey: .monitoringConfiguration) ?? MonitoringConfiguration()
-        algorithmState = try container.decodeIfPresent(AlgorithmStateEnvelope.self, forKey: .algorithmState) ?? AlgorithmStateEnvelope()
-        hasMigratedPolicyAlgorithmDefault = try container.decodeIfPresent(Bool.self, forKey: .hasMigratedPolicyAlgorithmDefault) ?? false
-        recentActions = try container.decodeIfPresent([ActionRecord].self, forKey: .recentActions) ?? []
-        recentSwitches = try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
-        usageByDay = try container.decodeIfPresent([String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
-        focusSegments = try container.decodeIfPresent([FocusTimelineSegment].self, forKey: .focusSegments) ?? []
-        let legacyDistraction = try container.decodeIfPresent(DistractionMetadata.self, forKey: .distraction)
+        monitoringConfiguration =
+            try container.decodeIfPresent(
+                MonitoringConfiguration.self, forKey: .monitoringConfiguration)
+            ?? MonitoringConfiguration()
+        algorithmState =
+            try container.decodeIfPresent(AlgorithmStateEnvelope.self, forKey: .algorithmState)
+            ?? AlgorithmStateEnvelope()
+        hasMigratedPolicyAlgorithmDefault =
+            try container.decodeIfPresent(Bool.self, forKey: .hasMigratedPolicyAlgorithmDefault)
+            ?? false
+        recentActions =
+            try container.decodeIfPresent([ActionRecord].self, forKey: .recentActions) ?? []
+        recentSwitches =
+            try container.decodeIfPresent([AppSwitchRecord].self, forKey: .recentSwitches) ?? []
+        usageByDay =
+            try container.decodeIfPresent(
+                [String: [String: TimeInterval]].self, forKey: .usageByDay) ?? [:]
+        focusSegments =
+            try container.decodeIfPresent([FocusTimelineSegment].self, forKey: .focusSegments) ?? []
+        let legacyDistraction = try container.decodeIfPresent(
+            DistractionMetadata.self, forKey: .distraction)
         if algorithmState.llmPolicy.distraction == DistractionMetadata(),
-           let legacyDistraction {
+            let legacyDistraction
+        {
             algorithmState.llmPolicy.distraction = legacyDistraction
         }
-        if let decodedEntries = try container.decodeIfPresent([MemoryEntry].self, forKey: .memoryEntries) {
+        if let decodedEntries = try container.decodeIfPresent(
+            [MemoryEntry].self, forKey: .memoryEntries)
+        {
             memoryEntries = decodedEntries
-        } else if let legacy = try container.decodeIfPresent(String.self, forKey: .memory), !legacy.isEmpty {
+        } else if let legacy = try container.decodeIfPresent(String.self, forKey: .memory),
+            !legacy.isEmpty
+        {
             // Legacy string memory → one entry per non-empty line, backdated 1 minute apart so
             // relative order is preserved. The next consolidation pass will clean up timestamps.
             let now = Date()
@@ -1105,16 +1157,27 @@ struct ACState: Codable, Sendable {
         } else {
             memoryEntries = []
         }
-        lastMemoryConsolidationAt = try container.decodeIfPresent(Date.self, forKey: .lastMemoryConsolidationAt)
-        policyMemory = try container.decodeIfPresent(PolicyMemory.self, forKey: .policyMemory) ?? PolicyMemory()
-        calendarIntelligenceEnabled = try container.decodeIfPresent(Bool.self, forKey: .calendarIntelligenceEnabled) ?? false
-        if let identifiers = try container.decodeIfPresent([String].self, forKey: .enabledCalendarIdentifiers) {
+        lastMemoryConsolidationAt = try container.decodeIfPresent(
+            Date.self, forKey: .lastMemoryConsolidationAt)
+        policyMemory =
+            try container.decodeIfPresent(PolicyMemory.self, forKey: .policyMemory)
+            ?? PolicyMemory()
+        calendarIntelligenceEnabled =
+            try container.decodeIfPresent(Bool.self, forKey: .calendarIntelligenceEnabled) ?? false
+        if let identifiers = try container.decodeIfPresent(
+            [String].self, forKey: .enabledCalendarIdentifiers)
+        {
             enabledCalendarIdentifiers = Set(identifiers)
         } else {
             enabledCalendarIdentifiers = []
         }
-        profiles = try container.decodeIfPresent([FocusProfile].self, forKey: .profiles) ?? [FocusProfile.makeDefault()]
-        activeProfileID = try container.decodeIfPresent(String.self, forKey: .activeProfileID) ?? PolicyRule.defaultProfileID
+        profiles =
+            try container.decodeIfPresent([FocusProfile].self, forKey: .profiles) ?? [
+                FocusProfile.makeDefault()
+            ]
+        activeProfileID =
+            try container.decodeIfPresent(String.self, forKey: .activeProfileID)
+            ?? PolicyRule.defaultProfileID
         // Migration safety: legacy state files have no profiles array. Make sure default is present.
         if !profiles.contains(where: { $0.isDefault }) {
             profiles.insert(FocusProfile.makeDefault(), at: 0)
@@ -1123,27 +1186,39 @@ struct ACState: Codable, Sendable {
             activeProfileID = PolicyRule.defaultProfileID
         }
         Self.migrateUnscopedRulesToDefaultProfile(&policyMemory)
-        lastFullScreenCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastFullScreenCheckAt)
-        hardEscalation = try container.decodeIfPresent(ActiveEscalation.self, forKey: .hardEscalation)
-        scheduledActions = try container.decodeIfPresent([ScheduledAction].self, forKey: .scheduledActions) ?? []
-        recurringNudges = try container.decodeIfPresent([RecurringNudge].self, forKey: .recurringNudges) ?? []
-        if let decoded = try container.decodeIfPresent(RecentlyEndedSession.self, forKey: .recentlyEndedSession),
-           !decoded.isStale(at: Date()) {
+        lastFullScreenCheckAt = try container.decodeIfPresent(
+            Date.self, forKey: .lastFullScreenCheckAt)
+        hardEscalation = try container.decodeIfPresent(
+            ActiveEscalation.self, forKey: .hardEscalation)
+        scheduledActions =
+            try container.decodeIfPresent([ScheduledAction].self, forKey: .scheduledActions) ?? []
+        recurringNudges =
+            try container.decodeIfPresent([RecurringNudge].self, forKey: .recurringNudges) ?? []
+        if let decoded = try container.decodeIfPresent(
+            RecentlyEndedSession.self, forKey: .recentlyEndedSession),
+            !decoded.isStale(at: Date())
+        {
             recentlyEndedSession = decoded
         } else {
             recentlyEndedSession = nil
         }
         let now = Date()
-        proposedChanges = (try container.decodeIfPresent([ProposedPolicyChange].self, forKey: .proposedChanges) ?? [])
+        proposedChanges =
+            (try container.decodeIfPresent([ProposedPolicyChange].self, forKey: .proposedChanges)
+            ?? [])
             .filter { !$0.isStale(at: now) }
-        recentBehavioralSignals = (try container.decodeIfPresent([BehavioralSignalSummary].self, forKey: .recentBehavioralSignals) ?? [])
+        recentBehavioralSignals =
+            (try container.decodeIfPresent(
+                [BehavioralSignalSummary].self, forKey: .recentBehavioralSignals) ?? [])
             .filter { !$0.isStale(at: now) }
             .suffix(Self.recentBehavioralSignalsCap)
             .map { $0 }
         do {
-            chatHistory = try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
+            chatHistory =
+                try container.decodeIfPresent([ChatMessage].self, forKey: .chatHistory) ?? []
         } catch {
-            let legacyHistory = (try? container.decode([LegacyChatMessage].self, forKey: .chatHistory)) ?? []
+            let legacyHistory =
+                (try? container.decode([LegacyChatMessage].self, forKey: .chatHistory)) ?? []
             if legacyHistory.isEmpty {
                 chatHistory = []
             } else {
@@ -1180,7 +1255,8 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
         try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
         try container.encode(algorithmState, forKey: .algorithmState)
-        try container.encode(hasMigratedPolicyAlgorithmDefault, forKey: .hasMigratedPolicyAlgorithmDefault)
+        try container.encode(
+            hasMigratedPolicyAlgorithmDefault, forKey: .hasMigratedPolicyAlgorithmDefault)
         try container.encode(recentActions, forKey: .recentActions)
         try container.encode(recentSwitches, forKey: .recentSwitches)
         try container.encode(usageByDay, forKey: .usageByDay)
@@ -1191,7 +1267,8 @@ struct ACState: Codable, Sendable {
         try container.encode(policyMemory, forKey: .policyMemory)
         try container.encode(chatHistory, forKey: .chatHistory)
         try container.encode(calendarIntelligenceEnabled, forKey: .calendarIntelligenceEnabled)
-        try container.encode(Array(enabledCalendarIdentifiers).sorted(), forKey: .enabledCalendarIdentifiers)
+        try container.encode(
+            Array(enabledCalendarIdentifiers).sorted(), forKey: .enabledCalendarIdentifiers)
         try container.encode(profiles, forKey: .profiles)
         try container.encode(activeProfileID, forKey: .activeProfileID)
         try container.encodeIfPresent(lastFullScreenCheckAt, forKey: .lastFullScreenCheckAt)
@@ -1232,11 +1309,13 @@ struct ACState: Codable, Sendable {
 
     mutating func pruneUsageHistory(now: Date = Date()) {
         let calendar = Calendar(identifier: .gregorian)
-        guard let cutoffDate = calendar.date(
-            byAdding: .day,
-            value: -(Self.usageHistoryRetentionDays - 1),
-            to: calendar.startOfDay(for: now)
-        ) else {
+        guard
+            let cutoffDate = calendar.date(
+                byAdding: .day,
+                value: -(Self.usageHistoryRetentionDays - 1),
+                to: calendar.startOfDay(for: now)
+            )
+        else {
             return
         }
 
@@ -1424,7 +1503,8 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         activatedAt = try c.decodeIfPresent(Date.self, forKey: .activatedAt)
         expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
         createdReason = try c.decodeIfPresent(String.self, forKey: .createdReason)
-        recurringSchedule = try c.decodeIfPresent(RecurringSchedule.self, forKey: .recurringSchedule)
+        recurringSchedule = try c.decodeIfPresent(
+            RecurringSchedule.self, forKey: .recurringSchedule)
         lastScheduleFireDate = try c.decodeIfPresent(Date.self, forKey: .lastScheduleFireDate)
         autoExtendedAt = try c.decodeIfPresent(Date.self, forKey: .autoExtendedAt)
         prewarnSentAt = try c.decodeIfPresent(Date.self, forKey: .prewarnSentAt)
