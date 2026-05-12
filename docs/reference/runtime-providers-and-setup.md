@@ -79,12 +79,9 @@ Model selection is split by text vs image where supported:
 Current behavior:
 
 - default online path: OpenRouter
-- temporary experiment: direct OpenAI for all online traffic
 - API keys live in macOS Keychain via `OnlineProviderCredentialStore`
-- direct-OpenAI and ZDR toggles live in `UserDefaults` via `OnlineProviderRoutingStore`
-- ZDR is on by default; users can opt out from the AI tab's advanced section after an explicit confirmation alert
-
-The direct-OpenAI experiment is documented separately in `docs/experiments/direct-openai-routing.md`.
+- ZDR toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`; on by default, opt-out via the AI tab's advanced section behind an explicit confirmation alert
+- direct-OpenAI routing code exists in `OnlineProviderRouting` but its UI was removed from `AITab`; the toggle can be re-exposed if needed (see `docs/experiments/direct-openai-routing.md`)
 
 ### OpenRouter request shape
 

@@ -502,11 +502,16 @@ nonisolated struct RecurringSchedule: Codable, Hashable, Sendable {
     var minute: Int
     /// nil = every day. 1 = Sunday … 7 = Saturday (matches `Calendar.current.component(.weekday, …)`).
     var weekdays: [Int]?
+    /// Optional end time — session auto-stops at this time if set.
+    var endHour: Int?
+    var endMinute: Int?
 
-    init(hour: Int, minute: Int, weekdays: [Int]? = nil) {
+    init(hour: Int, minute: Int, weekdays: [Int]? = nil, endHour: Int? = nil, endMinute: Int? = nil) {
         self.hour = min(max(hour, 0), 23)
         self.minute = min(max(minute, 0), 59)
         self.weekdays = weekdays.flatMap { $0.isEmpty ? nil : $0 }
+        self.endHour = endHour.map { min(max($0, 0), 23) }
+        self.endMinute = endMinute.map { min(max($0, 0), 59) }
     }
 
     func matches(now: Date, calendar: Calendar = .current) -> Bool {
@@ -524,7 +529,7 @@ nonisolated struct RecurringSchedule: Codable, Hashable, Sendable {
     }
 
     func scheduleDescription() -> String {
-        let time = String(format: "%02d:%02d", hour, minute)
+        let startTime = String(format: "%02d:%02d", hour, minute)
         let days: String
         if let weekdays {
             let fmt = DateFormatter()
@@ -537,7 +542,11 @@ nonisolated struct RecurringSchedule: Codable, Hashable, Sendable {
         } else {
             days = "every day"
         }
-        return "\(days) at \(time)"
+        if let eh = endHour, let em = endMinute {
+            let endTime = String(format: "%02d:%02d", eh, em)
+            return "\(days) \(startTime)–\(endTime)"
+        }
+        return "\(days) at \(startTime)"
     }
 }
 
@@ -906,7 +915,7 @@ struct ACState: Codable, Sendable {
     var character: ACCharacter = .mochi
     /// Glass effect mode for panels/overlays. `.auto` follows the system Reduce
     /// Transparency accessibility setting (glass off when system says reduce).
-    var glassMode: ACGlassMode = .auto
+    var glassMode: ACGlassMode = .off
     var aiTier: AITier = .balanced
     var permissions = PermissionsSnapshot()
     var setupStatus: SetupStatus = .checking
@@ -1075,7 +1084,7 @@ struct ACState: Codable, Sendable {
         // Glass mode migration: prefer the new 3-state key; otherwise inherit
         // from the legacy `useLiquidGlass` Bool (true → .on, false → .off so
         // returning users see no surprise change). Fresh installs default to
-        // .auto via the property initializer.
+        // .off via the property initializer.
         if let decoded = try container.decodeIfPresent(ACGlassMode.self, forKey: .glassMode) {
             glassMode = decoded
         } else if let legacy = try container.decodeIfPresent(Bool.self, forKey: .useLiquidGlass) {
@@ -1286,7 +1295,7 @@ struct ACState: Codable, Sendable {
     mutating func resetAlgorithmProfile() {
         goalsText = Self.defaultGoalsText
         userName = ""
-        glassMode = .auto
+        glassMode = .off
         aiTier = .balanced
         recentActions = []
         recentSwitches = []

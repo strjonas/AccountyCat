@@ -54,11 +54,9 @@ When the switch is on:
 
 ## UI Surface
 
-The experiment is intentionally exposed in one place only:
+**UI removed.** The switch and key field were removed from `AC/UI/Settings/AITab.swift` during a pre-release polish pass (2026-05-12). The backend routing code remains intact and can be re-exposed from `AppController.directOpenAIEnabled` / `updateDirectOpenAIEnabled` if needed.
 
-- `AC/UI/Settings/AITab.swift`
-
-It adds:
+Previously it added:
 
 - one switch: direct OpenAI on/off
 - one OpenAI API-key field

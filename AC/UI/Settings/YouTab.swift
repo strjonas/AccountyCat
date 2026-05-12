@@ -119,10 +119,7 @@ struct YouTab: View {
                     label: "quit AccountyCat",
                     isMuted: true,
                     action: {
-                        dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            NSApp.terminate(nil)
-                        }
+                        NSApp.terminate(nil)
                     }
                 )
             }

@@ -182,6 +182,16 @@ struct ProfilesTab: View {
                         .textFieldStyle(.plain)
                         .font(.ac(14, weight: .semibold))
                         .foregroundStyle(Color.acTextPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .fill(Color.acSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                        .stroke(Color.acHairline, lineWidth: 1)
+                                )
+                        )
                         .onSubmit { saveProfile() }
                 }
 
@@ -218,12 +228,12 @@ struct ProfilesTab: View {
                     .foregroundStyle(.secondary)
                     .italic()
             } else {
-                TextField("What belongs in this profile?", text: $descriptionDraft, axis: .vertical)
-                    .textFieldStyle(.plain)
+                TextEditor(text: $descriptionDraft)
                     .font(.ac(12))
-                    .lineLimit(1...3)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 52, maxHeight: 100)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                             .fill(Color.acSurface)
@@ -232,6 +242,16 @@ struct ProfilesTab: View {
                                     .stroke(Color.acHairline, lineWidth: 1)
                             )
                     )
+                    .overlay(alignment: .topLeading) {
+                        if descriptionDraft.isEmpty {
+                            Text("What belongs in this profile?")
+                                .font(.ac(12))
+                                .foregroundStyle(Color.acTextPrimary.opacity(0.25))
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 12)
+                                .allowsHitTesting(false)
+                        }
+                    }
 
                 // Color picker (simple hex presets)
                 colorPicker
@@ -293,7 +313,7 @@ struct ProfilesTab: View {
                     Button {
                         defaultDurationDraft = min
                     } label: {
-                        Text(min < 60 ? "\(min)m" : min == 60 ? "1h" : "\(min / 60)h")
+                        Text(durationLabel(min))
                             .font(.ac(11, weight: defaultDurationDraft == min ? .semibold : .medium))
                             .foregroundStyle(defaultDurationDraft == min ? .white : Color.acTextPrimary.opacity(0.75))
                             .padding(.horizontal, 10)
@@ -421,6 +441,8 @@ struct ProfilesTab: View {
                     .foregroundStyle(Color.acTextPrimary.opacity(0.35))
             }
 
+            addRuleRow
+
             if allDisplayRules.isEmpty {
                 Text("no rules yet — AC will learn from your usage")
                     .font(.acCaption)
@@ -433,8 +455,6 @@ struct ProfilesTab: View {
                     }
                 }
             }
-
-            addRuleRow
         }
     }
 
@@ -452,7 +472,7 @@ struct ProfilesTab: View {
             // Summary
             Text(rule.summary)
                 .font(.ac(11))
-                .foregroundStyle(Color.acTextPrimary.opacity(isActive ? 0.82 : 0.38))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.82))
                 .lineLimit(1)
 
             if rule.isAutoSafelistRule {
@@ -707,6 +727,13 @@ struct ProfilesTab: View {
         controller.state.profiles.append(profile)
         controller.persistState()
         withAnimation(.acSnap) { editingProfileID = profile.id }
+    }
+
+    private func durationLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)m" }
+        let h = minutes / 60
+        let m = minutes % 60
+        return m == 0 ? "\(h)h" : "\(h)h\(m)m"
     }
 
     private func sectionLabel(_ text: String) -> some View {

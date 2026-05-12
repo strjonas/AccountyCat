@@ -26,41 +26,65 @@ struct AITab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            // Vision toggle + info
-            HStack(spacing: 8) {
-                sectionLabel("vision")
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { controller.visionEnabled },
-                    set: { controller.updateVisionEnabled($0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(accent)
-                Button {
-                    withAnimation(.acSnap) { showVisionInfo.toggle() }
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(accent)
+            // Vision + cadence card
+            VStack(alignment: .leading, spacing: 0) {
+                // Vision row
+                HStack(spacing: 8) {
+                    Toggle("", isOn: Binding(
+                        get: { controller.visionEnabled },
+                        set: { controller.updateVisionEnabled($0) }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(accent)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Vision")
+                            .font(.ac(12, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary)
+                        Text("screenshots analyzed locally")
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        withAnimation(.acSnap) { showVisionInfo.toggle() }
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(accent)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            }
+                .padding(10)
 
-            if showVisionInfo {
-                Text("AC takes periodic screenshots and analyzes them to understand what you're doing — without sending anything to the cloud (in local mode). Screenshots are analyzed and immediately discarded; only the structured result is kept.")
-                    .font(.acCaption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, -10)
-            }
+                if showVisionInfo {
+                    Text("AC takes periodic screenshots and analyzes them to understand what you're working on. Screenshots are discarded immediately — only the structured result is kept. In local mode nothing leaves your Mac. Disabling vision reduces token usage but AC will rely on app titles and window names alone, which can miss context.")
+                        .font(.acCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 8)
+                }
 
-            sectionLabel("how actively should AC watch")
-            intensitySlider
-            Text("calm = fewer checks, lower cost/compute. sharp = catches drift faster, more prompts.")
-                .font(.acCaption)
-                .foregroundStyle(.secondary)
-                .padding(.top, -10)
+                Divider().opacity(0.3)
+
+                // Cadence row
+                VStack(alignment: .leading, spacing: 6) {
+                    cadencePills
+                    Text(cadenceDescription)
+                        .font(.acCaption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+            )
 
             Divider().opacity(0.3)
 
@@ -143,61 +167,49 @@ struct AITab: View {
         }
     }
 
-    // MARK: - Intensity slider
+    // MARK: - Cadence pills
 
-    private var intensitySlider: some View {
-        let value = cadenceSliderValue
-        return VStack(spacing: 4) {
-            HStack(spacing: 0) {
-                Text("calm")
-                    .font(.ac(10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("sharp")
-                    .font(.ac(10, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.acSurfaceInset)
-                        .frame(height: 4)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(accent)
-                        .frame(width: geo.size.width * value, height: 4)
-                    Circle()
-                        .fill(accent)
-                        .frame(width: 14, height: 14)
-                        .shadow(color: accent.opacity(0.3), radius: 4)
-                        .offset(x: geo.size.width * value - 7)
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { gesture in
-                                    let pct = max(0, min(1, gesture.location.x / geo.size.width))
-                                    setCadenceFromSlider(pct)
-                                }
+    private var cadencePills: some View {
+        HStack(spacing: 4) {
+            ForEach([MonitoringCadenceMode.gentle, .balanced, .sharp], id: \.self) { mode in
+                let isSelected = config.cadenceMode == mode
+                Button {
+                    controller.updateMonitoringCadenceMode(mode)
+                    controller.updateTitleLengthForTextOnly(mode.recommendedTitleLengthForTextOnly)
+                } label: {
+                    Text(cadenceModeLabel(mode))
+                        .font(.ac(11, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Color.white : Color.acTextPrimary.opacity(0.7))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(isSelected ? accent : Color.acSurfaceInset)
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(isSelected ? accent.opacity(0.5) : Color.acHairline, lineWidth: 0.5)
+                                )
                         )
                 }
+                .buttonStyle(.plain)
             }
-            .frame(height: 14)
         }
     }
 
-    private var cadenceSliderValue: CGFloat {
+    private func cadenceModeLabel(_ mode: MonitoringCadenceMode) -> String {
+        switch mode {
+        case .gentle:   return "calm"
+        case .balanced: return "balanced"
+        case .sharp:    return "sharp"
+        }
+    }
+
+    private var cadenceDescription: String {
         switch config.cadenceMode {
-        case .gentle:   return 0.0
-        case .balanced: return 0.5
-        case .sharp:    return 1.0
+        case .gentle:   return "fewer checks · lower token cost · may react slower to drift"
+        case .balanced: return "standard watch interval · moderate cost · good for most sessions"
+        case .sharp:    return "watches more closely · reacts faster · higher token usage"
         }
-    }
-
-    private func setCadenceFromSlider(_ pct: CGFloat) {
-        let mode: MonitoringCadenceMode
-        if pct < 0.33 { mode = .gentle }
-        else if pct < 0.66 { mode = .balanced }
-        else { mode = .sharp }
-        controller.updateMonitoringCadenceMode(mode)
-        controller.updateTitleLengthForTextOnly(mode.recommendedTitleLengthForTextOnly)
     }
 
     // MARK: - Mode pills
@@ -422,50 +434,6 @@ struct AITab: View {
 
             OpenRouterKeyField(compact: true)
                 .environmentObject(controller)
-
-            Divider().opacity(0.2)
-
-            sectionLabel("direct openai")
-            Text("When enabled, every online LLM request goes directly to OpenAI with no OpenRouter routing and no OpenRouter fallback chain.")
-                .font(.acCaption)
-                .foregroundStyle(.secondary)
-                .padding(.top, -10)
-
-            Toggle(
-                "Route all online traffic through OpenAI only",
-                isOn: Binding(
-                    get: { controller.directOpenAIEnabled },
-                    set: { controller.updateDirectOpenAIEnabled($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .tint(accent)
-
-            SecureField(
-                "Paste your OpenAI API key for direct \(OnlineProviderRouting.directOpenAIModelIdentifier) routing",
-                text: Binding(
-                    get: { controller.directOpenAIAPIKeyDraft },
-                    set: { controller.updateDirectOpenAIAPIKey($0) }
-                )
-            )
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 11, design: .monospaced))
-
-            if controller.hasDirectOpenAIAPIKeyConfigured {
-                HStack(spacing: 5) {
-                    Image(systemName: "flask.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(accent)
-                    Text(
-                        controller.directOpenAIEnabled
-                        ? "Saved to macOS Keychain. All online traffic now uses \(AppController.shortModelName(for: OnlineProviderRouting.directOpenAIModelIdentifier)) directly from OpenAI."
-                        : "Saved to macOS Keychain. Turn the switch on to bypass OpenRouter and use direct OpenAI routing."
-                    )
-                        .font(.ac(10))
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
     }
 

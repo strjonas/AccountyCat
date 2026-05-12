@@ -284,7 +284,7 @@ final class WindowCoordinator {
         triggerHaptic()
 
         if UserDefaults.standard.bool(forKey: "acSoundEnabled") {
-            NSSound(named: NSSound.Name("Tink"))?.play()
+            NSSound(named: NSSound.Name("Pop"))?.play()
         }
 
         dismissNudgeWorkItem?.cancel()
@@ -303,7 +303,7 @@ final class WindowCoordinator {
         triggerHaptic()
 
         if UserDefaults.standard.bool(forKey: "acSoundEnabled") {
-            NSSound(named: NSSound.Name("Tink"))?.play()
+            NSSound(named: NSSound.Name("Pop"))?.play()
         }
 
         let panel = statusBarNudgePanel ?? makeStatusBarNudgePanel()
