@@ -5,6 +5,7 @@ This doc explains the runtime-debugging surfaces. For actual live-debugging work
 ## Primary Files
 
 - `ACShared/Telemetry/TelemetryStore.swift`
+- `AC/Core/BrainService+Telemetry.swift`
 - `AC/Core/TelemetryAdapters.swift`
 - `AC/Services/LLMTelemetryRecorder.swift`
 - `AC/Services/ACDebugBundleService.swift`

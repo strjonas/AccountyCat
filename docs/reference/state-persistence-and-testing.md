@@ -4,6 +4,11 @@ This doc covers what AC persists, where it persists it, and how tests stay isola
 
 ## Primary Files
 
+- `AC/Core/AppController.swift`
+- `AC/Core/AppController+ConversationLearning.swift`
+- `AC/Core/AppController+Interventions.swift`
+- `AC/Core/AppController+Profiles.swift`
+- `AC/Core/AppController+RuntimeSetup.swift`
 - `AC/Models/ACModels.swift`
 - `AC/Models/MonitoringModels.swift`
 - `AC/Models/PolicyMemoryModels.swift`
@@ -33,7 +38,7 @@ It currently holds:
 - recently ended session context
 - proposed changes and recent behavioral signals
 
-`AppController` is the main mutation surface for this state.
+`AppController` and its focused extensions are the main mutation surface for this state.
 
 ## Disk Locations
 
@@ -62,7 +67,7 @@ Examples:
 - legacy chat history shapes are upgraded
 - missing default profile is repaired on decode
 - stale proposed changes / recent behavioral signals are pruned on load
-- temporary fake runtime overrides are stripped during decodegit 
+- temporary fake runtime overrides are stripped during decode
 
 When changing persisted models, keep decode-time migration logic instead of assuming a clean slate.
 
@@ -100,6 +105,27 @@ Tests use `CODE_SIGNING_ALLOWED=NO`, which produces an ad-hoc binary. macOS TCC 
 xcodebuild test -project AC.xcodeproj -scheme AC -destination 'platform=macOS' -only-testing:ACTests CODE_SIGNING_ALLOWED=NO
 xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=NO
 ```
+
+## Xcode Test Runner Hygiene
+
+Avoid overlapping `xcodebuild test` runs. The macOS test host is `AC.app`, and interrupted runs can leave `xcodebuild`, `debugserver`, or the `AC.app` test host alive while XCTest is still finalizing logs. Starting another run in that state can make the next run look hung or can report the in-flight test as canceled.
+
+If a run appears stuck after tests have mostly finished:
+
+1. Check for stale runners:
+   ```bash
+   pgrep -fl "xcodebuild|debugserver|AC.app|xctest"
+   ```
+2. If those processes belong to an interrupted test run, stop them before rerunning:
+   ```bash
+   kill -TERM <pid>
+   ```
+3. Inspect the `.xcresult` summary before assuming a code failure:
+   ```bash
+   xcrun xcresulttool get test-results summary --path <path-to-xcresult>
+   ```
+
+A `Testing was canceled` failure on the last in-flight test after manually interrupting `xcodebuild` is runner state, not necessarily a product regression. Rerun the named test directly, then rerun the full `ACTests` command once the process list is clean.
 
 ## If You Change This Area
 
