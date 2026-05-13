@@ -7,6 +7,8 @@
 
 import SwiftUI
 
+private enum RuleDisplayState { case active, schedulePaused, archived }
+
 struct ProfilesTab: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
@@ -25,6 +27,8 @@ struct ProfilesTab: View {
     @State private var scheduleEveryDay: Bool = true
     @State private var scheduleEnabledWeekdays: Set<Int> = []
     @State private var scheduleEnabledDraft: Bool = false
+    @State private var expandedRuleIDs: Set<String> = []
+    @State private var showArchivedRules: Bool = false
 
     private var sortedProfiles: [FocusProfile] {
         var list = controller.state.profiles
@@ -52,23 +56,29 @@ struct ProfilesTab: View {
         controller.state.profiles.filter { !$0.isDefault }.count < FocusProfile.maximumProfileCount - 1
     }
 
-    private var allDisplayRules: [PolicyRule] {
+    private func ruleDisplayState(_ rule: PolicyRule) -> RuleDisplayState {
+        guard rule.active else { return .archived }
+        if let exp = rule.schedule.expiresAt, Date() > exp { return .archived }
+        if rule.isActive(at: Date()) { return .active }
+        return .schedulePaused
+    }
+
+    private var scopedRules: [PolicyRule] {
         let profileID = resolvedEditingID
-        var seen = Set<String>()
+        return controller.state.policyMemory.rules
+            .filter { $0.profileID == nil || $0.profileID == profileID }
+    }
 
-        // Active policy rules scoped to this profile (or global)
-        let rules = controller.state.policyMemory.rules
-            .filter { $0.isActive(at: Date()) && ($0.profileID == nil || $0.profileID == profileID) }
+    private var liveRules: [PolicyRule] {
+        scopedRules
+            .filter { ruleDisplayState($0) != .archived }
             .sorted { $0.priority != $1.priority ? $0.priority > $1.priority : $0.updatedAt > $1.updatedAt }
-            .filter { seen.insert($0.id).inserted }
+    }
 
-        // Inactive policy rules (expired, revoked) for visibility
-        let inactive = controller.state.policyMemory.rules
-            .filter { !$0.isActive(at: Date()) && ($0.profileID == nil || $0.profileID == profileID) }
+    private var archivedRules: [PolicyRule] {
+        scopedRules
+            .filter { ruleDisplayState($0) == .archived }
             .sorted { $0.updatedAt > $1.updatedAt }
-            .filter { seen.insert($0.id).inserted }
-
-        return rules + inactive
     }
 
     private var runningAppNames: [String] {
@@ -443,15 +453,37 @@ struct ProfilesTab: View {
 
             addRuleRow
 
-            if allDisplayRules.isEmpty {
+            if liveRules.isEmpty && archivedRules.isEmpty {
                 Text("no rules yet — AC will learn from your usage")
                     .font(.acCaption)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {
                 VStack(spacing: 3) {
-                    ForEach(allDisplayRules) { rule in
+                    ForEach(liveRules) { rule in
                         ruleRow(rule)
+                    }
+
+                    if !archivedRules.isEmpty {
+                        Button {
+                            withAnimation(.acSnap) { showArchivedRules.toggle() }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: showArchivedRules ? "chevron.down" : "chevron.right")
+                                    .font(.system(size: 7, weight: .semibold))
+                                Text("\(archivedRules.count) archived")
+                                    .font(.ac(10))
+                            }
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.32))
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+
+                        if showArchivedRules {
+                            ForEach(archivedRules) { rule in
+                                archivedRuleRow(rule)
+                            }
+                        }
                     }
                 }
             }
@@ -459,71 +491,147 @@ struct ProfilesTab: View {
     }
 
     private func ruleRow(_ rule: PolicyRule) -> some View {
-        let isActive = rule.isActive(at: Date())
-        return HStack(spacing: 8) {
-            // Kind badge
-            Text(ruleKindLabel(rule.kind))
-                .font(.ac(9, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Capsule(style: .continuous).fill(ruleKindColor(rule.kind).opacity(isActive ? 0.85 : 0.4)))
+        let isPaused = ruleDisplayState(rule) == .schedulePaused
+        let isExpanded = expandedRuleIDs.contains(rule.id)
+        let target = ruleDisplayTarget(rule)
+        let hasSummary = rule.summary != target && !rule.summary.isEmpty
 
-            // Summary
-            Text(rule.summary)
-                .font(.ac(11))
-                .foregroundStyle(Color.acTextPrimary.opacity(0.82))
-                .lineLimit(1)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                // Kind badge — slightly muted when schedule-paused
+                Text(ruleKindLabel(rule.kind))
+                    .font(.ac(9, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Capsule(style: .continuous).fill(ruleKindColor(rule.kind).opacity(isPaused ? 0.45 : 1)))
 
-            if rule.isAutoSafelistRule {
-                Text("auto")
-                    .font(.ac(8, weight: .medium))
-                    .foregroundStyle(Color.secondary.opacity(0.45))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.acSurface)
-                            .overlay(Capsule().stroke(Color.acHairline, lineWidth: 0.5))
-                    )
+                // Target name
+                Text(target)
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(isPaused ? 0.5 : 0.85))
+                    .lineLimit(1)
+
+                if isPaused {
+                    Image(systemName: "moon.zzz")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.45))
+                }
+
+                if rule.isAutoSafelistRule {
+                    Text("auto")
+                        .font(.ac(8, weight: .medium))
+                        .foregroundStyle(Color.secondary.opacity(0.45))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.acSurface)
+                                .overlay(Capsule().stroke(Color.acHairline, lineWidth: 0.5))
+                        )
+                }
+
+                Spacer(minLength: 0)
+
+                // Expand chevron
+                if hasSummary {
+                    Button {
+                        withAnimation(.acSnap) {
+                            if isExpanded { expandedRuleIDs.remove(rule.id) }
+                            else { expandedRuleIDs.insert(rule.id) }
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(Color.secondary.opacity(0.45))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show reason")
+                }
+
+                // Lock
+                Button { controller.toggleRuleLocked(id: rule.id) } label: {
+                    Image(systemName: rule.isLocked ? "lock.fill" : "lock.open")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.28))
+                        .frame(width: 20, height: 20)
+                        .background(
+                            Circle()
+                                .fill(rule.isLocked ? accent.opacity(0.10) : Color.clear)
+                                .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.20) : Color.acHairline.opacity(0.6), lineWidth: 1))
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(rule.isLocked ? "Unlock — allow AC to modify" : "Lock — prevent AC from changing")
+
+                // Delete
+                Button { controller.deleteRule(id: rule.id) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.secondary.opacity(0.32))
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(Color.acSurface).overlay(Circle().stroke(Color.acHairline, lineWidth: 0.5)))
+                }
+                .buttonStyle(.plain)
+                .disabled(rule.isLocked)
             }
 
-            Spacer(minLength: 0)
-
-            // Lock
-            Button { controller.toggleRuleLocked(id: rule.id) } label: {
-                Image(systemName: rule.isLocked ? "lock.fill" : "lock.open")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(rule.isLocked ? accent : Color.secondary.opacity(0.28))
-                    .frame(width: 20, height: 20)
-                    .background(
-                        Circle()
-                            .fill(rule.isLocked ? accent.opacity(0.10) : Color.clear)
-                            .overlay(Circle().stroke(rule.isLocked ? accent.opacity(0.20) : Color.acHairline.opacity(0.6), lineWidth: 1))
-                    )
+            if isExpanded && hasSummary {
+                Text(rule.summary)
+                    .font(.acCaption)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                    .lineLimit(4)
+                    .padding(.top, 6)
+                    .padding(.leading, 2)
             }
-            .buttonStyle(.plain)
-            .help(rule.isLocked ? "Unlock — allow AC to modify" : "Lock — prevent AC from changing")
-
-            // Delete
-            Button { controller.deleteRule(id: rule.id) } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Color.secondary.opacity(0.32))
-                    .frame(width: 20, height: 20)
-                    .background(Circle().fill(Color.acSurface).overlay(Circle().stroke(Color.acHairline, lineWidth: 0.5)))
-            }
-            .buttonStyle(.plain)
-            .disabled(rule.isLocked)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                 .fill(rule.isLocked ? accent.opacity(0.04) : Color.acSurface.opacity(0.7))
                 .overlay(
                     RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
                         .stroke(rule.isLocked ? accent.opacity(0.12) : Color.acHairline.opacity(0.65), lineWidth: 1)
+                )
+        )
+    }
+
+    private func archivedRuleRow(_ rule: PolicyRule) -> some View {
+        HStack(spacing: 8) {
+            Text(ruleKindLabel(rule.kind))
+                .font(.ac(9, weight: .semibold))
+                .foregroundStyle(Color.secondary.opacity(0.5))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Capsule(style: .continuous).fill(Color.secondary.opacity(0.10)))
+
+            Text(ruleDisplayTarget(rule))
+                .font(.ac(11))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.38))
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            Button { controller.deleteRule(id: rule.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.secondary.opacity(0.25))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Color.acSurface).overlay(Circle().stroke(Color.acHairline.opacity(0.5), lineWidth: 0.5)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface.opacity(0.4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(Color.acHairline.opacity(0.4), lineWidth: 1)
                 )
         )
     }
@@ -605,6 +713,12 @@ struct ProfilesTab: View {
     }
 
     // MARK: - Rule helpers
+
+    private func ruleDisplayTarget(_ rule: PolicyRule) -> String {
+        if let name = rule.scope.appName, !name.isEmpty { return name }
+        if let title = rule.scope.titleContains.first, !title.isEmpty { return title }
+        return rule.summary
+    }
 
     private func ruleKindLabel(_ kind: PolicyRuleKind) -> String {
         switch kind {
