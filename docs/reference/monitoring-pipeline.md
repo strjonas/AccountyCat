@@ -51,6 +51,7 @@ Important fast paths:
 - recently cached focused decisions can skip re-evaluation in the same context
 - a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
 - cadence delays defer evaluation until a context has been stable long enough
+- browser contexts still pass through the stable-context gate, but use a much shorter settle window than native apps so tab switches are checked quickly
 - title-only context can suppress screenshots for non-ambiguous apps
 
 The design intent is to spend LLM calls where judgment is needed, not on obvious repeats.
@@ -62,6 +63,7 @@ The design intent is to spend LLM calls where judgment is needed, not on obvious
 Biases:
 
 - browsers never qualify for title-only mode
+- browser tab-title lookup is cached only briefly because stale browser titles can hide a real context switch
 - known ambiguous-content apps keep screenshots
 - clearly productive IDE/editor titles can skip screenshots more easily
 - descriptive titles can skip screenshots even outside IDEs

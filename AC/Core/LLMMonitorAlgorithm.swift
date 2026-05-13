@@ -56,6 +56,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     /// Beyond it the user may have moved on within the same app, so re-evaluate.
     /// Keep the per-context decision cache bounded so state.json stays small.
     private let decisionCacheCapacity = 32
+    /// Browser tab switches are semantically much stronger than "same native app, different
+    /// panel" and already get debounced by the 5-second context-change probe. Keep their
+    /// initial settle time short so obvious off-task tabs do not hide behind the generic
+    /// stable-context delay.
+    private let browserStableContextDelay: TimeInterval = 5
     /// Keep observation history bounded — evict by least recently seen.
     private let observationCapacity = 64
 
@@ -177,10 +182,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             reason = "scheduled_recheck"
         } else if distraction.lastAssessment == nil,
                   let stableSince = state.llmPolicy.currentContextEnteredAt {
-            let delay = configuration.cadenceMode.adjustedDelay(
+            let defaultDelay = configuration.cadenceMode.adjustedDelay(
                 configuration.cadenceMode.stableContextDelay,
                 isDefaultProfile: isDefaultProfile
             )
+            let delay = heuristics.browser ? min(defaultDelay, browserStableContextDelay) : defaultDelay
             shouldEvaluate = now.timeIntervalSince(stableSince) >= delay
             reason = "stable_context"
         } else if distraction.lastAssessment != nil {

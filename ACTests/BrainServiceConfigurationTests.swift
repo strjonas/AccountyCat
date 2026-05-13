@@ -96,4 +96,73 @@ struct BrainServiceConfigurationTests {
             now: now
         ) == true)
     }
+
+    @Test
+    func skipDetailExplainsBrowserStableContextWait() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        var state = ACState()
+        state.algorithmState.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-3)
+
+        let detail = BrainService.evaluationSkipDetail(
+            plan: MonitoringEvaluationPlan(
+                shouldEvaluate: false,
+                reason: "stable_context",
+                visualCheckReason: nil,
+                requiresScreenshot: true,
+                promptMode: "mode",
+                promptVersion: "1.0"
+            ),
+            state: state,
+            context: FrontmostContext(
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                windowTitle: "YouTube - Cat videos"
+            ),
+            heuristics: TelemetryHeuristicSnapshot(
+                clearlyProductive: false,
+                browser: true,
+                helpfulWindowTitle: true,
+                periodicVisualReason: nil
+            ),
+            now: now
+        )
+
+        #expect(detail.contains("browser/tab settle 3s/5s"))
+        #expect(detail.contains("YouTube - Cat videos"))
+    }
+
+    @Test
+    func skipDetailExplainsScheduledRecheckCountdown() {
+        let now = Date(timeIntervalSince1970: 20_000)
+        var state = ACState()
+        state.algorithmState.llmPolicy.distraction.lastAssessment = .focused
+        state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(42)
+
+        let detail = BrainService.evaluationSkipDetail(
+            plan: MonitoringEvaluationPlan(
+                shouldEvaluate: false,
+                reason: "scheduled_recheck",
+                visualCheckReason: nil,
+                requiresScreenshot: true,
+                promptMode: "mode",
+                promptVersion: "1.0"
+            ),
+            state: state,
+            context: FrontmostContext(
+                bundleIdentifier: "com.apple.TextEdit",
+                appName: "TextEdit",
+                windowTitle: "Notes"
+            ),
+            heuristics: TelemetryHeuristicSnapshot(
+                clearlyProductive: false,
+                browser: false,
+                helpfulWindowTitle: true,
+                periodicVisualReason: nil
+            ),
+            now: now
+        )
+
+        #expect(detail.contains("next recheck in 42s"))
+        #expect(detail.contains("last assessment focused"))
+    }
 }

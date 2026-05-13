@@ -233,9 +233,9 @@ struct LLMMonitorAlgorithmTests {
     func cadenceModeControlsInitialStableContextDelay() {
         let algorithm = makeAlgorithm()
         let context = FrontmostContext(
-            bundleIdentifier: "com.google.Chrome",
-            appName: "Google Chrome",
-            windowTitle: "Docs"
+            bundleIdentifier: "com.apple.TextEdit",
+            appName: "TextEdit",
+            windowTitle: "Draft notes"
         )
         let start = Date(timeIntervalSince1970: 7_700)
         var state = AlgorithmStateEnvelope()
@@ -247,7 +247,7 @@ struct LLMMonitorAlgorithmTests {
         let gentlePlan = algorithm.evaluationPlan(
             state: &state,
             context: context,
-            heuristics: makeHeuristics(),
+            heuristics: makeHeuristics(browser: false),
             policyMemory: PolicyMemory(),
             configuration: gentle,
             activeProfileID: PolicyRule.defaultProfileID,
@@ -262,7 +262,7 @@ struct LLMMonitorAlgorithmTests {
         let sharpPlan = algorithm.evaluationPlan(
             state: &sharpState,
             context: context,
-            heuristics: makeHeuristics(),
+            heuristics: makeHeuristics(browser: false),
             policyMemory: PolicyMemory(),
             configuration: sharp,
             activeProfileID: PolicyRule.defaultProfileID,
@@ -271,6 +271,58 @@ struct LLMMonitorAlgorithmTests {
 
         #expect(gentlePlan.shouldEvaluate == false)
         #expect(sharpPlan.shouldEvaluate == true)
+    }
+
+    @Test
+    func browserContextsUseShortStableDelayEvenInEverydayMode() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "YouTube - Cat videos"
+        )
+        let start = Date(timeIntervalSince1970: 7_730)
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+
+        let plan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(browser: true),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
+            now: start.addingTimeInterval(5)
+        )
+
+        #expect(plan.shouldEvaluate == true)
+        #expect(plan.reason == "stable_context")
+    }
+
+    @Test
+    func nonBrowserContextsStillHonorLongerEverydayStableDelay() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.apple.TextEdit",
+            appName: "TextEdit",
+            windowTitle: "Personal notes"
+        )
+        let start = Date(timeIntervalSince1970: 7_740)
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+
+        let plan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(browser: false),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
+            now: start.addingTimeInterval(5)
+        )
+
+        #expect(plan.shouldEvaluate == false)
+        #expect(plan.reason == "stable_context")
     }
 
     @Test
@@ -893,10 +945,10 @@ struct LLMMonitorAlgorithmTests {
         )
     }
 
-    private func makeHeuristics() -> TelemetryHeuristicSnapshot {
+    private func makeHeuristics(browser: Bool = true) -> TelemetryHeuristicSnapshot {
         TelemetryHeuristicSnapshot(
             clearlyProductive: false,
-            browser: true,
+            browser: browser,
             helpfulWindowTitle: true,
             periodicVisualReason: nil
         )

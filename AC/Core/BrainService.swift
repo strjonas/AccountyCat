@@ -222,6 +222,44 @@ final class BrainService: NSObject {
         return now.timeIntervalSince(lastFullScreenCheckAt) >= interval
     }
 
+    nonisolated static func evaluationSkipDetail(
+        plan: MonitoringEvaluationPlan,
+        state: ACState,
+        context: FrontmostContext,
+        heuristics: TelemetryHeuristicSnapshot,
+        now: Date
+    ) -> String {
+        let reason = plan.reason ?? "not_due"
+        switch reason {
+        case "stable_context":
+            let enteredAt = state.algorithmState.llmPolicy.currentContextEnteredAt
+            let observedSeconds = max(0, enteredAt.map { now.timeIntervalSince($0) } ?? 0)
+            let isDefaultProfile = state.activeProfileID == PolicyRule.defaultProfileID
+            let defaultDelay = state.monitoringConfiguration.cadenceMode.adjustedDelay(
+                state.monitoringConfiguration.cadenceMode.stableContextDelay,
+                isDefaultProfile: isDefaultProfile
+            )
+            let requiredSeconds = heuristics.browser ? min(defaultDelay, 5) : defaultDelay
+            let scope = heuristics.browser ? "browser/tab settle" : "context settle"
+            let title = context.windowTitle ?? "untitled"
+            return "\(context.appName) · \(scope) \(Int(observedSeconds))s/\(Int(requiredSeconds))s · \(title)"
+        case "scheduled_recheck":
+            let next = state.algorithmState.llmPolicy.distraction.nextEvaluationAt
+            let remainingSeconds = max(0, next.map { $0.timeIntervalSince(now) } ?? 0)
+            let assessment =
+                state.algorithmState.llmPolicy.distraction.lastAssessment?.rawValue ?? "unknown"
+            return "\(context.appName) · next recheck in \(Int(remainingSeconds))s · last assessment \(assessment)"
+        case "cached_focused":
+            let title = context.windowTitle ?? "untitled"
+            return "\(context.appName) · reused recent focused decision for exact context · \(title)"
+        case "explicit_allow_rule":
+            let title = context.windowTitle ?? "untitled"
+            return "\(context.appName) · matched active allow rule · \(title)"
+        default:
+            return context.appName
+        }
+    }
+
     init(
         monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry,
         executiveArm: ExecutiveArm,
@@ -879,16 +917,23 @@ final class BrainService: NSObject {
         }
 
         guard evaluationPlan.shouldEvaluate else {
+            let skipDetail = Self.evaluationSkipDetail(
+                plan: evaluationPlan,
+                state: state,
+                context: context,
+                heuristics: heuristics,
+                now: now
+            )
             await appendMonitoringMetric(
                 kind: .evaluationSkipped,
                 reason: evaluationPlan.reason ?? "not_due",
                 state: state,
-                detail: context.appName
+                detail: skipDetail
             )
             await ActivityLogService.shared.append(
                 level: .verbose,
                 category: "monitoring",
-                message: "skip: \(evaluationPlan.reason ?? "not_due") · \(context.appName)"
+                message: "skip: \(evaluationPlan.reason ?? "not_due") · \(skipDetail)"
             )
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")

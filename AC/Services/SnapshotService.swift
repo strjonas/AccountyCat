@@ -29,9 +29,10 @@ enum SnapshotService {
 
     // MARK: - Browser tab title cache
 
-    /// AppleScript execution is the dominant CPU sink (called every 2 s by `probeForContextChange`).
-    /// Caching browser tab titles for a few seconds eliminates ~95 % of those spawns without
-    /// meaningfully delaying detection of tab switches.
+    /// AppleScript execution is the dominant CPU sink during context probes.
+    /// Keep the cache short: browsers are ambiguous enough that a stale tab title can
+    /// suppress a needed evaluation, especially when the user jumps from a productive tab
+    /// to a distracting one in the same browser window.
     private struct CachedBrowserTitle: @unchecked Sendable {
         let title: String
         let recordedAt: Date
@@ -39,7 +40,7 @@ enum SnapshotService {
 
     private static let browserCacheLock = NSLock()
     private static var browserTitleCache: [pid_t: CachedBrowserTitle] = [:]
-    private static let browserCacheTTL: TimeInterval = 10
+    private static let browserCacheTTL: TimeInterval = 2
 
     static func frontmostContext() -> FrontmostContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else {
