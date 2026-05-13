@@ -365,6 +365,7 @@ nonisolated struct BehavioralSignalSummary: Codable, Hashable, Sendable {
     /// Suggested values:
     /// - `appealApproved` — user successfully appealed; treat existing rules as confirmed.
     /// - `repeatedDismissal` — user dismissed/ignored nudges in the same context multiple times.
+    /// - `nudgeMarkedFine` — user clicked "it's fine" on a nudge; treat as explicit correction.
     /// - `postNudgeReturnToFocus` — user came back to focused work after a nudge.
     /// - `userExplicitChatStatement` — user just said something in chat that landed an action.
     var kind: String

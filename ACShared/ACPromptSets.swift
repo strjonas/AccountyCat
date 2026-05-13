@@ -129,8 +129,12 @@ enum ACPromptSets {
     /// goal-mismatch should be called promptly.
     private static let sessionModeBlock = """
     Mode: FOCUS SESSION (named profile active).
-    - Judge against the active profile's name/description and the user's stated goals. The user opted in to being checked — call goal-mismatch promptly.
+    - The user opted in to being checked, but adjacent plausible work is not suspicious by default.
+    - Judge the actual content/task first: title, URL-like title text, perception summaries, screenshot, and conversation/topic beat broad app category unless an active rule names the app/category.
+    - Interpret sparse profile names as broad archetypes. "Coding", "Writing", "Research", "Studying", and similar short profiles include adjacent work such as docs, tutorials, examples, planning, project chat, reference material, and debugging.
+    - Specific profile descriptions and active rules narrow the scope. If the user says "code writing only", "no tutorials", "drafting only", or similar, enforce that stricter scope.
     - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
+    - If `activeProfile.activatedAt` is recent (roughly the first 10 minutes), calibrate carefully: require strong evidence before nudging plausible adjacent work, but still nudge clear unrelated drift.
     - Productive work that doesn't fit the session scope can still be a distraction (e.g. coding during "Presentation prep").
     - `recentlyEndedSession` is rarely set when a session is already active; if it is, treat it as background context only.
     """
@@ -142,6 +146,8 @@ enum ACPromptSets {
     Worked examples:
     - Everyday after expiry: activeProfile.isDefault=true, recentlyEndedSession=Writing essay, current title="Sonnencreme Gesicht | dm", newest user message="but I finished that session no?" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","session_already_ended","life_admin_allowed"]}
     - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
+    - Generic coding profile: activeProfile.name="Coding", activeProfile.description missing, current title="README tutorial for macOS apps - YouTube" → {"assessment":"focused","suggested_action":"none","reason_tags":["broad_profile_archetype","adjacent_learning"]}
+    - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
     - Everyday with a real rule: activeProfile.isDefault=true, policySummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
     """
@@ -438,7 +444,7 @@ enum ACPromptSets {
                 Profiles (use the `availableProfiles` and `activeProfile` payload fields):
                 - User says "help me focus on coding for an hour":
                   • If `availableProfiles` already has a "Coding"-like profile, emit `activate_profile {profileID:<that id>, profileDurationMinutes:60}`.
-                  • Otherwise emit `create_and_activate_profile {profileName:"Coding", profileDescription:"Deep coding work", profileDurationMinutes:60}`.
+                  • Otherwise emit `create_and_activate_profile {profileName:"Coding", profileDescription:"Coding work, including implementation, debugging, docs, references, and tutorials", profileDurationMinutes:60}`.
                 - User says "I'll work on the presentation until 5pm" → `create_and_activate_profile` with a duration matching now→17:00 (or activate an existing match).
                 - User says "I'm done coding for today" while a coding profile is active → `end_active_profile`.
                 - If no duration is specified, omit `profileDurationMinutes` and let the controller pick its 90-min default.
@@ -458,6 +464,12 @@ enum ACPromptSets {
                   app/scope. NEVER emit `add_rule` from this alone — emit `propose_rule` so
                   the user can confirm. Suggest a `discourage` rule (or `allow` if context
                   suggests they want it permitted) and explain in `reason`.
+                - `nudgeMarkedFine` — the user clicked "it's fine" on a nudge. Treat this as
+                  explicit correction that AC probably false-positived on the app/title in the
+                  active profile. If the title/context is narrow and work-related, emit a
+                  profile-scoped `allow` rule with `source:"explicit_feedback"`. For browser,
+                  media, social, chat, and email surfaces, never allow the whole app from this
+                  signal; use `titleContains` or propose a rule if the title is too generic.
                 - `postNudgeReturnToFocus` — soft positive signal that the recent nudge worked.
 
                 When to use add_memory vs propose_rule / propose_memory:
@@ -471,10 +483,17 @@ enum ACPromptSets {
                 - You see a behavioral pattern but no explicit user endorsement → `propose_rule`.
                 - You'd like to remember a generalization the user has not stated → `propose_memory`.
                 - Anything the user already explicitly said about app/site rules → `add_rule`.
+                - A click on "it's fine" is explicit feedback, but it is not a license to create
+                  a broad allowlist entry. Use the current app/window/profile context to preserve
+                  the reason: e.g. Chrome/YouTube title "README tutorial for macOS apps" in Coding
+                  should become a narrow Coding-profile allowance for that title/topic, not
+                  "allow YouTube" everywhere. If the context does not explain why it is focused,
+                  propose a rule or memory instead of silently applying one.
                 - Safelist promotions are handled by a separate path; do not emit them here.
 
                 Never auto-apply a rule that wasn't explicitly endorsed by the user (chat
-                statement or appealApproved on the same scope). When in doubt, propose, don't apply.
+                statement, appealApproved on the same scope, or nudgeMarkedFine correction).
+                When in doubt, propose, don't apply.
 
                 Prefer minimal updates. Only emit operations that actually change state.
                 """
@@ -710,6 +729,7 @@ enum ACPromptSets {
 
     Use availableProfiles IDs when reusing a similar profile. Create only when no existing profile fits.
     If no duration is specified, omit durationMinutes. Do not invent rules or memory here.
+    For broad archetype profiles like Coding, Writing, Research, or Studying, use broad non-restrictive descriptions unless the user explicitly gives exclusions.
     Return JSON only.
 
     Examples:

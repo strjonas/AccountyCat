@@ -97,12 +97,12 @@ final class WindowCoordinator {
     // MARK: - Entrance animation
 
     func playEntranceAnimation(completion: (() -> Void)? = nil) {
-        guard let panel = companionPanel else {
+        guard companionPanel != nil else {
             completion?()
             return
         }
 
-        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: panel.frame)
+        let orbCenter = CompanionGeometry.orbCenter(forPanelFrame: savedCompanionFrame())
         let size: CGFloat = 300
         let frame = NSRect(
             x: orbCenter.x - size / 2,

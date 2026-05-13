@@ -33,6 +33,7 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
             name: input.activeProfileName,
             isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
             description: input.activeProfileDescription,
+            activatedAt: input.activeProfileActivatedAt,
             expiresAt: input.activeProfileExpiresAt
         )
         recentlyEndedSession = input.recentlyEndedSession

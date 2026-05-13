@@ -356,7 +356,7 @@ extension AppController {
     /// `ActionRecord.contextKey` is `"<bundleIdentifier>|<normalized windowTitle>"`.
     /// Recover the bundle so we can route through the browser-widening branch of
     /// `RecentInteractionAllowance.make` even though `ActionRecord` doesn't store it.
-    static func bundleIdentifier(fromContextKey contextKey: String?) -> String? {
+    nonisolated static func bundleIdentifier(fromContextKey contextKey: String?) -> String? {
         guard let contextKey, let separator = contextKey.firstIndex(of: "|") else { return nil }
         let prefix = String(contextKey[..<separator])
         guard !prefix.isEmpty, prefix != "unknown" else { return nil }

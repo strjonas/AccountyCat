@@ -750,6 +750,7 @@ struct LLMMonitorAlgorithmTests {
             activeProfileID: "coding",
             activeProfileName: "Coding",
             activeProfileDescription: "Deep coding work in this repo",
+            activeProfileActivatedAt: now.addingTimeInterval(-300),
             activeProfileExpiresAt: now.addingTimeInterval(3600)
         )
 
@@ -767,6 +768,7 @@ struct LLMMonitorAlgorithmTests {
             name: "Coding",
             isDefault: false,
             description: "Deep coding work in this repo",
+            activatedAt: now.addingTimeInterval(-300),
             expiresAt: now.addingTimeInterval(3600)
         ))
     }
@@ -862,6 +864,7 @@ struct LLMMonitorAlgorithmTests {
         activeProfileID: String = PolicyRule.defaultProfileID,
         activeProfileName: String = FocusProfile.defaultDisplayName,
         activeProfileDescription: String? = nil,
+        activeProfileActivatedAt: Date? = nil,
         activeProfileExpiresAt: Date? = nil,
         recentlyEndedSession: RecentlyEndedSessionSummary? = nil
     ) -> MonitoringDecisionInput {
@@ -887,6 +890,7 @@ struct LLMMonitorAlgorithmTests {
             activeProfileID: activeProfileID,
             activeProfileName: activeProfileName,
             activeProfileDescription: activeProfileDescription,
+            activeProfileActivatedAt: activeProfileActivatedAt,
             activeProfileExpiresAt: activeProfileExpiresAt,
             recentlyEndedSession: recentlyEndedSession
         )

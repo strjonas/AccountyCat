@@ -679,7 +679,7 @@ final class AppController: ObservableObject {
             totalTrackedSeconds: total,
             focusedSeconds: focusedSeconds,
             longestFocusedBlockSeconds: longestFocusedBlock(in: todaySegments, dayStart: startOfToday, dayEnd: now),
-            streakDays: focusStreakDays(now: now),
+            streakDays: focusStreakDays(now: now, todayTrackedSeconds: total),
             topAppName: top?.key,
             topAppSeconds: top?.value ?? 0,
             nudgeCount: todayActions.filter { $0.kind == .nudge }.count,
@@ -735,23 +735,23 @@ final class AppController: ObservableObject {
         return longest
     }
 
-    private func focusStreakDays(now: Date) -> Int {
+    private func focusStreakDays(now: Date, todayTrackedSeconds: TimeInterval) -> Int {
         let cal = Calendar.current
         var streak = 0
         var cursor = cal.startOfDay(for: now)
+        var isToday = true
 
         while true {
             let nextDay = cal.date(byAdding: .day, value: 1, to: cursor) ?? cursor.addingTimeInterval(24 * 60 * 60)
             let focusedSeconds = state.focusSegments
                 .filter { $0.assessment == .focused && $0.endAt > cursor && $0.startAt < nextDay }
                 .reduce(0) { $0 + clampedDuration($1, start: cursor, end: nextDay) }
-            guard focusedSeconds >= 20 * 60 else {
-                return streak
-            }
+            // Today counts with any tracked time; past days require 20 min focused
+            let qualifies = isToday ? todayTrackedSeconds > 0 : focusedSeconds >= 20 * 60
+            guard qualifies else { return streak }
             streak += 1
-            guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else {
-                return streak
-            }
+            isToday = false
+            guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else { return streak }
             cursor = previous
         }
     }

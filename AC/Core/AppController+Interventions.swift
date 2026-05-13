@@ -30,6 +30,18 @@ extension AppController {
 
     /// Called when the user taps 👍 or 👎 on the nudge speech bubble.
     func rateNudge(positive: Bool, nudgeText: String) {
+        let now = Date()
+        let currentContext = SnapshotService.frontmostContext()
+        let recentNudge = state.recentActions.first {
+            $0.kind == .nudge
+                && now.timeIntervalSince($0.timestamp) <= 30 * 60
+                && ($0.message == nil || $0.message == nudgeText)
+        }
+        let feedbackContext = Self.nudgeFeedbackContext(
+            recentNudge: recentNudge,
+            currentContext: currentContext
+        )
+
         let kind: UserReactionKind = positive ? .nudgeRatedPositive : .nudgeRatedNegative
         brainService?.recordUserReaction(
             UserReactionRecord(
@@ -39,23 +51,57 @@ extension AppController {
                 details: nudgeText.cleanedSingleLine
             )
         )
-        // Write to persistent memory so future nudges adapt
-        let note = positive
-            ? "• User liked nudge: \"\(nudgeText.cleanedSingleLine)\""
-            : "• User disliked nudge: \"\(nudgeText.cleanedSingleLine)\""
-        appendMemoryLine(note)
-        schedulePolicyMemoryUpdate(
-            eventSummary: positive
-                ? "User explicitly liked this nudge: \(nudgeText.cleanedSingleLine)"
-                : "User explicitly disliked this nudge: \(nudgeText.cleanedSingleLine)",
-            context: SnapshotService.frontmostContext()
-        )
-        if !positive {
-            let now = Date()
-            let recentNudge = state.recentActions.first {
-                $0.kind == .nudge
-                    && now.timeIntervalSince($0.timestamp) <= 30 * 60
-                    && ($0.message == nil || $0.message == nudgeText)
+        if positive {
+            if let scope = Self.nudgeFeedbackScope(
+                bundleIdentifier: feedbackContext?.bundleIdentifier,
+                appName: feedbackContext?.appName,
+                windowTitle: feedbackContext?.windowTitle
+            ) {
+                recordBehavioralSignal(BehavioralSignalSummary(
+                    kind: "postNudgeReturnToFocus",
+                    observedAt: now,
+                    scope: scope,
+                    detail: Self.nudgeHelpfulSignalDetail(
+                        appName: feedbackContext?.appName,
+                        windowTitle: feedbackContext?.windowTitle,
+                        profileName: state.activeProfile.name,
+                        nudgeText: nudgeText
+                    )
+                ))
+            }
+        } else {
+            appendMemoryLine(Self.nudgeMarkedFineMemoryLine(
+                appName: feedbackContext?.appName,
+                windowTitle: feedbackContext?.windowTitle,
+                profileName: state.activeProfile.name,
+                nudgeText: nudgeText
+            ))
+            schedulePolicyMemoryUpdate(
+                eventSummary: Self.nudgeMarkedFineEventSummary(
+                    appName: feedbackContext?.appName,
+                    windowTitle: feedbackContext?.windowTitle,
+                    profileID: state.activeProfileID,
+                    profileName: state.activeProfile.name,
+                    nudgeText: nudgeText
+                ),
+                context: feedbackContext ?? currentContext
+            )
+            if let scope = Self.nudgeFeedbackScope(
+                bundleIdentifier: feedbackContext?.bundleIdentifier,
+                appName: feedbackContext?.appName,
+                windowTitle: feedbackContext?.windowTitle
+            ) {
+                recordBehavioralSignal(BehavioralSignalSummary(
+                    kind: "nudgeMarkedFine",
+                    observedAt: now,
+                    scope: scope,
+                    detail: Self.nudgeMarkedFineSignalDetail(
+                        appName: feedbackContext?.appName,
+                        windowTitle: feedbackContext?.windowTitle,
+                        profileName: state.activeProfile.name,
+                        nudgeText: nudgeText
+                    )
+                ))
             }
             installRecentInteractionAllowanceOverride(
                 reason: "user tapped it's fine: \(nudgeText.cleanedSingleLine)",
@@ -75,6 +121,99 @@ extension AppController {
 
         // Dismiss the nudge after rating
         clearTransientUI()
+    }
+
+    nonisolated static func nudgeFeedbackContext(
+        recentNudge: ActionRecord?,
+        currentContext: FrontmostContext?
+    ) -> FrontmostContext? {
+        if let recentNudge,
+           let appName = recentNudge.appName?.cleanedSingleLine,
+           !appName.isEmpty {
+            return FrontmostContext(
+                bundleIdentifier: bundleIdentifier(fromContextKey: recentNudge.contextKey),
+                appName: appName,
+                windowTitle: recentNudge.windowTitle
+            )
+        }
+        return currentContext
+    }
+
+    nonisolated static func nudgeMarkedFineMemoryLine(
+        appName: String?,
+        windowTitle: String?,
+        profileName: String,
+        nudgeText: String
+    ) -> String {
+        let activity = activityDescription(appName: appName, windowTitle: windowTitle)
+        return "• Correction: \(activity) was acceptable during \(profileName). User tapped \"it's fine\" on nudge: \"\(nudgeText.cleanedSingleLine)\""
+    }
+
+    nonisolated static func nudgeMarkedFineEventSummary(
+        appName: String?,
+        windowTitle: String?,
+        profileID: String,
+        profileName: String,
+        nudgeText: String
+    ) -> String {
+        let activity = activityDescription(appName: appName, windowTitle: windowTitle)
+        return """
+        User clicked "it's fine" on a nudge. Treat this as explicit feedback that AC's intervention was a false positive for this activity in the active profile. Active profile: \(profileName) (\(profileID)). Activity: \(activity). Nudge text: \(nudgeText.cleanedSingleLine). Learn a narrow profile-scoped allowance when the app/title is specific enough; for browser, media, social, chat, and email surfaces, never allow the whole app from this signal alone. Prefer a title-scoped allow rule or a proposal when the title is ambiguous.
+        """
+    }
+
+    nonisolated static func nudgeMarkedFineSignalDetail(
+        appName: String?,
+        windowTitle: String?,
+        profileName: String,
+        nudgeText: String
+    ) -> String {
+        "\(activityDescription(appName: appName, windowTitle: windowTitle)) was marked fine during \(profileName); nudge: \(nudgeText.cleanedSingleLine)"
+    }
+
+    nonisolated static func nudgeHelpfulSignalDetail(
+        appName: String?,
+        windowTitle: String?,
+        profileName: String,
+        nudgeText: String
+    ) -> String {
+        "\(activityDescription(appName: appName, windowTitle: windowTitle)) returned to focus during \(profileName); helpful nudge: \(nudgeText.cleanedSingleLine)"
+    }
+
+    nonisolated static func nudgeFeedbackScope(
+        bundleIdentifier: String?,
+        appName: String?,
+        windowTitle: String?
+    ) -> PolicyRuleScope? {
+        var scope = PolicyRuleScope()
+        if let bundleIdentifier = bundleIdentifier?.cleanedSingleLine, !bundleIdentifier.isEmpty {
+            scope.bundleIdentifier = bundleIdentifier
+        }
+        if let appName = appName?.cleanedSingleLine, !appName.isEmpty {
+            scope.appName = appName
+        }
+        if let title = windowTitle?.cleanedSingleLine, !title.isEmpty {
+            scope.titleContains = [title]
+        }
+        return scope.bundleIdentifier != nil || scope.appName != nil || !scope.titleContains.isEmpty
+            ? scope
+            : nil
+    }
+
+    nonisolated private static func activityDescription(appName: String?, windowTitle: String?) -> String {
+        let cleanedApp = appName?.cleanedSingleLine
+        let cleanedTitle = windowTitle?.cleanedSingleLine
+        if let cleanedApp, !cleanedApp.isEmpty,
+           let cleanedTitle, !cleanedTitle.isEmpty {
+            return "\(cleanedApp) — \(cleanedTitle)"
+        }
+        if let cleanedApp, !cleanedApp.isEmpty {
+            return cleanedApp
+        }
+        if let cleanedTitle, !cleanedTitle.isEmpty {
+            return "window titled \(cleanedTitle)"
+        }
+        return "the current activity"
     }
 
     func showTestOverlay() {

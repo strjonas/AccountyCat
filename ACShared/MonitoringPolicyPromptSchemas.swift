@@ -121,6 +121,7 @@ nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Send
     var name: String
     var isDefault: Bool
     var description: String?
+    var activatedAt: Date?
     var expiresAt: Date?
 
     nonisolated init(
@@ -128,12 +129,14 @@ nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Send
         name: String = "General",
         isDefault: Bool = true,
         description: String? = nil,
+        activatedAt: Date? = nil,
         expiresAt: Date? = nil
     ) {
         self.id = id
         self.name = name
         self.isDefault = isDefault
         self.description = description
+        self.activatedAt = activatedAt
         self.expiresAt = expiresAt
     }
 }

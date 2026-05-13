@@ -114,7 +114,10 @@ The prompt file is the single source of truth for:
 The monitoring payload is profile-aware.
 
 - Default profile (`general` / "Everyday") is lenient by design.
-- Named focus profiles raise the bar for off-task behavior.
+- Named focus profiles raise the bar for off-task behavior, but the monitor judges the visible content/task before broad app category.
+- Sparse profile names such as Coding, Writing, Research, or Studying are treated as broad archetypes. Adjacent docs, tutorials, examples, planning, project chat, reference material, and debugging can be focused unless the profile description or rules narrow the scope.
+- Specific profile descriptions and rules narrow the scope. A profile like "code writing only, no tutorials" should make tutorial/video content nudge-eligible.
+- `activeProfile.activatedAt` is included in the decision payload. During the first few minutes of a newly activated named profile, the model should require stronger evidence before nudging plausible adjacent work, while still nudging clear unrelated drift.
 - `recentlyEndedSession` keeps the just-finished task visible to the model for about 30 minutes.
 - Policy rules are profile-scoped.
 - Free-form memory remains globally visible, but entries carry profile labels.
@@ -122,7 +125,9 @@ The monitoring payload is profile-aware.
 ## Appeals, Rewards, and Escalation
 
 - Nudges can receive explicit positive/negative feedback from the user.
-- `BrainService` converts those reactions into normalized reward signals and passes them back into the active algorithm.
+- `BrainService` converts those reactions into normalized reward signals and passes them back into the active algorithm. The current `LLMMonitorAlgorithm` treats this as telemetry/reinforcement plumbing only; it does not update behavior from numeric rewards directly.
+- A positive nudge rating records telemetry plus a `postNudgeReturnToFocus` behavioral signal. It should not create persistent "liked nudge" memory or policy rules.
+- A negative "it's fine" nudge rating is explicit false-positive correction. It records app/title/profile context, emits `nudgeMarkedFine`, installs a short recent-interaction allowance, and can drive a narrow profile-scoped rule or proposal through the policy-memory pipeline. For browser, media, social, chat, and email surfaces, this signal must not allow the whole app by itself.
 - Hard escalations can reopen if the user returns to the blocked app.
 - Overlay appeals go back through `LLMMonitorAlgorithm.reviewAppeal(...)`.
 - An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` widens the scope to whole-app for browsers (research spans adjacent tabs) and keeps it window-scoped for everything else. Duration is set per cadence mode.

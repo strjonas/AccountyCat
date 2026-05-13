@@ -1118,6 +1118,7 @@ final class BrainService: NSObject {
                     activeProfileID: currentProfile.id,
                     activeProfileName: currentProfile.name,
                     activeProfileDescription: currentProfile.description,
+                    activeProfileActivatedAt: currentProfile.activatedAt,
                     activeProfileExpiresAt: currentProfile.expiresAt,
                     recentlyEndedSession: recentlyEndedForPayload
                 )
@@ -1200,6 +1201,7 @@ final class BrainService: NSObject {
                         activeProfileID: currentProfile.id,
                         activeProfileName: currentProfile.name,
                         activeProfileDescription: currentProfile.description,
+                        activeProfileActivatedAt: currentProfile.activatedAt,
                         activeProfileExpiresAt: currentProfile.expiresAt,
                         recentlyEndedSession: recentlyEndedForPayload
                     )
@@ -1306,6 +1308,7 @@ final class BrainService: NSObject {
                         activeProfileID: currentProfile.id,
                         activeProfileName: currentProfile.name,
                         activeProfileDescription: currentProfile.description,
+                        activeProfileActivatedAt: currentProfile.activatedAt,
                         activeProfileExpiresAt: currentProfile.expiresAt,
                         recentlyEndedSession: recentlyEndedForPayload
                     )

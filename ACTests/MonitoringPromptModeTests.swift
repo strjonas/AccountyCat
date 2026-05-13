@@ -58,12 +58,37 @@ struct MonitoringPromptModeTests {
     }
 
     @Test
+    func sessionPromptUsesContentFirstProfileSpecificityAndCalibration() {
+        let online = systemPrompt(for: .onlineDecision)
+        let decision = systemPrompt(for: .decision)
+        for prompt in [online, decision] {
+            #expect(prompt.contains("Judge the actual content/task first"))
+            #expect(prompt.contains("broad archetypes"))
+            #expect(prompt.contains("docs, tutorials"))
+            #expect(prompt.contains("activeProfile.activatedAt"))
+            #expect(prompt.contains("code writing only"))
+        }
+    }
+
+    @Test
     func onlineDecisionPromptIncludesSessionExpiryExamples() {
         let online = systemPrompt(for: .onlineDecision)
         #expect(online.contains("Everyday after expiry"))
         #expect(online.contains("Sonnencreme Gesicht"))
         #expect(online.contains("session_already_ended"))
         #expect(online.contains("User correction wins"))
+        #expect(online.contains("Generic coding profile"))
+        #expect(online.contains("Strict coding profile"))
+    }
+
+    @Test
+    func profileCreationPromptsKeepBroadArchetypesBroad() {
+        let policy = ACPromptSets.policyMemorySystemPrompt()
+        let executor = ACPromptSets.profileActionExecutorSystemPrompt
+
+        #expect(policy.contains("Coding work, including implementation, debugging, docs, references, and tutorials"))
+        #expect(executor.contains("broad non-restrictive descriptions"))
+        #expect(executor.contains("unless the user explicitly gives exclusions"))
     }
 
     @Test

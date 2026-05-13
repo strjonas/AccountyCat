@@ -29,6 +29,9 @@ struct ProfilesTab: View {
     @State private var scheduleEnabledDraft: Bool = false
     @State private var expandedRuleIDs: Set<String> = []
     @State private var showArchivedRules: Bool = false
+    @FocusState private var focusedField: ProfileField?
+
+    private enum ProfileField: Hashable { case name, description }
 
     private var sortedProfiles: [FocusProfile] {
         var list = controller.state.profiles
@@ -202,6 +205,7 @@ struct ProfilesTab: View {
                                         .stroke(Color.acHairline, lineWidth: 1)
                                 )
                         )
+                        .focused($focusedField, equals: .name)
                         .onSubmit { saveProfile() }
                 }
 
@@ -252,9 +256,10 @@ struct ProfilesTab: View {
                                     .stroke(Color.acHairline, lineWidth: 1)
                             )
                     )
+                    .focused($focusedField, equals: .description)
                     .overlay(alignment: .topLeading) {
                         if descriptionDraft.isEmpty {
-                            Text("What belongs in this profile?")
+                            Text("What counts as focused? e.g. coding includes docs/tutorials; writing includes research.")
                                 .font(.ac(12))
                                 .foregroundStyle(Color.acTextPrimary.opacity(0.25))
                                 .padding(.horizontal, 13)
@@ -275,17 +280,16 @@ struct ProfilesTab: View {
 
             // Unified rules
             rulesSection
-
-            if !editingProfile.isDefault && draftsChanged {
-                HStack {
-                    Spacer()
-                    Button("Save profile") { saveProfile() }
-                        .buttonStyle(ACPrimaryButton())
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
-            }
         }
-        .animation(.acSnap, value: draftsChanged)
+        .onChange(of: focusedField) { _, field in
+            // Auto-save name/description when focus leaves the field
+            if field == nil { saveProfile() }
+        }
+        .onChange(of: scheduleEnabledDraft) { _, _ in saveProfile() }
+        .onChange(of: scheduleHourDraft) { _, _ in saveProfile() }
+        .onChange(of: scheduleMinuteDraft) { _, _ in saveProfile() }
+        .onChange(of: scheduleEveryDay) { _, _ in saveProfile() }
+        .onChange(of: scheduleEnabledWeekdays) { _, _ in saveProfile() }
     }
 
     private var colorPicker: some View {
@@ -294,20 +298,26 @@ struct ProfilesTab: View {
             "#A8B58E", "#D9A8C7", "#9aa1a8",
             "#D9B87A", "#7AD9C4"
         ]
-        return HStack(spacing: 8) {
-            ForEach(presets, id: \.self) { hex in
-                Button {
-                    colorDraft = hex
-                } label: {
-                    Circle()
-                        .fill(colorFromHex(hex))
-                        .frame(width: 22, height: 22)
-                        .overlay(
-                            Circle()
-                                .stroke(colorDraft == hex ? Color.acTextPrimary.opacity(0.6) : Color.clear, lineWidth: 2)
-                        )
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("color")
+                .font(.ac(11, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+            HStack(spacing: 8) {
+                ForEach(presets, id: \.self) { hex in
+                    Button {
+                        colorDraft = hex
+                        saveProfile()
+                    } label: {
+                        Circle()
+                            .fill(colorFromHex(hex))
+                            .frame(width: 22, height: 22)
+                            .overlay(
+                                Circle()
+                                    .stroke(colorDraft == hex ? Color.acTextPrimary.opacity(0.6) : Color.clear, lineWidth: 2)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -322,6 +332,7 @@ struct ProfilesTab: View {
                 ForEach(options, id: \.self) { min in
                     Button {
                         defaultDurationDraft = min
+                        saveProfile()
                     } label: {
                         Text(durationLabel(min))
                             .font(.ac(11, weight: defaultDurationDraft == min ? .semibold : .medium))
@@ -759,15 +770,6 @@ struct ProfilesTab: View {
     }
 
     // MARK: - Drafts
-
-    private var draftsChanged: Bool {
-        nameDraft.trimmingCharacters(in: .whitespacesAndNewlines) != editingProfile.name ||
-            descriptionDraft.trimmingCharacters(in: .whitespacesAndNewlines) != (editingProfile.description ?? "") ||
-            emojiDraft != editingProfile.emoji ||
-            colorDraft != editingProfile.color ||
-            defaultDurationDraft != editingProfile.defaultDurationMin ||
-            scheduleHasChanged
-    }
 
     private var scheduleHasChanged: Bool {
         let current = editingProfile.recurringSchedule

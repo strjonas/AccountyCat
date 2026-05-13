@@ -260,6 +260,9 @@ struct PolicyMemoryProposalTests {
         #expect(prompt.contains("recentBehavioralSignals"))
         #expect(prompt.contains("appealApproved"))
         #expect(prompt.contains("repeatedDismissal"))
+        #expect(prompt.contains("nudgeMarkedFine"))
+        #expect(prompt.contains("never allow the whole app"))
+        #expect(prompt.contains("titleContains"))
         #expect(prompt.contains("Never auto-apply a rule that wasn't explicitly endorsed by the user"))
     }
 
@@ -268,6 +271,52 @@ struct PolicyMemoryProposalTests {
         let prompt = ACPromptSets.policyMemorySystemPrompt()
         #expect(prompt.contains("add_memory"))
         #expect(prompt.contains("explicitly stated"))
+    }
+
+    @Test
+    func nudgeMarkedFineMemoryCapturesActivityAndProfile() {
+        let line = AppController.nudgeMarkedFineMemoryLine(
+            appName: "YouTube",
+            windowTitle: "How to write a README for macOS apps",
+            profileName: "Coding",
+            nudgeText: "YouTube can wait; your coding block is active."
+        )
+
+        #expect(line.contains("Correction: YouTube"))
+        #expect(line.contains("How to write a README for macOS apps"))
+        #expect(line.contains("during Coding"))
+        #expect(line.contains("it's fine"))
+        #expect(!line.contains("User disliked nudge"))
+    }
+
+    @Test
+    func nudgeMarkedFineEventSummaryPreservesNarrowLearningContract() {
+        let summary = AppController.nudgeMarkedFineEventSummary(
+            appName: "Google Chrome",
+            windowTitle: "README tutorial for macOS apps - YouTube",
+            profileID: "coding",
+            profileName: "Coding",
+            nudgeText: "This looks like YouTube drift."
+        )
+
+        #expect(summary.contains("false positive"))
+        #expect(summary.contains("Coding (coding)"))
+        #expect(summary.contains("README tutorial for macOS apps - YouTube"))
+        #expect(summary.contains("never allow the whole app"))
+        #expect(summary.contains("title-scoped allow rule"))
+    }
+
+    @Test
+    func nudgeFeedbackScopeCarriesTitleForAmbiguousApps() {
+        let scope = AppController.nudgeFeedbackScope(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "README tutorial for macOS apps - YouTube"
+        )
+
+        #expect(scope?.bundleIdentifier == "com.google.Chrome")
+        #expect(scope?.appName == "Google Chrome")
+        #expect(scope?.titleContains == ["README tutorial for macOS apps - YouTube"])
     }
 
     @Test
@@ -433,6 +482,36 @@ struct PolicyMemoryProposalControllerTests {
             $0.text.contains("was not a distraction")
         } == false)
         #expect(controller.state.algorithmState.llmPolicy.recentInteractionAllowances.isEmpty)
+    }
+
+    @Test
+    func positiveNudgeRatingDoesNotCreatePersistentMemory() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        let now = Date()
+        var state = ACState()
+        state.recentActions = [
+            ActionRecord(
+                id: UUID().uuidString,
+                kind: .nudge,
+                message: "Back to the implementation.",
+                timestamp: now.addingTimeInterval(-30),
+                contextKey: "com.apple.dt.Xcode|appcontroller interventions",
+                appName: "Xcode",
+                windowTitle: "AppController+Interventions.swift"
+            )
+        ]
+        controller.state = state
+
+        controller.rateNudge(positive: true, nudgeText: "Back to the implementation.")
+
+        #expect(controller.state.memoryEntries.isEmpty)
+        #expect(controller.state.recentBehavioralSignals.contains {
+            $0.kind == "postNudgeReturnToFocus"
+                && $0.detail?.contains("helpful nudge") == true
+        })
     }
 
     @Test

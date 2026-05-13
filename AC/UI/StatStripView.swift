@@ -24,7 +24,7 @@ struct StatStripView: View {
 
             statColumn(
                 value: pctOfDayText,
-                label: "% of day"
+                label: "% on-task"
             )
 
             Divider()
@@ -106,14 +106,10 @@ struct StatStripView: View {
     }
 
     private var pctOfDayText: String {
-        let s = controller.todayStats.focusedSeconds
-        // Use elapsed time since midnight or since wake, whichever is smaller
-        let now = Date()
-        let calendar = Calendar.current
-        let midnight = calendar.startOfDay(for: now)
-        let elapsed = now.timeIntervalSince(midnight)
-        guard elapsed > 0 else { return "—" }
-        let pct = min(100, Int((s / elapsed) * 100))
+        let focused = controller.todayStats.focusedSeconds
+        let tracked = controller.todayStats.totalTrackedSeconds
+        guard tracked > 0 else { return "—" }
+        let pct = min(100, Int((focused / tracked) * 100))
         return "\(pct)%"
     }
 
