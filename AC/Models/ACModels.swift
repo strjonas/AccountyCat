@@ -1431,9 +1431,6 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var emoji: String
     /// Hex color for the profile (e.g. "#7BA3D9").
     var color: String
-    /// Per-profile blocklist — app names or site domains that are always
-    /// considered distractions while this profile is active.
-    var blocklist: [String]
     /// Default session duration in minutes. `nil` for the default profile.
     var defaultDurationMin: Int?
     let createdAt: Date
@@ -1462,7 +1459,6 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         description: String? = nil,
         emoji: String = "◎",
         color: String = "#9aa1a8",
-        blocklist: [String] = [],
         defaultDurationMin: Int? = nil,
         createdAt: Date = Date(),
         lastUsedAt: Date = Date(),
@@ -1479,7 +1475,6 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.description = description
         self.emoji = emoji
         self.color = color
-        self.blocklist = blocklist
         self.defaultDurationMin = defaultDurationMin
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
@@ -1494,7 +1489,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, isDefault, description
-        case emoji, color, blocklist, defaultDurationMin
+        case emoji, color, defaultDurationMin
         case createdAt, lastUsedAt, activatedAt, expiresAt, createdReason
         case recurringSchedule, lastScheduleFireDate
         case autoExtendedAt, prewarnSentAt
@@ -1508,7 +1503,6 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         description = try c.decodeIfPresent(String.self, forKey: .description)
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "◎"
         color = try c.decodeIfPresent(String.self, forKey: .color) ?? "#9aa1a8"
-        blocklist = try c.decodeIfPresent([String].self, forKey: .blocklist) ?? []
         defaultDurationMin = try c.decodeIfPresent(Int.self, forKey: .defaultDurationMin)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         lastUsedAt = try c.decode(Date.self, forKey: .lastUsedAt)
@@ -1530,7 +1524,6 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
             description: "Everyday baseline. Active when no named focus session is running.",
             emoji: "◎",
             color: "#9aa1a8",
-            blocklist: [],
             defaultDurationMin: nil,
             createdReason: "system_default"
         )

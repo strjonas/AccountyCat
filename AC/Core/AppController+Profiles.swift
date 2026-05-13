@@ -416,7 +416,6 @@ extension AppController {
         description: String? = nil,
         emoji: String? = nil,
         color: String? = nil,
-        blocklist: [String]? = nil,
         defaultDurationMin: Int? = nil,
         recurringSchedule: RecurringSchedule? = nil
     ) {
@@ -431,7 +430,6 @@ extension AppController {
             : nil
         if let emoji { state.profiles[index].emoji = emoji }
         if let color { state.profiles[index].color = color }
-        if let blocklist { state.profiles[index].blocklist = blocklist }
         if let defaultDurationMin { state.profiles[index].defaultDurationMin = defaultDurationMin }
         state.profiles[index].recurringSchedule = recurringSchedule
         persistState()

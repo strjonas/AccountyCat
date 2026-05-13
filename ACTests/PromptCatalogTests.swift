@@ -35,7 +35,7 @@ struct PromptCatalogTests {
         let decisionPrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .onlineDecision).systemPrompt
 
         // Chat injects the personality directly into the system prompt.
-        #expect(chatPrompt.contains("Character voice:"))
+        #expect(chatPrompt.contains("Character voice"))
         #expect(chatPrompt.contains("sharp and decisive focus co-pilot"))
         #expect(chatPrompt.contains("\"actions\":[]"))
         #expect(chatPrompt.contains("Action kinds:"))

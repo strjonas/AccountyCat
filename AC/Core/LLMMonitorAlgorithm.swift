@@ -293,6 +293,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             input.snapshot.perAppDurations,
             limit: MonitoringPromptContextBudget.decisionUsageCount
         )
+        let currentContextSeconds = input.algorithmState.llmPolicy.currentContextEnteredAt.map {
+            max(0, input.now.timeIntervalSince($0))
+        }
         let compactInterventions = compactInterventionSummary(relevantActions)
         if Self.hasActiveExplicitAllowanceOverride(
             snapshot: input.snapshot,
@@ -449,6 +452,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     windowTitle: compactWindowTitle,
                     recentSwitches: compactSwitches,
                     usage: compactUsage,
+                    currentContextSeconds: currentContextSeconds,
                     recentInterventions: compactInterventions,
                     distraction: MonitoringPromptDistractionSummary(
                         state: input.algorithmState.llmPolicy.distraction.telemetryState
@@ -1206,6 +1210,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             windowTitle: compactWindowTitle,
             recentSwitches: compactSwitches,
             usage: compactUsage,
+            currentContextSeconds: input.algorithmState.llmPolicy.currentContextEnteredAt.map {
+                max(0, input.now.timeIntervalSince($0))
+            },
             recentInterventions: compactInterventions,
             distraction: MonitoringPromptDistractionSummary(
                 state: input.algorithmState.llmPolicy.distraction.telemetryState

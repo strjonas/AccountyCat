@@ -169,6 +169,41 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func usagePayloadLabelsDailyAppTotalsAndSeparatesCurrentContextDuration() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"focused","suggested_action":"none","confidence":0.9,"reason_tags":["payload_check"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_300)
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.currentContextKey = "com.apple.Safari|reddit"
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-5 * 60)
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-usage-semantics",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: makeSnapshot(
+                    now: now,
+                    appName: "Safari",
+                    windowTitle: "reddit: the front page of the internet",
+                    bundleIdentifier: "com.apple.Safari"
+                )
+            )
+        )
+
+        let decisionAttempt = try #require(result.evaluation.attempts.first {
+            $0.promptMode == "decision"
+        })
+        #expect(decisionAttempt.payloadJSON.contains(#""scope":"today_app_total""#))
+        #expect(decisionAttempt.payloadJSON.contains(#""currentContextSeconds":300"#))
+    }
+
+    @Test
     func lowConfidenceDistractedDecisionIsSuppressedAsUnclear() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.decision = """

@@ -165,7 +165,7 @@ struct FakeRuntimeFixture {
           printf '%s\n' "$focus_policy_action_output"
         elif [[ "$system_prompt" == *'typed appeal'* ]]; then
           printf '%s\n' "$appeal_output"
-        elif [[ "$prompt" == *'Memory to compress:'* ]] || [[ "$system_prompt" == *'compressing a focus companion'* ]]; then
+        elif [[ "$prompt" == *'Memory to compress:'* ]] || [[ "$system_prompt" == *'compressing a focus companion'* ]] || [[ "$system_prompt" == *'curate the persistent memory'* ]]; then
           printf '%s\n' "$memory_compression_output"
         elif [[ "$prompt" == *'User message:'* ]] || [[ "$system_prompt" == *'memory extractor for a focus companion app'* ]]; then
           printf '%s\n' "$memory_extraction_output"

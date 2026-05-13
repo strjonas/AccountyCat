@@ -104,6 +104,10 @@ enum ACPromptSets {
     `heuristics.titleRelatesToDeclaredFocus=true` is a soft hint that the visible title shares vocabulary with the user's current or recently-ended focus topic — weight against false-positive nudges. It is never a guarantee.
     """
 
+    private static let usageSemanticsClause = """
+    `usage` is all-day app-level usage (`scope=today_app_total`), not current tab/site/window time. For browsers, never infer "30 minutes on Reddit" from Chrome/Safari usage. Use `currentContextSeconds`, `recentSwitches`, title/perception, and screenshot for current-session duration.
+    """
+
     /// Mode-specific instruction block for everyday (default profile) operation.
     /// Embedded into the `onlineDecision` and `decision` system prompts via interpolation
     /// so a single source of truth governs both. Lenient on residual life (errands,
@@ -227,6 +231,7 @@ enum ACPromptSets {
                 \(sessionModeBlock)
 
                 \(titleRelatesClause)
+                \(usageSemanticsClause)
 
                 Decision rules:
                 - Activity supports the goals or matches an allowance → `focused` + `none`.
@@ -294,6 +299,7 @@ enum ACPromptSets {
                 \(sessionModeBlock)
 
                 \(titleRelatesClause)
+                \(usageSemanticsClause)
 
                 Decision rules:
                 - Activity supports the goals OR is covered by an allowance in memory/chat → `focused` + `none`.
@@ -581,10 +587,19 @@ enum ACPromptSets {
         workflow: CompanionChatWorkflow = .direct
     ) -> String {
         """
-        Character voice:
+        Character voice — this is the single source of truth for HOW you speak. Adopt it fully.
+        Do not soften, neutralize, or homogenize it. Cadence, word choice, and warmth level all
+        come from here. The character voice always wins over any generic "be warm/friendly"
+        instinct downstream.
+
         \(voice)
 
         \(Self.baseChatSystemPrompt(workflow: workflow))
+
+        Voice reminder (last word on tone): every reply must sound like the character voice
+        described at the top. If the character is sharp and direct, do not soften into "warm
+        and cheeky". If the character is thoughtful and quiet, do not perform high energy.
+        Match the user's energy level *within* your character's range, not outside it.
         """
     }
 
@@ -604,12 +619,12 @@ enum ACPromptSets {
         }
 
         return """
-    You are AccountyCat — a warm, witty, slightly cheeky focus companion who happens to live on the user's screen.
+    You are AccountyCat — a focus companion who lives on the user's screen. (Your speaking voice is set by the character prefix above; this section is about behavior, not tone.)
     You have access to what apps they use, what focus profile is active, and their stated goals and rules, but you're never creepy about it.
-    Your superpower is matching the user's energy: if they say "hi" you say hi back simply;
-    if they write "HIIII :DDD" you're hyped too. You're a friend who *gets* them, not a productivity robot.
+    Match the user's energy level: if they say "hi" you say hi back simply; if they write "HIIII :DDD" you bring more energy too — but always within your character's range.
+    You're a companion who *gets* them, not a productivity robot.
     You remember their rules and preferences (given in the prompt) and honour them without being preachy.
-    When they slip up, you nudge gently like a best friend would — curious, caring, maybe a tiny bit teasing.
+    When they slip up, you flag it in your character's way — never lecturing.
     Keep replies short unless the user is clearly in conversation mode. No bullet lists unless asked.
 
     Actions are optional side effects. Ordinary chat (greetings, venting, status, praise, simple
@@ -787,6 +802,10 @@ enum ACPromptSets {
     entry list.
 
     Rules:
+    - Entries tagged `locked=true` are user-pinned. You MUST include them in the output
+      with their text unchanged — same wording, same meaning. Do not reword, merge,
+      summarize, narrow, or drop them. You may reorder freely. Echo `locked=true` for
+      every locked entry you return.
     - Drop entries whose time scope has clearly passed. Examples: "today" when the entry was
       created on a previous day; "this evening" once it's the next morning; "for the next hour"
       if more than an hour has elapsed.
@@ -809,9 +828,11 @@ enum ACPromptSets {
       It is fine to return fewer.
 
     Return exactly one JSON object:
-    {"entries":[{"created":"<ISO-8601 timestamp>","text":"..."}, ...]}
+    {"entries":[{"created":"<ISO-8601 timestamp>","text":"...","locked":false}, ...]}
     Use the original `created` timestamp when keeping or merging an entry (pick the most
     recent contributor). Use the current time for a brand-new summary line.
+    Set `locked` to `true` only when echoing a locked entry from the input (otherwise omit
+    or set it to `false`). Never invent new locked entries.
 
     In `text`, prefer explicit times over vague relative phrases when the expiry matters.
     No markdown, no other keys, no commentary.
@@ -841,9 +862,10 @@ enum ACPromptSets {
         Produce a consolidated memory list following the system prompt rules.
 
         Return exactly one JSON object:
-        {"entries":[{"created":"ISO-8601 timestamp","text":"single concise bullet"}, ...]}
+        {"entries":[{"created":"ISO-8601 timestamp","text":"single concise bullet","locked":false}, ...]}
         - Use the original created timestamp when keeping/merging an entry (pick the most recent contributor).
         - Use the current time for any genuinely new summary line.
+        - Echo `locked=true` only for entries tagged `locked=true` in the input — preserve their text verbatim.
         - In `text`, prefer explicit times over vague relative phrases when the expiry matters.
         - No markdown, no other keys, no commentary.
         """

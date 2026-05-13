@@ -87,6 +87,9 @@ nonisolated struct MonitoringPromptSwitchRecord: Codable, Hashable, Sendable {
 nonisolated struct MonitoringPromptUsageRecord: Codable, Hashable, Sendable {
     var appName: String
     var seconds: TimeInterval
+    /// What the duration represents. Today this is always the all-day total for
+    /// the app, not the active tab/window/session.
+    var scope: String = "today_app_total"
 }
 
 /// Compact snapshot of a focus session that just ended within the last ~30 minutes.
@@ -159,6 +162,7 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var windowTitle: String?
     var recentSwitches: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
+    var currentContextSeconds: TimeInterval?
     var recentInterventions: MonitoringPromptInterventionSummary
     var distraction: MonitoringPromptDistractionSummary
     var heuristics: MonitoringPromptHeuristicSummary
@@ -182,6 +186,7 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var windowTitle: String?
     var recentSwitches: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
+    var currentContextSeconds: TimeInterval?
     var recentInterventions: MonitoringPromptInterventionSummary
     var distraction: MonitoringPromptDistractionSummary
     var titlePerception: MonitoringPerceptionEnvelope?

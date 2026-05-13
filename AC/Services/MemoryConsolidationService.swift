@@ -111,7 +111,8 @@ actor MemoryConsolidationService {
         let entriesText = entries
             .sorted { $0.createdAt < $1.createdAt }
             .map { entry in
-                "- id=\(entry.id.uuidString) created=\(iso.string(from: entry.createdAt)) text=\(entry.text.cleanedSingleLine)"
+                let lockedTag = entry.isLocked ? " locked=true" : ""
+                return "- id=\(entry.id.uuidString) created=\(iso.string(from: entry.createdAt))\(lockedTag) text=\(entry.text.cleanedSingleLine)"
             }
             .joined(separator: "\n")
 
@@ -154,6 +155,7 @@ actor MemoryConsolidationService {
             var created: String?
             var createdAt: String?
             var text: String
+            var locked: Bool?
         }
         struct Wire: Decodable {
             var entries: [WireEntry]
@@ -172,7 +174,7 @@ actor MemoryConsolidationService {
                 uniquingKeysWith: { a, _ in a }
             )
             var usedIDs = Set<UUID>()
-            let consolidated: [MemoryEntry] = wire.entries.compactMap { raw in
+            var consolidated: [MemoryEntry] = wire.entries.compactMap { raw in
                 let text = raw.text.cleanedSingleLine
                 guard !text.isEmpty else { return nil }
                 let createdString = raw.created ?? raw.createdAt
@@ -183,14 +185,20 @@ actor MemoryConsolidationService {
                 let existing = fallbackByText[text.lowercased()]
                 let id = existing?.id ?? UUID()
                 guard usedIDs.insert(id).inserted else { return nil }
+                let isLocked = existing?.isLocked ?? (raw.locked == true)
                 return MemoryEntry(
                     id: id,
                     createdAt: existing?.createdAt ?? created,
                     text: text,
                     profileID: existing?.profileID,
                     profileName: existing?.profileName,
-                    isLocked: existing?.isLocked ?? false
+                    isLocked: isLocked
                 )
+            }
+
+            for lockedEntry in fallback where lockedEntry.isLocked {
+                guard usedIDs.insert(lockedEntry.id).inserted else { continue }
+                consolidated.append(lockedEntry)
             }
 
             if !consolidated.isEmpty {

@@ -705,7 +705,6 @@ struct ProfilesTab: View {
             description: descriptionDraft,
             emoji: emojiDraft,
             color: colorDraft,
-            blocklist: editingProfile.blocklist,
             defaultDurationMin: defaultDurationDraft,
             recurringSchedule: newSchedule
         )

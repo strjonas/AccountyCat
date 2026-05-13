@@ -1017,14 +1017,6 @@ extension AppController {
         let intent = normalizedFocusPolicyIntent(action.intent)
         guard let kind = intent.kind else { return false }
 
-        if kind == .disallow,
-           let target = action.target,
-           !["current_context", "currentcontext"].contains(target.type.cleanedSingleLine.lowercased()),
-           let value = target.value?.cleanedSingleLine,
-           !value.isEmpty {
-            return addProfileBlocklistEntry(value, scope: action.scope)
-        }
-
         guard let scope = makePolicyRuleScope(for: action, context: context, kind: kind) else {
             return false
         }
@@ -1188,20 +1180,6 @@ extension AppController {
         }
         if let title = scope.titleContains.first, !title.isEmpty { return title }
         return fallback?.cleanedSingleLine.isEmpty == false ? fallback!.cleanedSingleLine : "requested context"
-    }
-
-    @discardableResult
-    func addProfileBlocklistEntry(_ value: String, scope: String?) -> Bool {
-        guard let profileID = resolvedPolicyProfileID(scope: scope),
-              let index = state.profiles.firstIndex(where: { $0.id == profileID }) else {
-            return false
-        }
-        if !state.profiles[index].blocklist.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
-            state.profiles[index].blocklist.append(value)
-            persistState()
-        }
-        logActivity("profile", "Added blocklist entry \(value) to profile \(state.profiles[index].name)")
-        return true
     }
 
     func scopePolicyRulesToActiveProfile(

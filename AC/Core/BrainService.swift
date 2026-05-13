@@ -189,7 +189,7 @@ final class BrainService: NSObject {
         )
         state.sessionCelebrationPending = true
         let modeChange =
-            "You did it — \(activeProfile.name) wrapped. Really proud of you. Take a well-earned break."
+            "You did it — \(activeProfile.name) wrapped. You're back in everyday mode. Take a well-earned break."
         state.chatHistory.append(
             ChatMessage(
                 role: .assistant,
@@ -861,23 +861,6 @@ final class BrainService: NSObject {
         scopedPolicyMemory.rules = scopedPolicyMemory.rules.filter {
             $0.profileID == nil || $0.profileID == activeProfileID
         }
-        // Inject active profile blocklist as temporary disallow rules for this tick.
-        if let activeProfile = state.profile(withID: activeProfileID),
-            !activeProfile.blocklist.isEmpty
-        {
-            for entry in activeProfile.blocklist {
-                let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
-                scopedPolicyMemory.rules.append(
-                    PolicyRule(
-                        kind: .disallow,
-                        summary: "Block \(trimmed)",
-                        source: .system,
-                        scope: PolicyRuleScope(appName: trimmed, titleContains: [trimmed]),
-                        profileID: activeProfileID
-                    ))
-            }
-        }
 
         let evaluationPlan: MonitoringEvaluationPlan
         do {
@@ -1172,7 +1155,8 @@ final class BrainService: NSObject {
                         activeProfileID: currentProfile.id,
                         activeProfileName: currentProfile.name,
                         activeProfileDescription: currentProfile.description,
-                        activeProfileExpiresAt: currentProfile.expiresAt
+                        activeProfileExpiresAt: currentProfile.expiresAt,
+                        recentlyEndedSession: recentlyEndedForPayload
                     )
                     let retried = try await monitoringAlgorithmRegistry.evaluate(input: retryInput)
                     decisionResult = retried
@@ -1277,7 +1261,8 @@ final class BrainService: NSObject {
                         activeProfileID: currentProfile.id,
                         activeProfileName: currentProfile.name,
                         activeProfileDescription: currentProfile.description,
-                        activeProfileExpiresAt: currentProfile.expiresAt
+                        activeProfileExpiresAt: currentProfile.expiresAt,
+                        recentlyEndedSession: recentlyEndedForPayload
                     )
                     let retried = try await monitoringAlgorithmRegistry.evaluate(input: retryInput)
                     decisionResult = retried
@@ -1640,7 +1625,6 @@ final class BrainService: NSObject {
         storageService.saveState(stateProvider?() ?? updated)
         lastPersistAt = now
     }
-
     private func ensureEpisode(for context: FrontmostContext, sessionID: String, at now: Date)
         -> ObservationTransition
     {

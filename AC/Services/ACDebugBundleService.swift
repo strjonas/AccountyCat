@@ -80,7 +80,6 @@ nonisolated struct ACDebugStateSnapshot: Codable, Sendable {
         var name: String
         var isDefault: Bool
         var description: String?
-        var blocklistCount: Int
         var defaultDurationMin: Int?
         var activatedAt: Date?
         var expiresAt: Date?
@@ -309,7 +308,6 @@ actor ACDebugBundleService {
                     name: $0.name,
                     isDefault: $0.isDefault,
                     description: $0.description,
-                    blocklistCount: $0.blocklist.count,
                     defaultDurationMin: $0.defaultDurationMin,
                     activatedAt: $0.activatedAt,
                     expiresAt: $0.expiresAt,
