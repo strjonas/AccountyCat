@@ -165,4 +165,85 @@ struct BrainServiceConfigurationTests {
         #expect(detail.contains("next recheck in 42s"))
         #expect(detail.contains("last assessment focused"))
     }
+
+    @Test
+    func apiFailureBackoffCapsAtNinetySeconds() {
+        #expect(BrainService.apiFailureBackoffSeconds(consecutiveFailures: 1) == 10)
+        #expect(BrainService.apiFailureBackoffSeconds(consecutiveFailures: 2) == 20)
+        #expect(BrainService.apiFailureBackoffSeconds(consecutiveFailures: 4) == 80)
+        #expect(BrainService.apiFailureBackoffSeconds(consecutiveFailures: 5) == 90)
+        #expect(BrainService.apiFailureBackoffSeconds(consecutiveFailures: 8) == 90)
+    }
+
+    @Test
+    func monitoringFailureNoticeOnlyPromotesRepeatedFailuresToBanner() {
+        let earlyTimeout = BrainService.monitoringFailureNotice(
+            consecutiveFailures: 1,
+            timedOut: true
+        )
+        #expect(earlyTimeout.banner == nil)
+        #expect(earlyTimeout.status.contains("timed out"))
+
+        let repeatedTimeout = BrainService.monitoringFailureNotice(
+            consecutiveFailures: 3,
+            timedOut: true
+        )
+        #expect(repeatedTimeout.banner != nil)
+        #expect(repeatedTimeout.status.contains("Connection looks unstable"))
+
+        let repeatedProviderFailure = BrainService.monitoringFailureNotice(
+            consecutiveFailures: 3,
+            timedOut: false
+        )
+        #expect(repeatedProviderFailure.banner != nil)
+        #expect(repeatedProviderFailure.status.contains("trouble reaching the model provider"))
+    }
+
+    @Test
+    func onlineVisionTimeoutsDegradeToTextOnlyAfterThreshold() {
+        var configuration = MonitoringConfiguration(inferenceBackend: .openRouter)
+        configuration.pipelineProfileID = MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+
+        #expect(
+            BrainService.shouldDegradeOnlineVisionToTextOnly(
+                configuration: configuration,
+                consecutiveVisionTimeouts: 1
+            ) == false
+        )
+        #expect(
+            BrainService.shouldDegradeOnlineVisionToTextOnly(
+                configuration: configuration,
+                consecutiveVisionTimeouts: 2
+            ) == true
+        )
+    }
+
+    @Test
+    func degradedMonitoringConfigurationUsesTransientOnlineTextPipelineOnlyForOnlineVision() {
+        var onlineVision = MonitoringConfiguration(inferenceBackend: .openRouter)
+        onlineVision.pipelineProfileID = MonitoringConfiguration.defaultOnlineVisionPipelineProfileID
+
+        let degraded = BrainService.effectiveMonitoringConfiguration(
+            from: onlineVision,
+            degradeOnlineVisionToTextOnly: true
+        )
+        #expect(degraded.pipelineProfileID == MonitoringConfiguration.defaultOnlineTextPipelineProfileID)
+        #expect(onlineVision.pipelineProfileID == MonitoringConfiguration.defaultOnlineVisionPipelineProfileID)
+
+        var onlineText = MonitoringConfiguration(inferenceBackend: .openRouter)
+        onlineText.pipelineProfileID = MonitoringConfiguration.defaultOnlineTextPipelineProfileID
+        let unchangedOnlineText = BrainService.effectiveMonitoringConfiguration(
+            from: onlineText,
+            degradeOnlineVisionToTextOnly: true
+        )
+        #expect(unchangedOnlineText.pipelineProfileID == MonitoringConfiguration.defaultOnlineTextPipelineProfileID)
+
+        var localVision = MonitoringConfiguration(inferenceBackend: .local)
+        localVision.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
+        let unchangedLocal = BrainService.effectiveMonitoringConfiguration(
+            from: localVision,
+            degradeOnlineVisionToTextOnly: true
+        )
+        #expect(unchangedLocal.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
+    }
 }

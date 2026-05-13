@@ -53,6 +53,8 @@ Important fast paths:
 - cadence delays defer evaluation until a context has been stable long enough
 - browser contexts still pass through the stable-context gate, but use a much shorter settle window than native apps so tab switches are checked quickly
 - title-only context can suppress screenshots for non-ambiguous apps
+- online monitoring does a read-only connectivity gate before any provider call; true offline state skips evaluation quickly with a banner and a short recheck
+- repeated online vision timeouts can temporarily degrade the *effective* pipeline to online text-only for a few minutes; this is transient runtime state in `BrainService`, not a persisted settings change
 
 The design intent is to spend LLM calls where judgment is needed, not on obvious repeats.
 
@@ -69,6 +71,8 @@ Biases:
 - descriptive titles can skip screenshots even outside IDEs
 
 `ScreenshotCaptureMode` supports active-window vs full-screen capture, with a periodic full-screen safety check.
+
+When transient online text-only degradation is active, the effective pipeline for that tick no longer requires a screenshot, so AC skips capture/upload until the short degradation window expires or monitoring succeeds again on the normal path.
 
 ## Algorithm Shape
 
@@ -146,6 +150,7 @@ Important constraints:
 ## If You Change This Area
 
 - Preserve the distinction between deterministic gates and LLM judgment.
+- Keep temporary degradation state transient. Do not silently rewrite the user's saved monitoring backend or pipeline settings to handle network trouble.
 - Preserve the "legitimate work interruption is a bug" principle.
 - Update prompts and code together when schemas change.
 - Keep telemetry meaningful enough that the Inspector can reconstruct why a decision happened.

@@ -47,6 +47,8 @@ final class BrainService: NSObject {
     private var evaluationStartedAt: Date?
     private var watchdogTimer: Timer?
     private var activeEvaluationTask: Task<MonitoringDecisionResult, Error>?
+    private var activeEvaluationCancellationReason: String?
+    private var degradedOnlineVisionUntil: Date?
     private var isSessionAvailable = true
     private var lastObservedContext: FrontmostContext?
     private var lastObservedAt = Date()
@@ -56,6 +58,7 @@ final class BrainService: NSObject {
     var pendingReactionsByEvaluationID: [String: PendingReaction] = [:]
     private var wasInCallLastTick = false
     private var consecutiveAPIFailures = 0
+    private var consecutiveOnlineVisionTimeouts = 0
 
     struct PendingReaction: Sendable {
         var episodeID: String
@@ -222,6 +225,73 @@ final class BrainService: NSObject {
         return now.timeIntervalSince(lastFullScreenCheckAt) >= interval
     }
 
+    nonisolated static func apiFailureBackoffSeconds(consecutiveFailures: Int) -> TimeInterval {
+        min(10 * pow(2.0, Double(max(0, consecutiveFailures - 1))), 90)
+    }
+
+    nonisolated static func monitoringFailureNotice(
+        consecutiveFailures: Int,
+        timedOut: Bool
+    ) -> (status: String, banner: String?) {
+        if consecutiveFailures >= 3 {
+            let banner = timedOut
+                ? "Connection looks unstable, so AC may miss a check-in. Retrying with backup models…"
+                : "AC is having trouble reaching the model provider. Retrying with backup models…"
+            return (banner, banner)
+        }
+
+        let status = timedOut
+            ? "AC check-in timed out on an unstable connection — retrying…"
+            : "AC check-in hiccup — retrying…"
+        return (status, nil)
+    }
+
+    nonisolated static func offlineMonitoringRetryDelay() -> TimeInterval {
+        15
+    }
+
+    nonisolated static func degradedTextOnlyRetryDelay() -> TimeInterval {
+        15
+    }
+
+    nonisolated static func degradedTextOnlyDuration() -> TimeInterval {
+        180
+    }
+
+    nonisolated static func visionTimeoutsBeforeTextFallback() -> Int {
+        2
+    }
+
+    nonisolated static func degradedConnectionNotice() -> String {
+        "Connection looks weak. AC is checking without screenshots for a bit."
+    }
+
+    nonisolated static func shouldDegradeOnlineVisionToTextOnly(
+        configuration: MonitoringConfiguration,
+        consecutiveVisionTimeouts: Int
+    ) -> Bool {
+        guard configuration.usesOnlineInference else { return false }
+        let pipeline = LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
+        guard pipeline.descriptor.requiresScreenshot else { return false }
+        return consecutiveVisionTimeouts >= visionTimeoutsBeforeTextFallback()
+    }
+
+    nonisolated static func effectiveMonitoringConfiguration(
+        from configuration: MonitoringConfiguration,
+        degradeOnlineVisionToTextOnly: Bool
+    ) -> MonitoringConfiguration {
+        guard degradeOnlineVisionToTextOnly,
+              configuration.usesOnlineInference
+        else { return configuration }
+
+        let pipeline = LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
+        guard pipeline.descriptor.requiresScreenshot else { return configuration }
+
+        var effective = configuration
+        effective.pipelineProfileID = MonitoringConfiguration.defaultOnlineTextPipelineProfileID
+        return effective
+    }
+
     nonisolated static func evaluationSkipDetail(
         plan: MonitoringEvaluationPlan,
         state: ACState,
@@ -270,6 +340,30 @@ final class BrainService: NSObject {
         self.executiveArm = executiveArm
         self.storageService = storageService
         self.telemetryStore = telemetryStore
+    }
+
+    private func isUsingDegradedOnlineTextOnly(at now: Date) -> Bool {
+        guard let degradedOnlineVisionUntil else { return false }
+        return degradedOnlineVisionUntil > now
+    }
+
+    private func clearOnlineConnectivityFallback(clearBanner: Bool) {
+        degradedOnlineVisionUntil = nil
+        consecutiveOnlineVisionTimeouts = 0
+        if clearBanner {
+            connectionProblemSink?(nil)
+        }
+    }
+
+    private func enterOnlineTextFallback(at now: Date) {
+        let wasActive = isUsingDegradedOnlineTextOnly(at: now)
+        degradedOnlineVisionUntil = now.addingTimeInterval(Self.degradedTextOnlyDuration())
+        consecutiveOnlineVisionTimeouts = 0
+        if !wasActive {
+            let notice = Self.degradedConnectionNotice()
+            statusSink?(notice)
+            connectionProblemSink?(notice)
+        }
     }
 
     private func refreshPermissionsAfterScreenCaptureFailure(
@@ -395,6 +489,7 @@ final class BrainService: NSObject {
 
     func handleMonitoringConfigurationChange() {
         cancelActiveEvaluationIfNeeded(reason: "monitoring_configuration_changed")
+        clearOnlineConnectivityFallback(clearBanner: true)
         guard let baseState = stateProvider?() else { return }
         var state = baseState
         state.algorithmState = AlgorithmStateEnvelope()
@@ -533,6 +628,7 @@ final class BrainService: NSObject {
         cancelActiveEvaluationIfNeeded(reason: cancellationReason)
         isSessionAvailable = false
         consecutiveAPIFailures = 0
+        clearOnlineConnectivityFallback(clearBanner: true)
         wasInCallLastTick = false
         connectionProblemSink?(nil)
         appendLifecycleHeartbeat(reason: heartbeatReason)
@@ -636,6 +732,30 @@ final class BrainService: NSObject {
         }
 
         let now = Date()
+
+        if state.monitoringConfiguration.usesOnlineInference,
+            !ConnectivityService.shared.isInternetReachable
+        {
+            cancelActiveEvaluationIfNeeded(reason: "network_offline")
+            consecutiveAPIFailures = 0
+            clearOnlineConnectivityFallback(clearBanner: false)
+            state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
+                Self.offlineMonitoringRetryDelay()
+            )
+            moodSink?(.watching)
+            let notice =
+                "No internet connection. AC paused online monitoring and will resume automatically."
+            statusSink?(notice)
+            connectionProblemSink?(notice)
+            stateSink?(baseState, state)
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "offline",
+                state: state,
+                detail: "online_monitoring"
+            )
+            return
+        }
 
         // Soft profile lifecycle (clock-driven, no separate scheduler). The pure-state
         // logic lives in `applySoftProfileLifecycle` so it can be unit-tested in isolation;
@@ -900,10 +1020,15 @@ final class BrainService: NSObject {
             $0.profileID == nil || $0.profileID == activeProfileID
         }
 
+        let effectiveConfiguration = Self.effectiveMonitoringConfiguration(
+            from: state.monitoringConfiguration,
+            degradeOnlineVisionToTextOnly: isUsingDegradedOnlineTextOnly(at: now)
+        )
+
         let evaluationPlan: MonitoringEvaluationPlan
         do {
             evaluationPlan = try monitoringAlgorithmRegistry.evaluationPlan(
-                configuration: state.monitoringConfiguration,
+                configuration: effectiveConfiguration,
                 context: context,
                 heuristics: heuristics,
                 policyMemory: scopedPolicyMemory,
@@ -990,9 +1115,9 @@ final class BrainService: NSObject {
             algorithmID: algorithmDescriptor.id,
             algorithmVersion: algorithmDescriptor.version,
             promptProfileID: algorithmDescriptor.id,
-            pipelineProfileID: state.monitoringConfiguration.pipelineProfileID,
-            runtimeProfileID: state.monitoringConfiguration.runtimeProfileID,
-            experimentArm: state.monitoringConfiguration.experimentArm
+            pipelineProfileID: effectiveConfiguration.pipelineProfileID,
+            runtimeProfileID: effectiveConfiguration.runtimeProfileID,
+            experimentArm: effectiveConfiguration.experimentArm
         )
 
         await appendObservationEvent(
@@ -1006,7 +1131,7 @@ final class BrainService: NSObject {
         )
 
         let evaluationID = UUID().uuidString
-        let inferBackend = state.monitoringConfiguration.inferenceBackend.rawValue
+        let inferBackend = effectiveConfiguration.inferenceBackend.rawValue
         let reason = evaluationPlan.reason ?? "stable_context"
         await ActivityLogService.shared.append(
             level: .more,
@@ -1110,7 +1235,7 @@ final class BrainService: NSObject {
                     ),
                     policyMemory: scopedPolicyMemory,
                     runtimeOverride: state.runtimePathOverride,
-                    configuration: state.monitoringConfiguration,
+                    configuration: effectiveConfiguration,
                     algorithmState: state.algorithmState,
                     characterPersonalityPrefix: state.character.personalityPrefix,
                     character: state.character,
@@ -1124,9 +1249,11 @@ final class BrainService: NSObject {
                 )
             )
         }
+        activeEvaluationCancellationReason = nil
         activeEvaluationTask = evaluationTask
         defer {
             activeEvaluationTask = nil
+            activeEvaluationCancellationReason = nil
         }
 
         var decisionResult: MonitoringDecisionResult
@@ -1142,6 +1269,16 @@ final class BrainService: NSObject {
                     "verdict: \(decisionResult.decision.assessment.rawValue) · attempts: [\(attemptsSummary)]"
             )
         } catch is CancellationError {
+            if await handleWatchdogCancellationIfNeeded(
+                reason: activeEvaluationCancellationReason,
+                configuration: effectiveConfiguration,
+                state: &state,
+                baseState: baseState,
+                now: now,
+                appName: context.appName
+            ) {
+                return
+            }
             moodSink?(.watching)
             statusSink?("Context changed during evaluation — cancelled.")
             stateSink?(baseState, state)
@@ -1153,7 +1290,7 @@ final class BrainService: NSObject {
 
         let pipelineSupportsScreenshot =
             LLMPolicyCatalog
-            .pipelineProfile(id: state.monitoringConfiguration.pipelineProfileID)
+            .pipelineProfile(id: effectiveConfiguration.pipelineProfileID)
             .descriptor
             .requiresScreenshot
 
@@ -1161,7 +1298,7 @@ final class BrainService: NSObject {
         // tick can support vision, try the configured image model once before
         // backing off globally.
         if decisionResult.evaluation.failureMessage == "all_attempts_failed",
-            state.monitoringConfiguration.usesOnlineInference,
+            effectiveConfiguration.usesOnlineInference,
             snapshot.screenshotPath == nil,
             pipelineSupportsScreenshot
         {
@@ -1193,7 +1330,7 @@ final class BrainService: NSObject {
                         ),
                         policyMemory: scopedPolicyMemory,
                         runtimeOverride: state.runtimePathOverride,
-                        configuration: state.monitoringConfiguration,
+                        configuration: effectiveConfiguration,
                         algorithmState: state.algorithmState,
                         characterPersonalityPrefix: state.character.personalityPrefix,
                         character: state.character,
@@ -1220,6 +1357,16 @@ final class BrainService: NSObject {
                     )
                 }
             } catch is CancellationError {
+                if await handleWatchdogCancellationIfNeeded(
+                    reason: activeEvaluationCancellationReason,
+                    configuration: effectiveConfiguration,
+                    state: &state,
+                    baseState: baseState,
+                    now: now,
+                    appName: context.appName
+                ) {
+                    return
+                }
                 moodSink?(.watching)
                 statusSink?("Context changed during retry — cancelled.")
                 stateSink?(baseState, state)
@@ -1242,18 +1389,17 @@ final class BrainService: NSObject {
         // surface a gentle banner once the streak becomes persistent.
         if decisionResult.evaluation.failureMessage == "all_attempts_failed" {
             consecutiveAPIFailures += 1
-            let backoff = min(10 * pow(2.0, Double(consecutiveAPIFailures - 1)), 300)
+            consecutiveOnlineVisionTimeouts = 0
+            let backoff = Self.apiFailureBackoffSeconds(consecutiveFailures: consecutiveAPIFailures)
             state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
                 backoff)
             moodSink?(.watching)
-            if consecutiveAPIFailures >= 3 {
-                let banner =
-                    "AC is having trouble reaching the model provider. Retrying with backup models…"
-                statusSink?(banner)
-                connectionProblemSink?(banner)
-            } else {
-                statusSink?("AC check-in hiccup — retrying…")
-            }
+            let notice = Self.monitoringFailureNotice(
+                consecutiveFailures: consecutiveAPIFailures,
+                timedOut: false
+            )
+            statusSink?(notice.status)
+            connectionProblemSink?(notice.banner)
             stateSink?(baseState, state)
             await appendMonitoringMetric(
                 kind: .evaluationSkipped,
@@ -1264,7 +1410,10 @@ final class BrainService: NSObject {
             return
         }
         consecutiveAPIFailures = 0
-        connectionProblemSink?(nil)
+        if !isUsingDegradedOnlineTextOnly(at: now) {
+            consecutiveOnlineVisionTimeouts = 0
+            connectionProblemSink?(nil)
+        }
 
         // One-shot vision escalation: if text-only returned `unclear` and the pipeline supports
         // a screenshot, capture one and retry. Bound to a single retry per tick.
@@ -1300,7 +1449,7 @@ final class BrainService: NSObject {
                         ),
                         policyMemory: scopedPolicyMemory,
                         runtimeOverride: state.runtimePathOverride,
-                        configuration: state.monitoringConfiguration,
+                        configuration: effectiveConfiguration,
                         algorithmState: state.algorithmState,
                         characterPersonalityPrefix: state.character.personalityPrefix,
                         character: state.character,
@@ -1327,6 +1476,16 @@ final class BrainService: NSObject {
                     )
                 }
             } catch is CancellationError {
+                if await handleWatchdogCancellationIfNeeded(
+                    reason: activeEvaluationCancellationReason,
+                    configuration: effectiveConfiguration,
+                    state: &state,
+                    baseState: baseState,
+                    now: now,
+                    appName: context.appName
+                ) {
+                    return
+                }
                 moodSink?(.watching)
                 statusSink?("Context changed during retry — cancelled.")
                 stateSink?(baseState, state)
@@ -1834,6 +1993,7 @@ final class BrainService: NSObject {
 
     private func resetRuntimeContext() {
         cancelActiveEvaluationIfNeeded(reason: "runtime_context_reset")
+        clearOnlineConnectivityFallback(clearBanner: true)
         pendingReactionsByEvaluationID = [:]
         activeEpisode = nil
         lastObservedContext = nil
@@ -1854,6 +2014,7 @@ final class BrainService: NSObject {
         guard let activeEvaluationTask else { return }
         guard !activeEvaluationTask.isCancelled else { return }
 
+        activeEvaluationCancellationReason = reason
         activeEvaluationTask.cancel()
         appendLifecycleHeartbeat(reason: "evaluation_cancelled", details: ["reason": reason])
         Task {
@@ -1869,6 +2030,62 @@ final class BrainService: NSObject {
         Task { [telemetryStore] in
             await telemetryStore.appendSessionHeartbeat(reason: reason, details: details)
         }
+    }
+
+    private func handleWatchdogCancellationIfNeeded(
+        reason: String?,
+        configuration: MonitoringConfiguration,
+        state: inout ACState,
+        baseState: ACState,
+        now: Date,
+        appName: String
+    ) async -> Bool {
+        guard reason == "watchdog_stale_evaluation" else { return false }
+
+        consecutiveAPIFailures += 1
+        if configuration.usesOnlineInference,
+           LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID).descriptor.requiresScreenshot
+        {
+            consecutiveOnlineVisionTimeouts += 1
+        } else {
+            consecutiveOnlineVisionTimeouts = 0
+        }
+
+        let shouldDegrade = Self.shouldDegradeOnlineVisionToTextOnly(
+            configuration: configuration,
+            consecutiveVisionTimeouts: consecutiveOnlineVisionTimeouts
+        )
+        let backoff: TimeInterval
+        if shouldDegrade {
+            enterOnlineTextFallback(at: now)
+            backoff = Self.degradedTextOnlyRetryDelay()
+        } else {
+            backoff = Self.apiFailureBackoffSeconds(consecutiveFailures: consecutiveAPIFailures)
+        }
+        state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(backoff)
+
+        moodSink?(.watching)
+        if shouldDegrade {
+            let notice = Self.degradedConnectionNotice()
+            statusSink?(notice)
+            connectionProblemSink?(notice)
+        } else {
+            let notice = Self.monitoringFailureNotice(
+                consecutiveFailures: consecutiveAPIFailures,
+                timedOut: true
+            )
+            statusSink?(notice.status)
+            connectionProblemSink?(notice.banner)
+        }
+        stateSink?(baseState, state)
+
+        await appendMonitoringMetric(
+            kind: .evaluationSkipped,
+            reason: "api_timeout",
+            state: state,
+            detail: appName
+        )
+        return true
     }
 
     private func matchingPendingReaction(for reaction: UserReactionRecord) -> PendingReaction? {

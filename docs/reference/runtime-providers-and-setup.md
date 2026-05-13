@@ -82,6 +82,8 @@ Current behavior:
 - API keys live in macOS Keychain via `OnlineProviderCredentialStore`
 - ZDR toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`; on by default, opt-out via the AI tab's advanced section behind an explicit confirmation alert
 - direct-OpenAI routing code exists in `OnlineProviderRouting` but its UI was removed from `AITab`; the toggle can be re-exposed if needed (see `docs/experiments/direct-openai-routing.md`)
+- `ConnectivityService` provides a lightweight `NWPathMonitor`-backed reachability signal used by `BrainService` to pause online monitoring quickly when the machine is offline
+- online monitoring may transiently use the online text-only pipeline after repeated vision timeouts, but this degradation lives only in `BrainService`; it does not rewrite `MonitoringConfiguration`
 
 ### OpenRouter request shape
 
