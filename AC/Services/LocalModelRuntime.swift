@@ -228,6 +228,8 @@ actor LocalModelRuntime {
 
     private let urlSession: URLSession
     private var sharedServer: LocalModelServerHandle?
+    private var activeSharedServerRequests = 0
+    private var activeInteractiveRequests = 0
 
     init() {
         Self.killStalePIDIfNeeded()
@@ -304,6 +306,18 @@ actor LocalModelRuntime {
 
     func shutdown() async {
         await stopSharedServer(reason: "runtime_shutdown")
+    }
+
+    func hasInteractiveRequestInFlight() -> Bool {
+        activeInteractiveRequests > 0
+    }
+
+    func withInteractiveRequest<T>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async rethrows -> T {
+        activeInteractiveRequests += 1
+        defer { activeInteractiveRequests -= 1 }
+        return try await operation()
     }
 
     private func repositoryURL(forRuntimePath runtimePath: String) -> URL {
@@ -409,6 +423,8 @@ actor LocalModelRuntime {
             systemPrompt: systemPrompt,
             options: options
         )
+        activeSharedServerRequests += 1
+        defer { activeSharedServerRequests -= 1 }
         let requestURL = URL(string: "http://127.0.0.1:\(server.port)/v1/chat/completions")!
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
@@ -626,6 +642,10 @@ actor LocalModelRuntime {
 
             if sharedServer.process.isRunning, sameBinary, sameModel, sameProjector, canReuseCapacity {
                 return sharedServer
+            }
+
+            if activeSharedServerRequests > 0 {
+                try await waitForSharedServerToBecomeIdle()
             }
 
             await stopSharedServer(reason: "server_reconfigure")
@@ -1039,6 +1059,14 @@ actor LocalModelRuntime {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         return !process.isRunning
+    }
+
+    private func waitForSharedServerToBecomeIdle() async throws {
+        let deadline = Date().addingTimeInterval(60)
+        while activeSharedServerRequests > 0 && Date() < deadline {
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     private func withTimeout<T>(

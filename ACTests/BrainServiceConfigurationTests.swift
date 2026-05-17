@@ -31,6 +31,7 @@ struct BrainServiceConfigurationTests {
                 hideOverlay: { },
                 minimizeApp: { _ in }
             ),
+            runtime: runtime,
             storageService: StorageService.temporary(),
             telemetryStore: TelemetryStore(
                 rootURL: FileManager.default.temporaryDirectory
@@ -197,6 +198,65 @@ struct BrainServiceConfigurationTests {
         )
         #expect(repeatedProviderFailure.banner != nil)
         #expect(repeatedProviderFailure.status.contains("trouble reaching the model provider"))
+    }
+
+    @Test
+    func localInteractiveRequestDefersMonitoringEvaluation() async {
+        let runtime = LocalModelRuntime()
+        let registry = MonitoringAlgorithmRegistry(
+            runtime: runtime,
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
+        )
+        let brainService = BrainService(
+            monitoringAlgorithmRegistry: registry,
+            executiveArm: ExecutiveArm(
+                showNudge: { _ in },
+                showOverlay: { _ in },
+                hideOverlay: { },
+                minimizeApp: { _ in }
+            ),
+            runtime: runtime,
+            storageService: StorageService.temporary(),
+            telemetryStore: TelemetryStore(
+                rootURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("ac-brain-busy-tests-\(UUID().uuidString)", isDirectory: true)
+            )
+        )
+
+        let context = FrontmostContext(
+            bundleIdentifier: "com.example.focus",
+            appName: "FocusApp",
+            windowTitle: "Deep Work"
+        )
+        var state = ACState()
+        state.setupStatus = .ready
+        state.permissions = PermissionsSnapshot(screenRecording: .granted, accessibility: .granted)
+        state.algorithmState.llmPolicy.currentContextKey = context.contextKey
+        state.algorithmState.llmPolicy.currentContextEnteredAt = .distantPast
+
+        var latestStatus = ""
+        brainService.stateProvider = { state }
+        brainService.stateSink = { _, updatedState in state = updatedState }
+        brainService.statusSink = { latestStatus = $0 }
+        brainService.contextProvider = { context }
+        brainService.idleSecondsProvider = { 0 }
+
+        let blocker = Task {
+            try? await runtime.withInteractiveRequest {
+                try await Task.sleep(nanoseconds: 300_000_000)
+            }
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+
+        await brainService.tick()
+        blocker.cancel()
+
+        #expect(latestStatus.contains("Local chat has priority"))
+        #expect(state.algorithmState.llmPolicy.distraction.nextEvaluationAt != nil)
     }
 
     @Test

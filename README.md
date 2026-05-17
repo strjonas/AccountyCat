@@ -96,8 +96,8 @@ Grab the latest release from the [Releases page](../../releases). Precompiled bi
 ### Build from source
 
 ```sh
-git clone https://github.com/yourname/accountycat
-cd accountycat
+git clone https://github.com/strjonas/AccountyCat.git
+cd AccountyCat
 open AC.xcodeproj
 # Set your development team if prompted, then run the AC target
 ```

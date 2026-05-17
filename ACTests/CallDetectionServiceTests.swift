@@ -53,6 +53,7 @@ struct CallDetectionServiceTests {
         let brainService = BrainService(
             monitoringAlgorithmRegistry: registry,
             executiveArm: arm,
+            runtime: runtime,
             storageService: StorageService.temporary(),
             telemetryStore: store
         )
@@ -130,6 +131,7 @@ struct CallDetectionServiceTests {
         let brainService = BrainService(
             monitoringAlgorithmRegistry: registry,
             executiveArm: arm,
+            runtime: runtime,
             storageService: StorageService.temporary(),
             telemetryStore: store
         )

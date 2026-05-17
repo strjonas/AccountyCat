@@ -193,12 +193,14 @@ actor CompanionChatService {
                 )
                 let localStartedAt = Date()
                 do {
-                    var localOutput = try await runtime.runTextInference(
-                        runtimePath: runtimePath,
-                        modelIdentifier: localTextModelIdentifier,
-                        systemPrompt: systemPrompt,
-                        userPrompt: prompt
-                    )
+                    var localOutput = try await runtime.withInteractiveRequest { [runtime] in
+                        try await runtime.runTextInference(
+                            runtimePath: runtimePath,
+                            modelIdentifier: localTextModelIdentifier,
+                            systemPrompt: systemPrompt,
+                            userPrompt: prompt
+                        )
+                    }
                     let interactionID = await LLMTelemetryRecorder.shared.record(
                         LLMTelemetryCall(
                             kind: .localChat,

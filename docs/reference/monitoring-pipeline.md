@@ -55,6 +55,7 @@ Important fast paths:
 - title-only context can suppress screenshots for non-ambiguous apps
 - online monitoring does a read-only connectivity gate before any provider call; true offline state skips evaluation quickly with a banner and a short recheck
 - repeated online vision timeouts can temporarily degrade the *effective* pipeline to online text-only for a few minutes; this is transient runtime state in `BrainService`, not a persisted settings change
+- when the local inference backend is active and a user-interactive (chat) request is in flight, `BrainService` skips the evaluation tick and defers the next check by 10 seconds (`local_runtime_busy` skip reason); this ensures the shared llama.cpp server is never reconfigured or interrupted mid-chat
 
 The design intent is to spend LLM calls where judgment is needed, not on obvious repeats.
 

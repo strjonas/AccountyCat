@@ -35,6 +35,7 @@ final class BrainService: NSObject {
 
     let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
     private let executiveArm: ExecutiveArm
+    private let runtime: LocalModelRuntime
     private let storageService: StorageService
     let telemetryStore: TelemetryStore
     private let pollingInterval: TimeInterval = 10
@@ -325,6 +326,8 @@ final class BrainService: NSObject {
         case "explicit_allow_rule":
             let title = context.windowTitle ?? "untitled"
             return "\(context.appName) · matched active allow rule · \(title)"
+        case "local_runtime_busy":
+            return "\(context.appName) · deferred while local chat is in progress"
         default:
             return context.appName
         }
@@ -333,11 +336,13 @@ final class BrainService: NSObject {
     init(
         monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry,
         executiveArm: ExecutiveArm,
+        runtime: LocalModelRuntime,
         storageService: StorageService,
         telemetryStore: TelemetryStore
     ) {
         self.monitoringAlgorithmRegistry = monitoringAlgorithmRegistry
         self.executiveArm = executiveArm
+        self.runtime = runtime
         self.storageService = storageService
         self.telemetryStore = telemetryStore
     }
@@ -1062,6 +1067,41 @@ final class BrainService: NSObject {
             )
             moodSink?(.watching)
             statusSink?("Watching \(context.appName) quietly.")
+            stateSink?(baseState, state)
+            lastCheckSink?(now)
+            return
+        }
+
+        if !effectiveConfiguration.usesOnlineInference,
+           await runtime.hasInteractiveRequestInFlight() {
+            state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(10)
+            let skipDetail = Self.evaluationSkipDetail(
+                plan: MonitoringEvaluationPlan(
+                    shouldEvaluate: false,
+                    reason: "local_runtime_busy",
+                    visualCheckReason: nil,
+                    requiresScreenshot: evaluationPlan.requiresScreenshot,
+                    promptMode: evaluationPlan.promptMode,
+                    promptVersion: evaluationPlan.promptVersion
+                ),
+                state: state,
+                context: context,
+                heuristics: heuristics,
+                now: now
+            )
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "local_runtime_busy",
+                state: state,
+                detail: skipDetail
+            )
+            await ActivityLogService.shared.append(
+                level: .verbose,
+                category: "monitoring",
+                message: "skip: local_runtime_busy · \(skipDetail)"
+            )
+            moodSink?(.watching)
+            statusSink?("Local chat has priority. Monitoring will resume shortly.")
             stateSink?(baseState, state)
             lastCheckSink?(now)
             return

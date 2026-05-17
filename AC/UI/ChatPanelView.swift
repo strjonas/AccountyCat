@@ -189,6 +189,29 @@ struct ChatPanelView: View {
                 .background(Color.orange.opacity(0.08))
             }
 
+            if controller.localModelLowPowerNotice && !controller.localModelLowPowerNoticeDismissed {
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.slash.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.yellow)
+                    Text("Low Power Mode is on — offline models may be slower or stall. Consider switching to BYOK if performance matters.")
+                        .font(.ac(11, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.9))
+                    Spacer()
+                    Button {
+                        controller.localModelLowPowerNoticeDismissed = true
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.yellow.opacity(0.07))
+            }
+
             if controller.state.setupStatus == .ready
                 && !controller.showingOnboardingCompletion
             {

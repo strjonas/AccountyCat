@@ -160,6 +160,7 @@ struct BrainServiceTelemetryTests {
                 hideOverlay: { },
                 minimizeApp: { _ in }
             ),
+            runtime: runtime,
             storageService: StorageService.temporary(),
             telemetryStore: store
         )

@@ -46,6 +46,19 @@ When changing first run or setup, preserve all of these:
 
 Setup bugs are high-impact because they block the whole product.
 
+## Local Runtime Request Coordination
+
+`LocalModelRuntime` runs a single shared llama.cpp server process for all inference (monitoring and chat).
+
+Two request counters gate concurrent access:
+
+- `activeSharedServerRequests` — incremented for every in-flight server request (monitoring or chat)
+- `activeInteractiveRequests` — incremented only for user-facing chat requests via `withInteractiveRequest { }`
+
+When the server needs to be reconfigured (different model or capacity), `LocalModelRuntime` waits up to 60 seconds for `activeSharedServerRequests` to reach zero before stopping the old server. This prevents mid-request kills and double-RAM fallbacks.
+
+`BrainService` reads `hasInteractiveRequestInFlight()` at the start of each monitoring tick and defers evaluation when a chat request is in flight (see monitoring-pipeline.md, "Deterministic Gates").
+
 ## Monitoring Backend Selection
 
 `MonitoringConfiguration.inferenceBackend` selects the backend:
@@ -54,6 +67,8 @@ Setup bugs are high-impact because they block the whole product.
 - `.openRouter`
 
 The current default is local inference.
+
+When local inference is active and macOS Low Power Mode is on, `AppController` sets `localModelLowPowerNotice = true`. `ChatPanelView` renders this as a dismissible yellow banner. The notice auto-clears when either condition goes away and the dismissed state resets at that point so it reappears if the user re-enters the same condition.
 
 Model selection is split by text vs image where supported:
 

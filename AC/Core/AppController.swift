@@ -58,6 +58,9 @@ final class AppController: ObservableObject {
     /// Set by BrainService when repeated API failures suggest a provider-side issue.
     /// Displayed as a gentle banner in the main UI.
     @Published var connectionProblemNotice: String?
+    /// True when local inference is active and Low Power Mode is on.
+    @Published var localModelLowPowerNotice = false
+    @Published var localModelLowPowerNoticeDismissed = false
     /// True once the user has completed the first-run onboarding wizard. Stored in
     /// UserDefaults (not ACState) so it survives state resets.
     @Published var hasCompletedOnboardingWizard: Bool
@@ -243,6 +246,13 @@ final class AppController: ObservableObject {
         configureBrainIfNeeded()
         restorePendingScheduledActions()
         recomputeTodayStats()
+        NotificationCenter.default.addObserver(
+            forName: NSProcessInfo.powerStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateLocalModelLowPowerNotice()
+        }
     }
 
     func shutdown() async {
@@ -319,10 +329,20 @@ final class AppController: ObservableObject {
         if !installingRuntime {
             _ = applyPendingLocalModelIfReady()
         }
+        updateLocalModelLowPowerNotice()
 
         if persist {
             persistState()
         }
+    }
+
+    private func updateLocalModelLowPowerNotice() {
+        let active = !state.monitoringConfiguration.usesOnlineInference
+            && ProcessInfo.processInfo.isLowPowerModeEnabled
+        if !active {
+            localModelLowPowerNoticeDismissed = false
+        }
+        localModelLowPowerNotice = active
     }
 
     func persistState() {
@@ -952,6 +972,7 @@ final class AppController: ObservableObject {
             let brainService = BrainService(
                 monitoringAlgorithmRegistry: monitoringAlgorithmRegistry,
                 executiveArm: executiveArm,
+                runtime: localModelRuntime,
                 storageService: storageService,
                 telemetryStore: telemetryStore
             )

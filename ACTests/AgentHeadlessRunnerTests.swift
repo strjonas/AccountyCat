@@ -102,6 +102,7 @@ struct AgentHeadlessRunnerTests {
                 hideOverlay: { },
                 minimizeApp: { _ in }
             ),
+            runtime: runtime,
             storageService: .temporary(),
             telemetryStore: store
         )
