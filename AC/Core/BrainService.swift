@@ -502,11 +502,13 @@ final class BrainService: NSObject {
         resetRuntimeContext()
     }
 
+    @discardableResult
     func recordUserReaction(
         _ reaction: UserReactionRecord, endEpisodeReason: EpisodeEndReason? = nil
-    ) {
+    ) -> Task<Void, Never>? {
+        let telemetryTask: Task<Void, Never>?
         if shouldPersistVerboseTelemetry() {
-            Task {
+            telemetryTask = Task {
                 let sessionID =
                     (try? await telemetryStore.ensureCurrentSession(reason: "runtime").id)
                 if let sessionID {
@@ -534,6 +536,8 @@ final class BrainService: NSObject {
                     )
                 }
             }
+        } else {
+            telemetryTask = nil
         }
 
         // Feed reward signal to the active algorithm. The current LLM monitor ignores it,
@@ -563,7 +567,7 @@ final class BrainService: NSObject {
         }
 
         guard let endEpisodeReason else {
-            return
+            return telemetryTask
         }
 
         Task { @MainActor in
@@ -576,6 +580,7 @@ final class BrainService: NSObject {
                 at: Date()
             )
         }
+        return telemetryTask
     }
 
     @objc private func handleWillSleep() {

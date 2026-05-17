@@ -402,16 +402,17 @@ extension AppController {
         }
     }
 
-    func submitOverlayAppeal() {
+    @discardableResult
+    func submitOverlayAppeal() -> Task<Void, Never>? {
         guard !sendingOverlayAppeal,
-              let presentation = activeOverlay else { return }
+              let presentation = activeOverlay else { return nil }
 
         let trimmedAppeal = overlayAppealDraft.cleanedSingleLine
-        guard !trimmedAppeal.isEmpty else { return }
+        guard !trimmedAppeal.isEmpty else { return nil }
 
         sendingOverlayAppeal = true
 
-        Task {
+        let task = Task {
             let reviewNow = Date()
             let reviewInput = MonitoringAppealReviewInput(
                 now: reviewNow,
@@ -598,6 +599,7 @@ extension AppController {
 
             self.logActivity("appeal", "Overlay appeal reviewed: \(trimmedAppeal)")
         }
+        return task
     }
 
     func currentMonitoringPromptSnapshot(now: Date) -> AppSnapshot? {

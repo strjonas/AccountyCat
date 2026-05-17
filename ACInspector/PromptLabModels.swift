@@ -8,6 +8,7 @@ import Foundation
 enum InspectorTab: String, CaseIterable, Identifiable {
     case episodes
     case promptLab = "prompt_lab"
+    case evalCases = "eval_cases"
 
     var id: String { rawValue }
 
@@ -17,6 +18,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
             return "Episodes"
         case .promptLab:
             return "Prompt Lab"
+        case .evalCases:
+            return "Eval Cases"
         }
     }
 }

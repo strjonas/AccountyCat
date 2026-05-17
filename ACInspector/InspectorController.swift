@@ -23,6 +23,25 @@ final class InspectorController: ObservableObject {
         return episodes.filter { kindFilter.contains($0.kind) }
     }
 
+    var filteredEvalCases: [ACEvalCase] {
+        evalCases.filter { evalCase in
+            if let evalKindFilter, evalCase.kind != evalKindFilter {
+                return false
+            }
+            if let evalImportanceFilter, evalCase.importance != evalImportanceFilter {
+                return false
+            }
+            let category = ACEvalStore.normalizeCategory(evalCategoryFilter)
+            if !category.isEmpty {
+                let categories = Set(evalCase.categories.map(ACEvalStore.normalizeCategory))
+                if !categories.contains(category) {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     func selectEpisode(_ id: String) {
         selectedEpisodeID = id
     }
@@ -44,9 +63,17 @@ final class InspectorController: ObservableObject {
     @Published var promptLabResults: [PromptLabRunResult] = [] { didSet { schedulePersistPromptLabState() } }
     @Published var promptLabStatusText = "Prompt Lab ready."
     @Published var promptLabIsRunning = false
+    @Published var evalCases: [ACEvalCase] = []
+    @Published var selectedEvalCaseID: String?
+    @Published var evalKindFilter: ACEvalKind?
+    @Published var evalImportanceFilter: ACEvalImportance?
+    @Published var evalCategoryFilter = ""
+    @Published var evalStatusText = "Eval cases ready."
+    @Published var evalCreationDraft: ACEvalCase?
 
     private let indexStore = TelemetryIndexStore()
     private let telemetryStore = TelemetryStore.shared
+    private let evalStore = ACEvalStore()
     private let promptLabRunner = PromptLabRunner()
     private let promptLabPersistenceURL: URL
     private var refreshTask: Task<Void, Never>?
@@ -77,6 +104,7 @@ final class InspectorController: ObservableObject {
         promptLabPersistenceURL = TelemetryPaths.inspectorSupportURL(fileManager: fileManager)
             .appendingPathComponent("prompt_lab_state.json")
         loadPersistedPromptLabState(fileManager: fileManager)
+        refreshEvalCases()
     }
 
     deinit {
@@ -118,6 +146,7 @@ final class InspectorController: ObservableObject {
             } else {
                 clearSelectionState()
             }
+            refreshEvalCases()
 
             statusText = episodes.isEmpty ? "No telemetry episodes yet." : "Loaded \(episodes.count) episodes."
         } catch {
@@ -170,6 +199,69 @@ final class InspectorController: ObservableObject {
                 self.statusText = error.localizedDescription
             }
         }
+    }
+
+    func refreshEvalCases() {
+        do {
+            evalCases = try evalStore.loadAll()
+            if let selectedEvalCaseID,
+               !evalCases.contains(where: { $0.id == selectedEvalCaseID }) {
+                self.selectedEvalCaseID = evalCases.first?.id
+            } else if selectedEvalCaseID == nil {
+                selectedEvalCaseID = evalCases.first?.id
+            }
+            evalStatusText = evalCases.isEmpty ? "No eval cases yet." : "Loaded \(evalCases.count) eval cases."
+        } catch {
+            evalStatusText = error.localizedDescription
+        }
+    }
+
+    var selectedEvalCase: ACEvalCase? {
+        evalCases.first { $0.id == selectedEvalCaseID }
+    }
+
+    func beginEvalCaseCreationFromSelectedEpisode() {
+        guard let selectedEpisode else {
+            evalStatusText = "Select an episode first."
+            return
+        }
+
+        do {
+            evalCreationDraft = try makeEvalCase(from: selectedEpisode, events: selectedEpisodeEvents)
+            selectedTab = .episodes
+            evalStatusText = "Eval draft created."
+        } catch {
+            evalStatusText = error.localizedDescription
+            statusText = error.localizedDescription
+        }
+    }
+
+    func saveEvalCreationDraft() {
+        guard let draft = evalCreationDraft else { return }
+        do {
+            let saved = try evalStore.save(draft)
+            evalCreationDraft = nil
+            refreshEvalCases()
+            selectedEvalCaseID = saved.id
+            selectedTab = .evalCases
+            evalStatusText = "Eval case saved."
+        } catch {
+            evalStatusText = error.localizedDescription
+        }
+    }
+
+    func deleteEvalCases(at offsets: IndexSet) {
+        let cases = filteredEvalCases
+        for offset in offsets {
+            guard cases.indices.contains(offset) else { continue }
+            try? evalStore.delete(id: cases[offset].id)
+        }
+        refreshEvalCases()
+    }
+
+    func deleteEvalCase(id: String) {
+        try? evalStore.delete(id: id)
+        refreshEvalCases()
     }
 
     func openFile(_ path: String?) {
@@ -457,6 +549,242 @@ final class InspectorController: ObservableObject {
         )
     }
 
+    private func makeEvalCase(
+        from episode: IndexedEpisode,
+        events: [IndexedEvent]
+    ) throws -> ACEvalCase {
+        let telemetryEvents = events.compactMap(Self.decodeTelemetryEvent)
+        switch episode.kind {
+        case .focusDecision:
+            return try makeFocusEvalCase(from: episode, telemetryEvents: telemetryEvents)
+        case .chat, .localChat:
+            return makeChatEvalCase(from: episode)
+        case .chatAction:
+            return try makeChatActionEvalCase(from: episode)
+        case .policyMemory, .memoryConsolidation, .monitoringText, .monitoringVision, .safelistAppeal:
+            throw EvalCreationError.unsupportedKind(episode.kind.displayName)
+        }
+    }
+
+    private func makeFocusEvalCase(
+        from episode: IndexedEpisode,
+        telemetryEvents: [TelemetryEvent]
+    ) throws -> ACEvalCase {
+        let modelInput = telemetryEvents.compactMap(\.modelInput).last
+        let parsedOutput = telemetryEvents.compactMap(\.policy?.model).last
+            ?? telemetryEvents.compactMap(\.parsedOutput).last
+        let evaluation = telemetryEvents.compactMap(\.evaluation).last
+        let context = modelInput?.context
+        let payloadHints = Self.extractPromptPayloadHints(path: episode.promptPayloadPath)
+        let appName = context?.appName ?? episode.appName
+        let windowTitle = context?.windowTitle ?? episode.windowTitle
+        let timestamp = context?.timestamp ?? episode.startedAt
+        let activeProfileID = evaluation?.activeProfileID ?? "general"
+        let activeProfileName = evaluation?.activeProfileName ?? "Everyday"
+
+        let input = ACEvalFocusInput(
+            timestamp: timestamp,
+            appName: appName,
+            bundleIdentifier: context?.bundleIdentifier,
+            windowTitle: windowTitle,
+            screenshotPath: episode.screenshotPath,
+            goals: modelInput?.goalsSummary ?? payloadHints.goals ?? "Imported telemetry focus eval.",
+            freeFormMemory: payloadHints.freeFormMemory ?? "",
+            recentUserMessages: Self.extractRecentUserMessages(path: episode.promptPayloadPath),
+            policyMemorySummary: payloadHints.policySummary ?? "",
+            policyMemoryJSON: payloadHints.policyMemoryJSON ?? "",
+            recentSwitches: (context?.recentSwitches ?? []).map {
+                ACEvalSwitchRecord(
+                    fromAppName: $0.fromAppName,
+                    toAppName: $0.toAppName,
+                    toWindowTitle: $0.toWindowTitle,
+                    timestamp: $0.timestamp
+                )
+            },
+            recentActions: (context?.recentActions ?? []).map {
+                ACEvalActionRecord(kind: $0.kind, message: $0.message, timestamp: $0.timestamp)
+            },
+            usage: (context?.perAppDurations ?? []).map {
+                ACEvalUsageRecord(appName: $0.appName, seconds: $0.seconds)
+            },
+            heuristics: ACEvalHeuristics(
+                clearlyProductive: modelInput?.heuristics.clearlyProductive ?? false,
+                browser: modelInput?.heuristics.browser ?? Self.looksLikeBrowser(appName: appName),
+                helpfulWindowTitle: modelInput?.heuristics.helpfulWindowTitle ?? !(windowTitle ?? "").isEmpty,
+                periodicVisualReason: modelInput?.heuristics.periodicVisualReason,
+                titleRelatesToDeclaredFocus: modelInput?.heuristics.titleRelatesToDeclaredFocus
+            ),
+            distraction: ACEvalDistraction(
+                stableSince: modelInput?.distraction.stableSince,
+                lastAssessment: modelInput?.distraction.lastAssessment,
+                consecutiveDistractedCount: modelInput?.distraction.consecutiveDistractedCount ?? 0,
+                nextEvaluationAt: modelInput?.distraction.nextEvaluationAt
+            ),
+            activeProfile: ACEvalActiveProfile(
+                id: activeProfileID,
+                name: activeProfileName,
+                isDefault: activeProfileID == "general",
+                description: nil,
+                activatedAt: nil,
+                expiresAt: nil
+            )
+        )
+
+        let expectation = ACEvalExpectation(
+            focus: ACEvalFocusExpectation(
+                acceptedAssessments: parsedOutput.map { [$0.assessment] } ?? [],
+                acceptedActions: parsedOutput.map { [$0.suggestedAction] } ?? []
+            )
+        )
+
+        return ACEvalCase(
+            name: Self.defaultEvalName(prefix: "Focus", episode: episode),
+            kind: .focus,
+            importance: Self.defaultImportance(labels: episode.labels),
+            categories: Self.defaultCategories(kind: .focus, labels: episode.labels),
+            rationale: episode.note,
+            source: ACEvalSource(
+                episodeID: episode.id,
+                sessionID: episode.sessionID,
+                appName: appName,
+                bundleIdentifier: context?.bundleIdentifier,
+                windowTitle: windowTitle,
+                timestamp: timestamp,
+                screenshotPath: episode.screenshotPath
+            ),
+            recommendedBackend: episode.screenshotPath == nil ? .local : .online,
+            focusInput: input,
+            expectation: expectation,
+            observedOutput: ACEvalObservedOutput(
+                summary: parsedOutput.map { "\($0.assessment.rawValue) / \($0.suggestedAction.rawValue)" } ?? "No parsed output",
+                json: episode.modelOutputJSON,
+                modelIdentifier: episode.modelIdentifier
+            )
+        )
+    }
+
+    private func makeChatEvalCase(from episode: IndexedEpisode) -> ACEvalCase {
+        let parsed = Self.decodeChatOutputJSON(episode.modelOutputJSON)
+        let renderedPrompt = Self.readText(path: episode.renderedPromptPath)
+        let frontmostApp = Self.extractLine(prefix: "Frontmost app:", from: renderedPrompt) ?? "Unknown"
+        let frontmostTitle = Self.extractLine(prefix: "Window:", from: renderedPrompt)
+        let userMessage = episode.extractedFields["userMessage"] ?? ""
+        let actionKinds = parsed?.actions.map(\.kind)
+            ?? Self.parseActionKinds(episode.extractedFields["actionKinds"])
+
+        let input = ACEvalChatInput(
+            userMessage: userMessage,
+            goals: Self.extractSection("[User goals]", from: renderedPrompt) ?? "",
+            memory: Self.extractSection("[Persistent memory", from: renderedPrompt) ?? "",
+            policyRules: Self.extractSection("[Brain rules", from: renderedPrompt) ?? "",
+            context: ACEvalChatContext(
+                frontmostAppName: frontmostApp == "—" ? "Unknown" : frontmostApp,
+                frontmostWindowTitle: frontmostTitle == "—" ? nil : frontmostTitle,
+                idleSeconds: 0,
+                timestamp: episode.startedAt,
+                recentSwitches: [],
+                usage: []
+            ),
+            history: [],
+            character: "mochi",
+            activeProfileContext: "",
+            workflow: .staged
+        )
+
+        let expectation = ACEvalExpectation(
+            chat: ACEvalChatExpectation(requiredActionKinds: actionKinds)
+        )
+
+        return ACEvalCase(
+            name: Self.defaultEvalName(prefix: "Chat", episode: episode),
+            kind: .chat,
+            importance: Self.defaultImportance(labels: episode.labels),
+            categories: Self.defaultCategories(kind: .chat, labels: episode.labels, extra: actionKinds.map(\.rawValue)),
+            rationale: episode.note,
+            source: ACEvalSource(
+                episodeID: episode.id,
+                sessionID: episode.sessionID,
+                appName: "Chat",
+                windowTitle: userMessage.nilIfBlank ?? episode.windowTitle,
+                timestamp: episode.startedAt
+            ),
+            chatInput: input,
+            expectation: expectation,
+            observedOutput: ACEvalObservedOutput(
+                summary: episode.summary.isEmpty ? (parsed?.reply ?? "Chat") : episode.summary,
+                json: episode.modelOutputJSON,
+                modelIdentifier: episode.modelIdentifier
+            )
+        )
+    }
+
+    private func makeChatActionEvalCase(from episode: IndexedEpisode) throws -> ACEvalCase {
+        guard let resolved = Self.decodeChatActionOutputJSON(episode.modelOutputJSON) else {
+            throw EvalCreationError.missingParsedOutput
+        }
+
+        let instruction = episode.extractedFields["instruction"] ?? ""
+        let inputAction = CompanionChatAction(
+            kind: resolved.kind,
+            instruction: instruction.isEmpty ? episode.summary : instruction
+        )
+        let expectation = ACEvalExpectation(
+            chatAction: ACEvalChatActionExpectation(
+                kind: resolved.kind,
+                intent: resolved.intent,
+                scope: resolved.scope,
+                targetType: resolved.target?.type,
+                targetValue: resolved.target?.value,
+                duration: resolved.duration,
+                profileID: resolved.profileID,
+                profileName: resolved.profileName,
+                profileDescription: resolved.profileDescription,
+                durationMinutes: resolved.durationMinutes,
+                textContains: resolved.text,
+                locked: resolved.locked
+            )
+        )
+
+        let input = ACEvalChatActionInput(
+            action: inputAction,
+            latestUserMessage: instruction,
+            recentUserMessages: instruction.isEmpty ? [] : [instruction],
+            goals: "",
+            freeFormMemory: "",
+            policyRules: "",
+            context: nil,
+            activeProfile: ACEvalProfileSummary(
+                id: "general",
+                name: "Everyday",
+                description: nil,
+                isDefault: true
+            ),
+            availableProfiles: []
+        )
+
+        return ACEvalCase(
+            name: Self.defaultEvalName(prefix: "Chat Action", episode: episode),
+            kind: .chatAction,
+            importance: Self.defaultImportance(labels: episode.labels),
+            categories: Self.defaultCategories(kind: .chatAction, labels: episode.labels, extra: [resolved.kind.rawValue]),
+            rationale: episode.note,
+            source: ACEvalSource(
+                episodeID: episode.id,
+                sessionID: episode.sessionID,
+                appName: "Chat Action",
+                windowTitle: instruction.nilIfBlank ?? episode.windowTitle,
+                timestamp: episode.startedAt
+            ),
+            chatActionInput: input,
+            expectation: expectation,
+            observedOutput: ACEvalObservedOutput(
+                summary: episode.summary,
+                json: episode.modelOutputJSON,
+                modelIdentifier: episode.modelIdentifier
+            )
+        )
+    }
+
     private static func decodeTelemetryEvent(from indexedEvent: IndexedEvent) -> TelemetryEvent? {
         guard let data = indexedEvent.rawJSON.data(using: .utf8) else { return nil }
         let decoder = JSONDecoder()
@@ -556,6 +884,126 @@ final class InspectorController: ObservableObject {
             }
         }
         return []
+    }
+
+    private static func extractRecentUserMessages(path: String?) -> [String] {
+        guard let path,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let jsonObject = try? JSONSerialization.jsonObject(with: data) else {
+            return []
+        }
+        return findStringArray(in: jsonObject, matching: ["recentUserMessages", "recent_user_messages"])
+    }
+
+    private static func readText(path: String?) -> String {
+        guard let path else { return "" }
+        return (try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)) ?? ""
+    }
+
+    private static func extractLine(prefix: String, from text: String) -> String? {
+        text.components(separatedBy: .newlines)
+            .first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(prefix) }
+            .map { line in
+                line.replacingOccurrences(of: prefix, with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .flatMap(\.nilIfBlank)
+    }
+
+    private static func extractSection(_ marker: String, from text: String) -> String? {
+        guard let markerRange = text.range(of: marker) else { return nil }
+        let remainder = String(text[markerRange.lowerBound...])
+        let lines = remainder.components(separatedBy: .newlines)
+        guard lines.count > 1 else { return nil }
+        var collected: [String] = []
+        for line in lines.dropFirst() {
+            if line.hasPrefix("[") && !collected.isEmpty {
+                break
+            }
+            collected.append(line)
+        }
+        return collected.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfBlank
+    }
+
+    private struct ParsedChatTelemetryOutput: Decodable {
+        var reply: String
+        var actions: [CompanionChatAction]
+        var scheduleKind: String?
+        var scheduleDelayMinutes: Int?
+    }
+
+    private static func decodeChatOutputJSON(_ json: String?) -> ParsedChatTelemetryOutput? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ParsedChatTelemetryOutput.self, from: data)
+    }
+
+    private static func decodeChatActionOutputJSON(_ json: String?) -> CompanionChatAction? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CompanionChatAction.self, from: data)
+    }
+
+    private static func parseActionKinds(_ value: String?) -> [CompanionChatActionKind] {
+        guard let value else { return [] }
+        return value
+            .split(separator: ",")
+            .compactMap { CompanionChatActionKind(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    private static func defaultEvalName(prefix: String, episode: IndexedEpisode) -> String {
+        let title = episode.title.cleanedSingleLine
+        let suffix = title.isEmpty ? episode.id.prefix(8).description : title
+        return "\(prefix): \(suffix)"
+    }
+
+    private static func defaultImportance(labels: [EpisodeAnnotationLabel]) -> ACEvalImportance {
+        if labels.contains(.interruptedFlow) || labels.contains(.escalationWrong) {
+            return .critical
+        }
+        if labels.contains(.badNudge) || labels.contains(.shouldHaveNudged) || labels.contains(.tooEarly) || labels.contains(.tooLate) {
+            return .high
+        }
+        return .medium
+    }
+
+    private static func defaultCategories(
+        kind: ACEvalKind,
+        labels: [EpisodeAnnotationLabel],
+        extra: [String] = []
+    ) -> [String] {
+        var categories = Set<String>()
+        categories.insert(kind.rawValue)
+        for value in extra where !value.cleanedSingleLine.isEmpty {
+            categories.insert(ACEvalStore.normalizeCategory(value))
+        }
+        for label in labels {
+            switch label {
+            case .badNudge, .tooEarly, .interruptedFlow, .escalationWrong:
+                categories.insert(ACEvalCategory.falsePositive.rawValue)
+            case .shouldHaveNudged, .tooLate:
+                categories.insert(ACEvalCategory.falseNegative.rawValue)
+            case .goodNudge, .goodSilence, .escalationCorrect:
+                categories.insert(ACEvalCategory.goodBehavior.rawValue)
+            case .wrongTone:
+                categories.insert(ACEvalCategory.tone.rawValue)
+            }
+        }
+        return categories.sorted()
+    }
+
+    private enum EvalCreationError: LocalizedError {
+        case unsupportedKind(String)
+        case missingParsedOutput
+
+        var errorDescription: String? {
+            switch self {
+            case let .unsupportedKind(kind):
+                return "\(kind) episodes cannot become eval cases yet."
+            case .missingParsedOutput:
+                return "This episode has no parsed output to use as an eval expectation."
+            }
+        }
     }
 
     private func makeAttemptDetails(from indexedEvents: [IndexedEvent]) async -> [IndexedModelAttempt] {
@@ -1234,5 +1682,11 @@ final class InspectorController: ObservableObject {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        cleanedSingleLine.isEmpty ? nil : self
     }
 }

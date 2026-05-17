@@ -38,8 +38,43 @@ private struct InspectorRootView: View {
                 .tabItem {
                     Label("Prompt Lab", systemImage: "flask")
                 }
+
+            EvalCasesRootView()
+                .tag(InspectorTab.evalCases)
+                .tabItem {
+                    Label("Eval Cases", systemImage: "checklist")
+                }
         }
         .frame(minWidth: 1360, minHeight: 860)
+        .sheet(isPresented: Binding(
+            get: { controller.evalCreationDraft != nil },
+            set: { isPresented in
+                if !isPresented {
+                    controller.evalCreationDraft = nil
+                }
+            }
+        )) {
+            EvalCaseEditorView(
+                evalCase: evalDraftBinding,
+                onSave: { controller.saveEvalCreationDraft() },
+                onCancel: { controller.evalCreationDraft = nil }
+            )
+            .frame(minWidth: 720, minHeight: 680)
+        }
+    }
+
+    private var evalDraftBinding: Binding<ACEvalCase> {
+        Binding(
+            get: {
+                controller.evalCreationDraft ?? ACEvalCase(
+                    name: "Eval Case",
+                    kind: .focus,
+                    source: ACEvalSource(),
+                    expectation: ACEvalExpectation()
+                )
+            },
+            set: { controller.evalCreationDraft = $0 }
+        )
     }
 }
 
@@ -111,6 +146,10 @@ private struct EpisodesRootView: View {
                     controller.importSelectedEpisodeIntoPromptLab()
                 }
                 .disabled(controller.selectedEpisode == nil)
+                Button("Create Eval Case") {
+                    controller.beginEvalCaseCreationFromSelectedEpisode()
+                }
+                .disabled(controller.selectedEpisode == nil)
             }
             ToolbarItem(placement: .automatic) {
                 Text(controller.statusText)
@@ -120,6 +159,634 @@ private struct EpisodesRootView: View {
         }
         .task(id: controller.selectedEpisodeID) {
             await controller.selectionDidChange()
+        }
+    }
+}
+
+private struct EvalCasesRootView: View {
+    @EnvironmentObject private var controller: InspectorController
+
+    var body: some View {
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                evalFilters
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+                List(selection: Binding(
+                    get: { controller.selectedEvalCaseID },
+                    set: { controller.selectedEvalCaseID = $0 }
+                )) {
+                    ForEach(ACEvalKind.allCases) { kind in
+                        let cases = controller.filteredEvalCases.filter { $0.kind == kind }
+                        if !cases.isEmpty {
+                            Section(kind.displayName) {
+                                ForEach(cases) { evalCase in
+                                    EvalCaseListRow(evalCase: evalCase)
+                                        .tag(evalCase.id)
+                                }
+                                .onDelete { offsets in
+                                    for offset in offsets where cases.indices.contains(offset) {
+                                        controller.deleteEvalCase(id: cases[offset].id)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Eval Cases")
+        } detail: {
+            if let evalCase = controller.selectedEvalCase {
+                EvalCaseDetailView(evalCase: evalCase)
+            } else {
+                ContentUnavailableView("No Eval Case Selected", systemImage: "checklist")
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button("Refresh") {
+                    controller.refreshEvalCases()
+                }
+                Button("Create From Selected Episode") {
+                    controller.beginEvalCaseCreationFromSelectedEpisode()
+                }
+                .disabled(controller.selectedEpisode == nil)
+            }
+            ToolbarItem(placement: .automatic) {
+                Text(controller.evalStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var evalFilters: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("Kind", selection: Binding(
+                    get: { controller.evalKindFilter?.rawValue ?? "" },
+                    set: { controller.evalKindFilter = $0.isEmpty ? nil : ACEvalKind(rawValue: $0) }
+                )) {
+                    Text("All kinds").tag("")
+                    ForEach(ACEvalKind.allCases) { kind in
+                        Text(kind.displayName).tag(kind.rawValue)
+                    }
+                }
+
+                Picker("Importance", selection: Binding(
+                    get: { controller.evalImportanceFilter?.rawValue ?? "" },
+                    set: { controller.evalImportanceFilter = $0.isEmpty ? nil : ACEvalImportance(rawValue: $0) }
+                )) {
+                    Text("All importance").tag("")
+                    ForEach(ACEvalImportance.allCases) { importance in
+                        Text(importance.rawValue).tag(importance.rawValue)
+                    }
+                }
+
+                TextField("category", text: $controller.evalCategoryFilter)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+            }
+            .labelsHidden()
+        }
+    }
+}
+
+private struct EvalCaseListRow: View {
+    let evalCase: ACEvalCase
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                EvalKindBadge(kind: evalCase.kind)
+                Text(evalCase.name)
+                    .font(.headline)
+                    .lineLimit(1)
+            }
+            Text(evalCase.expectedOutcomeSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                Text(evalCase.importance.rawValue)
+                if evalCase.hasScreenshot {
+                    Label("screenshot", systemImage: "photo")
+                }
+                Text(evalCase.source.appName.isEmpty ? "No app" : evalCase.source.appName)
+            }
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct EvalCaseDetailView: View {
+    @EnvironmentObject private var controller: InspectorController
+    let evalCase: ACEvalCase
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                metadataSection
+                inputSection
+                expectationSection
+                if let observed = evalCase.observedOutput {
+                    observedSection(observed)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle(evalCase.name)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                EvalKindBadge(kind: evalCase.kind)
+                Text(evalCase.importance.rawValue)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            Text(evalCase.name)
+                .font(.title2.weight(.semibold))
+            Text(evalCase.expectedOutcomeSummary)
+                .font(.callout)
+            if !evalCase.rationale.cleanedSingleLine.isEmpty {
+                Text(evalCase.rationale)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            FlowWrap(items: evalCase.categories) { category in
+                Text(category)
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.12), in: Capsule())
+            }
+        }
+    }
+
+    private var metadataSection: some View {
+        GroupBox("Source") {
+            VStack(alignment: .leading, spacing: 8) {
+                detailRow("Episode", evalCase.source.episodeID ?? "n/a")
+                detailRow("Session", evalCase.source.sessionID ?? "n/a")
+                detailRow("App", evalCase.source.appName.isEmpty ? "n/a" : evalCase.source.appName)
+                detailRow("Bundle", evalCase.source.bundleIdentifier ?? "n/a")
+                detailRow("Title", evalCase.source.windowTitle ?? "n/a")
+                detailRow("Backend", evalCase.recommendedBackend.rawValue)
+                if let screenshotPath = evalCase.source.screenshotPath ?? evalCase.focusInput?.screenshotPath {
+                    HStack {
+                        detailRow("Screenshot", (screenshotPath as NSString).lastPathComponent)
+                        Spacer()
+                        Button("Open") { controller.openFile(screenshotPath) }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+    }
+
+    private var inputSection: some View {
+        GroupBox("Input") {
+            VStack(alignment: .leading, spacing: 8) {
+                switch evalCase.kind {
+                case .focus:
+                    if let input = evalCase.focusInput {
+                        detailRow("Context", [input.appName, input.windowTitle ?? ""].filter { !$0.isEmpty }.joined(separator: " / "))
+                        detailRow("Goals", input.goals)
+                        detailRow("Recent chat", input.recentUserMessages.joined(separator: "\n"))
+                    }
+                case .chat:
+                    if let input = evalCase.chatInput {
+                        detailRow("Message", input.userMessage)
+                        detailRow("Context", [input.context.frontmostAppName, input.context.frontmostWindowTitle ?? ""].filter { !$0.isEmpty }.joined(separator: " / "))
+                        detailRow("Workflow", input.workflow.rawValue)
+                    }
+                case .chatAction:
+                    if let input = evalCase.chatActionInput {
+                        detailRow("Action", input.action.kind.rawValue)
+                        detailRow("Instruction", input.action.instruction ?? "")
+                        detailRow("Latest message", input.latestUserMessage)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+    }
+
+    private var expectationSection: some View {
+        GroupBox("Expectation") {
+            Text(evalCase.expectedOutcomeSummary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+        }
+    }
+
+    private func observedSection(_ observed: ACEvalObservedOutput) -> some View {
+        GroupBox("Observed Output") {
+            VStack(alignment: .leading, spacing: 8) {
+                detailRow("Summary", observed.summary)
+                detailRow("Model", observed.modelIdentifier ?? "n/a")
+                if let json = observed.json, !json.isEmpty {
+                    PromptLabCodeBlock(title: "JSON", text: json)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(label)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
+            Text(value.isEmpty ? "n/a" : value)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct EvalCaseEditorView: View {
+    @Binding var evalCase: ACEvalCase
+    let onSave: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Create Eval Case")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Save Eval", action: onSave)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(evalCase.name.cleanedSingleLine.isEmpty)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    metadataEditor
+                    expectationEditor
+                    sourceSummary
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var metadataEditor: some View {
+        GroupBox("Case") {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("Name", text: $evalCase.name)
+                Picker("Importance", selection: $evalCase.importance) {
+                    ForEach(ACEvalImportance.allCases) { importance in
+                        Text(importance.rawValue).tag(importance)
+                    }
+                }
+                .pickerStyle(.segmented)
+                TextField("Categories", text: Binding(
+                    get: { evalCase.categories.joined(separator: ", ") },
+                    set: { evalCase.categories = Self.parseCategories($0) }
+                ))
+                TextField("Rationale", text: $evalCase.rationale, axis: .vertical)
+                    .lineLimit(2...5)
+            }
+            .padding(8)
+        }
+    }
+
+    @ViewBuilder
+    private var expectationEditor: some View {
+        switch evalCase.kind {
+        case .focus:
+            focusExpectationEditor
+        case .chat:
+            chatExpectationEditor
+        case .chatAction:
+            chatActionExpectationEditor
+        }
+    }
+
+    private var focusExpectationEditor: some View {
+        GroupBox("Expected Focus Decision") {
+            VStack(alignment: .leading, spacing: 14) {
+                EvalToggleGrid(title: "Accepted assessments") {
+                    ForEach(Self.assessments, id: \.rawValue) { value in
+                        Toggle(value.rawValue, isOn: focusAssessmentBinding(value, accepted: true))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+                EvalToggleGrid(title: "Forbidden assessments") {
+                    ForEach(Self.assessments, id: \.rawValue) { value in
+                        Toggle(value.rawValue, isOn: focusAssessmentBinding(value, accepted: false))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+                EvalToggleGrid(title: "Accepted actions") {
+                    ForEach(Self.actions, id: \.rawValue) { value in
+                        Toggle(value.rawValue, isOn: focusActionBinding(value, accepted: true))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+                EvalToggleGrid(title: "Forbidden actions") {
+                    ForEach(Self.actions, id: \.rawValue) { value in
+                        Toggle(value.rawValue, isOn: focusActionBinding(value, accepted: false))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private var chatExpectationEditor: some View {
+        GroupBox("Expected Chat Output") {
+            VStack(alignment: .leading, spacing: 14) {
+                Toggle("Reply must be non-empty", isOn: Binding(
+                    get: { evalCase.expectation.chat?.replyMustBeNonEmpty ?? true },
+                    set: { value in
+                        var expectation = evalCase.expectation.chat ?? ACEvalChatExpectation()
+                        expectation.replyMustBeNonEmpty = value
+                        evalCase.expectation.chat = expectation
+                    }
+                ))
+                .toggleStyle(.checkbox)
+
+                EvalToggleGrid(title: "Required action kinds") {
+                    ForEach(Self.chatActionKinds, id: \.rawValue) { value in
+                        Toggle(value.rawValue, isOn: chatActionKindBinding(value, required: true))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+                EvalToggleGrid(title: "Forbidden action kinds") {
+                    ForEach(Self.chatActionKinds, id: \.rawValue) { value in
+                        Toggle(value.rawValue, isOn: chatActionKindBinding(value, required: false))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+
+                TextField("Required schedule kind", text: Binding(
+                    get: { evalCase.expectation.chat?.requiredScheduleKind ?? "" },
+                    set: { value in
+                        var expectation = evalCase.expectation.chat ?? ACEvalChatExpectation()
+                        expectation.requiredScheduleKind = value.nilIfBlank
+                        evalCase.expectation.chat = expectation
+                    }
+                ))
+            }
+            .padding(8)
+        }
+    }
+
+    private var chatActionExpectationEditor: some View {
+        GroupBox("Expected Resolved Action") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Kind", selection: Binding(
+                    get: { evalCase.expectation.chatAction?.kind?.rawValue ?? "" },
+                    set: { rawValue in
+                        updateChatActionExpectation { expectation in
+                            expectation.kind = rawValue.isEmpty ? nil : CompanionChatActionKind(rawValue: rawValue)
+                        }
+                    }
+                )) {
+                    Text("Any").tag("")
+                    ForEach(Self.chatActionKinds, id: \.rawValue) { value in
+                        Text(value.rawValue).tag(value.rawValue)
+                    }
+                }
+
+                TextField("Intent", text: chatActionStringBinding(\.intent))
+                TextField("Target type", text: chatActionStringBinding(\.targetType))
+                TextField("Target value", text: chatActionStringBinding(\.targetValue))
+                TextField("Scope", text: chatActionStringBinding(\.scope))
+                TextField("Duration", text: chatActionStringBinding(\.duration))
+                TextField("Duration minutes", text: chatActionIntBinding(\.durationMinutes))
+                TextField("Profile id", text: chatActionStringBinding(\.profileID))
+                TextField("Profile name", text: chatActionStringBinding(\.profileName))
+                TextField("Profile description", text: chatActionStringBinding(\.profileDescription))
+                TextField("Memory text contains", text: chatActionStringBinding(\.textContains))
+                Picker("Locked", selection: chatActionBoolTagBinding(\.locked)) {
+                    Text("Any").tag("")
+                    Text("true").tag("true")
+                    Text("false").tag("false")
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private var sourceSummary: some View {
+        GroupBox("Captured Context") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(evalCase.source.appName) / \(evalCase.source.windowTitle ?? "No title")")
+                Text("Kind: \(evalCase.kind.displayName)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Text("Expected: \(evalCase.expectedOutcomeSummary)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func focusAssessmentBinding(_ value: ModelAssessment, accepted: Bool) -> Binding<Bool> {
+        Binding(
+            get: {
+                let expectation = evalCase.expectation.focus ?? ACEvalFocusExpectation()
+                return accepted
+                    ? expectation.acceptedAssessments.contains(value)
+                    : expectation.forbiddenAssessments.contains(value)
+            },
+            set: { isOn in
+                var expectation = evalCase.expectation.focus ?? ACEvalFocusExpectation()
+                if accepted {
+                    Self.setMembership(value, in: &expectation.acceptedAssessments, isOn: isOn)
+                } else {
+                    Self.setMembership(value, in: &expectation.forbiddenAssessments, isOn: isOn)
+                }
+                evalCase.expectation.focus = expectation
+            }
+        )
+    }
+
+    private func focusActionBinding(_ value: ModelSuggestedAction, accepted: Bool) -> Binding<Bool> {
+        Binding(
+            get: {
+                let expectation = evalCase.expectation.focus ?? ACEvalFocusExpectation()
+                return accepted
+                    ? expectation.acceptedActions.contains(value)
+                    : expectation.forbiddenActions.contains(value)
+            },
+            set: { isOn in
+                var expectation = evalCase.expectation.focus ?? ACEvalFocusExpectation()
+                if accepted {
+                    Self.setMembership(value, in: &expectation.acceptedActions, isOn: isOn)
+                } else {
+                    Self.setMembership(value, in: &expectation.forbiddenActions, isOn: isOn)
+                }
+                evalCase.expectation.focus = expectation
+            }
+        )
+    }
+
+    private func chatActionKindBinding(_ value: CompanionChatActionKind, required: Bool) -> Binding<Bool> {
+        Binding(
+            get: {
+                let expectation = evalCase.expectation.chat ?? ACEvalChatExpectation()
+                return required
+                    ? expectation.requiredActionKinds.contains(value)
+                    : expectation.forbiddenActionKinds.contains(value)
+            },
+            set: { isOn in
+                var expectation = evalCase.expectation.chat ?? ACEvalChatExpectation()
+                if required {
+                    Self.setMembership(value, in: &expectation.requiredActionKinds, isOn: isOn)
+                } else {
+                    Self.setMembership(value, in: &expectation.forbiddenActionKinds, isOn: isOn)
+                }
+                evalCase.expectation.chat = expectation
+            }
+        )
+    }
+
+    private func chatActionStringBinding(_ keyPath: WritableKeyPath<ACEvalChatActionExpectation, String?>) -> Binding<String> {
+        Binding(
+            get: { (evalCase.expectation.chatAction ?? ACEvalChatActionExpectation())[keyPath: keyPath] ?? "" },
+            set: { value in
+                updateChatActionExpectation { expectation in
+                    expectation[keyPath: keyPath] = value.nilIfBlank
+                }
+            }
+        )
+    }
+
+    private func chatActionIntBinding(_ keyPath: WritableKeyPath<ACEvalChatActionExpectation, Int?>) -> Binding<String> {
+        Binding(
+            get: {
+                guard let value = (evalCase.expectation.chatAction ?? ACEvalChatActionExpectation())[keyPath: keyPath] else {
+                    return ""
+                }
+                return String(value)
+            },
+            set: { value in
+                updateChatActionExpectation { expectation in
+                    expectation[keyPath: keyPath] = Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            }
+        )
+    }
+
+    private func chatActionBoolTagBinding(_ keyPath: WritableKeyPath<ACEvalChatActionExpectation, Bool?>) -> Binding<String> {
+        Binding(
+            get: {
+                guard let value = (evalCase.expectation.chatAction ?? ACEvalChatActionExpectation())[keyPath: keyPath] else {
+                    return ""
+                }
+                return value ? "true" : "false"
+            },
+            set: { value in
+                updateChatActionExpectation { expectation in
+                    switch value {
+                    case "true": expectation[keyPath: keyPath] = true
+                    case "false": expectation[keyPath: keyPath] = false
+                    default: expectation[keyPath: keyPath] = nil
+                    }
+                }
+            }
+        )
+    }
+
+    private func updateChatActionExpectation(_ mutate: (inout ACEvalChatActionExpectation) -> Void) {
+        var expectation = evalCase.expectation.chatAction ?? ACEvalChatActionExpectation()
+        mutate(&expectation)
+        evalCase.expectation.chatAction = expectation
+    }
+
+    private static func parseCategories(_ value: String) -> [String] {
+        value
+            .split(separator: ",")
+            .map { ACEvalStore.normalizeCategory(String($0)) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func setMembership<T: Equatable>(_ value: T, in values: inout [T], isOn: Bool) {
+        if isOn {
+            if !values.contains(value) {
+                values.append(value)
+            }
+        } else {
+            values.removeAll { $0 == value }
+        }
+    }
+
+    private static let assessments: [ModelAssessment] = [.focused, .distracted, .unclear]
+    private static let actions: [ModelSuggestedAction] = [.none, .nudge, .overlay, .abstain]
+    private static let chatActionKinds: [CompanionChatActionKind] = [.profile, .memory, .focusPolicy, .recurringNudge]
+}
+
+private struct EvalToggleGrid<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 8) {
+                content()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct EvalKindBadge: View {
+    let kind: ACEvalKind
+
+    var body: some View {
+        Text(kind.displayName)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.18), in: Capsule())
+            .foregroundStyle(color)
+            .overlay(Capsule().stroke(color.opacity(0.35), lineWidth: 0.5))
+    }
+
+    private var color: Color {
+        switch kind {
+        case .focus: return .blue
+        case .chat: return .green
+        case .chatAction: return .orange
+        }
+    }
+}
+
+private struct FlowWrap<Item: Hashable, Content: View>: View {
+    let items: [Item]
+    @ViewBuilder let content: (Item) -> Content
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 6)], alignment: .leading, spacing: 6) {
+            ForEach(items, id: \.self) { item in
+                content(item)
+            }
         }
     }
 }
@@ -1209,8 +1876,13 @@ private struct InspectorDetailView: View {
                             .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
                     )
 
-                Button("Save annotation") {
-                    controller.saveAnnotation()
+                HStack {
+                    Button("Save annotation") {
+                        controller.saveAnnotation()
+                    }
+                    Button("Create Eval Case") {
+                        controller.beginEvalCaseCreationFromSelectedEpisode()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

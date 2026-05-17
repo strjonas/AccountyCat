@@ -247,7 +247,7 @@ final class AppController: ObservableObject {
         restorePendingScheduledActions()
         recomputeTodayStats()
         NotificationCenter.default.addObserver(
-            forName: NSProcessInfo.powerStateDidChangeNotification,
+            forName: NSNotification.Name.NSProcessInfoPowerStateDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in

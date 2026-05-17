@@ -245,15 +245,9 @@ struct BrainServiceConfigurationTests {
         brainService.contextProvider = { context }
         brainService.idleSecondsProvider = { 0 }
 
-        let blocker = Task {
-            try? await runtime.withInteractiveRequest {
-                try await Task.sleep(nanoseconds: 300_000_000)
-            }
+        await runtime.withInteractiveRequest {
+            await brainService.tick()
         }
-        try? await Task.sleep(nanoseconds: 20_000_000)
-
-        await brainService.tick()
-        blocker.cancel()
 
         #expect(latestStatus.contains("Local chat has priority"))
         #expect(state.algorithmState.llmPolicy.distraction.nextEvaluationAt != nil)

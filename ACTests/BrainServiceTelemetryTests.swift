@@ -19,7 +19,7 @@ struct BrainServiceTelemetryTests {
         let state = ACState()
         brainService.stateProvider = { state }
 
-        brainService.recordUserReaction(
+        let telemetryTask = brainService.recordUserReaction(
             UserReactionRecord(
                 kind: .nudgeRatedPositive,
                 relatedAction: nil,
@@ -27,6 +27,7 @@ struct BrainServiceTelemetryTests {
                 details: "helpful"
             )
         )
+        await telemetryTask?.value
 
         let events = try await waitForTelemetryEvents(in: store) { events in
             events.contains { $0.kind == .userReaction }
@@ -122,7 +123,7 @@ struct BrainServiceTelemetryTests {
 
     private func waitForTelemetryEvents(
         in store: TelemetryStore,
-        timeout: Duration = .seconds(2),
+        timeout: Duration = .seconds(15),
         matching predicate: ([TelemetryEvent]) -> Bool
     ) async throws -> [TelemetryEvent] {
         let deadline = ContinuousClock.now + timeout

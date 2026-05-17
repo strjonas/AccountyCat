@@ -24,6 +24,7 @@ Load on demand:
 - `docs/reference/state-persistence-and-testing.md` — state / persistence / tests / migrations
 - `docs/reference/telemetry-inspector-and-debugging.md` — telemetry / Inspector / debug bundles
 - `dev/agents/accountycat-debugger/SKILL.md` — live/runtime debugging from telemetry, logs, Inspector output, or an exported debug bundle
+- `dev/agents/accountycat-eval/SKILL.md` — listing/running local eval cases captured from Inspector
 
 Do not load the whole `docs/` tree into every session. `core/` is the default context; `reference/` and `experiments/` are on-demand.
 

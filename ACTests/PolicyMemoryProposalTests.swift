@@ -401,12 +401,8 @@ struct PolicyMemoryProposalControllerTests {
         controller.overlayVisible = true
         controller.overlayAppealDraft = "short, reviewing stories on friends is okay"
 
-        controller.submitOverlayAppeal()
-
-        let deadline = Date().addingTimeInterval(5)
-        while controller.sendingOverlayAppeal && Date() < deadline {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
+        let appealTask = try #require(controller.submitOverlayAppeal())
+        await appealTask.value
 
         #expect(controller.activeOverlay == nil)
         #expect(controller.overlayVisible == false)

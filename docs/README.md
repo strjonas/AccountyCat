@@ -35,7 +35,7 @@ These are implementation references. They are intentionally narrower and more li
 | `reference/monitoring-pipeline.md` | Brain loop, evaluation flow, appeals, policy updates, nudges/escalations. | Medium-high |
 | `reference/runtime-providers-and-setup.md` | First-run setup, local runtime install, model selection, OpenRouter/OpenAI routing. | Medium-high |
 | `reference/state-persistence-and-testing.md` | `ACState`, storage paths, migrations, test isolation, fixtures. | Medium |
-| `reference/telemetry-inspector-and-debugging.md` | Telemetry sessions/artifacts, ACInspector, debug bundles, runtime triage. | Medium |
+| `reference/telemetry-inspector-and-debugging.md` | Telemetry sessions/artifacts, ACInspector, eval cases, debug bundles, runtime triage. | Medium |
 
 ### Temporary / removable docs
 
