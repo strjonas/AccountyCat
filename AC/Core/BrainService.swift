@@ -949,7 +949,12 @@ final class BrainService: NSObject {
         }
 
         let idleSeconds = idleSecondsProvider?() ?? SnapshotService.idleSeconds()
-        if idleSeconds >= 60 {
+        // When the last known assessment is distracted, passive consumption (e.g. watching a video
+        // without touching the keyboard) should not reset monitoring. Use a much longer idle gate
+        // so AC keeps checking while the user is visibly off-task.
+        let lastDistracted = state.algorithmState.llmPolicy.distraction.lastAssessment == .distracted
+        let idleThreshold: TimeInterval = lastDistracted ? 5 * 60 : 60
+        if idleSeconds >= idleThreshold {
             cancelActiveEvaluationIfNeeded(reason: "idle_reset")
             await endActiveEpisode(
                 reason: .idleReset,

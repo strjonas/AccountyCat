@@ -1666,15 +1666,19 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             relevantActions: relevantActions
         )
 
+        let isSharp = input.configuration.cadenceMode == .sharp
+
         if input.activeProfileID == PolicyRule.defaultProfileID,
            !hasActiveRestrictiveRule {
             guard input.recentlyEndedSession == nil else {
                 return false
             }
-            return distraction.consecutiveDistractedCount >= 3 || matchingRecentNudges >= 3
+            let threshold = isSharp ? 2 : 3
+            return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
         }
 
-        if distraction.consecutiveDistractedCount >= 2 {
+        let namedThreshold = isSharp ? 1 : 2
+        if distraction.consecutiveDistractedCount >= namedThreshold {
             return true
         }
 
@@ -1693,9 +1697,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             relevantActions: relevantActions
         )
 
+        let isSharp = input.configuration.cadenceMode == .sharp
+
         if input.activeProfileID == PolicyRule.defaultProfileID {
             if hasActiveRestrictiveRule {
-                return distraction.consecutiveDistractedCount >= 2 || matchingRecentNudges >= 2
+                let threshold = isSharp ? 1 : 2
+                return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
             }
 
             // A recently ended focus session is explanatory context, not a live contract.
@@ -1704,14 +1711,16 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 return false
             }
 
-            return distraction.consecutiveDistractedCount >= 3 || matchingRecentNudges >= 3
+            let threshold = isSharp ? 2 : 3
+            return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
         }
 
         if hasActiveRestrictiveRule {
             return distraction.consecutiveDistractedCount >= 1 || matchingRecentNudges >= 1
         }
 
-        return distraction.consecutiveDistractedCount >= 2 || matchingRecentNudges >= 2
+        let threshold = isSharp ? 1 : 2
+        return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
     }
 
     private func matchingRecentNudgeCount(
