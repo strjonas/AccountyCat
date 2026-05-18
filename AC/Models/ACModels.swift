@@ -789,10 +789,10 @@ struct RecentInteractionAllowance: Codable, Hashable, Sendable {
         now >= expiresAt
     }
 
-    /// Canonical builder. For browsers we drop `contextKey` and `windowTitle` so the
-    /// allowance spans adjacent tabs of the same research session. For everything else
-    /// we keep the exact window — distinct windows in a native app usually mean distinct
-    /// activities (e.g. two Slack channels, two Notes notes) and shouldn't be conflated.
+    /// Canonical builder. Feedback allowances stay narrow on browsers and other
+    /// title-scoped surfaces so a user correction for one tab/thread does not exempt
+    /// unrelated content a few seconds later. Less ambiguous native apps can still use
+    /// the exact current context key.
     static func make(
         bundleIdentifier: String?,
         appName: String?,
@@ -806,14 +806,17 @@ struct RecentInteractionAllowance: Codable, Hashable, Sendable {
         guard bundleIdentifier != nil || (cleanedAppName?.isEmpty == false) else {
             return nil
         }
-        let browserLike = MonitoringHeuristics.isBrowser(bundleIdentifier: bundleIdentifier)
+        let narrowScopeRequired = MonitoringHeuristics.requiresNarrowFeedbackAllowance(
+            bundleIdentifier: bundleIdentifier
+        )
+        let cleanedWindowTitle = windowTitle?.cleanedSingleLine
         return RecentInteractionAllowance(
             createdAt: now,
             expiresAt: now.addingTimeInterval(duration),
-            contextKey: browserLike ? nil : contextKey,
+            contextKey: narrowScopeRequired ? nil : contextKey,
             bundleIdentifier: bundleIdentifier,
             appName: cleanedAppName,
-            windowTitle: browserLike ? nil : windowTitle?.cleanedSingleLine,
+            windowTitle: narrowScopeRequired ? cleanedWindowTitle : nil,
             reason: reason.cleanedSingleLine
         )
     }

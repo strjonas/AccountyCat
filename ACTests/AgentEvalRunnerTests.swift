@@ -16,7 +16,7 @@ struct AgentEvalCommandRunnerTests {
         let options = request.map(ACEvalRunnerOptions.init(request:)) ?? ACEvalRunnerOptions(environment: env)
         let store = ACEvalStore(rootURL: options.rootURL ?? ACEvalStore().rootURL)
         let cases = try options.filteredCases(from: store)
-        let executor = ACEvalExecutor(environment: env)
+        let executor = ACEvalExecutor(environment: Self.mergedEvalEnvironment(base: env, request: request))
         let results = await executor.run(
             cases: cases,
             backend: options.backend,
@@ -26,7 +26,11 @@ struct AgentEvalCommandRunnerTests {
         let output = ACEvalRunnerOutput(results: results)
         let json = Self.jsonString(output)
         if let resultPath = request?.resultPath ?? env["AC_EVAL_RESULT_PATH"], !resultPath.isEmpty {
-            try json.write(to: URL(fileURLWithPath: resultPath), atomically: true, encoding: .utf8)
+            try json.write(
+                to: URL(fileURLWithPath: resultPath),
+                atomically: true,
+                encoding: String.Encoding.utf8
+            )
         }
         print("AC_EVAL_RUNNER_RESULT \(json)")
         #expect(output.failedCount == 0)
@@ -59,6 +63,20 @@ struct AgentEvalCommandRunnerTests {
             return request
         }
         return nil
+    }
+
+    private static func mergedEvalEnvironment(
+        base: [String: String],
+        request: ACEvalRunnerFileRequest?
+    ) -> [String: String] {
+        var merged = base
+        if let key = request?.openRouterAPIKey, !key.isEmpty {
+            merged["AC_EVAL_OPENROUTER_API_KEY"] = key
+        }
+        if let key = request?.openAIAPIKey, !key.isEmpty {
+            merged["AC_EVAL_OPENAI_API_KEY"] = key
+        }
+        return merged
     }
 }
 
@@ -354,6 +372,8 @@ private struct ACEvalRunnerFileRequest: Codable {
     var limit: Int?
     var onlineModel: String?
     var runtimePath: String?
+    var openRouterAPIKey: String?
+    var openAIAPIKey: String?
     var resultPath: String
 }
 

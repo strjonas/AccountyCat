@@ -33,6 +33,7 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
             name: input.activeProfileName,
             isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
             description: input.activeProfileDescription,
+            goalSummary: input.activeProfileGoalSummary,
             activatedAt: input.activeProfileActivatedAt,
             expiresAt: input.activeProfileExpiresAt
         )
@@ -463,6 +464,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     bundleIdentifier: input.snapshot.bundleIdentifier,
                     windowTitle: compactWindowTitle,
                     recentSwitches: compactSwitches,
+                    recentActivityTimeline: compactSwitches,
                     usage: compactUsage,
                     currentContextSeconds: currentContextSeconds,
                     recentInterventions: compactInterventions,
@@ -577,7 +579,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     hasActiveRestrictiveRule: hasActiveRestrictiveRule
                 ) {
                     action = .none
-                    blockReason = "everyday_overlay_requires_stronger_evidence"
+                    blockReason = input.activeProfileID == PolicyRule.defaultProfileID
+                        ? "everyday_overlay_requires_stronger_evidence"
+                        : "overlay_requires_repeat_or_rule"
                 } else {
                     let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
                     let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
@@ -1219,6 +1223,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             bundleIdentifier: input.snapshot.bundleIdentifier,
             windowTitle: compactWindowTitle,
             recentSwitches: compactSwitches,
+            recentActivityTimeline: compactSwitches,
             usage: compactUsage,
             currentContextSeconds: input.algorithmState.llmPolicy.currentContextEnteredAt.map {
                 max(0, input.now.timeIntervalSince($0))
@@ -1683,26 +1688,30 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         distraction: DistractionMetadata,
         hasActiveRestrictiveRule: Bool
     ) -> Bool {
-        guard input.activeProfileID == PolicyRule.defaultProfileID else {
-            return true
-        }
-
         let matchingRecentNudges = matchingRecentNudgeCount(
             input: input,
             relevantActions: relevantActions
         )
 
+        if input.activeProfileID == PolicyRule.defaultProfileID {
+            if hasActiveRestrictiveRule {
+                return distraction.consecutiveDistractedCount >= 2 || matchingRecentNudges >= 2
+            }
+
+            // A recently ended focus session is explanatory context, not a live contract.
+            // In Everyday mode it should never be enough to force an overlay by itself.
+            guard input.recentlyEndedSession == nil else {
+                return false
+            }
+
+            return distraction.consecutiveDistractedCount >= 3 || matchingRecentNudges >= 3
+        }
+
         if hasActiveRestrictiveRule {
-            return distraction.consecutiveDistractedCount >= 2 || matchingRecentNudges >= 2
+            return distraction.consecutiveDistractedCount >= 1 || matchingRecentNudges >= 1
         }
 
-        // A recently ended focus session is explanatory context, not a live contract.
-        // In Everyday mode it should never be enough to force an overlay by itself.
-        guard input.recentlyEndedSession == nil else {
-            return false
-        }
-
-        return distraction.consecutiveDistractedCount >= 3 || matchingRecentNudges >= 3
+        return distraction.consecutiveDistractedCount >= 2 || matchingRecentNudges >= 2
     }
 
     private func matchingRecentNudgeCount(

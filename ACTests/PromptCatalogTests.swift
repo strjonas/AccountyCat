@@ -22,7 +22,7 @@ struct PromptCatalogTests {
         #expect(systemPrompt.contains("policySummary"))
         #expect(systemPrompt.contains("the newest relevant user statement wins"))
         #expect(systemPrompt.contains("review/debug/inspector tool"))
-        #expect(onlineDecisionPrompt.contains("Trust the current screenshot/frontmost app more than stale `usage`"))
+        #expect(onlineDecisionPrompt.contains("Trust the current screenshot/frontmost app and `recentActivityTimeline` more than stale `usage`"))
         #expect(onlineDecisionPrompt.contains("review, debugger, inspector, prompt-lab"))
         #expect(perceptionPrompt.contains("Do not decide whether the activity matches the user's current intent or policy rules yet."))
         #expect(runtimeProfile.options(for: .decision).ctxSize == 3072)

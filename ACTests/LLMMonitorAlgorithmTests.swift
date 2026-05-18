@@ -40,12 +40,23 @@ struct LLMMonitorAlgorithmTests {
         let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
         let algorithm = makeAlgorithm()
         let now = Date(timeIntervalSince1970: 6_000)
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: "com.google.Chrome|docs",
+            stableSince: now.addingTimeInterval(-90),
+            lastAssessment: .distracted,
+            consecutiveDistractedCount: 1,
+            nextEvaluationAt: nil
+        )
+        state.llmPolicy.currentContextKey = "com.google.Chrome|docs"
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-90)
 
         let result = await algorithm.evaluate(
             input: makeDecisionInput(
                 now: now,
                 evaluationID: "eval-overlay",
                 runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
                 activeProfileID: "coding",
                 activeProfileName: "Coding"
             )
@@ -79,12 +90,23 @@ struct LLMMonitorAlgorithmTests {
         let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
         let algorithm = makeAlgorithm()
         let now = Date(timeIntervalSince1970: 7_000)
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: "com.google.Chrome|docs",
+            stableSince: now.addingTimeInterval(-90),
+            lastAssessment: .distracted,
+            consecutiveDistractedCount: 1,
+            nextEvaluationAt: nil
+        )
+        state.llmPolicy.currentContextKey = "com.google.Chrome|docs"
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-90)
 
         let result = await algorithm.evaluate(
             input: makeDecisionInput(
                 now: now,
                 evaluationID: "eval-overlay-cooldown",
                 runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
                 activeProfileID: "coding",
                 activeProfileName: "Coding"
             )
@@ -169,6 +191,34 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func namedProfileFirstOverlaySuggestionRequiresRepeatEvidence() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"distracted","suggested_action":"overlay","confidence":0.96,"reason_tags":["off_task_shopping"],"overlay_headline":"Pause.","overlay_body":"This looks off-track.","overlay_prompt":"Why continue?"}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_275)
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-named-first-overlay",
+                runtimeOverride: runtimeFixture.runtimePath,
+                activeProfileID: "coding",
+                activeProfileName: "Coding",
+                activeProfileDescription: "Focus for coding and development work"
+            )
+        )
+
+        #expect(result.policy.action == .none)
+        #expect(result.policy.record.blockReason == "overlay_requires_repeat_or_rule")
+        #expect(result.updatedAlgorithmState.llmPolicy.activeAppeal == nil)
+        #expect(result.updatedAlgorithmState.llmPolicy.lastOverlayAt == nil)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 1)
+    }
+
+    @Test
     func usagePayloadLabelsDailyAppTotalsAndSeparatesCurrentContextDuration() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.decision = """
@@ -201,6 +251,58 @@ struct LLMMonitorAlgorithmTests {
         })
         #expect(decisionAttempt.payloadJSON.contains(#""scope":"today_app_total""#))
         #expect(decisionAttempt.payloadJSON.contains(#""currentContextSeconds":300"#))
+    }
+
+    @Test
+    func payloadIncludesSessionGoalSummaryAndRecentActivityTimeline() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"focused","suggested_action":"none","confidence":0.9,"reason_tags":["payload_check"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_320)
+
+        let snapshot = AppSnapshot(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Google Calendar - Week of May 18, 2026",
+            recentSwitches: [
+                AppSwitchRecord(fromAppName: "Google Chrome", toAppName: "Google Chrome", toWindowTitle: "Google Calendar - Week of May 18, 2026", timestamp: now.addingTimeInterval(-10)),
+                AppSwitchRecord(fromAppName: "Google Chrome", toAppName: "Google Chrome", toWindowTitle: "Inbox - Gmail", timestamp: now.addingTimeInterval(-15)),
+                AppSwitchRecord(fromAppName: "Google Chrome", toAppName: "Google Chrome", toWindowTitle: "Order details", timestamp: now.addingTimeInterval(-20)),
+            ],
+            perAppDurations: [
+                AppUsageRecord(appName: "Google Chrome", seconds: 1200),
+                AppUsageRecord(appName: "Xcode", seconds: 3600),
+            ],
+            screenshotArtifact: nil,
+            screenshotThumbnail: nil,
+            screenshotPath: nil,
+            idle: false,
+            timestamp: now
+        )
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-goal-summary-payload",
+                runtimeOverride: runtimeFixture.runtimePath,
+                snapshot: snapshot,
+                activeProfileID: "coding",
+                activeProfileName: "Coding",
+                activeProfileDescription: "Focus for coding and development work",
+                activeProfileGoalSummary: "coding with browsing/order errands allowed right now"
+            )
+        )
+
+        let decisionAttempt = try #require(result.evaluation.attempts.first {
+            $0.promptMode == "decision"
+        })
+        #expect(decisionAttempt.payloadJSON.contains(#""goalSummary":"coding with browsing"#))
+        #expect(decisionAttempt.payloadJSON.contains(#""recentActivityTimeline""#))
+        #expect(decisionAttempt.payloadJSON.contains("Google Calendar - Week of May 18, 2026"))
+        #expect(decisionAttempt.payloadJSON.contains("Order details"))
     }
 
     @Test
@@ -466,6 +568,45 @@ struct LLMMonitorAlgorithmTests {
         #expect(result.policy.record.blockReason == "recent_user_feedback_override")
         #expect(result.evaluation.attempts.isEmpty)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
+    }
+
+    @Test
+    func browserRecentInteractionAllowanceDoesNotCoverDifferentTabTitle() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = try #require(makeLocalPromptDate("2026-04-25 14:36"))
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.recentInteractionAllowances = [
+            RecentInteractionAllowance(
+                createdAt: now.addingTimeInterval(-60),
+                expiresAt: now.addingTimeInterval(10 * 60),
+                contextKey: nil,
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                windowTitle: "Docs",
+                reason: "user correction"
+            )
+        ]
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-browser-allowance-scope",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: makeSnapshot(
+                    now: now,
+                    appName: "Google Chrome",
+                    windowTitle: "Instagram",
+                    bundleIdentifier: "com.google.Chrome"
+                )
+            )
+        )
+
+        #expect(result.policy.action == .showNudge("Back to the build."))
+        #expect(result.decision.assessment == .distracted)
+        #expect(result.policy.record.blockReason != "recent_user_feedback_override")
+        #expect(result.evaluation.attempts.isEmpty == false)
     }
 
     @Test
@@ -833,7 +974,7 @@ struct LLMMonitorAlgorithmTests {
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.count == 1)
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.appName == "Google Chrome")
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.contextKey == nil)
-        #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.windowTitle == nil)
+        #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.windowTitle == "Docs")
     }
 
     private func makeAlgorithm(
@@ -864,6 +1005,7 @@ struct LLMMonitorAlgorithmTests {
         activeProfileID: String = PolicyRule.defaultProfileID,
         activeProfileName: String = FocusProfile.defaultDisplayName,
         activeProfileDescription: String? = nil,
+        activeProfileGoalSummary: String? = nil,
         activeProfileActivatedAt: Date? = nil,
         activeProfileExpiresAt: Date? = nil,
         recentlyEndedSession: RecentlyEndedSessionSummary? = nil
@@ -890,6 +1032,7 @@ struct LLMMonitorAlgorithmTests {
             activeProfileID: activeProfileID,
             activeProfileName: activeProfileName,
             activeProfileDescription: activeProfileDescription,
+            activeProfileGoalSummary: activeProfileGoalSummary,
             activeProfileActivatedAt: activeProfileActivatedAt,
             activeProfileExpiresAt: activeProfileExpiresAt,
             recentlyEndedSession: recentlyEndedSession

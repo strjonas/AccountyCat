@@ -144,7 +144,7 @@ The monitoring payload is profile-aware.
 - A negative "it's fine" nudge rating is explicit false-positive correction. It records app/title/profile context, emits `nudgeMarkedFine`, installs a short recent-interaction allowance, and can drive a narrow profile-scoped rule or proposal through the policy-memory pipeline. For browser, media, social, chat, and email surfaces, this signal must not allow the whole app by itself.
 - Hard escalations can reopen if the user returns to the blocked app.
 - Overlay appeals go back through `LLMMonitorAlgorithm.reviewAppeal(...)`.
-- An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` widens the scope to whole-app for browsers (research spans adjacent tabs) and keeps it window-scoped for everything else. Duration is set per cadence mode.
+- An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` keeps browsers and other title-scoped surfaces narrow so one tab/thread correction does not exempt unrelated content in the same app a moment later. Less ambiguous native apps still use the exact current context key. Duration is set per cadence mode.
 - Chat actions that mutate monitored state (profile changes, memory writes, focus-policy changes including safelist-like allows/disallows) call `BrainService.invalidateContextAndCooldown(reason:)`. This clears the current-context decision cache and resets the global cooldown without scheduling an immediate tick; the next natural app/context change drives a fresh evaluation. Any in-flight appeal session is preserved so a correction in chat does not silently dismiss an open appeal sheet.
 
 ## Safelist Promotion

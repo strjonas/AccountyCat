@@ -121,6 +121,8 @@ struct RunRequest: Codable {
     var limit: Int?
     var onlineModel: String?
     var runtimePath: String?
+    var openRouterAPIKey: String?
+    var openAIAPIKey: String?
     var resultPath: String
 }
 
@@ -206,6 +208,8 @@ func runEval(_ args: Arguments) {
         limit: args.limit,
         onlineModel: args.onlineModel,
         runtimePath: args.runtimePath,
+        openRouterAPIKey: environment["AC_EVAL_OPENROUTER_API_KEY"],
+        openAIAPIKey: environment["AC_EVAL_OPENAI_API_KEY"],
         resultPath: resultURL.path
     )
     let requestData = (try? JSONEncoder().encode(request)) ?? Data("{}".utf8)

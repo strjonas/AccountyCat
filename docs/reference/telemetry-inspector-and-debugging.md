@@ -103,8 +103,10 @@ AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval
 AC_EVAL_OPENAI_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend online --online-model <model> --ids <case-id> --json
 ```
 
-The eval runner does not read Keychain. Prefer local evals and filtered online slices;
-eval cases can contain personal titles, chat messages, and screenshots.
+The eval runner does not read Keychain. The shell wrapper writes any supplied online
+API key into the temporary runner request so the `xcodebuild`-hosted eval path sees
+the same credential. Prefer local evals and filtered online slices; eval cases can
+contain personal titles, chat messages, and screenshots.
 
 ## Debug Bundles
 

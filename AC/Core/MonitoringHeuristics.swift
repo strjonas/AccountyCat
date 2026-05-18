@@ -131,6 +131,15 @@ enum MonitoringHeuristics {
         return ambiguousContentBundleIdentifiers.contains(bundleIdentifier)
     }
 
+    /// Surfaces where a short-lived user-feedback allowance should stay narrow.
+    /// Browsers, chat, email, and other title-scoped apps can flip from legitimate work
+    /// to distraction too quickly for a whole-app recent override to be trustworthy.
+    nonisolated static func requiresNarrowFeedbackAllowance(bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return isBrowser(bundleIdentifier: bundleIdentifier)
+            || titleScopedBundleIdentifiers.contains(bundleIdentifier)
+    }
+
     /// True when the title structurally proves it carries the actual content signal —
     /// looks like an editor / document / issue-tracker title, not a media or generic app title.
     /// Conservative on purpose: we'd rather pay for an unnecessary screenshot than miss intent.

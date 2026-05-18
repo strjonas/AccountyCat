@@ -106,6 +106,7 @@ enum ACPromptSets {
 
     private static let usageSemanticsClause = """
     `usage` is all-day app-level usage (`scope=today_app_total`), not current tab/site/window time. For browsers, never infer "30 minutes on Reddit" from Chrome/Safari usage. Use `currentContextSeconds`, `recentSwitches`, title/perception, and screenshot for current-session duration.
+    `recentActivityTimeline` is the short chronology of the user's last visible windows/apps. Prefer it over `usage` when they conflict.
     """
 
     /// Mode-specific instruction block for everyday (default profile) operation.
@@ -132,6 +133,7 @@ enum ACPromptSets {
     - The user opted in to being checked, but adjacent plausible work is not suspicious by default.
     - Judge the actual content/task first: title, URL-like title text, perception summaries, screenshot, and conversation/topic beat broad app category unless an active rule names the app/category.
     - Interpret sparse profile names as broad archetypes. "Coding", "Writing", "Research", "Studying", and similar short profiles include adjacent work such as docs, tutorials, examples, planning, project chat, reference material, and debugging.
+    - `activeProfile.goalSummary` is the current session's activation intent. If it mentions temporary lenience like browsing, ordering, errands, or admin being okay right now, treat that as a soft allowance for adjacent detours during this session unless a current restrictive rule says otherwise.
     - Specific profile descriptions and active rules narrow the scope. If the user says "code writing only", "no tutorials", "drafting only", or similar, enforce that stricter scope.
     - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
     - If `activeProfile.activatedAt` is recent (roughly the first 10 minutes), calibrate carefully: require strong evidence before nudging plausible adjacent work, but still nudge clear unrelated drift.
@@ -147,6 +149,7 @@ enum ACPromptSets {
     - Everyday after expiry: activeProfile.isDefault=true, recentlyEndedSession=Writing essay, current title="Sonnencreme Gesicht | dm", newest user message="but I finished that session no?" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","session_already_ended","life_admin_allowed"]}
     - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
     - Generic coding profile: activeProfile.name="Coding", activeProfile.description missing, current title="README tutorial for macOS apps - YouTube" → {"assessment":"focused","suggested_action":"none","reason_tags":["broad_profile_archetype","adjacent_learning"]}
+    - Coding session with lenience: activeProfile.name="Coding", activeProfile.goalSummary="coding with browsing/order errands allowed right now", current title="Google Calendar - Week of May 18, 2026" → {"assessment":"focused","suggested_action":"none","reason_tags":["session_goal_lenience","adjacent_errand_allowed"]}
     - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
     - Everyday with a real rule: activeProfile.isDefault=true, policySummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
@@ -243,12 +246,13 @@ enum ACPromptSets {
                 Decision rules:
                 - Activity supports the user's current intent or matches an allowance → `focused` + `none`.
                 - Newer explicit allowance or correction in `recentUserMessages` for the current app/activity overrides an older nudge or stale suspicion → `focused` + `none`.
+                - Treat `activeProfile.goalSummary` as the contract for THIS activation. It can be broader or more situational than the static profile description.
                 - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
                 - Genuinely unclear → `unclear` + `abstain`.
                 - Conflicts with the user's current intent or an active restriction → `distracted`.
                 - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
                 - First clear distraction → `nudge`. Repeated distraction already in the payload AND no newer allowance/correction → `overlay`.
-                - Trust the current screenshot/frontmost app more than stale `usage`, `recentSwitches`, or an older intervention message when they conflict.
+                - Trust the current screenshot/frontmost app and `recentActivityTimeline` more than stale `usage`, `recentSwitches`, or an older intervention message when they conflict.
                 - If the screenshot shows a review, debugger, inspector, prompt-lab, or other meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
                 - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
                 - When the screenshot is missing (`screenshotIncluded=false`), prefer `focused` or `unclear` unless the text context is clearly distracting.
@@ -312,13 +316,14 @@ enum ACPromptSets {
                 - Activity supports the user's current intent OR is covered by an allowance in memory/chat → `focused` + `none`.
                 - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
                 - A newer user correction that a recent nudge/overlay was wrong supersedes that older intervention for the current activity.
+                - Treat `activeProfile.goalSummary` as the contract for THIS activation. It can be broader or more situational than the static profile description.
                 - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
                 - Genuinely unclear after using the full payload → `unclear` + `abstain`.
                 - Activity conflicts with the user's current intent or an active restriction → `distracted`.
                 - First clear distraction → `nudge`.
                 - Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity, and no newer allowance) → `overlay`.
                 - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
-                - Trust what the user is doing now more than stale usage summaries when they conflict.
+                - Trust what the user is doing now and `recentActivityTimeline` more than stale usage summaries when they conflict.
                 - If the visible surface is a review/debug/inspector tool showing prior activity, judge the current work as reviewing/debugging/tooling unless the payload clearly says otherwise.
                 - Development tools, editors, terminals, docs, research, reading, planning, and drafting default to `focused` unless the payload clearly says otherwise.
                 - Prefer silence over a false positive.
@@ -731,6 +736,7 @@ enum ACPromptSets {
     Use availableProfiles IDs when reusing a similar profile. Create only when no existing profile fits.
     If no duration is specified, omit durationMinutes. Do not invent rules or memory here.
     For broad archetype profiles like Coding, Writing, Research, or Studying, use broad non-restrictive descriptions unless the user explicitly gives exclusions.
+    Preserve important session-specific nuance in `reason` when the user mixes focus with temporary lenience, e.g. "coding, but browsing/order errands are okay right now". Do not silently collapse that into a strict code-only activation.
     Return JSON only.
 
     Examples:
@@ -745,6 +751,9 @@ enum ACPromptSets {
 
     Hint: "create a reading mode profile"
     → {"action":{"kind":"profile","intent":"create","profileName":"Reading","profileDescription":"Relaxed focus for reading sessions"}}
+
+    Hint: "I want to code, but browsing in between is okay right now, I need to order some stuff"
+    → {"action":{"kind":"profile","intent":"activate","profileID":"<existing coding id>","reason":"coding with browsing/order errands allowed right now"}}
     """
 
     nonisolated static let memoryActionExecutorSystemPrompt = """

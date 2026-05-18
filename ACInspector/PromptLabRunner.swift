@@ -235,6 +235,7 @@ actor PromptLabRunner {
                 bundleIdentifier: scenario.bundleIdentifier.nilIfBlank,
                 windowTitle: compactWindowTitle,
                 recentSwitches: compactSwitches,
+                recentActivityTimeline: compactSwitches,
                 usage: compactUsage,
                 recentInterventions: compactInterventions,
                 distraction: MonitoringPromptDistractionSummary(state: scenario.distraction.telemetryRecord),

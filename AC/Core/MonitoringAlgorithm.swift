@@ -68,6 +68,8 @@ struct MonitoringDecisionInput: Sendable {
     /// Display name + description of the active profile, for prompt context.
     var activeProfileName: String = FocusProfile.defaultDisplayName
     var activeProfileDescription: String? = nil
+    /// Session-specific activation intent captured when the profile was activated.
+    var activeProfileGoalSummary: String? = nil
     var activeProfileActivatedAt: Date? = nil
     var activeProfileExpiresAt: Date? = nil
     /// Snapshot of a session that ended within the last ~30 minutes. This is

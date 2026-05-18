@@ -19,7 +19,7 @@ enum MonitoringPromptContextBudget {
     nonisolated static let policySummaryLines = 4
     nonisolated static let titlePerceptionSwitchCount = 2
     nonisolated static let titlePerceptionUsageCount = 3
-    nonisolated static let decisionSwitchCount = 3
+    nonisolated static let decisionSwitchCount = 6
     nonisolated static let decisionUsageCount = 4
     nonisolated static let recentNudgeCount = 3
     /// Last user chat messages passed into decision + nudge stages as a safety net
@@ -121,6 +121,7 @@ nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Send
     var name: String
     var isDefault: Bool
     var description: String?
+    var goalSummary: String?
     var activatedAt: Date?
     var expiresAt: Date?
 
@@ -129,6 +130,7 @@ nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Send
         name: String = "General",
         isDefault: Bool = true,
         description: String? = nil,
+        goalSummary: String? = nil,
         activatedAt: Date? = nil,
         expiresAt: Date? = nil
     ) {
@@ -136,6 +138,7 @@ nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Send
         self.name = name
         self.isDefault = isDefault
         self.description = description
+        self.goalSummary = goalSummary
         self.activatedAt = activatedAt
         self.expiresAt = expiresAt
     }
@@ -163,6 +166,7 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var bundleIdentifier: String?
     var windowTitle: String?
     var recentSwitches: [MonitoringPromptSwitchRecord]
+    var recentActivityTimeline: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var currentContextSeconds: TimeInterval?
     var recentInterventions: MonitoringPromptInterventionSummary
@@ -186,6 +190,7 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var bundleIdentifier: String?
     var windowTitle: String?
     var recentSwitches: [MonitoringPromptSwitchRecord]
+    var recentActivityTimeline: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var currentContextSeconds: TimeInterval?
     var recentInterventions: MonitoringPromptInterventionSummary

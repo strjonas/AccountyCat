@@ -443,7 +443,7 @@ struct PolicyMemoryProposalControllerTests {
         }
         #expect(browserAllowance != nil)
         #expect(browserAllowance?.contextKey == nil)
-        #expect(browserAllowance?.windowTitle == nil)
+        #expect(browserAllowance?.windowTitle == "OpenRouter API Pricing")
         #expect(controller.state.memoryEntries.contains {
             $0.text.contains("Google Chrome")
                 && $0.text.contains("not a distraction")

@@ -307,8 +307,8 @@ extension AppController {
 
     /// After a user correction or approved appeal, install a short cooldown so AC
     /// doesn't immediately re-evaluate (and re-flag) the same activity.
-    /// `RecentInteractionAllowance.make` widens to the whole app for browsers
-    /// (tab-hopping research) and stays window-specific elsewhere.
+    /// `RecentInteractionAllowance.make` keeps browsers/title-scoped apps narrow so
+    /// a correction on one tab/thread does not exempt unrelated content in the same app.
     func installRecentInteractionAllowanceOverride(
         reason: String,
         now: Date = Date(),
@@ -368,8 +368,8 @@ extension AppController {
     }
 
     /// `ActionRecord.contextKey` is `"<bundleIdentifier>|<normalized windowTitle>"`.
-    /// Recover the bundle so we can route through the browser-widening branch of
-    /// `RecentInteractionAllowance.make` even though `ActionRecord` doesn't store it.
+    /// Recover the bundle so `RecentInteractionAllowance.make` can keep browser/title-scoped
+    /// corrections narrow even though `ActionRecord` doesn't store the bundle separately.
     nonisolated static func bundleIdentifier(fromContextKey contextKey: String?) -> String? {
         guard let contextKey, let separator = contextKey.firstIndex(of: "|") else { return nil }
         let prefix = String(contextKey[..<separator])
