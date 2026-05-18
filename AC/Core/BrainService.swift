@@ -46,6 +46,7 @@ final class BrainService: NSObject {
     private var isTickScheduled = false
     private var isEvaluating = false
     private var evaluationStartedAt: Date?
+    private var evaluationWatchdogTimeout: TimeInterval?
     private var watchdogTimer: Timer?
     private var activeEvaluationTask: Task<MonitoringDecisionResult, Error>?
     private var activeEvaluationCancellationReason: String?
@@ -1114,9 +1115,11 @@ final class BrainService: NSObject {
 
         isEvaluating = true
         evaluationStartedAt = Date()
+        evaluationWatchdogTimeout = Self.evaluationWatchdogTimeout(configuration: effectiveConfiguration)
         defer {
             isEvaluating = false
             evaluationStartedAt = nil
+            evaluationWatchdogTimeout = nil
             lastCheckSink?(now)
         }
 
@@ -2047,7 +2050,8 @@ final class BrainService: NSObject {
 
     private func checkEvaluationHealth() {
         guard isEvaluating, let startedAt = evaluationStartedAt else { return }
-        guard Date().timeIntervalSince(startedAt) > 35 else { return }
+        let timeout = evaluationWatchdogTimeout ?? Self.defaultEvaluationWatchdogTimeout
+        guard Date().timeIntervalSince(startedAt) > timeout else { return }
         appendLifecycleHeartbeat(
             reason: "watchdog_stale_evaluation",
             details: ["ageSeconds": String(Int(Date().timeIntervalSince(startedAt)))]
@@ -2169,5 +2173,35 @@ final class BrainService: NSObject {
         default:
             return false
         }
+    }
+
+    nonisolated static let defaultEvaluationWatchdogTimeout: TimeInterval = 35
+
+    nonisolated static func evaluationWatchdogTimeout(
+        configuration: MonitoringConfiguration
+    ) -> TimeInterval {
+        let pipeline = LLMPolicyCatalog.pipelineProfile(id: configuration.pipelineProfileID)
+        let runtimeProfile = LLMPolicyCatalog.runtimeProfile(id: configuration.runtimeProfileID)
+
+        var stageTimeouts: [TimeInterval] = []
+
+        if configuration.usesOnlineInference {
+            stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .onlineDecision).timeoutSeconds))
+        } else {
+            if pipeline.usesTitlePerception {
+                stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .perceptionTitle).timeoutSeconds))
+            }
+            if pipeline.usesVisionPerception {
+                stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .perceptionVision).timeoutSeconds))
+            }
+            stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .decision).timeoutSeconds))
+            if pipeline.splitCopyGeneration {
+                stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .nudgeCopy).timeoutSeconds))
+            }
+        }
+
+        let stageTransitionBuffer = Double(max(stageTimeouts.count, 1)) * 5
+        let totalBudget = stageTimeouts.reduce(0, +) + stageTransitionBuffer
+        return max(defaultEvaluationWatchdogTimeout, totalBudget)
     }
 }

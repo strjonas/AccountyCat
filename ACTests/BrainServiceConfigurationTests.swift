@@ -201,6 +201,25 @@ struct BrainServiceConfigurationTests {
     }
 
     @Test
+    func evaluationWatchdogTimeoutExpandsForLocalVisionSplitPipeline() {
+        let timeout = BrainService.evaluationWatchdogTimeout(configuration: MonitoringConfiguration())
+
+        #expect(timeout > BrainService.defaultEvaluationWatchdogTimeout)
+        #expect(timeout == 130)
+    }
+
+    @Test
+    func evaluationWatchdogTimeoutKeepsSingleRoundOnlineBudgetTighter() {
+        var configuration = MonitoringConfiguration()
+        configuration.inferenceBackend = .openRouter
+        configuration.pipelineProfileID = "online_single_round_vision"
+
+        let timeout = BrainService.evaluationWatchdogTimeout(configuration: configuration)
+
+        #expect(timeout == 35)
+    }
+
+    @Test
     func localInteractiveRequestDefersMonitoringEvaluation() async {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(
