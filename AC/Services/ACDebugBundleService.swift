@@ -315,7 +315,7 @@ actor ACDebugBundleService {
                 )
             },
             monitoringConfiguration: state.monitoringConfiguration,
-            goalsPreview: Self.preview(state.goalsText, limit: 500),
+            goalsPreview: "",
             memoryCount: state.memoryEntries.count,
             recentMemory: Array(recentMemory),
             policyRuleCount: state.policyMemory.rules.count,

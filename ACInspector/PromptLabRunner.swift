@@ -225,9 +225,6 @@ actor PromptLabRunner {
             options: runtimeProfile.options(for: .decision),
             payload: MonitoringDecisionPromptPayload(
                 now: scenario.timestamp,
-                goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
-                    maxLength: MonitoringPromptContextBudget.goalCharacters
-                ),
                 freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
@@ -270,9 +267,6 @@ actor PromptLabRunner {
                 runtimePath: normalizedRuntimePath,
                 options: runtimeProfile.options(for: .nudgeCopy),
                 payload: MonitoringNudgePromptPayload(
-                    goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
-                        maxLength: MonitoringPromptContextBudget.goalCharacters
-                    ),
                     freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
@@ -305,9 +299,6 @@ actor PromptLabRunner {
                 options: runtimeProfile.options(for: .appealReview),
                 payload: MonitoringAppealPromptPayload(
                     appealText: scenario.appealText.cleanedSingleLine,
-                    goals: scenario.goals.cleanedSingleLine.truncatedForPrompt(
-                        maxLength: MonitoringPromptContextBudget.goalCharacters
-                    ),
                     freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines

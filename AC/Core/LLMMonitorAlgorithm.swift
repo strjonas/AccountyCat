@@ -450,7 +450,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
                 payload: MonitoringDecisionPromptPayload(
                     now: input.now,
-                    goals: requestScope.goals,
                     freeFormMemory: requestScope.freeFormMemory,
                     recentUserMessages: requestScope.recentUserMessages,
                     policySummary: requestScope.policySummary,
@@ -840,7 +839,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             sampleWindowTitles: workingStat.sampleWindowTitles,
             focusedCount: workingStat.focusedCount,
             distinctDays: workingStat.distinctDayCount,
-            goals: requestScope.goals,
             freeFormMemory: requestScope.freeFormMemory,
             activeProfile: requestScope.activeProfile,
             configuration: input.configuration,
@@ -1007,9 +1005,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             options: applyOverrides(runtimeProfile.options(for: .appealReview), configuration: input.configuration),
             payload: MonitoringAppealPromptPayload(
                 appealText: input.appealText,
-                goals: input.goals.cleanedSingleLine.truncatedForPrompt(
-                    maxLength: MonitoringPromptContextBudget.goalCharacters
-                ),
                 freeFormMemory: input.memory.truncatedMultilineForPrompt(
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
@@ -1208,7 +1203,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     ) async -> MonitoringDecisionEnvelope? {
         let payload = MonitoringOnlineDecisionPromptPayload(
             now: input.now,
-            goals: requestScope.goals,
             freeFormMemory: requestScope.freeFormMemory,
             recentUserMessages: requestScope.recentUserMessages,
             policySummary: requestScope.policySummary,
@@ -1287,7 +1281,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
             payload: MonitoringNudgePromptPayload(
-                goals: requestScope.goals,
                 freeFormMemory: requestScope.freeFormMemory,
                 recentUserMessages: requestScope.recentUserMessages,
                 policySummary: requestScope.policySummary,

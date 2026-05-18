@@ -442,9 +442,6 @@ actor CompanionChatService {
         Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
 
         \(profileContext)
-        [User goals]
-        \(goals.cleanedSingleLine)
-
         [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
         \(memorySection)
 
@@ -617,7 +614,6 @@ actor CompanionChatService {
             var actionHint: CompanionChatAction
             var latestUserMessage: String
             var recentUserMessages: [String]
-            var goals: String
             var freeFormMemory: String
             var policyRules: String
             var context: FrontmostContext?
@@ -629,7 +625,6 @@ actor CompanionChatService {
             actionHint: request.action,
             latestUserMessage: request.latestUserMessage,
             recentUserMessages: request.recentUserMessages,
-            goals: request.goals,
             freeFormMemory: request.freeFormMemory,
             policyRules: request.policyRules,
             context: request.context,

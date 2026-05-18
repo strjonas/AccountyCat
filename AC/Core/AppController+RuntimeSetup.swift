@@ -270,12 +270,14 @@ extension AppController {
         var changed = false
 
         if let identifier = state.monitoringConfiguration.onlineModelIdentifierText,
-           deprecated.contains(identifier) {
+            deprecated.contains(identifier)
+        {
             state.monitoringConfiguration.onlineModelIdentifierText = tier.byokModelIdentifierText
             changed = true
         }
         if let identifier = state.monitoringConfiguration.onlineModelIdentifierImage,
-           deprecated.contains(identifier) {
+            deprecated.contains(identifier)
+        {
             state.monitoringConfiguration.onlineModelIdentifierImage = tier.byokModelIdentifierImage
             changed = true
         }
@@ -294,6 +296,18 @@ extension AppController {
     func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
         guard state.monitoringConfiguration.inferenceBackend != backend else { return }
         state.monitoringConfiguration.inferenceBackend = backend
+        if backend == .openRouter {
+            Task { [localModelRuntime] in
+                await localModelRuntime.scheduleShutdown(
+                    after: 130,  // keep it long so that if user accidently swithces to byok, its not restarted for nothing AND importantly: so that pending local requests still work
+                    reason: "backend_switched_to_byok"
+                )
+            }
+        } else {
+            Task { [localModelRuntime] in
+                await localModelRuntime.cancelScheduledShutdown()
+            }
+        }
         state.monitoringConfiguration.pipelineProfileID =
             backend == .openRouter
             ? (visionEnabled

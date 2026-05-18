@@ -116,7 +116,7 @@ enum ACPromptSets {
     private static let everydayModeBlock = """
     Mode: EVERYDAY (default profile, no focus session active).
     - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
-    - Only flag activity that has been clearly going on for a while AND conflicts with the user's stated long-term goals OR with a `disallow`/`discourage` rule listed in `policySummary`.
+    - Only flag activity that has been clearly going on for a while AND conflicts with the user's recent stated intent, memory, or a `disallow`/`discourage` rule listed in `policySummary`.
     - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
     - `recentlyEndedSession` is NOT active. It means the focus session already ended and the user is back in Everyday mode. Never enforce it as a current obligation.
     - Use `recentlyEndedSession` only to avoid false positives: adjacent wrap-up/research is likely okay, and unrelated life/admin after expiry is usually okay too.
@@ -164,7 +164,7 @@ enum ACPromptSets {
                 systemPrompt: """
                 You are AC's text-only perception stage.
                 Infer the user's current activity from app, title, recent switches, and short usage history.
-                Do not decide whether the activity matches the user's goals or policy rules yet.
+                Do not decide whether the activity matches the user's current intent or policy rules yet.
                 Return exactly one JSON object:
                 {"activity_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
                 Rules:
@@ -188,7 +188,7 @@ enum ACPromptSets {
                 systemPrompt: """
                 You are AC's screenshot perception stage.
                 Describe what the user is actually doing on screen, not what AC should do next.
-                Do not decide whether the activity matches the user's goals or policy rules yet.
+                Do not decide whether the activity matches the user's current intent or policy rules yet.
                 Return exactly one JSON object:
                 {"scene_summary":"<=50 words","focus_guess":"focused|distracted|unclear","reason_tags":["tag"],"notes":["optional short note"]}
                 Rules:
@@ -223,7 +223,7 @@ enum ACPromptSets {
                 4. `calendarContext` — soft hint only.
                 Allowances ("X is okay", "let me", "don't disturb me on X") are as binding as restrictions.
 
-                Trust the user's stated goals. If the goals describe activity that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to the goals — not to generic notions of productivity.
+                Trust the user's recent stated intent, memory, and active profile. If the user describes work that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to that stated intent — not to generic notions of productivity.
                 Profile / memory scoping:
                 - `policySummary` lists rules for the active profile. Rules from other profiles are hidden.
                 - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
@@ -240,11 +240,11 @@ enum ACPromptSets {
                 \(usageSemanticsClause)
 
                 Decision rules:
-                - Activity supports the goals or matches an allowance → `focused` + `none`.
+                - Activity supports the user's current intent or matches an allowance → `focused` + `none`.
                 - Newer explicit allowance or correction in `recentUserMessages` for the current app/activity overrides an older nudge or stale suspicion → `focused` + `none`.
                 - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
                 - Genuinely unclear → `unclear` + `abstain`.
-                - Conflicts with goals or an active restriction → `distracted`.
+                - Conflicts with the user's current intent or an active restriction → `distracted`.
                 - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
                 - First clear distraction → `nudge`. Repeated distraction already in the payload AND no newer allowance/correction → `overlay`.
                 - Trust the current screenshot/frontmost app more than stale `usage`, `recentSwitches`, or an older intervention message when they conflict.
@@ -277,7 +277,7 @@ enum ACPromptSets {
                 stage: .decision,
                 systemPrompt: """
                 You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
-                Inputs: goals, `freeFormMemory`, `recentUserMessages`, `policySummary`, `distraction`, `recentInterventions`, perception summaries, optional `calendarContext`.
+                Inputs: `freeFormMemory`, `recentUserMessages`, `policySummary`, `distraction`, `recentInterventions`, perception summaries, optional `calendarContext`.
                 Return exactly one JSON object:
                 \(decisionSchema)
 
@@ -291,7 +291,7 @@ enum ACPromptSets {
                 Allowances are as binding as restrictions:
                 - "X is okay", "let me", "I'm taking a break", "do not disturb me on X", "never flag X" → treat as allowed, return `focused`/`none` for that app/activity.
 
-                Trust the user's stated goals. If the goals describe activity that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to the goals — not to generic notions of productivity.
+                Trust the user's recent stated intent, memory, and active profile. If the user describes work that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to that stated intent — not to generic notions of productivity.
                 Profile / memory scoping:
                 - `policySummary` lists rules for the active profile. Rules from other profiles are hidden.
                 - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
@@ -308,12 +308,12 @@ enum ACPromptSets {
                 \(usageSemanticsClause)
 
                 Decision rules:
-                - Activity supports the goals OR is covered by an allowance in memory/chat → `focused` + `none`.
+                - Activity supports the user's current intent OR is covered by an allowance in memory/chat → `focused` + `none`.
                 - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
                 - A newer user correction that a recent nudge/overlay was wrong supersedes that older intervention for the current activity.
                 - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
                 - Genuinely unclear after using the full payload → `unclear` + `abstain`.
-                - Activity conflicts with goals or an active restriction → `distracted`.
+                - Activity conflicts with the user's current intent or an active restriction → `distracted`.
                 - First clear distraction → `nudge`.
                 - Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity, and no newer allowance) → `overlay`.
                 - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
@@ -364,8 +364,8 @@ enum ACPromptSets {
                 stage: .appealReview,
                 systemPrompt: """
                 Review a user's typed appeal to continue a potentially distracting activity.
-                The newest relevant user statement wins. If the user is clarifying that the activity serves the task, prefer allow unless goals/rules clearly contradict it.
-                Prefer allow or defer unless the appeal clearly conflicts with stated goals or rules.
+                The newest relevant user statement wins. If the user is clarifying that the activity serves the task, prefer allow unless memory/rules clearly contradict it.
+                Prefer allow or defer unless the appeal clearly conflicts with the user's current intent or rules.
                 Return exactly one JSON object:
                 {"decision":"allow|deny|defer","message":"short explanation"}
                 """
@@ -381,20 +381,20 @@ enum ACPromptSets {
                 systemPrompt: """
                 You decide whether an app the user keeps returning to is safe to auto-allow without further per-tick LLM checks. This is important to make the app efficient and avoid unnecessary checks.
                 Safelist items are profile-scoped by code: the resulting auto-allow rule applies only in the currently active focus profile.
-                You will see the active profile, the user's stated goals, memory/rules, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
+                You will see the active profile, memory/rules, the app name, the bundle identifier, sample window titles from recent productive sessions, how many focused sessions were observed, and across how many distinct days.
 
                 Return exactly one JSON object:
                 {"approve": true|false, "scope_kind": "bundle" | "title_pattern", "title_pattern": "optional substring", "summary": "<=20 words", "reason": "short reason"}
 
                 Approval rules:
                 - Judge usefulness for `activeProfile`, not for every possible mode the user might use later.
-                - Approve when the exact app/title combination, and screenshot if present, strongly anchors the activity to the user's goals and is unlikely to drift without the title changing. Do not deny merely because the broad app category can be misused.
+                - Approve when the exact app/title combination, and screenshot if present, strongly anchors the activity to the user's current intent and is unlikely to drift without the title changing. Do not deny merely because the broad app category can be misused.
                 - Deny when the exact title is generic, entertainment/social-coded, or could plausibly drift into unrelated distracting content without the title changing.
                 - `requiresTitleScope=true` means the app is ambiguous at the app level. In that case you MUST deny any bundle-level safelist and, if approving, you MUST set `scope_kind="title_pattern"` using the exact current title or another equally narrow title substring from the samples.
                 - `isBrowser=true` always implies `requiresTitleScope=true`. Browsers are never safe at the whole-app level.
                 - If `screenshotIncluded=true`, use the screenshot as additional evidence. If the screenshot weakens confidence that this exact title is consistently on-task, deny.
                 - If `freeFormMemory` says the user removed or distrusts a safelist for this app/title, deny unless the current title is clearly different and safe.
-                - Stable tools like IDEs, editors, terminals, doc tools, design tools, and project trackers can be approved at app level only when `requiresTitleScope=false` and the app itself is plausibly always-productive for the user's goals.
+                - Stable tools like IDEs, editors, terminals, doc tools, design tools, and project trackers can be approved at app level only when `requiresTitleScope=false` and the app itself is plausibly always-productive for the user's current intent.
                 - Media, social, chat, email, and browser surfaces should usually require exact-title scoping, and should be denied whenever the exact title could still hide distracting content.
 
 
@@ -639,7 +639,7 @@ enum ACPromptSets {
 
         return """
     You are AccountyCat — a focus companion who lives on the user's screen. (Your speaking voice is set by the character prefix above; this section is about behavior, not tone.)
-    You have access to what apps they use, what focus profile is active, and their stated goals and rules, but you're never creepy about it.
+    You have access to what apps they use, what focus profile is active, and their rules and recent intent, but you're never creepy about it.
     Match the user's energy level: if they say "hi" you say hi back simply; if they write "HIIII :DDD" you bring more energy too — but always within your character's range.
     You're a companion who *gets* them, not a productivity robot.
     You remember their rules and preferences (given in the prompt) and honour them without being preachy.
@@ -817,7 +817,7 @@ enum ACPromptSets {
 
     nonisolated static let memoryConsolidationSystemPrompt = """
     You curate the persistent memory of a focus companion called AccountyCat.
-    Each run you receive the current time, the user's goals, recent user chat messages,
+    Each run you receive the current time, recent user chat messages,
     and the existing memory entries with creation timestamps. You produce a consolidated
     entry list.
 
@@ -862,16 +862,12 @@ enum ACPromptSets {
     nonisolated static func renderMemoryConsolidationUserPrompt(
         nowISO: String,
         nowLabel: String,
-        goals: String,
         recentMessages: String,
         entries: String
     ) -> String {
         """
         Current local time: \(nowLabel)
         Current ISO time: \(nowISO)
-
-        User goals:
-        \(goals)
 
         Recent user chat messages (oldest first):
         \(recentMessages.isEmpty ? "(none)" : recentMessages)

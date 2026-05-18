@@ -124,7 +124,6 @@ actor MemoryConsolidationService {
         return ACPromptSets.renderMemoryConsolidationUserPrompt(
             nowISO: iso.string(from: now),
             nowLabel: PromptTimestampFormatting.absoluteLabel(for: now),
-            goals: goals.cleanedSingleLine,
             recentMessages: recentMessages,
             entries: entriesText
         )

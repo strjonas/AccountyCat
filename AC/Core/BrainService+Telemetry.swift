@@ -169,7 +169,7 @@ extension BrainService {
                     evaluation: nil,
                     modelInput: ModelInputRecord(
                         evaluationID: evaluationID,
-                        goalsSummary: state.goalsText.cleanedSingleLine,
+                        goalsSummary: "",
                         screenshot: snapshot.screenshotArtifact,
                         screenshotThumbnail: snapshot.screenshotThumbnail,
                         promptMode: attempt.promptMode,

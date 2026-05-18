@@ -227,7 +227,6 @@ actor PolicyMemoryService: PolicyMemoryServicing {
 
         struct Payload: Encodable {
             var now: Date
-            var goals: String
             var freeFormMemory: String
             var policyMemory: PolicyMemory
             var eventSummary: String
@@ -245,7 +244,6 @@ actor PolicyMemoryService: PolicyMemoryServicing {
 
         let payload = Payload(
             now: request.now,
-            goals: request.goals.cleanedSingleLine,
             freeFormMemory: request.freeFormMemory,
             policyMemory: request.policyMemory,
             eventSummary: request.eventSummary.cleanedSingleLine,

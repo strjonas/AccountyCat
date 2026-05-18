@@ -230,6 +230,7 @@ actor LocalModelRuntime {
     private var sharedServer: LocalModelServerHandle?
     private var activeSharedServerRequests = 0
     private var activeInteractiveRequests = 0
+    private var scheduledShutdownTask: Task<Void, Never>?
 
     init() {
         Self.killStalePIDIfNeeded()
@@ -305,7 +306,26 @@ actor LocalModelRuntime {
     }
 
     func shutdown() async {
+        scheduledShutdownTask?.cancel()
+        scheduledShutdownTask = nil
         await stopSharedServer(reason: "runtime_shutdown")
+    }
+
+    func scheduleShutdown(after seconds: UInt64, reason: String) {
+        scheduledShutdownTask?.cancel()
+        scheduledShutdownTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: seconds * NSEC_PER_SEC)
+                await self?.shutdownWhenIdle(reason: reason)
+            } catch {
+                return
+            }
+        }
+    }
+
+    func cancelScheduledShutdown() {
+        scheduledShutdownTask?.cancel()
+        scheduledShutdownTask = nil
     }
 
     func hasInteractiveRequestInFlight() -> Bool {
@@ -334,6 +354,7 @@ actor LocalModelRuntime {
         systemPrompt: String,
         options: RuntimeInferenceOptions
     ) async throws -> RuntimeProcessOutput {
+        cancelScheduledShutdown()
         let cancellationBox = RuntimeCancellationBox()
 
         return try await withTaskCancellationHandler {
@@ -631,6 +652,7 @@ actor LocalModelRuntime {
     private func ensureSharedServer(
         config: RuntimeServerConfig
     ) async throws -> LocalModelServerHandle {
+        cancelScheduledShutdown()
         if let sharedServer {
             let sameBinary = sharedServer.config.executablePath == config.executablePath
             let sameModel = sharedServer.config.modelPath == config.modelPath
@@ -729,6 +751,16 @@ actor LocalModelRuntime {
         _ = await waitForTermination(of: sharedServer.process, timeoutMilliseconds: 1_000)
 
         let _ = reason
+    }
+
+    private func shutdownWhenIdle(reason: String) async {
+        guard sharedServer != nil else { return }
+        if activeSharedServerRequests > 0 {
+            try? await waitForSharedServerToBecomeIdle()
+        }
+        guard sharedServer != nil, activeSharedServerRequests == 0 else { return }
+        scheduledShutdownTask = nil
+        await stopSharedServer(reason: reason)
     }
 
     private func waitForServerReady(

@@ -358,7 +358,6 @@ private struct EvalCaseDetailView: View {
                 case .focus:
                     if let input = evalCase.focusInput {
                         detailRow("Context", [input.appName, input.windowTitle ?? ""].filter { !$0.isEmpty }.joined(separator: " / "))
-                        detailRow("Goals", input.goals)
                         detailRow("Recent chat", input.recentUserMessages.joined(separator: "\n"))
                     }
                 case .chat:
@@ -990,8 +989,6 @@ private struct PromptLabDetailView: View {
         GroupBox("Scenario") {
             VStack(alignment: .leading, spacing: 16) {
                 TextField("Scenario name", text: $scenario.name)
-                TextField("Goals", text: $scenario.goals, axis: .vertical)
-                    .lineLimit(2...4)
 
                 HStack {
                     TextField("App name", text: $scenario.appName)

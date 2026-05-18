@@ -156,7 +156,6 @@ nonisolated struct MonitoringVisionPerceptionPromptPayload: Encodable, Sendable 
 
 nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var now: Date
-    var goals: String
     var freeFormMemory: String
     var recentUserMessages: [String]
     var policySummary: String
@@ -180,7 +179,6 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
 
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var now: Date
-    var goals: String
     var freeFormMemory: String
     var recentUserMessages: [String]
     var policySummary: String
@@ -207,7 +205,6 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
 }
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
-    var goals: String
     var freeFormMemory: String
     var recentUserMessages: [String]
     var policySummary: String
@@ -229,7 +226,6 @@ nonisolated struct MonitoringSafelistAppealPromptPayload: Encodable, Sendable {
     var appName: String
     var bundleIdentifier: String?
     var sampleWindowTitles: [String]
-    var goals: String
     var freeFormMemory: String
     var activeProfile: MonitoringActiveProfilePromptPayload
     var focusedCount: Int
@@ -262,7 +258,6 @@ nonisolated struct MonitoringSafelistAppealEnvelope: Codable, Sendable {
 
 nonisolated struct MonitoringAppealPromptPayload: Encodable, Sendable {
     var appealText: String
-    var goals: String
     var freeFormMemory: String
     var recentUserMessages: [String]
     var policySummary: String
