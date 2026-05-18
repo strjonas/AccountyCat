@@ -20,9 +20,15 @@ This doc explains the live monitoring path. It is narrower and more volatile tha
 `BrainService` drives two timers:
 
 - a 10-second polling tick
-- a 5-second context-change probe
+- a 30-second fallback context-change probe
 
-The probe is cheap and mostly detects whether the frontmost context changed enough to justify a real tick.
+The probe is now belt-and-braces rather than the main driver. Normal frontmost-app changes are event-driven:
+
+- `NSWorkspace.didActivateApplicationNotification` re-attaches monitoring to the new frontmost PID
+- `AppFocusAXObserver` subscribes to `kAXFocusedWindowChangedNotification` on the app and `kAXTitleChangedNotification` on its focused window
+- browser-title cache entries are explicitly invalidated on those AX callbacks before the next tick is scheduled
+
+If AX subscription fails for a PID, `BrainService` falls back to a 5-second fast poll until the user switches away again. Cooperative apps stay on the 30-second fallback probe.
 
 Each real tick does roughly this:
 
@@ -50,12 +56,15 @@ Important fast paths:
 - explicit active `allow` rules can skip evaluation entirely
 - recently cached focused decisions can skip re-evaluation in the same context
 - a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
+- a short global LLM cooldown (`lastLLMEvalAt`) suppresses rapid back-to-back fresh evaluations after app switching: 5s on `sharp`, 10s on `balanced`, 20s on `gentle`
 - cadence delays defer evaluation until a context has been stable long enough
 - browser contexts still pass through the stable-context gate, but use a much shorter settle window than native apps so tab switches are checked quickly
 - title-only context can suppress screenshots for non-ambiguous apps
 - online monitoring does a read-only connectivity gate before any provider call; true offline state skips evaluation quickly with a banner and a short recheck
 - repeated online vision timeouts can temporarily degrade the *effective* pipeline to online text-only for a few minutes; this is transient runtime state in `BrainService`, not a persisted settings change
 - when the local inference backend is active and a user-interactive (chat) request is in flight, `BrainService` skips the evaluation tick and defers the next check by 10 seconds (`local_runtime_busy` skip reason); this ensures the shared llama.cpp server is never reconfigured or interrupted mid-chat
+
+The global cooldown does not suppress scheduled follow-up cycles from prior focused/unclear/distracted decisions, and restrictive rules still override it.
 
 The design intent is to spend LLM calls where judgment is needed, not on obvious repeats.
 
@@ -66,7 +75,7 @@ The design intent is to spend LLM calls where judgment is needed, not on obvious
 Biases:
 
 - browsers never qualify for title-only mode
-- browser tab-title lookup is cached only briefly because stale browser titles can hide a real context switch
+- browser tab-title lookup is cached briefly (5 seconds) because stale browser titles can hide a real context switch, but AX-driven invalidation clears the cache immediately when the browser window or tab title actually changes
 - known ambiguous-content apps keep screenshots
 - clearly productive IDE/editor titles can skip screenshots more easily
 - descriptive titles can skip screenshots even outside IDEs
@@ -136,6 +145,7 @@ The monitoring payload is profile-aware.
 - Hard escalations can reopen if the user returns to the blocked app.
 - Overlay appeals go back through `LLMMonitorAlgorithm.reviewAppeal(...)`.
 - An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` widens the scope to whole-app for browsers (research spans adjacent tabs) and keeps it window-scoped for everything else. Duration is set per cadence mode.
+- Chat actions that mutate monitored state (profile changes, memory writes, focus-policy changes including safelist-like allows/disallows) call `BrainService.invalidateContextAndCooldown(reason:)`. This clears the current-context decision cache and resets the global cooldown without scheduling an immediate tick; the next natural app/context change drives a fresh evaluation. Any in-flight appeal session is preserved so a correction in chat does not silently dismiss an open appeal sheet.
 
 ## Safelist Promotion
 

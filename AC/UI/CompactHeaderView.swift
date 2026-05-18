@@ -117,27 +117,13 @@ struct CompactHeaderView: View {
 
     // MARK: - Status dot
 
-    @State private var healthPulse: CGFloat = 0
-
     private var statusDot: some View {
         ZStack {
             Circle()
-                .fill(healthColor.opacity(0.28))
-                .frame(width: 10, height: 10)
-                .scaleEffect(1 + healthPulse)
-                .opacity(0.8 - healthPulse * 0.7)
-            Circle()
                 .fill(healthColor)
-                .frame(width: 5, height: 5)
+                .frame(width: 6, height: 6)
         }
         .frame(width: 10, height: 10)
-        .onAppear {
-            if controller.state.setupStatus == .ready && !controller.state.isPaused {
-                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
-                    healthPulse = 0.9
-                }
-            }
-        }
     }
 
     private var healthColor: Color {

@@ -150,6 +150,7 @@ enum ACPromptSets {
     - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
     - Everyday with a real rule: activeProfile.isDefault=true, policySummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
+    - Ambiguous case: app="Google Chrome", title="Tab", no visible body, previous verdict focused → {"assessment":"unclear","suggested_action":"none","reason_tags":["title_too_generic","needs_vision"]}
     """
 
     // MARK: - Policy stage prompt set
@@ -558,13 +559,13 @@ enum ACPromptSets {
             displayName: "Gemma Balanced",
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
-                ACRuntimeStageDefinition(stage: .perceptionTitle, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 220, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 9216, batchSize: 4608, ubatchSize: 2048, timeoutSeconds: 45)),
-                ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 240, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                ACRuntimeStageDefinition(stage: .decision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 40)),
-                ACRuntimeStageDefinition(stage: .nudgeCopy, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 3072, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 30)),
-                ACRuntimeStageDefinition(stage: .appealReview, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
-                ACRuntimeStageDefinition(stage: .policyMemory, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 4096, batchSize: 1024, ubatchSize: 512, timeoutSeconds: 35)),
+                ACRuntimeStageDefinition(stage: .perceptionTitle, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 2048, batchSize: 512, ubatchSize: 256, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 220, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 6144, batchSize: 2048, ubatchSize: 512, timeoutSeconds: 45)),
+                ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 240, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 512, ubatchSize: 256, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .decision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 512, ubatchSize: 256, timeoutSeconds: 40)),
+                ACRuntimeStageDefinition(stage: .nudgeCopy, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 2048, batchSize: 512, ubatchSize: 256, timeoutSeconds: 30)),
+                ACRuntimeStageDefinition(stage: .appealReview, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 2048, batchSize: 512, ubatchSize: 256, timeoutSeconds: 35)),
+                ACRuntimeStageDefinition(stage: .policyMemory, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 512, ubatchSize: 256, timeoutSeconds: 35)),
                 ACRuntimeStageDefinition(stage: .safelistAppeal, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),

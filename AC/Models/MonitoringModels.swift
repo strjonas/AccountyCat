@@ -16,7 +16,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     case balanced
     case gentle
 
-    var displayName: String {
+    nonisolated var displayName: String {
         switch self {
         case .sharp: return "Sharp"
         case .balanced: return "Balanced"
@@ -24,7 +24,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .sharp:
             return "Checks sooner after context changes. Best when fast drift prevention matters."
@@ -35,7 +35,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
-    var byokCostHint: String {
+    nonisolated var byokCostHint: String {
         switch self {
         case .sharp: return "Higher usage"
         case .balanced: return "Moderate usage"
@@ -43,7 +43,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
-    var stableContextDelay: TimeInterval {
+    nonisolated var stableContextDelay: TimeInterval {
         switch self {
         case .sharp: return 6
         case .balanced: return 30
@@ -51,7 +51,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
-    var focusedFollowUp: TimeInterval {
+    nonisolated var focusedFollowUp: TimeInterval {
         switch self {
         case .sharp: return 2 * 60
         case .balanced: return 5 * 60
@@ -60,18 +60,26 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     }
 
     /// Probe sooner than `focusedFollowUp` after an `unclear` verdict to catch ambiguous activity.
-    var unclearFollowUp: TimeInterval {
+    nonisolated var unclearFollowUp: TimeInterval {
         max(60, focusedFollowUp / 2)
     }
 
     /// React faster than `focusedFollowUp` after a `distracted` verdict to support recovery.
     /// Floor of 60s prevents a churn loop on weak local models.
-    var distractedFollowUp: TimeInterval {
+    nonisolated var distractedFollowUp: TimeInterval {
         max(60, focusedFollowUp / 3)
     }
 
-    var focusedDecisionCacheTTL: TimeInterval {
+    nonisolated var focusedDecisionCacheTTL: TimeInterval {
         focusedFollowUp * 3
+    }
+
+    nonisolated var minimumEvalGap: TimeInterval {
+        switch self {
+        case .sharp: return 5
+        case .balanced: return 10
+        case .gentle: return 20
+        }
     }
 
     /// Multiplier applied to all cadence delays when no named profile is active.
@@ -85,7 +93,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     /// The threshold is the *minimum* title length required to skip a screenshot.
     /// Higher = harder to skip → more screenshots (sharper detection).
     /// Lower  = easier to skip → fewer screenshots (calmer / lower cost).
-    var recommendedTitleLengthForTextOnly: Int {
+    nonisolated var recommendedTitleLengthForTextOnly: Int {
         switch self {
         case .sharp: return 45
         case .balanced: return 30
@@ -96,7 +104,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     /// Cooldown applied after a user correction or approved appeal: AC stops re-evaluating
     /// the same activity for this long. Sharp returns to vigilance faster; gentle stays
     /// out of the way longer because the user picked a calmer mode in the first place.
-    var recentInteractionAllowanceDuration: TimeInterval {
+    nonisolated var recentInteractionAllowanceDuration: TimeInterval {
         switch self {
         case .sharp: return 10 * 60
         case .balanced: return 15 * 60
@@ -107,7 +115,7 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     /// Apply the everyday multiplier when no named profile is active.
     /// Internal helper for `LLMMonitorAlgorithm` — keeps the multiplier in one place
     /// rather than scattering ternaries at every cadence call site.
-    func adjustedDelay(_ base: TimeInterval, isDefaultProfile: Bool) -> TimeInterval {
+    nonisolated func adjustedDelay(_ base: TimeInterval, isDefaultProfile: Bool) -> TimeInterval {
         guard isDefaultProfile else { return base }
         return base * Self.everydayDelayMultiplier
     }
@@ -530,6 +538,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
     var recentInteractionAllowances: [RecentInteractionAllowance] = []
     var focusedObservations: [String: FocusedObservationStat] = [:]
     var decisionCacheByContext: [String: CachedDecision] = [:]
+    var lastLLMEvalAt: Date?
     var focusSignal = FocusSignalState()
 
     enum CodingKeys: String, CodingKey {
@@ -544,6 +553,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         case recentInteractionAllowances
         case focusedObservations
         case decisionCacheByContext
+        case lastLLMEvalAt
         case focusSignal
     }
 
@@ -565,6 +575,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
             .map { $0 }
         focusedObservations = try c.decodeIfPresent([String: FocusedObservationStat].self, forKey: .focusedObservations) ?? [:]
         decisionCacheByContext = try c.decodeIfPresent([String: CachedDecision].self, forKey: .decisionCacheByContext) ?? [:]
+        lastLLMEvalAt = try c.decodeIfPresent(Date.self, forKey: .lastLLMEvalAt)
         focusSignal = try c.decodeIfPresent(FocusSignalState.self, forKey: .focusSignal) ?? FocusSignalState()
     }
 
@@ -581,6 +592,7 @@ struct LLMPolicyAlgorithmState: Codable, Sendable, Equatable {
         try c.encode(recentInteractionAllowances, forKey: .recentInteractionAllowances)
         try c.encode(focusedObservations, forKey: .focusedObservations)
         try c.encode(decisionCacheByContext, forKey: .decisionCacheByContext)
+        try c.encodeIfPresent(lastLLMEvalAt, forKey: .lastLLMEvalAt)
         try c.encode(focusSignal, forKey: .focusSignal)
     }
 

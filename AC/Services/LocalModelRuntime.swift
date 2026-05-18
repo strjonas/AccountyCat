@@ -7,6 +7,7 @@
 
 import Darwin
 import Foundation
+import ImageIO
 
 struct RuntimeProcessOutput: Sendable {
     var stdout: String
@@ -93,6 +94,22 @@ nonisolated private enum RuntimeInferenceInput: Sendable {
             return false
         case .vision:
             return true
+        }
+    }
+
+    var userPrompt: String {
+        switch self {
+        case let .text(userPrompt), let .vision(_, userPrompt):
+            return userPrompt
+        }
+    }
+
+    var imagePath: String? {
+        switch self {
+        case .text:
+            return nil
+        case let .vision(snapshotPath, _):
+            return snapshotPath
         }
     }
 }
@@ -425,6 +442,25 @@ actor LocalModelRuntime {
         options: RuntimeInferenceOptions,
         cancellationBox: RuntimeCancellationBox
     ) async throws -> RuntimeProcessOutput {
+        let preflight = PromptBudgetGuard.preflightPlan(
+            systemPrompt: systemPrompt,
+            userPrompt: input.userPrompt,
+            imagePath: input.imagePath,
+            ctxSize: options.ctxSize,
+            maxTokens: options.maxTokens,
+            maxCtxGrowth: 2_048
+        )
+        let effectiveOptions = RuntimeInferenceOptions(
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK,
+            ctxSize: preflight.recommendedCtxSize,
+            batchSize: options.batchSize,
+            ubatchSize: options.ubatchSize,
+            timeoutSeconds: options.timeoutSeconds,
+            thinkingEnabled: options.thinkingEnabled
+        )
         let server = try await ensureSharedServer(
             config: RuntimeServerConfig(
                 executablePath: serverExecutablePath,
@@ -432,17 +468,19 @@ actor LocalModelRuntime {
                 modelIdentifier: modelIdentifier,
                 modelPath: artifacts.modelPath,
                 multimodalProjectorPath: artifacts.multimodalProjectorPath,
-                ctxSize: options.ctxSize,
-                batchSize: options.batchSize,
-                ubatchSize: options.ubatchSize
+                ctxSize: effectiveOptions.ctxSize,
+                batchSize: effectiveOptions.batchSize,
+                ubatchSize: effectiveOptions.ubatchSize
             )
         )
 
-        let requestBody = try makeServerRequestBody(
+        let requestBody = try await makeServerRequestBody(
             modelIdentifier: modelIdentifier,
             input: input,
             systemPrompt: systemPrompt,
-            options: options
+            options: effectiveOptions,
+            serverPort: server.port,
+            imageMaxDimension: preflight.imageMaxDimension
         )
         activeSharedServerRequests += 1
         defer { activeSharedServerRequests -= 1 }
@@ -460,7 +498,7 @@ actor LocalModelRuntime {
         }
 
         do {
-            let (data, response) = try await withTimeout(seconds: options.timeoutSeconds) {
+            let (data, response) = try await withTimeout(seconds: effectiveOptions.timeoutSeconds) {
                 try await requestTask.value
             }
             try Task.checkCancellation()
@@ -690,6 +728,10 @@ actor LocalModelRuntime {
             "--reasoning", "off",
             "--no-webui",
             "-a", config.modelIdentifier,
+            "-ngl", "999",
+            "--threads", String(Self.sharedServerThreadCount),
+            "--cache-type-k", "q8_0",
+            "--cache-type-v", "q8_0",
         ]
         if let multimodalProjectorPath = config.multimodalProjectorPath {
             arguments.append(contentsOf: ["--mmproj", multimodalProjectorPath])
@@ -806,11 +848,23 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         input: RuntimeInferenceInput,
         systemPrompt: String,
-        options: RuntimeInferenceOptions
-    ) throws -> Data {
+        options: RuntimeInferenceOptions,
+        serverPort: Int,
+        imageMaxDimension: Int?
+    ) async throws -> Data {
+        let guardedPrompt: PromptBudgetGuardResult
         let messages: [[String: Any]]
         switch input {
         case let .text(userPrompt):
+            guardedPrompt = await PromptBudgetGuard.guardedUserPrompt(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                imagePath: nil,
+                ctxSize: options.ctxSize,
+                maxTokens: options.maxTokens,
+                serverPort: serverPort,
+                transport: tokenizeWithServer(request:)
+            )
             messages = [
                 [
                     "role": "system",
@@ -818,12 +872,24 @@ actor LocalModelRuntime {
                 ],
                 [
                     "role": "user",
-                    "content": userPrompt,
+                    "content": guardedPrompt.userPrompt,
                 ],
             ]
 
         case let .vision(snapshotPath, userPrompt):
-            let imageDataURL = try Self.makeImageDataURL(from: snapshotPath)
+            guardedPrompt = await PromptBudgetGuard.guardedUserPrompt(
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                imagePath: snapshotPath,
+                ctxSize: options.ctxSize,
+                maxTokens: options.maxTokens,
+                serverPort: serverPort,
+                transport: tokenizeWithServer(request:)
+            )
+            let imageDataURL = try Self.makeImageDataURL(
+                from: snapshotPath,
+                maxPixelDimension: imageMaxDimension
+            )
             messages = [
                 [
                     "role": "system",
@@ -834,7 +900,7 @@ actor LocalModelRuntime {
                     "content": [
                         [
                             "type": "text",
-                            "text": userPrompt,
+                            "text": guardedPrompt.userPrompt,
                         ],
                         [
                             "type": "image_url",
@@ -854,14 +920,119 @@ actor LocalModelRuntime {
             "temperature": options.temperature,
             "top_p": options.topP,
             "top_k": options.topK,
-            "cache_prompt": false,
+            "cache_prompt": true,
             "stream": false,
         ]
         if !options.thinkingEnabled {
             body["reasoning_format"] = "none"
         }
 
+        if guardedPrompt.wasTruncated {
+            appendPromptBudgetTruncatedMetric(
+                detail:
+                    "ctx=\(options.ctxSize) max=\(options.maxTokens) prompt=\(guardedPrompt.promptTokensEstimate) image=\(guardedPrompt.imageTokensEstimate)"
+            )
+        }
+        if let warning = guardedPrompt.warning {
+            Task {
+                await ActivityLogService.shared.append(
+                    category: "prompt-budget-warning",
+                    message: warning
+                )
+            }
+        }
+
         return try JSONSerialization.data(withJSONObject: body, options: [])
+    }
+
+    private func tokenizeWithServer(request: PromptBudgetGuardRequest) async throws -> Int {
+        guard var components = URLComponents(string: "http://127.0.0.1") else {
+            throw LLMError.commandFailed(1, "Failed to construct llama-server tokenization URL.")
+        }
+        components.port = request.serverPort
+        components.path = "/tokenize"
+        guard let tokenizeURL = components.url else {
+            throw LLMError.commandFailed(
+                1,
+                "Failed to construct llama-server tokenization URL for port \(request.serverPort)."
+            )
+        }
+        var urlRequest = URLRequest(url: tokenizeURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = request.timeoutSeconds
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "content": request.content,
+                "add_special": false,
+                "parse_special": true,
+            ]
+        )
+
+        let (data, response) = try await urlSession.data(for: urlRequest)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMError.commandFailed(1, "llama-server tokenization returned a non-HTTP response.")
+        }
+        guard httpResponse.statusCode == 200 else {
+            throw LLMError.commandFailed(
+                Int32(httpResponse.statusCode),
+                String(decoding: data, as: UTF8.self)
+            )
+        }
+        guard
+            let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let tokens = payload["tokens"] as? [Any]
+        else {
+            throw LLMError.commandFailed(1, "llama-server tokenization returned an unexpected payload.")
+        }
+        return tokens.count
+    }
+
+    private func appendPromptBudgetTruncatedMetric(detail: String) {
+        Task {
+            await ActivityLogService.shared.append(
+                category: "prompt-budget-truncated",
+                message: detail
+            )
+        }
+        guard TelemetryPersistencePolicy.storesVerboseTelemetry(debugMode: ACBuild.isDebug) else {
+            return
+        }
+        Task {
+            guard let sessionID = try? await TelemetryStore.shared.ensureCurrentSession(reason: "runtime").id else {
+                return
+            }
+            try? await TelemetryStore.shared.appendEvent(
+                TelemetryEvent(
+                    id: UUID().uuidString,
+                    kind: .monitoringMetric,
+                    timestamp: Date(),
+                    sessionID: sessionID,
+                    episodeID: nil,
+                    episode: nil,
+                    session: nil,
+                    observation: nil,
+                    evaluation: nil,
+                    modelInput: nil,
+                    modelOutput: nil,
+                    parsedOutput: nil,
+                    policy: nil,
+                    action: nil,
+                    metric: MonitoringMetricRecord(
+                        kind: .promptBudgetTruncated,
+                        reason: "prompt_budget_truncated",
+                        activeProfileID: nil,
+                        activeProfileName: nil,
+                        detail: detail
+                    ),
+                    reaction: nil,
+                    annotation: nil,
+                    failure: nil,
+                    llmInteraction: nil
+                ),
+                sessionID: sessionID
+            )
+        }
     }
 
     private func extractAssistantMessage(from data: Data) throws -> String {
@@ -976,12 +1147,26 @@ actor LocalModelRuntime {
             .appendingPathComponent("hf-cache", isDirectory: true)
     }
 
+    private nonisolated static let sharedServerThreadCount = perfCoreCount()
+
     private nonisolated static func processEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let cacheURL = defaultHuggingFaceCacheURL()
         try? FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
         environment["HF_HOME"] = cacheURL.path
         return environment
+    }
+
+    private nonisolated static func perfCoreCount() -> Int {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let status = withUnsafeMutablePointer(to: &value) { pointer in
+            sysctlbyname("hw.perflevel0.physicalcpu", pointer, &size, nil, 0)
+        }
+        if status == 0, value > 0 {
+            return Int(value)
+        }
+        return max(1, ProcessInfo.processInfo.activeProcessorCount)
     }
 
     private func resolvedSnapshotURL(cacheRoot: URL, snapshotsRoot: URL) -> URL? {
@@ -1177,12 +1362,23 @@ actor LocalModelRuntime {
         return candidates.sorted { $0.lastPathComponent < $1.lastPathComponent }.first
     }
 
-    private nonisolated static func makeImageDataURL(from snapshotPath: String) throws -> String {
-        let data = try Data(contentsOf: URL(fileURLWithPath: snapshotPath))
-        let base64 = data.base64EncodedString()
+    private nonisolated static func makeImageDataURL(
+        from snapshotPath: String,
+        maxPixelDimension: Int?
+    ) throws -> String {
+        let imageURL = URL(fileURLWithPath: snapshotPath)
+        let originalData = try Data(contentsOf: imageURL)
+        if let downscaledPNG = downscaledPNGDataIfNeeded(
+            originalData,
+            maxPixelDimension: maxPixelDimension ?? 1_600
+        ) {
+            return "data:image/png;base64,\(downscaledPNG.base64EncodedString())"
+        }
+
+        let base64 = originalData.base64EncodedString()
 
         let mimeType: String
-        switch URL(fileURLWithPath: snapshotPath).pathExtension.lowercased() {
+        switch imageURL.pathExtension.lowercased() {
         case "jpg", "jpeg":
             mimeType = "image/jpeg"
         case "webp":
@@ -1192,6 +1388,39 @@ actor LocalModelRuntime {
         }
 
         return "data:\(mimeType);base64,\(base64)"
+    }
+
+    private nonisolated static func downscaledPNGDataIfNeeded(
+        _ data: Data,
+        maxPixelDimension: Int
+    ) -> Data? {
+        guard
+            let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int,
+            max(width, height) > maxPixelDimension
+        else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelDimension,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        let destinationData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(destinationData, "public.png" as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, thumbnail, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return destinationData as Data
     }
 
     private nonisolated static func reserveLocalPort() throws -> Int {

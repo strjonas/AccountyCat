@@ -436,6 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let p = popover ?? makePopover()
         popover = p
         p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
+        installPopoverContentIfNeeded(on: p)
         guard !p.isShown else { return }
 
         if let button = statusItem?.button {
@@ -457,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let p = popover ?? makePopover()
             popover = p
             p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
+            installPopoverContentIfNeeded(on: p)
             p.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
             controller.markAllChatMessagesRead()
@@ -475,6 +477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let p = popover ?? makePopover()
         popover = p
         p.behavior = controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined
+        installPopoverContentIfNeeded(on: p)
 
         if let wc = windowCoordinator,
            let placement = wc.screenPopoverPlacement(
@@ -506,10 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         p.behavior = isWizard ? .applicationDefined : .transient
         p.animates = true
         p.delegate = self
-        p.contentViewController = NSHostingController(
-            rootView: PopoverRootView()
-                .environmentObject(controller)
-        )
+        installPopoverContentIfNeeded(on: p)
         controller.dismissPopover = { [weak p] in
             p?.performClose(nil)
         }
@@ -518,6 +518,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             p.contentSize = size
         }
         return p
+    }
+
+    private func installPopoverContentIfNeeded(on popover: NSPopover) {
+        guard popover.contentViewController == nil else { return }
+        popover.contentViewController = NSHostingController(
+            rootView: PopoverRootView()
+                .environmentObject(controller)
+        )
     }
 
     private func makeOrbPopoverAnchorWindow() -> NSWindow {
@@ -540,6 +548,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         orbPopoverAnchorWindow?.orderOut(nil)
+        // Detach the hidden SwiftUI tree so closed popovers do not keep
+        // background animations or timers alive after the user dismisses them.
+        popover?.contentViewController = nil
         NotificationCenter.default.post(name: .acDismissSheet, object: nil)
     }
 

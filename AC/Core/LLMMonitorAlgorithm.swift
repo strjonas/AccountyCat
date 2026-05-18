@@ -182,6 +182,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             shouldEvaluate = false
             reason = "scheduled_recheck"
         } else if distraction.lastAssessment == nil,
+                  !hasRestrictiveRule,
+                  let lastLLMEvalAt = state.llmPolicy.lastLLMEvalAt,
+                  now.timeIntervalSince(lastLLMEvalAt) < configuration.cadenceMode.minimumEvalGap {
+            shouldEvaluate = false
+            reason = "cooldown"
+        } else if distraction.lastAssessment == nil,
                   let stableSince = state.llmPolicy.currentContextEnteredAt {
             let defaultDelay = configuration.cadenceMode.adjustedDelay(
                 configuration.cadenceMode.stableContextDelay,
@@ -671,6 +677,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 contextKey: contextKey
             )
             evictOldestDecisionCacheEntries(from: &policyState.decisionCacheByContext)
+        }
+        if !attempts.isEmpty {
+            policyState.lastLLMEvalAt = input.now
         }
 
         // Observation tracking + safelist auto-promotion / revocation (Optimization 1).

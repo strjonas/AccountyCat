@@ -15,34 +15,15 @@ struct CatView: View {
     var size: CGFloat = 72
     var animating: Bool = true
 
-    @State private var pulse: CGFloat = 1.0
-
     var body: some View {
         Image(character.portraitAssetName(for: expression))
             .resizable()
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
-            .scaleEffect(pulse)
-            .onAppear { startPulsating() }
-            .onDisappear { stopAnimations() }
-    }
-
-    // MARK: - Pulsating
-    //
-    // Gentle 1.0 ↔ 1.05 oscillation, ~2s period. Disabled when `animating`
-    // is false (settings previews, menu bar). Keeps the orb feeling alive
-    // without any image-swap transitions.
-
-    private func startPulsating() {
-        guard animating else { return }
-        withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-            pulse = 1.05
-        }
-    }
-
-    private func stopAnimations() {
-        pulse = 1.0
+            // Keep the orb at true rest by default. Continuous idle animation
+            // was a measurable steady-state CPU cost even when AC was otherwise
+            // inactive or hidden.
     }
 }
 

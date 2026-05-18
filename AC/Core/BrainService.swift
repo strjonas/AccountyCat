@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import ApplicationServices
 import Foundation
 
 @MainActor
@@ -39,10 +40,12 @@ final class BrainService: NSObject {
     private let storageService: StorageService
     let telemetryStore: TelemetryStore
     private let pollingInterval: TimeInterval = 10
-    private let contextChangeProbeInterval: TimeInterval = 5
+    private let contextChangeProbeInterval: TimeInterval = 30
+    private let fastContextChangeProbeInterval: TimeInterval = 5
 
     private var timer: Timer?
     private var contextProbeTimer: Timer?
+    private let focusObserver = AppFocusAXObserver()
     private var isTickScheduled = false
     private var isEvaluating = false
     private var evaluationStartedAt: Date?
@@ -327,6 +330,11 @@ final class BrainService: NSObject {
         case "explicit_allow_rule":
             let title = context.windowTitle ?? "untitled"
             return "\(context.appName) · matched active allow rule · \(title)"
+        case "cooldown":
+            let lastLLMEvalAt = state.algorithmState.llmPolicy.lastLLMEvalAt
+            let elapsedSeconds = max(0, lastLLMEvalAt.map { now.timeIntervalSince($0) } ?? 0)
+            let requiredSeconds = state.monitoringConfiguration.cadenceMode.minimumEvalGap
+            return "\(context.appName) · cooldown \(Int(elapsedSeconds))s/\(Int(requiredSeconds))s"
         case "local_runtime_busy":
             return "\(context.appName) · deferred while local chat is in progress"
         default:
@@ -438,6 +446,9 @@ final class BrainService: NSObject {
         notificationCenter.addObserver(
             self, selector: #selector(handleSessionActive),
             name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+        notificationCenter.addObserver(
+            self, selector: #selector(handleAppActivated),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
 
         timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) {
             [weak self] _ in
@@ -445,19 +456,13 @@ final class BrainService: NSObject {
                 self?.scheduleTickIfNeeded()
             }
         }
-        contextProbeTimer = Timer.scheduledTimer(
-            withTimeInterval: contextChangeProbeInterval, repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.probeForContextChange()
-            }
-        }
+        resetContextProbeTimer(interval: contextChangeProbeInterval)
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.checkEvaluationHealth() }
         }
         RunLoop.main.add(timer!, forMode: .common)
-        RunLoop.main.add(contextProbeTimer!, forMode: .common)
         RunLoop.main.add(watchdogTimer!, forMode: .common)
+        attachFocusObserverForFrontmostApplication()
     }
 
     func stop() {
@@ -468,6 +473,7 @@ final class BrainService: NSObject {
         contextProbeTimer = nil
         watchdogTimer?.invalidate()
         watchdogTimer = nil
+        focusObserver.detach()
         isTickScheduled = false
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
@@ -501,6 +507,31 @@ final class BrainService: NSObject {
         state.algorithmState = AlgorithmStateEnvelope()
         stateSink?(baseState, state)
         resetRuntimeContext()
+    }
+
+    func invalidateContextAndCooldown(reason: String) {
+        guard let baseState = stateProvider?() else { return }
+        var state = baseState
+        let keys = Set([
+            state.algorithmState.llmPolicy.currentContextKey,
+            state.algorithmState.llmPolicy.distraction.contextKey,
+        ].compactMap { $0 })
+        for key in keys {
+            state.algorithmState.llmPolicy.decisionCacheByContext.removeValue(forKey: key)
+        }
+        // Preserve an in-flight appeal sheet: chat-side policy or memory changes should
+        // invalidate the monitored-context verdict, not silently abort the user's appeal.
+        state.algorithmState.llmPolicy.distraction.lastAssessment = nil
+        state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount = 0
+        state.algorithmState.llmPolicy.distraction.nextEvaluationAt = nil
+        state.algorithmState.llmPolicy.lastLLMEvalAt = nil
+        stateSink?(baseState, state)
+        Task {
+            await ActivityLogService.shared.append(
+                category: "monitoring",
+                message: "Invalidated cached context and cooldown: \(reason)"
+            )
+        }
     }
 
     @discardableResult
@@ -599,6 +630,7 @@ final class BrainService: NSObject {
             await ActivityLogService.shared.append(
                 category: "app", message: "System woke up. Monitoring resumed.")
         }
+        attachFocusObserverForFrontmostApplication()
         scheduleTickIfNeeded()
     }
 
@@ -616,6 +648,16 @@ final class BrainService: NSObject {
         Task {
             await ActivityLogService.shared.append(
                 category: "app", message: "User session became active. Monitoring resumed.")
+        }
+        attachFocusObserverForFrontmostApplication()
+        scheduleTickIfNeeded()
+    }
+
+    @objc private func handleAppActivated(_ note: Notification) {
+        let application = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+            ?? NSWorkspace.shared.frontmostApplication
+        if let application {
+            configureFocusObservation(for: application.processIdentifier)
         }
         scheduleTickIfNeeded()
     }
@@ -642,6 +684,7 @@ final class BrainService: NSObject {
         clearOnlineConnectivityFallback(clearBanner: true)
         wasInCallLastTick = false
         connectionProblemSink?(nil)
+        focusObserver.detach()
         appendLifecycleHeartbeat(reason: heartbeatReason)
 
         Task {
@@ -697,6 +740,41 @@ final class BrainService: NSObject {
 
         if context.contextKey != lastObservedContext?.contextKey {
             scheduleTickIfNeeded()
+        }
+    }
+
+    private func attachFocusObserverForFrontmostApplication() {
+        if let application = NSWorkspace.shared.frontmostApplication {
+            configureFocusObservation(for: application.processIdentifier)
+        } else {
+            resetContextProbeTimer(interval: contextChangeProbeInterval)
+        }
+    }
+
+    private func configureFocusObservation(for pid: pid_t) {
+        if focusObserver.isKnownUncooperative(pid: pid) {
+            resetContextProbeTimer(interval: fastContextChangeProbeInterval)
+            focusObserver.detach()
+            return
+        }
+
+        let attached = focusObserver.attach(pid: pid) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleTickIfNeeded()
+            }
+        }
+        resetContextProbeTimer(interval: attached ? contextChangeProbeInterval : fastContextChangeProbeInterval)
+    }
+
+    private func resetContextProbeTimer(interval: TimeInterval) {
+        contextProbeTimer?.invalidate()
+        contextProbeTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.probeForContextChange()
+            }
+        }
+        if let contextProbeTimer {
+            RunLoop.main.add(contextProbeTimer, forMode: .common)
         }
     }
 

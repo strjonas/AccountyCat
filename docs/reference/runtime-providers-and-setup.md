@@ -59,6 +59,49 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 
 `BrainService` reads `hasInteractiveRequestInFlight()` at the start of each monitoring tick and defers evaluation when a chat request is in flight (see monitoring-pipeline.md, "Deterministic Gates").
 
+### Shared llama-server defaults
+
+`LocalModelRuntime` keeps one shared `llama-server` alive for local monitoring and chat. The shared server is launched with a fixed performance-oriented flag set that does not participate in capacity reuse decisions:
+
+- `-ngl 999` to offload all supported layers to Metal
+- `--threads <perf-core-count>` where the count comes from `hw.perflevel0.physicalcpu` when available, else `ProcessInfo.processInfo.activeProcessorCount`
+- `--cache-type-k q8_0`
+- `--cache-type-v q8_0`
+
+Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC currently uses a single shared slot and relies on the fact that the monitoring/system prompts are prefix-stable, so no explicit slot management is needed.
+
+KV-cache quantization is a memory-saving tradeoff for local monitoring: q8 K/V materially lowers cache RAM pressure while keeping quality stable on the small Q4/Q5 local models AC targets for v1.0.
+
+### Local prompt budgets
+
+The default staged local runtime profile in `ACShared/ACPromptSets.swift` currently uses:
+
+| Stage | ctxSize | batchSize | ubatchSize |
+| --- | --- | --- | --- |
+| `perception_vision` | 6144 | 2048 | 512 |
+| `perception_title` | 2048 | 512 | 256 |
+| `decision` | 3072 | 512 | 256 |
+| `online_decision` | 3072 | 512 | 256 |
+| `nudge_copy` | 2048 | 512 | 256 |
+| `appeal_review` | 2048 | 512 | 256 |
+| `policy_memory` | 3072 | 512 | 256 |
+| `safelist_appeal` | 2048 | 768 | 384 |
+
+The shared server therefore runs at the largest requested capacity (`ctxSize = 6144` for the vision stage) and smaller text stages reuse that server without forcing a restart.
+
+### Prompt overflow guard
+
+`PromptBudgetGuard` sits in front of local shared-server requests. It:
+
+- estimates prompt size heuristically from text length plus vision tile count
+- prefers preserving the rendered text payload intact: when the heuristic says a request is too large, AC first grows the per-request shared-server context budget (up to a bounded ceiling) instead of immediately trimming text
+- on vision requests, progressively reduces the image max dimension before falling back to text truncation
+- optionally calls `POST /tokenize` on the local `llama-server` when the heuristic is already close to the context limit
+- only as a last resort, trims the user-prompt tail proportionally and verifies the reduced prompt once via `/tokenize`
+- records `prompt_budget_truncated` telemetry/activity when truncation actually happens
+
+If tokenization fails or times out, AC falls back to the heuristic path and continues the request rather than blocking inference.
+
 ## Monitoring Backend Selection
 
 `MonitoringConfiguration.inferenceBackend` selects the backend:

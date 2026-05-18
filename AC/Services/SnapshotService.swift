@@ -40,7 +40,7 @@ enum SnapshotService {
 
     private static let browserCacheLock = NSLock()
     private static var browserTitleCache: [pid_t: CachedBrowserTitle] = [:]
-    private static let browserCacheTTL: TimeInterval = 2
+    private static let browserCacheTTL: TimeInterval = 5
 
     static func frontmostContext() -> FrontmostContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else {
@@ -81,6 +81,12 @@ enum SnapshotService {
         }
 
         return cgWindowTitle(for: app.processIdentifier)
+    }
+
+    static func invalidateBrowserTitleCache(pid: pid_t) {
+        browserCacheLock.lock()
+        browserTitleCache.removeValue(forKey: pid)
+        browserCacheLock.unlock()
     }
 
     private static func normalizedWindowTitle(_ title: String?, appName: String) -> String? {

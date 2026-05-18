@@ -221,6 +221,9 @@ extension AppController {
                 context: SnapshotService.frontmostContext(),
                 parentInteractionID: result.interactionID
             )
+            if Self.chatActionsMutateMonitoredState(result.actions) {
+                self.brainService?.invalidateContextAndCooldown(reason: "chat_actions_applied")
+            }
 
             // Backstop: when the chat returns no actions but the reply commits to remembering
             // something (e.g. "I'll keep that in mind"), the model has promised a memory write
@@ -252,6 +255,17 @@ extension AppController {
 
     static func makeChatMessages(from persistedHistory: [ChatMessage]) -> [ChatMessage] {
         AppControllerChatSupport.makeChatMessages(from: persistedHistory)
+    }
+
+    nonisolated static func chatActionsMutateMonitoredState(_ actions: [CompanionChatAction]) -> Bool {
+        actions.contains { action in
+            switch action.kind {
+            case .memory, .focusPolicy, .profile:
+                return true
+            case .recurringNudge:
+                return false
+            }
+        }
     }
 
     // MARK: - Memory helpers

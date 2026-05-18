@@ -95,6 +95,8 @@ If a change mutates settings, persisted state, chat side effects, setup status, 
 - `AC/Core/CompanionPolicy.swift`
 - `AC/Core/DistractionLadder.swift`
 - `AC/Core/ExecutiveArm.swift`
+- `AC/Services/AppFocusAXObserver.swift`
+- `ACShared/PromptBudgetGuard.swift`
 
 This is the path from observed context to a user-visible nudge or overlay.
 
@@ -138,7 +140,7 @@ This is the main path for runtime debugging, Inspector views, and exported debug
 
 1. `AppDelegate` builds the UI shell and bootstraps `AppController`.
 2. `AppController.bootstrap()` refreshes state, configures `BrainService`, and starts telemetry if applicable.
-3. `BrainService` runs a periodic tick plus a faster context-change probe.
+3. `BrainService` runs a periodic tick, event-driven app/window/title change detection, plus a slower fallback probe.
 4. Each tick gathers context, heuristics, optional screenshot data, and policy/profile state.
 5. `MonitoringAlgorithmRegistry` resolves `llm_monitor_v1`.
 6. `LLMMonitorAlgorithm` decides whether to skip, stay silent, nudge, overlay, or abstain.

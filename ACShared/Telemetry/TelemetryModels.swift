@@ -546,6 +546,7 @@ nonisolated enum MonitoringMetricKind: String, Codable, Sendable {
     case evaluationSkipped = "evaluation_skipped"
     case visionRetried = "vision_retried"
     case profileChanged = "profile_changed"
+    case promptBudgetTruncated = "prompt_budget_truncated"
 }
 
 nonisolated struct MonitoringMetricRecord: Codable, Hashable, Sendable {

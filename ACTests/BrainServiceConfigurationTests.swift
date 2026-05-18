@@ -60,6 +60,79 @@ struct BrainServiceConfigurationTests {
     }
 
     @Test
+    func invalidateContextAndCooldownPreservesActiveAppeal() {
+        let runtime = LocalModelRuntime()
+        let registry = MonitoringAlgorithmRegistry(
+            runtime: runtime,
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
+        )
+        let brainService = BrainService(
+            monitoringAlgorithmRegistry: registry,
+            executiveArm: ExecutiveArm(
+                showNudge: { _ in },
+                showOverlay: { _ in },
+                hideOverlay: { },
+                minimizeApp: { _ in }
+            ),
+            runtime: runtime,
+            storageService: StorageService.temporary(),
+            telemetryStore: TelemetryStore(
+                rootURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("ac-brain-tests-\(UUID().uuidString)", isDirectory: true)
+            )
+        )
+        var state = ACState()
+        let currentKey = "com.google.Chrome|Docs"
+        let otherKey = "com.apple.dt.Xcode|Project"
+        state.algorithmState.llmPolicy.currentContextKey = currentKey
+        state.algorithmState.llmPolicy.distraction = DistractionMetadata(
+            contextKey: currentKey,
+            stableSince: Date(timeIntervalSince1970: 1),
+            lastAssessment: .distracted,
+            consecutiveDistractedCount: 2,
+            nextEvaluationAt: Date(timeIntervalSince1970: 2)
+        )
+        state.algorithmState.llmPolicy.activeAppeal = MonitoringAppealSession(
+            evaluationID: "appeal-1",
+            contextKey: otherKey,
+            appName: "Xcode",
+            prompt: "Why should I let you continue?",
+            createdAt: Date(timeIntervalSince1970: 6)
+        )
+        state.algorithmState.llmPolicy.lastLLMEvalAt = Date(timeIntervalSince1970: 3)
+        state.algorithmState.llmPolicy.decisionCacheByContext[currentKey] = CachedDecision(
+            assessment: .focused,
+            decidedAt: Date(timeIntervalSince1970: 4),
+            contextKey: currentKey
+        )
+        state.algorithmState.llmPolicy.decisionCacheByContext[otherKey] = CachedDecision(
+            assessment: .focused,
+            decidedAt: Date(timeIntervalSince1970: 5),
+            contextKey: otherKey
+        )
+
+        brainService.stateProvider = { state }
+        func applyStateUpdate(_: ACState, updatedState: ACState) {
+            state = updatedState
+        }
+        brainService.stateSink = applyStateUpdate
+
+        brainService.invalidateContextAndCooldown(reason: "chat_actions_applied")
+
+        #expect(state.algorithmState.llmPolicy.activeAppeal?.evaluationID == "appeal-1")
+        #expect(state.algorithmState.llmPolicy.decisionCacheByContext[currentKey] == nil)
+        #expect(state.algorithmState.llmPolicy.decisionCacheByContext[otherKey] != nil)
+        #expect(state.algorithmState.llmPolicy.distraction.lastAssessment == nil)
+        #expect(state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount == 0)
+        #expect(state.algorithmState.llmPolicy.distraction.nextEvaluationAt == nil)
+        #expect(state.algorithmState.llmPolicy.lastLLMEvalAt == nil)
+    }
+
+    @Test
     func registryRejectsUnknownAlgorithmIDs() {
         let runtime = LocalModelRuntime()
         let registry = MonitoringAlgorithmRegistry(

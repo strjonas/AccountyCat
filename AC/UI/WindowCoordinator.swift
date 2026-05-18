@@ -68,6 +68,7 @@ final class WindowCoordinator {
     func showCompanion() {
         let panel = companionPanel ?? makeCompanionPanel()
         companionPanel = panel
+        installCompanionContentIfNeeded(on: panel)
         let frame = savedCompanionFrame()
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
@@ -91,7 +92,11 @@ final class WindowCoordinator {
     }
 
     func hideCompanion() {
-        companionPanel?.orderOut(nil)
+        guard let panel = companionPanel else { return }
+        panel.orderOut(nil)
+        // Detach the SwiftUI tree so menu-bar-only mode does not keep an offscreen
+        // animated orb alive in the background.
+        panel.contentViewController = nil
     }
 
     // MARK: - Entrance animation
@@ -487,15 +492,6 @@ final class WindowCoordinator {
     // MARK: - Factories
 
     private func makeCompanionPanel() -> PassivePanel {
-        // CompanionView no longer needs onDrag/onDragEnd — drag is handled by
-        // the NSEvent monitor above. Only onTap is needed for popover toggle.
-        let view = CompanionView(
-            onTap: { [weak self] in self?.openPopoverFromOrb?() }
-        )
-        .environmentObject(controller)
-        .background(.clear)
-
-        let hosting = NSHostingController(rootView: view)
         let panel = PassivePanel(
             contentRect: savedCompanionFrame(),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -507,12 +503,7 @@ final class WindowCoordinator {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
-        panel.contentViewController = hosting
-        // Fully transparent hosting view — without all three of these the
-        // NSHostingView paints a window-background-coloured rectangle behind the orb.
-        hosting.view.wantsLayer = true
-        hosting.view.layer?.isOpaque = false
-        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
+        installCompanionContentIfNeeded(on: panel)
 
         // Save position whenever the panel moves
         NotificationCenter.default.addObserver(
@@ -534,6 +525,26 @@ final class WindowCoordinator {
 
         setupDragMonitor(for: panel)
         return panel
+    }
+
+    private func installCompanionContentIfNeeded(on panel: NSWindow) {
+        guard panel.contentViewController == nil else { return }
+
+        // CompanionView no longer needs onDrag/onDragEnd — drag is handled by
+        // the NSEvent monitor above. Only onTap is needed for popover toggle.
+        let view = CompanionView(
+            onTap: { [weak self] in self?.openPopoverFromOrb?() }
+        )
+        .environmentObject(controller)
+        .background(.clear)
+
+        let hosting = NSHostingController(rootView: view)
+        panel.contentViewController = hosting
+        // Fully transparent hosting view — without all three of these the
+        // NSHostingView paints a window-background-coloured rectangle behind the orb.
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.isOpaque = false
+        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     private func makeOverlayWindow() -> NSWindow {
