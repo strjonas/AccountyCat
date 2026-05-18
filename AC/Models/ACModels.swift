@@ -1405,6 +1405,12 @@ struct ACState: Codable, Sendable {
         if !profiles.contains(where: { $0.isDefault }) {
             profiles.insert(FocusProfile.makeDefault(), at: 0)
         }
+        if let defaultIndex = profiles.firstIndex(where: { $0.isDefault }),
+           profiles[defaultIndex].promptSessionStartedAt == nil {
+            let anchor = Date()
+            profiles[defaultIndex].activatedAt = profiles[defaultIndex].activatedAt ?? anchor
+            profiles[defaultIndex].promptSessionStartedAt = anchor
+        }
         if !profiles.contains(where: { $0.id == activeProfileID }) {
             activeProfileID = PolicyRule.defaultProfileID
         }
@@ -1454,6 +1460,10 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Set when the 5-min pre-expiry warning fired for the current activation.
     /// Cleared on reactivation. Ensures a single warning per session.
     var prewarnSentAt: Date?
+    /// Prompt-context anchor for the current active-profile window.
+    /// Monitoring only forwards user messages at/after this timestamp so old
+    /// profile intent does not leak into later evaluations.
+    var promptSessionStartedAt: Date?
 
     init(
         id: String = UUID().uuidString,
@@ -1470,7 +1480,8 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         createdReason: String? = nil,
         recurringSchedule: RecurringSchedule? = nil,
         autoExtendedAt: Date? = nil,
-        prewarnSentAt: Date? = nil
+        prewarnSentAt: Date? = nil,
+        promptSessionStartedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -1488,6 +1499,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.lastScheduleFireDate = nil
         self.autoExtendedAt = autoExtendedAt
         self.prewarnSentAt = prewarnSentAt
+        self.promptSessionStartedAt = promptSessionStartedAt
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1496,6 +1508,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         case createdAt, lastUsedAt, activatedAt, expiresAt, createdReason
         case recurringSchedule, lastScheduleFireDate
         case autoExtendedAt, prewarnSentAt
+        case promptSessionStartedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -1517,10 +1530,12 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         lastScheduleFireDate = try c.decodeIfPresent(Date.self, forKey: .lastScheduleFireDate)
         autoExtendedAt = try c.decodeIfPresent(Date.self, forKey: .autoExtendedAt)
         prewarnSentAt = try c.decodeIfPresent(Date.self, forKey: .prewarnSentAt)
+        promptSessionStartedAt = try c.decodeIfPresent(Date.self, forKey: .promptSessionStartedAt)
     }
 
     static func makeDefault() -> FocusProfile {
-        FocusProfile(
+        let now = Date()
+        return FocusProfile(
             id: PolicyRule.defaultProfileID,
             name: defaultDisplayName,
             isDefault: true,
@@ -1528,7 +1543,11 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
             emoji: "◎",
             color: "#9aa1a8",
             defaultDurationMin: nil,
-            createdReason: "system_default"
+            createdAt: now,
+            lastUsedAt: now,
+            activatedAt: now,
+            createdReason: "system_default",
+            promptSessionStartedAt: now
         )
     }
 

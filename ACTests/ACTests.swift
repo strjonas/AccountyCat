@@ -120,6 +120,59 @@ struct ACTests {
     }
 
     @Test
+    func monitoringRecentUserMessagesOnlyIncludeCurrentNamedSession() {
+        let beforeSession = Date(timeIntervalSince1970: 10)
+        let sessionStart = Date(timeIntervalSince1970: 20)
+        let inSession = Date(timeIntervalSince1970: 30)
+        let history = [
+            ChatMessage(role: .user, text: "old everyday note", timestamp: beforeSession),
+            ChatMessage(role: .assistant, text: "reply", timestamp: Date(timeIntervalSince1970: 25)),
+            ChatMessage(role: .user, text: "start coding now", timestamp: sessionStart),
+            ChatMessage(role: .user, text: "also check docs", timestamp: inSession),
+        ]
+        let profile = FocusProfile(
+            id: "coding",
+            name: "Coding",
+            activatedAt: sessionStart,
+            expiresAt: sessionStart.addingTimeInterval(30 * 60),
+            promptSessionStartedAt: sessionStart
+        )
+
+        let recent = BrainService.monitoringRecentUserMessages(
+            chatHistory: history,
+            activeProfile: profile,
+            limit: 5
+        )
+
+        #expect(recent == [
+            "[\(PromptTimestampFormatting.absoluteLabel(for: sessionStart))] start coding now",
+            "[\(PromptTimestampFormatting.absoluteLabel(for: inSession))] also check docs",
+        ])
+    }
+
+    @Test
+    func monitoringRecentUserMessagesOnlyIncludeCurrentEverydayWindow() {
+        let firstMessage = Date(timeIntervalSince1970: 20)
+        let secondMessage = Date(timeIntervalSince1970: 30)
+        let history = [
+            ChatMessage(role: .user, text: "old session note", timestamp: firstMessage),
+            ChatMessage(role: .user, text: "current everyday note", timestamp: secondMessage)
+        ]
+        var activeProfile = FocusProfile.makeDefault()
+        activeProfile.promptSessionStartedAt = secondMessage
+
+        let recent = BrainService.monitoringRecentUserMessages(
+            chatHistory: history,
+            activeProfile: activeProfile,
+            limit: 5
+        )
+
+        #expect(recent == [
+            "[\(PromptTimestampFormatting.absoluteLabel(for: secondMessage))] current everyday note"
+        ])
+    }
+
+    @Test
     func chatSupportRecognizesImmediateMonitoringAllowances() {
         #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("but I finished that session no?"))
         #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("hey chill for now, I need to do something else"))

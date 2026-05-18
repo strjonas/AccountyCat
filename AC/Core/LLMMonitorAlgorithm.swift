@@ -12,7 +12,6 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
     var recentUserMessages: [String]
     var policySummary: String
     var activeProfile: MonitoringActiveProfilePromptPayload
-    var recentlyEndedSession: RecentlyEndedSessionSummary?
 
     init(input: MonitoringDecisionInput) {
         goals = input.goals.cleanedSingleLine.truncatedForPrompt(
@@ -37,7 +36,6 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
             activatedAt: input.activeProfileActivatedAt,
             expiresAt: input.activeProfileExpiresAt
         )
-        recentlyEndedSession = input.recentlyEndedSession
     }
 }
 
@@ -474,8 +472,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     titlePerception: titlePerception,
                     visionPerception: visionPerception,
                     calendarContext: input.calendarContext,
-                    activeProfile: requestScope.activeProfile,
-                    recentlyEndedSession: requestScope.recentlyEndedSession
+                    activeProfile: requestScope.activeProfile
                 ),
                 attempts: &attempts,
                 decoder: MonitoringDecisionEnvelope.self
@@ -1235,8 +1232,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
             calendarContext: input.calendarContext,
             screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration),
-            activeProfile: requestScope.activeProfile,
-            recentlyEndedSession: requestScope.recentlyEndedSession
+            activeProfile: requestScope.activeProfile
         )
 
         let screenshotPath = visionEnabled(for: input.configuration)
@@ -1670,9 +1666,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
         if input.activeProfileID == PolicyRule.defaultProfileID,
            !hasActiveRestrictiveRule {
-            guard input.recentlyEndedSession == nil else {
-                return false
-            }
             let threshold = isSharp ? 2 : 3
             return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
         }
@@ -1703,12 +1696,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             if hasActiveRestrictiveRule {
                 let threshold = isSharp ? 1 : 2
                 return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
-            }
-
-            // A recently ended focus session is explanatory context, not a live contract.
-            // In Everyday mode it should never be enough to force an overlay by itself.
-            guard input.recentlyEndedSession == nil else {
-                return false
             }
 
             let threshold = isSharp ? 2 : 3

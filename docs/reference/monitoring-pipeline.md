@@ -132,7 +132,7 @@ The monitoring payload is profile-aware.
 - Sparse profile names such as Coding, Writing, Research, or Studying are treated as broad archetypes. Adjacent docs, tutorials, examples, planning, project chat, reference material, and debugging can be focused unless the profile description or rules narrow the scope.
 - Specific profile descriptions and rules narrow the scope. A profile like "code writing only, no tutorials" should make tutorial/video content nudge-eligible.
 - `activeProfile.activatedAt` is included in the decision payload. During the first few minutes of a newly activated named profile, the model should require stronger evidence before nudging plausible adjacent work, while still nudging clear unrelated drift.
-- `recentlyEndedSession` keeps the just-finished task visible to the model for about 30 minutes.
+- `recentUserMessages` is scoped to the currently active profile window, including `Everyday`.
 - Policy rules are profile-scoped.
 - Free-form memory remains globally visible, but entries carry profile labels.
 

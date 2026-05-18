@@ -119,8 +119,7 @@ enum ACPromptSets {
     - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
     - Only flag activity that has been clearly going on for a while AND conflicts with the user's recent stated intent, memory, or a `disallow`/`discourage` rule listed in `policySummary`.
     - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
-    - `recentlyEndedSession` is NOT active. It means the focus session already ended and the user is back in Everyday mode. Never enforce it as a current obligation.
-    - Use `recentlyEndedSession` only to avoid false positives: adjacent wrap-up/research is likely okay, and unrelated life/admin after expiry is usually okay too.
+    - In Everyday mode, judge what is active right now. Do not infer a current obligation from an expired profile or stale chat context.
     - If the newest user message says the session is done/expired/over, says "it's fine", asks AC to chill/leave them alone, or says they need a break/errand, treat that as an allowance for now unless `policySummary` contains a current restrictive rule.
     - An overlay in Everyday mode requires overwhelming evidence: a current restrictive rule, or a long repeated same-context pattern with no newer user allowance/correction. Otherwise nudge at most; often abstain.
     """
@@ -138,7 +137,6 @@ enum ACPromptSets {
     - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
     - If `activeProfile.activatedAt` is recent (roughly the first 10 minutes), calibrate carefully: require strong evidence before nudging plausible adjacent work, but still nudge clear unrelated drift.
     - Productive work that doesn't fit the session scope can still be a distraction (e.g. coding during "Presentation prep").
-    - `recentlyEndedSession` is rarely set when a session is already active; if it is, treat it as background context only.
     """
 
     /// Few-shot examples shared by the online and staged decision prompts. These are
@@ -146,7 +144,7 @@ enum ACPromptSets {
     /// right thing with ranked context, not merely parroting abstract policy text.
     private static let monitoringDecisionExamples = """
     Worked examples:
-    - Everyday after expiry: activeProfile.isDefault=true, recentlyEndedSession=Writing essay, current title="Sonnencreme Gesicht | dm", newest user message="but I finished that session no?" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","session_already_ended","life_admin_allowed"]}
+    - Everyday after expiry: activeProfile.isDefault=true, recentUserMessages=[], current title="Sonnencreme Gesicht | dm" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","life_admin_allowed"]}
     - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
     - Generic coding profile: activeProfile.name="Coding", activeProfile.description missing, current title="README tutorial for macOS apps - YouTube" → {"assessment":"focused","suggested_action":"none","reason_tags":["broad_profile_archetype","adjacent_learning"]}
     - Coding session with lenience: activeProfile.name="Coding", activeProfile.goalSummary="coding with browsing/order errands allowed right now", current title="Google Calendar - Week of May 18, 2026" → {"assessment":"focused","suggested_action":"none","reason_tags":["session_goal_lenience","adjacent_errand_allowed"]}
@@ -226,6 +224,7 @@ enum ACPromptSets {
                 3. `policySummary` — structured support; never overrides a newer chat/memory statement.
                 4. `calendarContext` — soft hint only.
                 Allowances ("X is okay", "let me", "don't disturb me on X") are as binding as restrictions.
+                `recentUserMessages` is profile-window scoped: it only contains user chat from the currently active profile window, including Everyday.
 
                 Trust the user's recent stated intent, memory, and active profile. If the user describes work that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to that stated intent — not to generic notions of productivity.
                 Profile / memory scoping:
@@ -247,7 +246,7 @@ enum ACPromptSets {
                 - Activity supports the user's current intent or matches an allowance → `focused` + `none`.
                 - Newer explicit allowance or correction in `recentUserMessages` for the current app/activity overrides an older nudge or stale suspicion → `focused` + `none`.
                 - Treat `activeProfile.goalSummary` as the contract for THIS activation. It can be broader or more situational than the static profile description.
-                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
+                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`.
                 - Genuinely unclear → `unclear` + `abstain`.
                 - Conflicts with the user's current intent or an active restriction → `distracted`.
                 - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
@@ -292,6 +291,7 @@ enum ACPromptSets {
                 3. `policySummary` — structured support; never overrides a newer chat/memory statement.
                 4. `calendarContext` — SOFT hint about current intent. When it names a task, apps that clearly serve that task are `focused` (e.g. event "Summarise r/foo" + reddit.com/r/foo → focused). Vague events like "Work" or "Meeting" give no strong signal.
                 `freeFormMemory` and `recentUserMessages` carry `YYYY-MM-DD HH:MM` timestamps; use `now` plus the timestamps to resolve any temporary rule's expiry.
+                `recentUserMessages` is profile-window scoped: it only contains user chat from the currently active profile window, including Everyday.
 
                 Allowances are as binding as restrictions:
                 - "X is okay", "let me", "I'm taking a break", "do not disturb me on X", "never flag X" → treat as allowed, return `focused`/`none` for that app/activity.
@@ -317,7 +317,7 @@ enum ACPromptSets {
                 - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
                 - A newer user correction that a recent nudge/overlay was wrong supersedes that older intervention for the current activity.
                 - Treat `activeProfile.goalSummary` as the contract for THIS activation. It can be broader or more situational than the static profile description.
-                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`; do not keep enforcing `recentlyEndedSession`.
+                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`.
                 - Genuinely unclear after using the full payload → `unclear` + `abstain`.
                 - Activity conflicts with the user's current intent or an active restriction → `distracted`.
                 - First clear distraction → `nudge`.

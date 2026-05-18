@@ -53,8 +53,7 @@ struct MonitoringPromptModeTests {
         #expect(online.contains("errands") || online.contains("life admin"))
         #expect(online.contains("opted in to being checked"))
         #expect(online.contains("Prefer `unclear` + `abstain` over `nudge`"))
-        #expect(online.contains("`recentlyEndedSession` is NOT active"))
-        #expect(online.contains("Never enforce it as a current obligation"))
+        #expect(online.contains("expired profile or stale chat context"))
     }
 
     @Test
@@ -71,11 +70,20 @@ struct MonitoringPromptModeTests {
     }
 
     @Test
+    func promptsDescribeRecentUserMessagesAsProfileWindowScoped() {
+        let online = systemPrompt(for: .onlineDecision)
+        let decision = systemPrompt(for: .decision)
+        #expect(online.contains("profile-window scoped"))
+        #expect(decision.contains("profile-window scoped"))
+        #expect(online.contains("including Everyday"))
+    }
+
+    @Test
     func onlineDecisionPromptIncludesSessionExpiryExamples() {
         let online = systemPrompt(for: .onlineDecision)
         #expect(online.contains("Everyday after expiry"))
         #expect(online.contains("Sonnencreme Gesicht"))
-        #expect(online.contains("session_already_ended"))
+        #expect(online.contains("life_admin_allowed"))
         #expect(online.contains("User correction wins"))
         #expect(online.contains("Generic coding profile"))
         #expect(online.contains("Strict coding profile"))

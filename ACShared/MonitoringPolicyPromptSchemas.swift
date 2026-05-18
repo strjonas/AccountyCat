@@ -175,10 +175,6 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var calendarContext: String?
     var screenshotIncluded: Bool
     var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
-    /// A focus session that ended within the last ~30 minutes. Present even
-    /// when `activeProfile.isDefault=true` so the model knows what the user
-    /// was just doing.
-    var recentlyEndedSession: RecentlyEndedSessionSummary?
 }
 
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
@@ -205,8 +201,6 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     /// not authority.
     var calendarContext: String?
     var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
-    /// See `MonitoringOnlineDecisionPromptPayload.recentlyEndedSession`.
-    var recentlyEndedSession: RecentlyEndedSessionSummary?
 }
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {

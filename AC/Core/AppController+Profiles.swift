@@ -7,6 +7,16 @@ import Foundation
 
 @MainActor
 extension AppController {
+    private static let sessionChatAnchorLeadWindow: TimeInterval = 2 * 60
+
+    private func sessionChatAnchorForActivation(at now: Date) -> Date {
+        guard let latestUserTimestamp = state.chatHistory.last(where: { $0.role == .user })?.timestamp,
+              now.timeIntervalSince(latestUserTimestamp) <= Self.sessionChatAnchorLeadWindow else {
+            return now
+        }
+        return latestUserTimestamp
+    }
+
     // MARK: - Brain — rule management
 
     func addUserRule(
@@ -189,6 +199,7 @@ extension AppController {
             logActivity("profile", "Activate failed — unknown profile id: \(id)")
             return false
         }
+        let wasSameActiveProfile = state.activeProfileID == id
         var profile = state.profiles[index]
         profile.activatedAt = now
         profile.lastUsedAt = now
@@ -198,16 +209,22 @@ extension AppController {
         profile.prewarnSentAt = nil
         if profile.isDefault {
             profile.expiresAt = nil
+            profile.promptSessionStartedAt = wasSameActiveProfile
+                ? (profile.promptSessionStartedAt ?? now)
+                : now
         } else {
             profile.expiresAt = expiresAt ?? now.addingTimeInterval(90 * 60)
+            profile.promptSessionStartedAt = wasSameActiveProfile
+                ? (profile.promptSessionStartedAt ?? sessionChatAnchorForActivation(at: now))
+                : sessionChatAnchorForActivation(at: now)
         }
         if let reason, !reason.isEmpty {
             profile.createdReason = reason
         }
         state.profiles[index] = profile
         // Activating any named profile clears the recently-ended session — the
-        // user's anchor has moved on. (Activating Everyday keeps it so the
-        // model still sees the prior session's goal context for ~30 min.)
+        // user's anchor has moved on. Activating Everyday preserves it for
+        // UI/debug continuity, but the monitoring payload no longer uses it.
         if !profile.isDefault {
             state.recentlyEndedSession = nil
         }
@@ -266,7 +283,8 @@ extension AppController {
             lastUsedAt: now,
             activatedAt: now,
             expiresAt: now.addingTimeInterval(durationToUse),
-            createdReason: reason
+            createdReason: reason,
+            promptSessionStartedAt: sessionChatAnchorForActivation(at: now)
         )
         state.profiles.append(profile)
         // New named profile: prior recently-ended anchor is no longer relevant.
@@ -279,28 +297,33 @@ extension AppController {
     }
 
     /// End the active profile and switch back to default. No-op when default is already active.
-    /// Sets `recentlyEndedSession` so the next ~30 min of monitoring evals retain the
-    /// just-ended goal anchor in the prompt payload.
+    /// Preserves a `recentlyEndedSession` snapshot for UI/debug continuity after the switch.
     func endActiveProfile(announce: Bool = false) {
         guard state.activeProfileID != PolicyRule.defaultProfileID else { return }
         state.ensureDefaultProfileExists()
+        let now = Date()
         let endedSnapshot: RecentlyEndedSession?
         if let i = state.profiles.firstIndex(where: { $0.id == state.activeProfileID }) {
             let ended = state.profiles[i]
             endedSnapshot = RecentlyEndedSession(
                 name: ended.name,
                 description: ended.description,
-                endedAt: Date(),
+                endedAt: now,
                 goalSummary: ended.createdReason
             )
             state.profiles[i].activatedAt = nil
             state.profiles[i].expiresAt = nil
             state.profiles[i].autoExtendedAt = nil
             state.profiles[i].prewarnSentAt = nil
+            state.profiles[i].promptSessionStartedAt = nil
         } else {
             endedSnapshot = nil
         }
         state.activeProfileID = PolicyRule.defaultProfileID
+        if let defaultIndex = state.profiles.firstIndex(where: { $0.id == PolicyRule.defaultProfileID }) {
+            state.profiles[defaultIndex].activatedAt = now
+            state.profiles[defaultIndex].promptSessionStartedAt = now
+        }
         if let endedSnapshot {
             state.recentlyEndedSession = endedSnapshot
             state.sessionCelebrationPending = true

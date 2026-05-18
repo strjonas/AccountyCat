@@ -157,7 +157,7 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
-    func everydayRecentlyEndedSessionSuppressesOverlaySuggestion() async throws {
+    func everydayFirstOverlaySuggestionStillRequiresStrongerEvidence() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.decision = """
         {"assessment":"distracted","suggested_action":"overlay","confidence":0.96,"reason_tags":["shopping_after_ended_session"],"overlay_headline":"Still shopping?","overlay_body":"Your writing session ended, but this looks off-track.","overlay_prompt":"Why continue?"}
@@ -174,11 +174,6 @@ struct LLMMonitorAlgorithmTests {
                 snapshot: makeSnapshot(
                     now: now,
                     windowTitle: "Sonnencreme Gesicht | dm"
-                ),
-                recentlyEndedSession: RecentlyEndedSessionSummary(
-                    name: "Writing",
-                    endedAt: now.addingTimeInterval(-9 * 60),
-                    goalSummary: "essay writing: can machines think"
                 )
             )
         )
@@ -1007,8 +1002,7 @@ struct LLMMonitorAlgorithmTests {
         activeProfileDescription: String? = nil,
         activeProfileGoalSummary: String? = nil,
         activeProfileActivatedAt: Date? = nil,
-        activeProfileExpiresAt: Date? = nil,
-        recentlyEndedSession: RecentlyEndedSessionSummary? = nil
+        activeProfileExpiresAt: Date? = nil
     ) -> MonitoringDecisionInput {
         var configuration = configuration ?? MonitoringConfiguration()
         if configuration == MonitoringConfiguration() {
@@ -1034,8 +1028,7 @@ struct LLMMonitorAlgorithmTests {
             activeProfileDescription: activeProfileDescription,
             activeProfileGoalSummary: activeProfileGoalSummary,
             activeProfileActivatedAt: activeProfileActivatedAt,
-            activeProfileExpiresAt: activeProfileExpiresAt,
-            recentlyEndedSession: recentlyEndedSession
+            activeProfileExpiresAt: activeProfileExpiresAt
         )
     }
 

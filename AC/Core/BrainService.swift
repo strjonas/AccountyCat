@@ -102,8 +102,7 @@ final class BrainService: NSObject {
     /// pre-expiry warning ~5 min before expiry, and at expiry either auto-extends
     /// the session by 30m (when last assessment was focused AND the visible title
     /// still relates to the goal AND we haven't already auto-extended this run) or
-    /// ends the profile and stamps `recentlyEndedSession` for ~30 min so the
-    /// monitoring payload retains the goal anchor across the transition.
+    /// ends the profile and stamps `recentlyEndedSession` for UI/debug continuity.
     /// Pure mutation — no I/O, no main-actor dependencies. Returns an outcome the
     /// caller drives side effects on.
     static func applySoftProfileLifecycle(
@@ -187,8 +186,13 @@ final class BrainService: NSObject {
             state.profiles[i].expiresAt = nil
             state.profiles[i].autoExtendedAt = nil
             state.profiles[i].prewarnSentAt = nil
+            state.profiles[i].promptSessionStartedAt = nil
         }
         state.activeProfileID = PolicyRule.defaultProfileID
+        if let defaultIndex = state.profiles.firstIndex(where: { $0.id == PolicyRule.defaultProfileID }) {
+            state.profiles[defaultIndex].activatedAt = now
+            state.profiles[defaultIndex].promptSessionStartedAt = now
+        }
         state.recentlyEndedSession = RecentlyEndedSession(
             name: activeProfile.name,
             description: activeProfile.description,
@@ -214,6 +218,24 @@ final class BrainService: NSObject {
         let userMessages =
             chatHistory
             .filter { $0.role == .user }
+            .suffix(limit)
+            .compactMap(\.promptStampedLine)
+        return Array(userMessages)
+    }
+
+    /// Monitoring should only see user chat that belongs to the currently active
+    /// profile window, including Everyday.
+    static func monitoringRecentUserMessages(
+        chatHistory: [ChatMessage],
+        activeProfile: FocusProfile,
+        limit: Int
+    ) -> [String] {
+        guard let sessionStartAt = activeProfile.promptSessionStartedAt ?? activeProfile.activatedAt else {
+            return []
+        }
+        let userMessages =
+            chatHistory
+            .filter { $0.role == .user && $0.timestamp >= sessionStartAt }
             .suffix(limit)
             .compactMap(\.promptStampedLine)
         return Array(userMessages)
@@ -1078,9 +1100,7 @@ final class BrainService: NSObject {
         }
 
         // Compute the focus-goal text for the title-relevance heuristic.
-        // Active session description wins; otherwise fall back to a recently
-        // ended session's goalSummary (kept for ~30 min after expiry) so the
-        // model still sees the anchor right after a profile transition.
+        // Heuristics only look at the currently active profile window.
         let focusGoalForHeuristic: String? = {
             let active = state.activeProfile
             if !active.isDefault {
@@ -1088,9 +1108,6 @@ final class BrainService: NSObject {
                     return description
                 }
                 return active.name
-            }
-            if let recentlyEnded = state.recentlyEndedSession, !recentlyEnded.isStale(at: now) {
-                return recentlyEnded.goalSummary ?? recentlyEnded.description ?? recentlyEnded.name
             }
             return nil
         }()
@@ -1337,20 +1354,8 @@ final class BrainService: NSObject {
 
         // Re-read activeProfile here in case the expiry check earlier in this tick swapped it.
         let currentProfile = state.activeProfile
-        // Carry a recently-ended session into the payload (~30 min retention).
-        // The model sees what the user just finished even after the profile drops
-        // back to Everyday; without this, the goal anchor evaporates at expiry.
-        let recentlyEndedForPayload: RecentlyEndedSessionSummary? = {
-            guard let recentlyEnded = state.recentlyEndedSession,
-                !recentlyEnded.isStale(at: now)
-            else { return nil }
-            return recentlyEnded.promptSummary
-        }()
         let evaluationTask = Task {
-            [
-                monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile,
-                recentlyEndedForPayload
-            ] in
+            [monitoringAlgorithmRegistry, scopedPolicyMemory, currentProfile] in
             try await monitoringAlgorithmRegistry.evaluate(
                 input: MonitoringDecisionInput(
                     now: now,
@@ -1360,8 +1365,9 @@ final class BrainService: NSObject {
                     recentActions: state.recentActions,
                     heuristics: heuristics,
                     memory: state.memoryForPrompt(now: now),
-                    recentUserMessages: Self.recentUserMessages(
+                    recentUserMessages: Self.monitoringRecentUserMessages(
                         chatHistory: state.chatHistory,
+                        activeProfile: currentProfile,
                         limit: MonitoringPromptContextBudget.recentUserChatCount
                     ),
                     policyMemory: scopedPolicyMemory,
@@ -1376,8 +1382,7 @@ final class BrainService: NSObject {
                     activeProfileDescription: currentProfile.description,
                     activeProfileGoalSummary: currentProfile.createdReason,
                     activeProfileActivatedAt: currentProfile.activatedAt,
-                    activeProfileExpiresAt: currentProfile.expiresAt,
-                    recentlyEndedSession: recentlyEndedForPayload
+                    activeProfileExpiresAt: currentProfile.expiresAt
                 )
             )
         }
@@ -1456,8 +1461,9 @@ final class BrainService: NSObject {
                         recentActions: state.recentActions,
                         heuristics: heuristics,
                         memory: state.memoryForPrompt(now: now),
-                        recentUserMessages: Self.recentUserMessages(
+                        recentUserMessages: Self.monitoringRecentUserMessages(
                             chatHistory: state.chatHistory,
+                            activeProfile: currentProfile,
                             limit: MonitoringPromptContextBudget.recentUserChatCount
                         ),
                         policyMemory: scopedPolicyMemory,
@@ -1472,8 +1478,7 @@ final class BrainService: NSObject {
                         activeProfileDescription: currentProfile.description,
                         activeProfileGoalSummary: currentProfile.createdReason,
                         activeProfileActivatedAt: currentProfile.activatedAt,
-                        activeProfileExpiresAt: currentProfile.expiresAt,
-                        recentlyEndedSession: recentlyEndedForPayload
+                        activeProfileExpiresAt: currentProfile.expiresAt
                     )
                     let retried = try await monitoringAlgorithmRegistry.evaluate(input: retryInput)
                     decisionResult = retried
@@ -1576,8 +1581,9 @@ final class BrainService: NSObject {
                         recentActions: state.recentActions,
                         heuristics: heuristics,
                         memory: state.memoryForPrompt(now: now),
-                        recentUserMessages: Self.recentUserMessages(
+                        recentUserMessages: Self.monitoringRecentUserMessages(
                             chatHistory: state.chatHistory,
+                            activeProfile: currentProfile,
                             limit: MonitoringPromptContextBudget.recentUserChatCount
                         ),
                         policyMemory: scopedPolicyMemory,
@@ -1592,8 +1598,7 @@ final class BrainService: NSObject {
                         activeProfileDescription: currentProfile.description,
                         activeProfileGoalSummary: currentProfile.createdReason,
                         activeProfileActivatedAt: currentProfile.activatedAt,
-                        activeProfileExpiresAt: currentProfile.expiresAt,
-                        recentlyEndedSession: recentlyEndedForPayload
+                        activeProfileExpiresAt: currentProfile.expiresAt
                     )
                     let retried = try await monitoringAlgorithmRegistry.evaluate(input: retryInput)
                     decisionResult = retried

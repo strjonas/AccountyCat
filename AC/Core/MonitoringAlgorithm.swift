@@ -72,10 +72,6 @@ struct MonitoringDecisionInput: Sendable {
     var activeProfileGoalSummary: String? = nil
     var activeProfileActivatedAt: Date? = nil
     var activeProfileExpiresAt: Date? = nil
-    /// Snapshot of a session that ended within the last ~30 minutes. This is
-    /// reference-only context after the profile transition; it should prevent
-    /// false positives around wrap-up work, not enforce the expired session.
-    var recentlyEndedSession: RecentlyEndedSessionSummary? = nil
 }
 
 struct MonitoringDecisionResult: Sendable {
