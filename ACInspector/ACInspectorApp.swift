@@ -470,6 +470,21 @@ private struct EvalCaseEditorView: View {
 
     @ViewBuilder
     private var expectationEditor: some View {
+        if let observed = evalCase.observedOutput {
+            GroupBox("What the model did") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(observed.summary)
+                        .font(.callout)
+                    if let model = observed.modelIdentifier, !model.isEmpty {
+                        Text(model)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            }
+        }
         switch evalCase.kind {
         case .focus:
             focusExpectationEditor
@@ -481,7 +496,7 @@ private struct EvalCaseEditorView: View {
     }
 
     private var focusExpectationEditor: some View {
-        GroupBox("Expected Focus Decision") {
+        GroupBox("What should have happened") {
             VStack(alignment: .leading, spacing: 14) {
                 EvalToggleGrid(title: "Accepted assessments") {
                     ForEach(Self.assessments, id: \.rawValue) { value in
@@ -513,7 +528,7 @@ private struct EvalCaseEditorView: View {
     }
 
     private var chatExpectationEditor: some View {
-        GroupBox("Expected Chat Output") {
+        GroupBox("What should have happened") {
             VStack(alignment: .leading, spacing: 14) {
                 Toggle("Reply must be non-empty", isOn: Binding(
                     get: { evalCase.expectation.chat?.replyMustBeNonEmpty ?? true },
@@ -552,7 +567,7 @@ private struct EvalCaseEditorView: View {
     }
 
     private var chatActionExpectationEditor: some View {
-        GroupBox("Expected Resolved Action") {
+        GroupBox("What should have happened") {
             VStack(alignment: .leading, spacing: 12) {
                 Picker("Kind", selection: Binding(
                     get: { evalCase.expectation.chatAction?.kind?.rawValue ?? "" },

@@ -631,10 +631,7 @@ final class InspectorController: ObservableObject {
         )
 
         let expectation = ACEvalExpectation(
-            focus: ACEvalFocusExpectation(
-                acceptedAssessments: parsedOutput.map { [$0.assessment] } ?? [],
-                acceptedActions: parsedOutput.map { [$0.suggestedAction] } ?? []
-            )
+            focus: ACEvalFocusExpectation()
         )
 
         return ACEvalCase(
@@ -665,30 +662,30 @@ final class InspectorController: ObservableObject {
 
     private func makeChatEvalCase(from episode: IndexedEpisode) -> ACEvalCase {
         let parsed = Self.decodeChatOutputJSON(episode.modelOutputJSON)
-        let renderedPrompt = Self.readText(path: episode.renderedPromptPath)
-        let frontmostApp = Self.extractLine(prefix: "Frontmost app:", from: renderedPrompt) ?? "Unknown"
-        let frontmostTitle = Self.extractLine(prefix: "Window:", from: renderedPrompt)
-        let userMessage = episode.extractedFields["userMessage"] ?? ""
         let actionKinds = parsed?.actions.map(\.kind)
             ?? Self.parseActionKinds(episode.extractedFields["actionKinds"])
 
+        let chatPayload = Self.decodeChatInputPayload(path: episode.promptPayloadPath)
+
         let input = ACEvalChatInput(
-            userMessage: userMessage,
-            goals: Self.extractSection("[User goals]", from: renderedPrompt) ?? "",
-            memory: Self.extractSection("[Persistent memory", from: renderedPrompt) ?? "",
-            policyRules: Self.extractSection("[Brain rules", from: renderedPrompt) ?? "",
+            userMessage: episode.extractedFields["userMessage"] ?? chatPayload?.userMessage ?? "",
+            goals: chatPayload?.goals ?? "",
+            memory: chatPayload?.memory ?? "",
+            policyRules: chatPayload?.policyRules ?? "",
             context: ACEvalChatContext(
-                frontmostAppName: frontmostApp == "—" ? "Unknown" : frontmostApp,
-                frontmostWindowTitle: frontmostTitle == "—" ? nil : frontmostTitle,
-                idleSeconds: 0,
+                frontmostAppName: chatPayload?.frontmostAppName ?? "Unknown",
+                frontmostWindowTitle: chatPayload?.frontmostWindowTitle,
+                idleSeconds: chatPayload?.idleSeconds ?? 0,
                 timestamp: episode.startedAt,
                 recentSwitches: [],
                 usage: []
             ),
-            history: [],
-            character: "mochi",
-            activeProfileContext: "",
-            workflow: .staged
+            history: chatPayload?.history?.map { msg in
+                ACEvalChatMessage(role: msg.role, text: msg.text, timestamp: msg.timestamp)
+            } ?? [],
+            character: chatPayload?.character ?? "mochi",
+            activeProfileContext: chatPayload?.activeProfileContext ?? "",
+            workflow: chatPayload?.workflow.flatMap(CompanionChatWorkflow.init(rawValue:)) ?? .staged
         )
 
         let expectation = ACEvalExpectation(
@@ -705,7 +702,7 @@ final class InspectorController: ObservableObject {
                 episodeID: episode.id,
                 sessionID: episode.sessionID,
                 appName: "Chat",
-                windowTitle: userMessage.nilIfBlank ?? episode.windowTitle,
+                windowTitle: input.userMessage.nilIfBlank ?? episode.windowTitle,
                 timestamp: episode.startedAt
             ),
             chatInput: input,
@@ -932,6 +929,33 @@ final class InspectorController: ObservableObject {
         var actions: [CompanionChatAction]
         var scheduleKind: String?
         var scheduleDelayMinutes: Int?
+    }
+
+    private struct ChatInputPayloadRecord: Decodable {
+        struct HistoryMessage: Decodable {
+            var role: String
+            var text: String
+            var timestamp: Date
+        }
+        var userMessage: String?
+        var goals: String?
+        var memory: String?
+        var policyRules: String?
+        var character: String?
+        var activeProfileContext: String?
+        var workflow: String?
+        var history: [HistoryMessage]?
+        var frontmostAppName: String?
+        var frontmostWindowTitle: String?
+        var idleSeconds: Double?
+    }
+
+    private static func decodeChatInputPayload(path: String?) -> ChatInputPayloadRecord? {
+        guard let path,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(ChatInputPayloadRecord.self, from: data)
     }
 
     private static func decodeChatOutputJSON(_ json: String?) -> ParsedChatTelemetryOutput? {

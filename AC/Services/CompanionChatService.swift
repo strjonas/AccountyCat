@@ -210,7 +210,17 @@ actor CompanionChatService {
                             promptMode: "chat",
                             systemPrompt: systemPrompt,
                             userPrompt: prompt,
-                            requestPayloadJSON: nil,
+                            requestPayloadJSON: Self.makeChatInputPayloadJSON(
+                                userMessage: userMessage,
+                                goals: goals,
+                                context: context,
+                                history: history,
+                                memory: memory,
+                                policyRules: policyRules,
+                                character: character,
+                                activeProfileContext: activeProfileContext,
+                                workflow: workflow
+                            ),
                             imagePath: nil,
                             startedAt: localStartedAt,
                             endedAt: Date(),
@@ -607,6 +617,56 @@ actor CompanionChatService {
             message: "Could not parse \(request.action.kind.rawValue) action JSON. Raw output: \(combined.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
         )
         return nil
+    }
+
+    nonisolated private static func makeChatInputPayloadJSON(
+        userMessage: String,
+        goals: String,
+        context: ChatContext,
+        history: [ChatMessage],
+        memory: String,
+        policyRules: String,
+        character: ACCharacter,
+        activeProfileContext: String,
+        workflow: CompanionChatWorkflow
+    ) -> String {
+        struct HistoryMessage: Encodable {
+            var role: String
+            var text: String
+            var timestamp: Date
+        }
+        struct ChatInputPayload: Encodable {
+            var userMessage: String
+            var goals: String
+            var memory: String
+            var policyRules: String
+            var character: String
+            var activeProfileContext: String
+            var workflow: String
+            var history: [HistoryMessage]
+            var frontmostAppName: String
+            var frontmostWindowTitle: String?
+            var idleSeconds: Double
+        }
+        let payload = ChatInputPayload(
+            userMessage: userMessage,
+            goals: goals,
+            memory: memory,
+            policyRules: policyRules,
+            character: character.rawValue,
+            activeProfileContext: activeProfileContext,
+            workflow: workflow.rawValue,
+            history: history.map { HistoryMessage(role: $0.role.rawValue, text: $0.text, timestamp: $0.timestamp) },
+            frontmostAppName: context.frontmostAppName,
+            frontmostWindowTitle: context.frontmostWindowTitle,
+            idleSeconds: context.idleSeconds
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(payload),
+              let json = String(data: data, encoding: .utf8) else { return "{}" }
+        return json
     }
 
     nonisolated private static func makeActionPayloadJSON(_ request: ChatActionResolutionRequest) -> String {
