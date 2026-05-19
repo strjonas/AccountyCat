@@ -8,15 +8,14 @@
 import Foundation
 
 enum MonitoringPromptContextBudget {
-    nonisolated static let goalCharacters = 180
     nonisolated static let appNameCharacters = 80
     nonisolated static let windowTitleCharacters = 180
     /// Full memory context. AC is the authority on content; these caps only exist to keep
     /// prompt latency predictable. Exceed them via consolidation, not truncation.
     nonisolated static let freeFormMemoryCharacters = 2000
     nonisolated static let freeFormMemoryLines = 15
-    nonisolated static let policySummaryCharacters = 420
-    nonisolated static let policySummaryLines = 4
+    nonisolated static let matchingRuleSummaryCharacters = 520
+    nonisolated static let matchingRuleSummaryLines = 6
     nonisolated static let titlePerceptionSwitchCount = 2
     nonisolated static let titlePerceptionUsageCount = 3
     nonisolated static let decisionSwitchCount = 6
@@ -24,8 +23,9 @@ enum MonitoringPromptContextBudget {
     nonisolated static let recentNudgeCount = 3
     /// Last user chat messages passed into decision + nudge stages as a safety net
     /// against memory extraction lag.
-    nonisolated static let recentUserChatCount = 5
+    nonisolated static let recentUserChatCount = 8
     nonisolated static let recentUserChatCharacters = 320
+    nonisolated static let recentUserChatTotalCharacters = 1800
 }
 
 nonisolated struct MonitoringPromptHeuristicSummary: Codable, Hashable, Sendable {
@@ -144,6 +144,80 @@ nonisolated struct MonitoringActiveProfilePromptPayload: Codable, Hashable, Send
     }
 }
 
+/// Compact end-of-payload recap for the decision stages. The full payload still
+/// carries memory, chat, perception, and telemetry details; this frame repeats
+/// the active contract near the end so small/local models and prefix-cached
+/// online calls both keep the current "where are they / where should they be"
+/// comparison salient.
+nonisolated struct MonitoringDecisionFramePromptPayload: Codable, Hashable, Sendable {
+    var currentSurface: String
+    var newestCurrentSessionUserMessage: String?
+    var activeMatchingRules: String
+    var expectedFocusContract: String
+
+    nonisolated init(
+        currentSurface: String,
+        newestCurrentSessionUserMessage: String? = nil,
+        activeMatchingRules: String,
+        expectedFocusContract: String
+    ) {
+        self.currentSurface = currentSurface
+        self.newestCurrentSessionUserMessage = newestCurrentSessionUserMessage
+        self.activeMatchingRules = activeMatchingRules
+        self.expectedFocusContract = expectedFocusContract
+    }
+
+    nonisolated static func make(
+        appName: String,
+        windowTitle: String?,
+        currentContextSeconds: TimeInterval?,
+        matchingRuleSummary: String,
+        recentUserMessages: [String],
+        activeProfile: MonitoringActiveProfilePromptPayload
+    ) -> MonitoringDecisionFramePromptPayload {
+        var surface = "Current surface: \(appName.cleanedSingleLine)"
+        if let title = windowTitle?.cleanedSingleLine, !title.isEmpty {
+            surface += " — \(title)"
+        }
+        if let currentContextSeconds {
+            surface += " — stable for \(Int(currentContextSeconds))s"
+        }
+
+        let expected: String
+        if activeProfile.isDefault {
+            let description = activeProfile.description?.cleanedSingleLine
+            let descriptionLine = description?.isEmpty == false ? description : nil
+            expected = [
+                "Everyday profile is active: no named focus session is running.",
+                descriptionLine.map { "Description: \($0)." },
+                "Normal life, breaks, errands, and admin are allowed unless active matching rules or fresh user intent say otherwise.",
+            ].compactMap { $0 }.joined(separator: " ")
+        } else {
+            var parts = ["Focus session active: \(activeProfile.name.cleanedSingleLine)."]
+            if let goal = activeProfile.goalSummary?.cleanedSingleLine, !goal.isEmpty {
+                parts.append("Activation intent: \(goal).")
+            }
+            if let description = activeProfile.description?.cleanedSingleLine, !description.isEmpty {
+                parts.append("Profile description: \(description).")
+            }
+            if let expiresAt = activeProfile.expiresAt {
+                parts.append("Expires at \(PromptTimestampFormatting.absoluteLabel(for: expiresAt)).")
+            }
+            expected = parts.joined(separator: " ")
+        }
+
+        return MonitoringDecisionFramePromptPayload(
+            currentSurface: surface.truncatedForPrompt(maxLength: 280),
+            newestCurrentSessionUserMessage: recentUserMessages.last?
+                .truncatedForPrompt(maxLength: MonitoringPromptContextBudget.recentUserChatCharacters),
+            activeMatchingRules: matchingRuleSummary.isEmpty
+                ? "(none matching current context)"
+                : matchingRuleSummary,
+            expectedFocusContract: expected.truncatedForPrompt(maxLength: 520)
+        )
+    }
+}
+
 nonisolated struct MonitoringTitlePerceptionPromptPayload: Encodable, Sendable {
     var appName: String
     var bundleIdentifier: String?
@@ -158,10 +232,12 @@ nonisolated struct MonitoringVisionPerceptionPromptPayload: Encodable, Sendable 
 }
 
 nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
-    var now: Date
-    var freeFormMemory: String
+    var activeProfile: MonitoringActiveProfilePromptPayload
+    var matchingRuleSummary: String
     var recentUserMessages: [String]
-    var policySummary: String
+    var freeFormMemory: String
+    var calendarContext: String?
+    var now: Date
     var appName: String
     var bundleIdentifier: String?
     var windowTitle: String?
@@ -172,16 +248,23 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var recentInterventions: MonitoringPromptInterventionSummary
     var distraction: MonitoringPromptDistractionSummary
     var heuristics: MonitoringPromptHeuristicSummary
-    var calendarContext: String?
     var screenshotIncluded: Bool
-    var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
+    var decisionFrame: MonitoringDecisionFramePromptPayload
 }
 
 nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
-    var now: Date
-    var freeFormMemory: String
+    var activeProfile: MonitoringActiveProfilePromptPayload
+    var matchingRuleSummary: String
     var recentUserMessages: [String]
-    var policySummary: String
+    var freeFormMemory: String
+    /// Current calendar event rendered as a short single-line string, or nil
+    /// when the user has Calendar Intelligence off / no event is active.
+    /// A soft hint about intent — ranked below the active profile contract,
+    /// `matchingRuleSummary`, current-session chat, and `freeFormMemory`.
+    /// Calendars can be wrong (plans change), so the prompt instructs the
+    /// model to use this as a tiebreaker, not authority.
+    var calendarContext: String?
+    var now: Date
     var appName: String
     var bundleIdentifier: String?
     var windowTitle: String?
@@ -193,32 +276,23 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var distraction: MonitoringPromptDistractionSummary
     var titlePerception: MonitoringPerceptionEnvelope?
     var visionPerception: MonitoringPerceptionEnvelope?
-    /// Current calendar event rendered as a short single-line string, or nil
-    /// when the user has Calendar Intelligence off / no event is active.
-    /// A soft hint about intent — ranked below `recentUserMessages`,
-    /// `freeFormMemory`, and `policySummary`. Calendars can be wrong (plans
-    /// change), so the prompt instructs the model to use this as a tiebreaker,
-    /// not authority.
-    var calendarContext: String?
-    var activeProfile: MonitoringActiveProfilePromptPayload = MonitoringActiveProfilePromptPayload()
+    var decisionFrame: MonitoringDecisionFramePromptPayload
 }
 
 nonisolated struct MonitoringNudgePromptPayload: Encodable, Sendable {
-    var freeFormMemory: String
+    var activeProfile: MonitoringActiveProfilePromptPayload
+    var matchingRuleSummary: String
     var recentUserMessages: [String]
-    var policySummary: String
+    var freeFormMemory: String
+    /// Mirrors `calendarContext` on the decision payload. The copywriter uses
+    /// it to phrase nudges more specifically (e.g. "didn't you block this hour
+    /// for writing?") without treating it as ground truth.
+    var calendarContext: String?
     var appName: String
     var windowTitle: String?
     var titlePerception: String?
     var visionPerception: String?
     var recentNudges: [String]
-    /// Mirrors `calendarContext` on the decision payload. The copywriter uses
-    /// it to phrase nudges more specifically (e.g. "didn't you block this hour
-    /// for writing?") without treating it as ground truth.
-    var calendarContext: String?
-    /// The name of the currently active profile (e.g. "General", "Paper Writing").
-    /// Ground the nudge to what is actually active right now.
-    var activeProfileName: String
 }
 
 nonisolated struct MonitoringSafelistAppealPromptPayload: Encodable, Sendable {
@@ -256,14 +330,193 @@ nonisolated struct MonitoringSafelistAppealEnvelope: Codable, Sendable {
 }
 
 nonisolated struct MonitoringAppealPromptPayload: Encodable, Sendable {
+    var activeProfile: MonitoringActiveProfilePromptPayload
+    var matchingRuleSummary: String
+    var recentUserMessages: [String]
     var appealText: String
     var freeFormMemory: String
-    var recentUserMessages: [String]
-    var policySummary: String
     var snapshotAppName: String?
     var snapshotWindowTitle: String?
     var assessment: ModelAssessment?
     var suggestedAction: ModelSuggestedAction?
+}
+
+private nonisolated struct MonitoringPromptAnyEncodable: Encodable {
+    private let encodeValue: (Encoder) throws -> Void
+
+    nonisolated init<T: Encodable>(_ value: T) {
+        encodeValue = value.encode(to:)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        try encodeValue(encoder)
+    }
+}
+
+private nonisolated struct MonitoringPromptOrderedField {
+    var name: String
+    var value: MonitoringPromptAnyEncodable?
+}
+
+nonisolated enum MonitoringPromptPayloadEncoding {
+    nonisolated static func encode<T: Encodable>(_ payload: T, prettyPrinted: Bool = false) -> String {
+        if let payload = payload as? MonitoringOnlineDecisionPromptPayload {
+            return encodeOnlineDecision(payload, prettyPrinted: prettyPrinted)
+        }
+        if let payload = payload as? MonitoringDecisionPromptPayload {
+            return encodeDecision(payload, prettyPrinted: prettyPrinted)
+        }
+        if let payload = payload as? MonitoringNudgePromptPayload {
+            return encodeNudge(payload, prettyPrinted: prettyPrinted)
+        }
+        if let payload = payload as? MonitoringAppealPromptPayload {
+            return encodeAppeal(payload, prettyPrinted: prettyPrinted)
+        }
+        if let payload = payload as? MonitoringSafelistAppealPromptPayload {
+            return encodeSafelistAppeal(payload, prettyPrinted: prettyPrinted)
+        }
+        return encodeAny(payload, prettyPrinted: prettyPrinted)
+    }
+
+    private static func encodeOnlineDecision(
+        _ payload: MonitoringOnlineDecisionPromptPayload,
+        prettyPrinted: Bool
+    ) -> String {
+        encodeFields([
+            field("activeProfile", payload.activeProfile),
+            field("matchingRuleSummary", payload.matchingRuleSummary),
+            field("recentUserMessages", payload.recentUserMessages),
+            field("freeFormMemory", payload.freeFormMemory),
+            optionalField("calendarContext", payload.calendarContext),
+            field("now", payload.now),
+            field("appName", payload.appName),
+            optionalField("bundleIdentifier", payload.bundleIdentifier),
+            optionalField("windowTitle", payload.windowTitle),
+            field("recentSwitches", payload.recentSwitches),
+            field("recentActivityTimeline", payload.recentActivityTimeline),
+            field("usage", payload.usage),
+            optionalField("currentContextSeconds", payload.currentContextSeconds),
+            field("recentInterventions", payload.recentInterventions),
+            field("distraction", payload.distraction),
+            field("heuristics", payload.heuristics),
+            field("screenshotIncluded", payload.screenshotIncluded),
+            field("decisionFrame", payload.decisionFrame),
+        ], prettyPrinted: prettyPrinted)
+    }
+
+    private static func encodeDecision(
+        _ payload: MonitoringDecisionPromptPayload,
+        prettyPrinted: Bool
+    ) -> String {
+        encodeFields([
+            field("activeProfile", payload.activeProfile),
+            field("matchingRuleSummary", payload.matchingRuleSummary),
+            field("recentUserMessages", payload.recentUserMessages),
+            field("freeFormMemory", payload.freeFormMemory),
+            optionalField("calendarContext", payload.calendarContext),
+            field("now", payload.now),
+            field("appName", payload.appName),
+            optionalField("bundleIdentifier", payload.bundleIdentifier),
+            optionalField("windowTitle", payload.windowTitle),
+            field("recentSwitches", payload.recentSwitches),
+            field("recentActivityTimeline", payload.recentActivityTimeline),
+            field("usage", payload.usage),
+            optionalField("currentContextSeconds", payload.currentContextSeconds),
+            field("recentInterventions", payload.recentInterventions),
+            field("distraction", payload.distraction),
+            optionalField("titlePerception", payload.titlePerception),
+            optionalField("visionPerception", payload.visionPerception),
+            field("decisionFrame", payload.decisionFrame),
+        ], prettyPrinted: prettyPrinted)
+    }
+
+    private static func encodeNudge(
+        _ payload: MonitoringNudgePromptPayload,
+        prettyPrinted: Bool
+    ) -> String {
+        encodeFields([
+            field("activeProfile", payload.activeProfile),
+            field("matchingRuleSummary", payload.matchingRuleSummary),
+            field("recentUserMessages", payload.recentUserMessages),
+            field("freeFormMemory", payload.freeFormMemory),
+            optionalField("calendarContext", payload.calendarContext),
+            field("appName", payload.appName),
+            optionalField("windowTitle", payload.windowTitle),
+            optionalField("titlePerception", payload.titlePerception),
+            optionalField("visionPerception", payload.visionPerception),
+            field("recentNudges", payload.recentNudges),
+        ], prettyPrinted: prettyPrinted)
+    }
+
+    private static func encodeAppeal(
+        _ payload: MonitoringAppealPromptPayload,
+        prettyPrinted: Bool
+    ) -> String {
+        encodeFields([
+            field("activeProfile", payload.activeProfile),
+            field("matchingRuleSummary", payload.matchingRuleSummary),
+            field("recentUserMessages", payload.recentUserMessages),
+            field("appealText", payload.appealText),
+            field("freeFormMemory", payload.freeFormMemory),
+            optionalField("snapshotAppName", payload.snapshotAppName),
+            optionalField("snapshotWindowTitle", payload.snapshotWindowTitle),
+            optionalField("assessment", payload.assessment),
+            optionalField("suggestedAction", payload.suggestedAction),
+        ], prettyPrinted: prettyPrinted)
+    }
+
+    private static func encodeSafelistAppeal(
+        _ payload: MonitoringSafelistAppealPromptPayload,
+        prettyPrinted: Bool
+    ) -> String {
+        encodeFields([
+            field("activeProfile", payload.activeProfile),
+            field("freeFormMemory", payload.freeFormMemory),
+            field("appName", payload.appName),
+            optionalField("bundleIdentifier", payload.bundleIdentifier),
+            field("sampleWindowTitles", payload.sampleWindowTitles),
+            field("focusedCount", payload.focusedCount),
+            field("distinctDays", payload.distinctDays),
+            field("isBrowser", payload.isBrowser),
+            field("requiresTitleScope", payload.requiresTitleScope),
+            field("screenshotIncluded", payload.screenshotIncluded),
+        ], prettyPrinted: prettyPrinted)
+    }
+
+    private static func field<T: Encodable>(_ name: String, _ value: T) -> MonitoringPromptOrderedField {
+        MonitoringPromptOrderedField(name: name, value: MonitoringPromptAnyEncodable(value))
+    }
+
+    private static func optionalField<T: Encodable>(_ name: String, _ value: T?) -> MonitoringPromptOrderedField {
+        MonitoringPromptOrderedField(name: name, value: value.map(MonitoringPromptAnyEncodable.init))
+    }
+
+    private static func encodeFields(
+        _ fields: [MonitoringPromptOrderedField],
+        prettyPrinted: Bool
+    ) -> String {
+        let parts = fields.compactMap { field -> String? in
+            guard let value = field.value else { return nil }
+            let key = encodeAny(field.name, prettyPrinted: false)
+            let encodedValue = encodeAny(value, prettyPrinted: false)
+            return "\(key):\(encodedValue)"
+        }
+        if prettyPrinted {
+            return parts.isEmpty ? "{}" : "{\n  \(parts.joined(separator: ",\n  "))\n}"
+        }
+        return "{\(parts.joined(separator: ","))}"
+    }
+
+    private static func encodeAny<T: Encodable>(_ value: T, prettyPrinted: Bool) -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
+    }
 }
 
 nonisolated struct MonitoringPerceptionEnvelope: Codable, Sendable {

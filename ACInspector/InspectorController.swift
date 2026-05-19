@@ -279,11 +279,12 @@ final class InspectorController: ObservableObject {
                 sourceEpisodeID: nil,
                 appName: scenario.appName,
                 bundleIdentifier: scenario.bundleIdentifier,
-                windowTitle: scenario.windowTitle,
-                timestamp: Date(),
-                goals: scenario.goals,
-                freeFormMemorySummary: scenario.freeFormMemorySummary,
-                policyMemorySummary: scenario.policyMemorySummary,
+            windowTitle: scenario.windowTitle,
+            timestamp: Date(),
+            goals: scenario.goals,
+            activeProfile: scenario.activeProfile,
+            freeFormMemorySummary: scenario.freeFormMemorySummary,
+            policyMemorySummary: scenario.policyMemorySummary,
                 policyMemoryJSON: scenario.policyMemoryJSON,
                 recentSwitches: scenario.recentSwitches,
                 recentActions: scenario.recentActions,
@@ -509,8 +510,9 @@ final class InspectorController: ObservableObject {
             windowTitle: context?.windowTitle ?? episode.windowTitle ?? "",
             timestamp: context?.timestamp ?? episode.startedAt,
             goals: modelInput?.goalsSummary ?? payloadHints.goals ?? "Imported telemetry scenario.",
+            activeProfile: payloadHints.activeProfile,
             freeFormMemorySummary: payloadHints.freeFormMemory ?? "",
-            policyMemorySummary: payloadHints.policySummary ?? "",
+            policyMemorySummary: payloadHints.matchingRuleSummary ?? "",
             policyMemoryJSON: payloadHints.policyMemoryJSON ?? "",
             recentSwitches: (context?.recentSwitches ?? []).map {
                 PromptLabSwitchRecord(
@@ -591,7 +593,7 @@ final class InspectorController: ObservableObject {
             goals: modelInput?.goalsSummary ?? payloadHints.goals ?? "Imported telemetry focus eval.",
             freeFormMemory: payloadHints.freeFormMemory ?? "",
             recentUserMessages: Self.extractRecentUserMessages(path: episode.promptPayloadPath),
-            policyMemorySummary: payloadHints.policySummary ?? "",
+            policyMemorySummary: payloadHints.matchingRuleSummary ?? "",
             policyMemoryJSON: payloadHints.policyMemoryJSON ?? "",
             recentSwitches: (context?.recentSwitches ?? []).map {
                 ACEvalSwitchRecord(
@@ -800,22 +802,55 @@ final class InspectorController: ObservableObject {
 
     private static func extractPromptPayloadHints(path: String?) -> (
         goals: String?,
+        activeProfile: MonitoringActiveProfilePromptPayload?,
         freeFormMemory: String?,
-        policySummary: String?,
+        matchingRuleSummary: String?,
         policyMemoryJSON: String?
     ) {
         guard let path,
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let jsonObject = try? JSONSerialization.jsonObject(with: data) else {
-            return (nil, nil, nil, nil)
+            return (nil, nil, nil, nil, nil)
         }
 
         return (
             findString(in: jsonObject, matching: ["goals", "goalsSummary"]),
+            findActiveProfile(in: jsonObject),
             findString(in: jsonObject, matching: ["memory", "freeFormMemory", "free_form_memory"]),
-            findString(in: jsonObject, matching: ["policySummary", "policy_summary"]),
+            findString(in: jsonObject, matching: ["matchingRuleSummary", "matching_rule_summary", "policySummary", "policy_summary"]),
             findJSON(in: jsonObject, matching: ["policyMemory", "policy_memory"])
         )
+    }
+
+    private static func findActiveProfile(in object: Any) -> MonitoringActiveProfilePromptPayload? {
+        guard let profileObject = findObject(in: object, matching: ["activeProfile", "active_profile"]),
+              JSONSerialization.isValidJSONObject(profileObject),
+              let data = try? JSONSerialization.data(withJSONObject: profileObject) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(MonitoringActiveProfilePromptPayload.self, from: data)
+    }
+
+    private static func findObject(in object: Any, matching keys: Set<String>) -> Any? {
+        if let dictionary = object as? [String: Any] {
+            for (key, value) in dictionary {
+                if keys.contains(key) {
+                    return value
+                }
+                if let nested = findObject(in: value, matching: keys) {
+                    return nested
+                }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                if let nested = findObject(in: value, matching: keys) {
+                    return nested
+                }
+            }
+        }
+        return nil
     }
 
     private static func findString(in object: Any, matching keys: Set<String>) -> String? {
@@ -1294,9 +1329,9 @@ final class InspectorController: ObservableObject {
                     value: recentChat.map { "• \($0.cleanedSingleLine)" }.joined(separator: "\n")
                 ))
             }
-            if let policySummary = findString(in: payloadObject as Any, matching: ["policySummary", "policy_summary"]),
-               !policySummary.cleanedSingleLine.isEmpty {
-                details.append(InspectorDetailRow(label: "Policy context", value: policySummary))
+            if let matchingRuleSummary = findString(in: payloadObject as Any, matching: ["matchingRuleSummary", "matching_rule_summary", "policySummary", "policy_summary"]),
+               !matchingRuleSummary.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Policy context", value: matchingRuleSummary))
             }
             let contextParts = [
                 findString(in: payloadObject as Any, matching: ["appName", "frontmostApp"]),
@@ -1331,9 +1366,9 @@ final class InspectorController: ObservableObject {
                     value: recentChatNudge.map { "• \($0.cleanedSingleLine)" }.joined(separator: "\n")
                 ))
             }
-            if let policySummary = findString(in: payloadObject as Any, matching: ["policySummary", "policy_summary"]),
-               !policySummary.cleanedSingleLine.isEmpty {
-                details.append(InspectorDetailRow(label: "Policy context", value: policySummary))
+            if let matchingRuleSummary = findString(in: payloadObject as Any, matching: ["matchingRuleSummary", "matching_rule_summary", "policySummary", "policy_summary"]),
+               !matchingRuleSummary.cleanedSingleLine.isEmpty {
+                details.append(InspectorDetailRow(label: "Policy context", value: matchingRuleSummary))
             }
             let contextParts = [
                 findString(in: payloadObject as Any, matching: ["appName"]),

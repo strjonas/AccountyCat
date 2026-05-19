@@ -88,14 +88,12 @@ enum ACPromptSets {
     {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional","overlay_headline":"optional","overlay_body":"optional","overlay_prompt":"optional","submit_button_title":"optional","secondary_button_title":"optional"}
     """
 
-    private static let onlineDecisionSchema = """
-    {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","reason_tags":["tag"]}
-    """
-
-    /// Shared rule reminding both modes that user-defined rules are authoritative
-    /// regardless of mode. Keeps "Reddit is never okay" working in everyday mode.
+    /// Shared rule about how `matchingRuleSummary` interacts with current-session chat.
+    /// For v1.0 the user is always king: a clear, current-session statement that
+    /// relaxes a rule for this exact activity wins. A future "accountability mode"
+    /// may introduce non-negotiable rules; not implemented yet.
     private static let authoritativeRulesClause = """
-    Rules in `policySummary` are authoritative regardless of mode. A `disallow`/`discourage`/`limit` rule fires per-tick even in everyday mode; an `allow` rule for the current activity skips the check entirely (you will not be asked).
+    Rules in `matchingRuleSummary` are the active structural rules for this profile/context. `disallow`/`discourage`/`limit` rules are strong evidence for `distracted` and `allow` rules are strong evidence for `focused` — but a clear, current-session user message about this exact activity outranks them. If the user statement is vague, the structural rule wins.
     """
 
     /// Shared soft-signal clause for the `titleRelatesToDeclaredFocus` heuristic.
@@ -117,10 +115,10 @@ enum ACPromptSets {
     private static let everydayModeBlock = """
     Mode: EVERYDAY (default profile, no focus session active).
     - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
-    - Only flag activity that has been clearly going on for a while AND conflicts with the user's recent stated intent, memory, or a `disallow`/`discourage` rule listed in `policySummary`.
+    - Only flag activity that has been clearly going on for a while AND conflicts with current-session user intent, memory, or a `disallow`/`discourage` rule listed in `matchingRuleSummary`.
     - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
     - In Everyday mode, judge what is active right now. Do not infer a current obligation from an expired profile or stale chat context.
-    - If the newest user message says the session is done/expired/over, says "it's fine", asks AC to chill/leave them alone, or says they need a break/errand, treat that as an allowance for now unless `policySummary` contains a current restrictive rule.
+    - If the newest user message says the session is done/expired/over, says "it's fine", asks AC to chill/leave them alone, or says they need a break/errand, treat that as an allowance for now unless a current matching restrictive rule still clearly applies and the user has not explicitly relaxed it.
     - An overlay in Everyday mode requires overwhelming evidence: a current restrictive rule, or a long repeated same-context pattern with no newer user allowance/correction. Otherwise nudge at most; often abstain.
     """
 
@@ -132,11 +130,89 @@ enum ACPromptSets {
     - The user opted in to being checked, but adjacent plausible work is not suspicious by default.
     - Judge the actual content/task first: title, URL-like title text, perception summaries, screenshot, and conversation/topic beat broad app category unless an active rule names the app/category.
     - Interpret sparse profile names as broad archetypes. "Coding", "Writing", "Research", "Studying", and similar short profiles include adjacent work such as docs, tutorials, examples, planning, project chat, reference material, and debugging.
-    - `activeProfile.goalSummary` is the current session's activation intent. If it mentions temporary lenience like browsing, ordering, errands, or admin being okay right now, treat that as a soft allowance for adjacent detours during this session unless a current restrictive rule says otherwise.
+    - `activeProfile.goalSummary` is the current activation intent and outranks the static profile description for this run. If it mentions temporary lenience like browsing, ordering, errands, or admin being okay right now, treat that as a session allowance unless a newer matching restrictive rule says otherwise.
     - Specific profile descriptions and active rules narrow the scope. If the user says "code writing only", "no tutorials", "drafting only", or similar, enforce that stricter scope.
     - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
     - If `activeProfile.activatedAt` is recent (roughly the first 10 minutes), calibrate carefully: require strong evidence before nudging plausible adjacent work, but still nudge clear unrelated drift.
     - Productive work that doesn't fit the session scope can still be a distraction (e.g. coding during "Presentation prep").
+    """
+
+    private static let decisionTruthHierarchy = """
+    Decision contract (normative sources, highest first — customer is king):
+    1. `recentUserMessages` — profile-window scoped to the active profile (including Everyday), read oldest→newest. The newest relevant user statement is the user's current intent and wins over older profile/rule context for this exact activity. Treat amendments, corrections, allowances, and "I'm done / it's fine / let me X" as the latest contract.
+    2. `activeProfile` + `matchingRuleSummary` — both profile-scoped. `activeProfile.goalSummary` is the current activation intent, then `activeProfile.description`, then the profile name as a broad archetype. `matchingRuleSummary` lists active rules already filtered to this profile/context (the structural rule summary, not the profile description). A current-session user message about this exact activity outranks them; if no recent message speaks to this activity, the profile contract stands.
+    3. `freeFormMemory` — cross-mode soft truth. Memory persists across profiles and is strong evidence about the user's habits and standing preferences. Entries may include a `[ProfileName]` capture label — provenance, not scope.
+    4. `calendarContext` — soft hint only.
+    5. App/title/perception/screenshot/timeline/usage — evidence of what is happening now, not a rule by itself.
+
+    Payload ordering note: the most static fields appear first for prefix caching; the most current fields and a compact `decisionFrame` appear at the end for recency. Importance follows the hierarchy above, not field position.
+
+    `decisionFrame` repeats the current surface, newest current-session user message, active matching rules, and expected focus contract near the end of the payload. Use it as the final orientation, then resolve details from the full payload.
+    """
+
+    private static let decisionProcedure = """
+    Decision procedure:
+    - Start from `recentUserMessages` (oldest→newest). The newest message that clearly speaks to the current activity sets the contract; treat that as the user's truth even when it relaxes a profile rule.
+    - If no recent message speaks to this exact activity, identify the expected lane from `activeProfile` + `matchingRuleSummary`.
+    - Then use `freeFormMemory` as softer cross-mode background, then `calendarContext` as a tiebreaker.
+    - Finally identify the actual current activity from app/title/timeline/perception/screenshot.
+    - If actual activity fits the expected lane, or matches an allowance the user just stated → `focused` + `none`.
+    - If actual activity clearly conflicts with the expected lane or an active restriction AND the user has not relaxed it in chat → `distracted`.
+    - If the evidence is sparse, stale, generic, or ambiguous → `unclear` + `abstain`.
+    - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
+    - First clear distraction → `nudge`. Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity) AND no newer allowance/correction → `overlay`.
+    - Trust the current screenshot/frontmost app, perception, and `recentActivityTimeline` more than stale `usage`, `recentSwitches`, or older intervention text when they conflict.
+    - If the visible surface is a review/debugger/inspector/prompt-lab/meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
+    - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
+    - When the screenshot is missing (`screenshotIncluded=false` or no vision perception), prefer `focused` or `unclear` unless the text context is clearly distracting.
+    - Prefer silence over a false positive.
+    """
+
+    private static let decisionOutputRules = """
+    Output rules:
+    - Return exactly one JSON object and omit every unused key.
+    - `assessment` and `suggested_action` must agree: focused→none, unclear→abstain, distracted→nudge|overlay.
+    - Always include `reason_tags`.
+    - Include `confidence` only when uncertainty matters. Otherwise omit it.
+    - If `nudge`: include `nudge`; keep it to one sentence under 18 words, specific to this activity, distinct from recent nudges.
+    - If `abstain`: `abstain_reason` is optional; include it only when it adds useful specificity.
+    - If `overlay`: include `overlay_headline`, `overlay_body`, `overlay_prompt`.
+    - Do not emit `submit_button_title` or `secondary_button_title` unless you must override AC's defaults.
+    - Never emit keys with `null`, empty strings, or placeholder values.
+    - Never mention hidden fields, counters, or that you are reading memory/history.
+    """
+
+    private static let monitoringDecisionSystemPrompt = """
+    You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, overlay, or abstain.
+    Return shape:
+    \(decisionSchema)
+
+    \(decisionTruthHierarchy)
+
+    Trust the user's current profile, explicit rules, recent stated intent, and memory. If the user describes work that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to that stated intent — not to generic notions of productivity.
+
+    Profile / memory scoping:
+    - `matchingRuleSummary` contains active rules for the current profile/context. Rules from other profiles are hidden before the prompt is built.
+    - `activeProfile.description` is the persistent profile description. Do not look for it inside `matchingRuleSummary`.
+    - `freeFormMemory` is global soft context visible across profiles; profile labels in memory are capture provenance only.
+    \(authoritativeRulesClause)
+
+    AC operates in two modes — read `activeProfile.isDefault` to know which one applies right now. Apply ONLY the matching block:
+
+    IF `activeProfile.isDefault == true`:
+    \(everydayModeBlock)
+
+    IF `activeProfile.isDefault == false`:
+    \(sessionModeBlock)
+
+    \(titleRelatesClause)
+    \(usageSemanticsClause)
+
+    \(decisionProcedure)
+
+    \(decisionOutputRules)
+
+    \(monitoringDecisionExamples)
     """
 
     /// Few-shot examples shared by the online and staged decision prompts. These are
@@ -150,7 +226,7 @@ enum ACPromptSets {
     - Coding session with lenience: activeProfile.name="Coding", activeProfile.goalSummary="coding with browsing/order errands allowed right now", current title="Google Calendar - Week of May 18, 2026" → {"assessment":"focused","suggested_action":"none","reason_tags":["session_goal_lenience","adjacent_errand_allowed"]}
     - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
-    - Everyday with a real rule: activeProfile.isDefault=true, policySummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
+    - Everyday with a real rule: activeProfile.isDefault=true, matchingRuleSummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
     - Ambiguous case: app="Google Chrome", title="Tab", no visible body, previous verdict focused → {"assessment":"unclear","suggested_action":"none","reason_tags":["title_too_generic","needs_vision"]}
     """
 
@@ -212,136 +288,24 @@ enum ACPromptSets {
             ),
             ACPromptStageDefinition(
                 stage: .onlineDecision,
-                systemPrompt: """
-                You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
-                Return exactly one JSON object. Keep it minimal and omit every unused key.
-                Base shape:
-                \(onlineDecisionSchema)
-
-                Priority of truth (highest first; newer always wins on conflict; the newest relevant user statement wins):
-                1. `recentUserMessages` — read oldest→newest; the newest relevant statement is authoritative.
-                2. `freeFormMemory` — newer entries override older ones.
-                3. `policySummary` — structured support; never overrides a newer chat/memory statement.
-                4. `calendarContext` — soft hint only.
-                Allowances ("X is okay", "let me", "don't disturb me on X") are as binding as restrictions.
-                `recentUserMessages` is profile-window scoped: it only contains user chat from the currently active profile window, including Everyday.
-
-                Trust the user's recent stated intent, memory, and active profile. If the user describes work that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to that stated intent — not to generic notions of productivity.
-                Profile / memory scoping:
-                - `policySummary` lists rules for the active profile. Rules from other profiles are hidden.
-                - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
-                \(authoritativeRulesClause)
-                AC operates in two modes — read `activeProfile.isDefault` to know which one applies right now. Apply ONLY the matching block:
-
-                IF `activeProfile.isDefault == true`:
-                \(everydayModeBlock)
-
-                IF `activeProfile.isDefault == false`:
-                \(sessionModeBlock)
-
-                \(titleRelatesClause)
-                \(usageSemanticsClause)
-
-                Decision rules:
-                - Activity supports the user's current intent or matches an allowance → `focused` + `none`.
-                - Newer explicit allowance or correction in `recentUserMessages` for the current app/activity overrides an older nudge or stale suspicion → `focused` + `none`.
-                - Treat `activeProfile.goalSummary` as the contract for THIS activation. It can be broader or more situational than the static profile description.
-                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`.
-                - Genuinely unclear → `unclear` + `abstain`.
-                - Conflicts with the user's current intent or an active restriction → `distracted`.
-                - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
-                - First clear distraction → `nudge`. Repeated distraction already in the payload AND no newer allowance/correction → `overlay`.
-                - Trust the current screenshot/frontmost app and `recentActivityTimeline` more than stale `usage`, `recentSwitches`, or an older intervention message when they conflict.
-                - If the screenshot shows a review, debugger, inspector, prompt-lab, or other meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
-                - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
-                - When the screenshot is missing (`screenshotIncluded=false`), prefer `focused` or `unclear` unless the text context is clearly distracting.
-                - Prefer silence over a false positive.
-
-                Output rules:
-                - `assessment` and `suggested_action` must agree: focused→none, unclear→abstain, distracted→nudge|overlay.
-                - Always include `reason_tags`.
-                - Include `confidence` only when uncertainty matters. Otherwise omit it.
-                - If `nudge`: include only `nudge` in addition to the base keys; keep it to one sentence under 18 words, specific to this activity, distinct from recent nudges.
-                - If `abstain`: `abstain_reason` is optional; include it only when it adds useful specificity.
-                - If `overlay`: include `overlay_headline`, `overlay_body`, `overlay_prompt`.
-                - Do not emit `submit_button_title` or `secondary_button_title` unless you must override AC's defaults.
-                - Never emit keys with `null`, empty strings, or placeholder values.
-                - Never mention hidden fields, counters, or that you are reading memory/history.
-
-                \(monitoringDecisionExamples)
-                """
+                systemPrompt: monitoringDecisionSystemPrompt
             ,
                 userTemplate: """
                 Decide AC's next action from this live context.
                 {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
+                Re-check `decisionFrame` last: compare `currentSurface` against `expectedFocusContract` and `activeMatchingRules`, then return exactly one JSON object.
                 """
             ),
             ACPromptStageDefinition(
                 stage: .decision,
-                systemPrompt: """
-                You are AccountyCat (AC), the user's focus companion. Decide whether AC should stay silent, nudge, or escalate.
-                Inputs: `freeFormMemory`, `recentUserMessages`, `policySummary`, `distraction`, `recentInterventions`, perception summaries, optional `calendarContext`.
-                Return exactly one JSON object:
-                \(decisionSchema)
-
-                Priority of truth (highest first; newer always wins on conflict; the newest relevant user statement wins):
-                1. `recentUserMessages` — read oldest→newest; the newest relevant statement is authoritative.
-                2. `freeFormMemory` — newer entries override older ones.
-                3. `policySummary` — structured support; never overrides a newer chat/memory statement.
-                4. `calendarContext` — SOFT hint about current intent. When it names a task, apps that clearly serve that task are `focused` (e.g. event "Summarise r/foo" + reddit.com/r/foo → focused). Vague events like "Work" or "Meeting" give no strong signal.
-                `freeFormMemory` and `recentUserMessages` carry `YYYY-MM-DD HH:MM` timestamps; use `now` plus the timestamps to resolve any temporary rule's expiry.
-                `recentUserMessages` is profile-window scoped: it only contains user chat from the currently active profile window, including Everyday.
-
-                Allowances are as binding as restrictions:
-                - "X is okay", "let me", "I'm taking a break", "do not disturb me on X", "never flag X" → treat as allowed, return `focused`/`none` for that app/activity.
-
-                Trust the user's recent stated intent, memory, and active profile. If the user describes work that looks like leisure to most people (content creation, moderation, research about media), match the visible activity to that stated intent — not to generic notions of productivity.
-                Profile / memory scoping:
-                - `policySummary` lists rules for the active profile. Rules from other profiles are hidden.
-                - `freeFormMemory` is global — ALL entries are visible regardless of the active profile (entries carry a `[ProfileName]` prefix showing when they were captured).
-                \(authoritativeRulesClause)
-                AC operates in two modes — read `activeProfile.isDefault` to know which one applies right now. Apply ONLY the matching block:
-
-                IF `activeProfile.isDefault == true`:
-                \(everydayModeBlock)
-
-                IF `activeProfile.isDefault == false`:
-                \(sessionModeBlock)
-
-                \(titleRelatesClause)
-                \(usageSemanticsClause)
-
-                Decision rules:
-                - Activity supports the user's current intent OR is covered by an allowance in memory/chat → `focused` + `none`.
-                - Newer explicit allowance in `recentUserMessages` for the current app/activity → `focused` + `none`.
-                - A newer user correction that a recent nudge/overlay was wrong supersedes that older intervention for the current activity.
-                - Treat `activeProfile.goalSummary` as the contract for THIS activation. It can be broader or more situational than the static profile description.
-                - Treat "session is finished/expired/over" as a correction when `activeProfile.isDefault=true`.
-                - Genuinely unclear after using the full payload → `unclear` + `abstain`.
-                - Activity conflicts with the user's current intent or an active restriction → `distracted`.
-                - First clear distraction → `nudge`.
-                - Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity, and no newer allowance) → `overlay`.
-                - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
-                - Trust what the user is doing now and `recentActivityTimeline` more than stale usage summaries when they conflict.
-                - If the visible surface is a review/debug/inspector tool showing prior activity, judge the current work as reviewing/debugging/tooling unless the payload clearly says otherwise.
-                - Development tools, editors, terminals, docs, research, reading, planning, and drafting default to `focused` unless the payload clearly says otherwise.
-                - Prefer silence over a false positive.
-
-                Output rules:
-                - `assessment` and `suggested_action` must agree: focused→none, unclear→abstain, distracted→nudge|overlay.
-                - If `nudge`: under 18 words, specific to this activity, distinct from recent nudges.
-                - Never mention counters, hidden fields, or that you are reading memory/history.
-
-                \(monitoringDecisionExamples)
-                """
+                systemPrompt: monitoringDecisionSystemPrompt
             ,
                 userTemplate: """
                 Decide AC's next action from this context.
                 Trust the perception summaries more than raw usage when they conflict.
                 Use `recentInterventions` to avoid repeating recent nudges and to escalate only if already warranted.
                 {{PAYLOAD_JSON}}
-                Return exactly one JSON object.
+                Re-check `decisionFrame` last: compare `currentSurface` against `expectedFocusContract` and `activeMatchingRules`, then return exactly one JSON object.
                 """
             ),
             ACPromptStageDefinition(
@@ -350,9 +314,10 @@ enum ACPromptSets {
                 Write one short nudge for a focus companion.
                 Keep it human, specific to the current activity, and different from recent nudges.
                 Avoid generic productivity slogans.
-                `activeProfileName` is the session the user is currently in — ground the nudge to what is active right now, not upcoming or past sessions.
+                `activeProfile` is the profile/session the user is currently in — ground the nudge to what is active right now, not upcoming or past sessions.
                 If `freeFormMemory` or `recentUserMessages` names this specific app or activity, reference that context — it will feel more caring and less generic.
                 `calendarContext` (when present) can make the nudge feel more specific — treat it as a soft hint, not ground truth. Only reference events that are currently active, not past or future ones.
+                `matchingRuleSummary` contains current active matching rules; use it to avoid generic scolding and to respect active allowances.
                 Return exactly one JSON object: {"nudge":"..."}
                 """
             ,
@@ -360,7 +325,7 @@ enum ACPromptSets {
                 Write the nudge for this situation.
                 Mention the actual activity when that helps.
                 Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory`, or clearly implied by `calendarContext`.
-                If chat/memory conflict, the newest timestamp wins. Calendar is a tiebreaker only.
+                If profile/rules/chat/memory conflict, use the same priority as the decision stage: active profile and matching rules first, then newest current-session user statement, then memory. Calendar is a tiebreaker only.
                 If the decision stage made a mistake, still produce something neutral-to-supportive rather than scolding the user for an allowed activity.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
@@ -370,7 +335,8 @@ enum ACPromptSets {
                 stage: .appealReview,
                 systemPrompt: """
                 Review a user's typed appeal to continue a potentially distracting activity.
-                The newest relevant user statement wins. If the user is clarifying that the activity serves the task, prefer allow unless memory/rules clearly contradict it.
+                Start from the active profile and `matchingRuleSummary`, then apply the appeal as the newest current-session user statement.
+                If the user is clarifying that the activity serves the task, prefer allow unless an active matching rule or profile scope clearly still contradicts it.
                 Prefer allow or defer unless the appeal clearly conflicts with the user's current intent or rules.
                 Return exactly one JSON object:
                 {"decision":"allow|deny|defer","message":"short explanation"}

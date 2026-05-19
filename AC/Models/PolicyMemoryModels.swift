@@ -534,7 +534,7 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
         }
 
         for rule in rules {
-            var segments = [rule.summary]
+            var segments = ["\(rule.kind.rawValue): \(rule.summary)"]
             if let maxMinutesPerDay = rule.maxMinutesPerDay {
                 let usedMinutes = Int((usageByDay[now.acDayKey]?[context.appName] ?? 0) / 60)
                 segments.append("limit \(maxMinutesPerDay)m/day, used \(usedMinutes)m today")
@@ -547,6 +547,9 @@ nonisolated struct PolicyMemory: Codable, Hashable, Sendable {
             }
             if let expiresAt = rule.schedule.expiresAt {
                 segments.append("until \(PromptTimestampFormatting.absoluteLabel(for: expiresAt))")
+            }
+            if rule.isLocked {
+                segments.append("fixed")
             }
             lines.append("• " + segments.joined(separator: " — "))
         }

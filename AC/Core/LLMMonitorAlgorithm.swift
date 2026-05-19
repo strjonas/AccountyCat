@@ -7,22 +7,18 @@ import CryptoKit
 import Foundation
 
 struct MonitoringRequestScopeContext: Sendable, Equatable {
-    var goals: String
     var freeFormMemory: String
     var recentUserMessages: [String]
-    var policySummary: String
+    var matchingRuleSummary: String
     var activeProfile: MonitoringActiveProfilePromptPayload
 
     init(input: MonitoringDecisionInput) {
-        goals = input.goals.cleanedSingleLine.truncatedForPrompt(
-            maxLength: MonitoringPromptContextBudget.goalCharacters
-        )
         freeFormMemory = input.memory.truncatedMultilineForPrompt(
             maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
             maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
         )
         recentUserMessages = LLMMonitorAlgorithm.compactRecentUserMessages(input.recentUserMessages)
-        policySummary = LLMMonitorAlgorithm.makePolicySummary(
+        matchingRuleSummary = LLMMonitorAlgorithm.makeMatchingRuleSummary(
             policyMemory: input.policyMemory,
             snapshot: input.snapshot,
             now: input.now
@@ -454,10 +450,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 configuration: input.configuration,
                 options: applyOverrides(runtimeProfile.options(for: .decision), configuration: input.configuration),
                 payload: MonitoringDecisionPromptPayload(
-                    now: input.now,
-                    freeFormMemory: requestScope.freeFormMemory,
+                    activeProfile: requestScope.activeProfile,
+                    matchingRuleSummary: requestScope.matchingRuleSummary,
                     recentUserMessages: requestScope.recentUserMessages,
-                    policySummary: requestScope.policySummary,
+                    freeFormMemory: requestScope.freeFormMemory,
+                    calendarContext: input.calendarContext,
+                    now: input.now,
                     appName: compactAppName,
                     bundleIdentifier: input.snapshot.bundleIdentifier,
                     windowTitle: compactWindowTitle,
@@ -471,8 +469,14 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     ),
                     titlePerception: titlePerception,
                     visionPerception: visionPerception,
-                    calendarContext: input.calendarContext,
-                    activeProfile: requestScope.activeProfile
+                    decisionFrame: MonitoringDecisionFramePromptPayload.make(
+                        appName: compactAppName,
+                        windowTitle: compactWindowTitle,
+                        currentContextSeconds: currentContextSeconds,
+                        matchingRuleSummary: requestScope.matchingRuleSummary,
+                        recentUserMessages: requestScope.recentUserMessages,
+                        activeProfile: requestScope.activeProfile
+                    )
                 ),
                 attempts: &attempts,
                 decoder: MonitoringDecisionEnvelope.self
@@ -1014,16 +1018,25 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .appealReview), configuration: input.configuration),
             payload: MonitoringAppealPromptPayload(
+                activeProfile: MonitoringActiveProfilePromptPayload(
+                    id: input.activeProfileID,
+                    name: input.activeProfileName,
+                    isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
+                    description: input.activeProfileDescription,
+                    goalSummary: input.activeProfileGoalSummary,
+                    activatedAt: input.activeProfileActivatedAt,
+                    expiresAt: input.activeProfileExpiresAt
+                ),
+                matchingRuleSummary: Self.makeMatchingRuleSummary(
+                    policyMemory: input.policyMemory,
+                    snapshot: input.snapshot,
+                    now: input.now
+                ),
+                recentUserMessages: Self.compactRecentUserMessages(input.recentUserMessages),
                 appealText: input.appealText,
                 freeFormMemory: input.memory.truncatedMultilineForPrompt(
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
-                ),
-                recentUserMessages: Self.compactRecentUserMessages(input.recentUserMessages),
-                policySummary: Self.makePolicySummary(
-                    policyMemory: input.policyMemory,
-                    snapshot: input.snapshot,
-                    now: input.now
                 ),
                 snapshotAppName: input.snapshot?.appName,
                 snapshotWindowTitle: input.snapshot?.windowTitle,
@@ -1171,7 +1184,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
     }
 
-    static func makePolicySummary(
+    static func makeMatchingRuleSummary(
         policyMemory: PolicyMemory,
         snapshot: AppSnapshot?,
         now: Date
@@ -1193,10 +1206,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         var policyMemory = policyMemory
         policyMemory.expireRules(at: now)
         return policyMemory
-            .monitoringSummary(for: context, usageByDay: usageByDay, now: now, limit: 5)
+            .monitoringSummary(for: context, usageByDay: usageByDay, now: now, limit: 6)
             .truncatedMultilineForPrompt(
-                maxLength: MonitoringPromptContextBudget.policySummaryCharacters,
-                maxLines: MonitoringPromptContextBudget.policySummaryLines
+                maxLength: MonitoringPromptContextBudget.matchingRuleSummaryCharacters,
+                maxLines: MonitoringPromptContextBudget.matchingRuleSummaryLines
             )
     }
 
@@ -1212,10 +1225,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         attempts: inout [LLMEvaluationAttempt]
     ) async -> MonitoringDecisionEnvelope? {
         let payload = MonitoringOnlineDecisionPromptPayload(
-            now: input.now,
-            freeFormMemory: requestScope.freeFormMemory,
+            activeProfile: requestScope.activeProfile,
+            matchingRuleSummary: requestScope.matchingRuleSummary,
             recentUserMessages: requestScope.recentUserMessages,
-            policySummary: requestScope.policySummary,
+            freeFormMemory: requestScope.freeFormMemory,
+            calendarContext: input.calendarContext,
+            now: input.now,
             appName: compactAppName,
             bundleIdentifier: input.snapshot.bundleIdentifier,
             windowTitle: compactWindowTitle,
@@ -1230,9 +1245,17 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 state: input.algorithmState.llmPolicy.distraction.telemetryState
             ),
             heuristics: MonitoringPromptHeuristicSummary(heuristics: input.heuristics),
-            calendarContext: input.calendarContext,
             screenshotIncluded: input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration),
-            activeProfile: requestScope.activeProfile
+            decisionFrame: MonitoringDecisionFramePromptPayload.make(
+                appName: compactAppName,
+                windowTitle: compactWindowTitle,
+                currentContextSeconds: input.algorithmState.llmPolicy.currentContextEnteredAt.map {
+                    max(0, input.now.timeIntervalSince($0))
+                },
+                matchingRuleSummary: requestScope.matchingRuleSummary,
+                recentUserMessages: requestScope.recentUserMessages,
+                activeProfile: requestScope.activeProfile
+            )
         )
 
         let screenshotPath = visionEnabled(for: input.configuration)
@@ -1291,9 +1314,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             configuration: input.configuration,
             options: applyOverrides(runtimeProfile.options(for: .nudgeCopy), configuration: input.configuration),
             payload: MonitoringNudgePromptPayload(
-                freeFormMemory: requestScope.freeFormMemory,
+                activeProfile: requestScope.activeProfile,
+                matchingRuleSummary: requestScope.matchingRuleSummary,
                 recentUserMessages: requestScope.recentUserMessages,
-                policySummary: requestScope.policySummary,
+                freeFormMemory: requestScope.freeFormMemory,
+                calendarContext: input.calendarContext,
                 appName: compactAppName,
                 windowTitle: compactWindowTitle,
                 titlePerception: titlePerception?.activitySummary,
@@ -1301,9 +1326,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 recentNudges: Array(
                     input.algorithmState.llmPolicy.recentNudgeMessages
                         .prefix(MonitoringPromptContextBudget.recentNudgeCount)
-                ),
-                calendarContext: input.calendarContext,
-                activeProfileName: input.activeProfileName
+                )
             ),
             attempts: &attempts,
             decoder: MonitoringNudgeEnvelope.self,
@@ -1611,12 +1634,13 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     }
 
     static func compactRecentUserMessages(_ messages: [String]) -> [String] {
-        // Caller already passes the last few user messages oldest→newest; keep that order so
+        // Caller usually passes capped current-session messages oldest→newest; keep that order so
         // "newest wins" is visually obvious at the tail of the list.
-        messages
+        let cleaned = messages
             .map { $0.cleanedSingleLine }
             .filter { !$0.isEmpty }
-            .prefix(MonitoringPromptContextBudget.recentUserChatCount)
+        return cleaned
+            .suffix(MonitoringPromptContextBudget.recentUserChatCount)
             .map { $0.truncatedForPrompt(maxLength: MonitoringPromptContextBudget.recentUserChatCharacters) }
     }
 

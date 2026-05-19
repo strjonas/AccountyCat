@@ -173,6 +173,35 @@ struct ACTests {
     }
 
     @Test
+    func monitoringRecentUserMessagesKeepsNewestSessionMessagesUntilCap() {
+        let sessionStart = Date(timeIntervalSince1970: 100)
+        let history = (0..<10).map { index in
+            ChatMessage(
+                role: .user,
+                text: "message \(index)",
+                timestamp: sessionStart.addingTimeInterval(Double(index))
+            )
+        }
+        let profile = FocusProfile(
+            id: "coding",
+            name: "Coding",
+            activatedAt: sessionStart,
+            expiresAt: sessionStart.addingTimeInterval(30 * 60),
+            promptSessionStartedAt: sessionStart
+        )
+
+        let recent = BrainService.monitoringRecentUserMessages(
+            chatHistory: history,
+            activeProfile: profile,
+            limit: 8
+        )
+
+        #expect(recent.count == 8)
+        #expect(recent.first?.contains("message 2") == true)
+        #expect(recent.last?.contains("message 9") == true)
+    }
+
+    @Test
     func chatSupportRecognizesImmediateMonitoringAllowances() {
         #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("but I finished that session no?"))
         #expect(AppControllerChatSupport.looksLikeImmediateMonitoringAllowance("hey chill for now, I need to do something else"))

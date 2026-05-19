@@ -129,12 +129,15 @@ The monitoring payload is profile-aware.
 
 - Default profile (`general` / "Everyday") is lenient by design.
 - Named focus profiles raise the bar for off-task behavior, but the monitor judges the visible content/task before broad app category.
+- **Decision payload ordering vs truth ordering are intentionally different.** Payload field order is optimized for prefix caching and recency: most-static fields first (`activeProfile`, `matchingRuleSummary`), then current-profile `recentUserMessages`, then `freeFormMemory`, then `calendarContext`, then live surface evidence. A compact `decisionFrame` repeats "where the user is" and "where the user should be" at the end of the payload for recency bias.
+- **Truth ordering (which source wins on conflict) is customer-first**: `recentUserMessages` for this exact activity > `activeProfile` + `matchingRuleSummary` (both profile-scoped) > `freeFormMemory` (cross-mode soft truth) > `calendarContext` > live evidence. The prompt's "Decision contract" section is the authoritative copy of this hierarchy.
+- For v1.0 the user is always king: a clear, current-session message that relaxes a profile rule for this exact activity wins. A future "accountability mode" may introduce non-negotiable / fixed rules that chat cannot relax — that is a deliberate v1.1+ scope (hard to get right; not on the v1.0 critical path).
 - Sparse profile names such as Coding, Writing, Research, or Studying are treated as broad archetypes. Adjacent docs, tutorials, examples, planning, project chat, reference material, and debugging can be focused unless the profile description or rules narrow the scope.
 - Specific profile descriptions and rules narrow the scope. A profile like "code writing only, no tutorials" should make tutorial/video content nudge-eligible.
 - `activeProfile.activatedAt` is included in the decision payload. During the first few minutes of a newly activated named profile, the model should require stronger evidence before nudging plausible adjacent work, while still nudging clear unrelated drift.
-- `recentUserMessages` is scoped to the currently active profile window, including `Everyday`.
-- Policy rules are profile-scoped.
-- Free-form memory remains globally visible, but entries carry profile labels.
+- `recentUserMessages` is scoped to the currently active profile window, including `Everyday` — up to `recentUserChatCount` messages, oldest→newest, capped by `recentUserChatTotalCharacters`.
+- `matchingRuleSummary` is the prompt-facing summary of active profile/context-matched policy rules. It is not the profile description.
+- Free-form memory remains globally visible, but entries carry profile labels as capture provenance, not scope.
 
 ## Appeals, Rewards, and Escalation
 

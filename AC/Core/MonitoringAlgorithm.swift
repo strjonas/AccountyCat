@@ -46,7 +46,7 @@ struct MonitoringDecisionInput: Sendable {
     /// Pre-rendered prompt-facing memory (with timestamps). The algorithm no longer
     /// condenses or filters this — the LLM is the authority on what matters.
     var memory: String
-    /// Last few user chat messages (most recent first is fine — the LLM reads order).
+    /// Current active-profile user chat, oldest→newest, capped by prompt budget.
     /// This is a safety net so fresh intent always reaches the decision stage even
     /// if memory extraction is lagging.
     var recentUserMessages: [String] = []
@@ -98,6 +98,12 @@ struct MonitoringAppealReviewInput: Sendable {
     var configuration: MonitoringConfiguration
     var algorithmState: AlgorithmStateEnvelope
     var runtimeOverride: String?
+    var activeProfileID: String = PolicyRule.defaultProfileID
+    var activeProfileName: String = FocusProfile.defaultDisplayName
+    var activeProfileDescription: String? = nil
+    var activeProfileGoalSummary: String? = nil
+    var activeProfileActivatedAt: Date? = nil
+    var activeProfileExpiresAt: Date? = nil
 }
 
 struct MonitoringAppealReviewOutput: Sendable {

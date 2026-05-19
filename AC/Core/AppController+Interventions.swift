@@ -414,6 +414,9 @@ extension AppController {
 
         let task = Task {
             let reviewNow = Date()
+            let activeProfile = state.activeProfile
+            let activeProfileDescription = activeProfile.description?.cleanedSingleLine
+            let activeProfileGoalSummary = activeProfile.createdReason?.cleanedSingleLine
             let reviewInput = MonitoringAppealReviewInput(
                 now: reviewNow,
                 appealText: trimmedAppeal,
@@ -421,14 +424,21 @@ extension AppController {
                 goals: state.goalsText,
                 recentActions: state.recentActions,
                 memory: state.memoryForPrompt(now: reviewNow),
-                recentUserMessages: BrainService.recentUserMessages(
+                recentUserMessages: BrainService.monitoringRecentUserMessages(
                     chatHistory: state.chatHistory,
+                    activeProfile: activeProfile,
                     limit: MonitoringPromptContextBudget.recentUserChatCount
                 ),
                 policyMemory: state.policyMemory,
                 configuration: state.monitoringConfiguration,
                 algorithmState: state.algorithmState,
-                runtimeOverride: state.runtimePathOverride
+                runtimeOverride: state.runtimePathOverride,
+                activeProfileID: activeProfile.id,
+                activeProfileName: activeProfile.name,
+                activeProfileDescription: activeProfileDescription?.isEmpty == false ? activeProfileDescription : nil,
+                activeProfileGoalSummary: activeProfileGoalSummary?.isEmpty == false ? activeProfileGoalSummary : nil,
+                activeProfileActivatedAt: activeProfile.activatedAt,
+                activeProfileExpiresAt: activeProfile.expiresAt
             )
 
             let output = try? await monitoringAlgorithmRegistry.reviewAppeal(input: reviewInput)

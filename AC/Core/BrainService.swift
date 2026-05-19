@@ -228,17 +228,30 @@ final class BrainService: NSObject {
     static func monitoringRecentUserMessages(
         chatHistory: [ChatMessage],
         activeProfile: FocusProfile,
-        limit: Int
+        limit: Int,
+        maxCharacters: Int = MonitoringPromptContextBudget.recentUserChatTotalCharacters
     ) -> [String] {
         guard let sessionStartAt = activeProfile.promptSessionStartedAt ?? activeProfile.activatedAt else {
             return []
         }
-        let userMessages =
+        let sessionMessages =
             chatHistory
             .filter { $0.role == .user && $0.timestamp >= sessionStartAt }
-            .suffix(limit)
             .compactMap(\.promptStampedLine)
-        return Array(userMessages)
+        var kept: [String] = []
+        var usedCharacters = 0
+        for line in sessionMessages.reversed() {
+            let compactLine = line.truncatedForPrompt(
+                maxLength: MonitoringPromptContextBudget.recentUserChatCharacters
+            )
+            let prospective = usedCharacters + compactLine.count + (kept.isEmpty ? 0 : 1)
+            guard kept.count < limit, prospective <= maxCharacters else {
+                break
+            }
+            kept.insert(compactLine, at: 0)
+            usedCharacters = prospective
+        }
+        return kept
     }
 
     nonisolated static func shouldUsePeriodicFullScreenCapture(

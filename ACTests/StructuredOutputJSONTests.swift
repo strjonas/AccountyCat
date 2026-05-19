@@ -154,7 +154,7 @@ struct StructuredOutputJSONTests {
             maxCharacters: 400
         )
 
-        #expect(prompt.contains("[Coding]") == false)
+        #expect(prompt.contains("[Coding]"))
         #expect(prompt.contains("No work after 22:00"))
     }
 }

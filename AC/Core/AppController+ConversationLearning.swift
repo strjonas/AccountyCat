@@ -55,7 +55,11 @@ extension AppController {
     func addMemoryEntry(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        state.memoryEntries.insert(MemoryEntry(text: trimmed), at: 0)
+        let profile = state.activeProfile
+        state.memoryEntries.insert(
+            MemoryEntry(text: trimmed, profileID: profile.id, profileName: profile.name),
+            at: 0
+        )
         persistState()
         logActivity("memory", "Added memory entry")
     }
@@ -277,7 +281,8 @@ extension AppController {
         if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(trimmed) == .orderedSame }) {
             return
         }
-        let entry = MemoryEntry(text: trimmed)
+        let profile = state.activeProfile
+        let entry = MemoryEntry(text: trimmed, profileID: profile.id, profileName: profile.name)
         state.memoryEntries.append(entry)
         persistState()
         maybeConsolidateMemory()
@@ -928,6 +933,8 @@ extension AppController {
         }
         state.memoryEntries.append(MemoryEntry(
             text: text,
+            profileID: state.activeProfile.id,
+            profileName: state.activeProfile.name,
             isLocked: action.locked == true
         ))
         logActivity("memory", "Remembered: \(text)")

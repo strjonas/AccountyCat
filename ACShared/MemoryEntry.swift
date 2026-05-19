@@ -94,7 +94,9 @@ public enum MemoryRendering {
             let cleaned = entry.text.cleanedSingleLine
             guard !cleaned.isEmpty else { continue }
             let label = timestampLabel(for: entry.createdAt, now: now)
-            let line = "[\(label)] \(cleaned)"
+            let profile = entry.profileName?.cleanedSingleLine
+            let profileLabel = profile?.isEmpty == false ? " [\(profile ?? "")]" : ""
+            let line = "[\(label)]\(profileLabel) \(cleaned)"
             let prospective = totalChars + line.count + 1
             if prospective > maxCharacters { break }
             lines.insert(line, at: 0)

@@ -151,7 +151,12 @@ actor PromptLabRunner {
         let compactWindowTitle = scenario.windowTitle.nilIfBlank?.truncatedForPrompt(
             maxLength: MonitoringPromptContextBudget.windowTitleCharacters
         )
-        let compactPolicySummary = policySummary(for: scenario)
+        let compactMatchingRuleSummary = matchingRuleSummary(for: scenario)
+        let compactRecentUserMessages = Self.compactRecentUserMessages(scenario.recentUserMessages)
+        // Faithful replay: when the scenario didn't capture an active profile, assume
+        // Everyday rather than synthesizing a focus session that would change the
+        // mode-block the decision prompt picks.
+        let activeProfile = scenario.activeProfile ?? MonitoringActiveProfilePromptPayload()
         let compactSwitches = compactRecentSwitches(
             scenario.recentSwitches,
             limit: MonitoringPromptContextBudget.decisionSwitchCount
@@ -224,13 +229,15 @@ actor PromptLabRunner {
             runtimePath: normalizedRuntimePath,
             options: runtimeProfile.options(for: .decision),
             payload: MonitoringDecisionPromptPayload(
-                now: scenario.timestamp,
+                activeProfile: activeProfile,
+                matchingRuleSummary: compactMatchingRuleSummary,
+                recentUserMessages: compactRecentUserMessages,
                 freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
                     maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                     maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                 ),
-                recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
-                policySummary: compactPolicySummary,
+                calendarContext: nil,
+                now: scenario.timestamp,
                 appName: compactAppName,
                 bundleIdentifier: scenario.bundleIdentifier.nilIfBlank,
                 windowTitle: compactWindowTitle,
@@ -240,7 +247,15 @@ actor PromptLabRunner {
                 recentInterventions: compactInterventions,
                 distraction: MonitoringPromptDistractionSummary(state: scenario.distraction.telemetryRecord),
                 titlePerception: titlePerception,
-                visionPerception: visionPerception
+                visionPerception: visionPerception,
+                decisionFrame: MonitoringDecisionFramePromptPayload.make(
+                    appName: compactAppName,
+                    windowTitle: compactWindowTitle,
+                    currentContextSeconds: nil,
+                    matchingRuleSummary: compactMatchingRuleSummary,
+                    recentUserMessages: compactRecentUserMessages,
+                    activeProfile: activeProfile
+                )
             ),
             stageResults: &stageResults,
             decoder: MonitoringDecisionEnvelope.self
@@ -268,20 +283,21 @@ actor PromptLabRunner {
                 runtimePath: normalizedRuntimePath,
                 options: runtimeProfile.options(for: .nudgeCopy),
                 payload: MonitoringNudgePromptPayload(
+                    activeProfile: activeProfile,
+                    matchingRuleSummary: compactMatchingRuleSummary,
+                    recentUserMessages: compactRecentUserMessages,
                     freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                     ),
-                    recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
-                    policySummary: compactPolicySummary,
+                    calendarContext: nil,
                     appName: compactAppName,
                     windowTitle: compactWindowTitle,
                     titlePerception: titlePerception?.activitySummary,
                     visionPerception: visionPerception?.activitySummary,
                     recentNudges: Array(
                         scenario.recentNudgeMessages.prefix(MonitoringPromptContextBudget.recentNudgeCount)
-                    ),
-                    activeProfileName: "General"
+                    )
                 ),
                 stageResults: &stageResults,
                 decoder: MonitoringNudgeEnvelope.self
@@ -299,13 +315,14 @@ actor PromptLabRunner {
                 runtimePath: normalizedRuntimePath,
                 options: runtimeProfile.options(for: .appealReview),
                 payload: MonitoringAppealPromptPayload(
+                    activeProfile: activeProfile,
+                    matchingRuleSummary: compactMatchingRuleSummary,
+                    recentUserMessages: compactRecentUserMessages,
                     appealText: scenario.appealText.cleanedSingleLine,
                     freeFormMemory: scenario.freeFormMemorySummary.truncatedMultilineForPrompt(
                         maxLength: MonitoringPromptContextBudget.freeFormMemoryCharacters,
                         maxLines: MonitoringPromptContextBudget.freeFormMemoryLines
                     ),
-                    recentUserMessages: Self.compactRecentUserMessages(scenario.recentUserMessages),
-                    policySummary: compactPolicySummary,
                     snapshotAppName: compactAppName,
                     snapshotWindowTitle: compactWindowTitle,
                     assessment: decision?.assessment,
@@ -339,16 +356,16 @@ actor PromptLabRunner {
         )
     }
 
-    private func policySummary(for scenario: PromptLabScenario) -> String {
+    private func matchingRuleSummary(for scenario: PromptLabScenario) -> String {
         if !scenario.policyMemorySummary.cleanedSingleLine.isEmpty {
             return scenario.policyMemorySummary.truncatedMultilineForPrompt(
-                maxLength: MonitoringPromptContextBudget.policySummaryCharacters,
-                maxLines: MonitoringPromptContextBudget.policySummaryLines
+                maxLength: MonitoringPromptContextBudget.matchingRuleSummaryCharacters,
+                maxLines: MonitoringPromptContextBudget.matchingRuleSummaryLines
             )
         }
         if !scenario.policyMemoryJSON.cleanedSingleLine.isEmpty {
             return scenario.policyMemoryJSON.cleanedSingleLine
-                .truncatedForPrompt(maxLength: MonitoringPromptContextBudget.policySummaryCharacters)
+                .truncatedForPrompt(maxLength: MonitoringPromptContextBudget.matchingRuleSummaryCharacters)
         }
         return "No structured policy rules."
     }
@@ -481,14 +498,7 @@ actor PromptLabRunner {
         _ payload: P,
         prettyPrinted: Bool = false
     ) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(payload),
-              let json = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return json
+        MonitoringPromptPayloadEncoding.encode(payload, prettyPrinted: prettyPrinted)
     }
 
     private static func decode<T: Decodable>(_ type: T.Type, from output: String) -> T? {
@@ -586,10 +596,11 @@ actor PromptLabRunner {
     }
 
     private static func compactRecentUserMessages(_ messages: [String]) -> [String] {
-        messages
+        let cleaned = messages
             .map { $0.cleanedSingleLine }
             .filter { !$0.isEmpty }
-            .prefix(MonitoringPromptContextBudget.recentUserChatCount)
+        return cleaned
+            .suffix(MonitoringPromptContextBudget.recentUserChatCount)
             .map { $0.truncatedForPrompt(maxLength: MonitoringPromptContextBudget.recentUserChatCharacters) }
     }
 

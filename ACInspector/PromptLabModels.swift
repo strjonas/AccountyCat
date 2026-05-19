@@ -262,6 +262,7 @@ struct PromptLabScenario: Codable, Hashable, Identifiable, Sendable {
     var windowTitle: String
     var timestamp: Date
     var goals: String
+    var activeProfile: MonitoringActiveProfilePromptPayload? = nil
     var freeFormMemorySummary: String
     var recentUserMessages: [String] = []
     var policyMemorySummary: String

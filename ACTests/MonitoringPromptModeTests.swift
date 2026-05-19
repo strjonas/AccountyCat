@@ -4,7 +4,7 @@
 //
 //  Verifies the everyday/session split inside the monitoring decision prompts:
 //  both stages embed two distinct mode-specific instruction blocks, and the
-//  shared "rules in policySummary are authoritative" clause appears in both so
+//  shared "rules in matchingRuleSummary are authoritative" clause appears in both so
 //  user-defined disallow/discourage rules still fire in everyday mode.
 //
 
@@ -40,10 +40,12 @@ struct MonitoringPromptModeTests {
         let decision = systemPrompt(for: .decision)
         // The shared clause is what keeps "Reddit is never okay" working in
         // everyday mode — the model must always honour disallow/discourage.
-        #expect(online.contains("authoritative regardless of mode"))
-        #expect(decision.contains("authoritative regardless of mode"))
+        #expect(online.contains("active structural rules"))
+        #expect(decision.contains("active structural rules"))
         #expect(online.contains("disallow"))
         #expect(decision.contains("disallow"))
+        #expect(online.contains("matchingRuleSummary"))
+        #expect(decision.contains("matchingRuleSummary"))
     }
 
     @Test
@@ -76,6 +78,17 @@ struct MonitoringPromptModeTests {
         #expect(online.contains("profile-window scoped"))
         #expect(decision.contains("profile-window scoped"))
         #expect(online.contains("including Everyday"))
+    }
+
+    @Test
+    func decisionPromptsStayUnifiedAcrossOnlineAndLocalStages() {
+        let prompt = systemPrompt(for: .decision)
+        #expect(systemPrompt(for: .onlineDecision) == prompt)
+        #expect(prompt.contains("Decision contract"))
+        #expect(prompt.contains("decisionFrame"))
+        #expect(prompt.contains("customer is king"))
+        #expect(prompt.contains("Start from `recentUserMessages`"))
+        #expect(!prompt.contains("userGoals"))
     }
 
     @Test

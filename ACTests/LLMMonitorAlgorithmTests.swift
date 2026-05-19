@@ -294,10 +294,77 @@ struct LLMMonitorAlgorithmTests {
         let decisionAttempt = try #require(result.evaluation.attempts.first {
             $0.promptMode == "decision"
         })
-        #expect(decisionAttempt.payloadJSON.contains(#""goalSummary":"coding with browsing"#))
-        #expect(decisionAttempt.payloadJSON.contains(#""recentActivityTimeline""#))
-        #expect(decisionAttempt.payloadJSON.contains("Google Calendar - Week of May 18, 2026"))
-        #expect(decisionAttempt.payloadJSON.contains("Order details"))
+        let payload = decisionAttempt.payloadJSON
+        #expect(payload.contains(#""goalSummary":"coding with browsing"#))
+        #expect(payload.contains(#""recentActivityTimeline""#))
+        #expect(payload.contains(#""matchingRuleSummary""#))
+        #expect(payload.contains(#""decisionFrame""#))
+        #expect(!payload.contains(#""policySummary""#))
+        #expect(payload.contains("Google Calendar - Week of May 18, 2026"))
+        #expect(payload.contains("Order details"))
+    }
+
+    @Test
+    func decisionPayloadEncodesNormativeFieldsBeforeEvidenceAndDecisionFrameLast() throws {
+        let activeProfile = MonitoringActiveProfilePromptPayload(
+            id: "coding",
+            name: "Coding",
+            isDefault: false,
+            description: "Development work",
+            goalSummary: "Finish prompt ordering"
+        )
+        let payload = MonitoringDecisionPromptPayload(
+            activeProfile: activeProfile,
+            matchingRuleSummary: "disallow: Social feeds",
+            recentUserMessages: ["[2026-05-18 10:00] User: coding now"],
+            freeFormMemory: "User prefers quiet nudges.",
+            calendarContext: "Coding block",
+            now: Date(timeIntervalSince1970: 7_320),
+            appName: "Xcode",
+            bundleIdentifier: "com.apple.dt.Xcode",
+            windowTitle: "ACPromptSets.swift",
+            recentSwitches: [],
+            recentActivityTimeline: [],
+            usage: [],
+            currentContextSeconds: 42,
+            recentInterventions: MonitoringPromptInterventionSummary(
+                recentNudges: [],
+                lastActionKind: nil,
+                lastActionMessage: nil
+            ),
+            distraction: MonitoringPromptDistractionSummary(
+                state: TelemetryDistractionState(
+                    stableSince: nil,
+                    lastAssessment: nil,
+                    consecutiveDistractedCount: 0,
+                    nextEvaluationAt: nil
+                )
+            ),
+            titlePerception: nil,
+            visionPerception: nil,
+            decisionFrame: MonitoringDecisionFramePromptPayload.make(
+                appName: "Xcode",
+                windowTitle: "ACPromptSets.swift",
+                currentContextSeconds: 42,
+                matchingRuleSummary: "disallow: Social feeds",
+                recentUserMessages: ["[2026-05-18 10:00] User: coding now"],
+                activeProfile: activeProfile
+            )
+        )
+        let json = MonitoringLLMClient.encodePayload(payload)
+        let activeProfileIndex = try #require(json.range(of: #""activeProfile""#)?.lowerBound)
+        let matchingRuleIndex = try #require(json.range(of: #""matchingRuleSummary""#)?.lowerBound)
+        let recentUserIndex = try #require(json.range(of: #""recentUserMessages""#)?.lowerBound)
+        let freeFormIndex = try #require(json.range(of: #""freeFormMemory""#)?.lowerBound)
+        let appNameIndex = try #require(json.range(of: #""appName""#)?.lowerBound)
+        let decisionFrameIndex = try #require(json.range(of: #""decisionFrame""#)?.lowerBound)
+
+        #expect(activeProfileIndex < matchingRuleIndex)
+        #expect(matchingRuleIndex < recentUserIndex)
+        #expect(recentUserIndex < freeFormIndex)
+        #expect(freeFormIndex < appNameIndex)
+        #expect(decisionFrameIndex > appNameIndex)
+        #expect(!json.contains(#""userGoals""#))
     }
 
     @Test
@@ -892,13 +959,12 @@ struct LLMMonitorAlgorithmTests {
 
         let scope = MonitoringRequestScopeContext(input: input)
 
-        #expect(scope.goals == "Ship AC and stay focused on engineering work.")
         #expect(scope.freeFormMemory.contains("Keep nudges blunt during coding."))
         #expect(scope.recentUserMessages == [
             "[2026-05-01 10:10] focus on coding for the next hour",
             "[2026-05-01 10:12] docs are allowed if they unblock the build",
         ])
-        #expect(scope.policySummary.contains("Allow docs needed to unblock the build."))
+        #expect(scope.matchingRuleSummary.contains("Allow docs needed to unblock the build."))
         #expect(scope.activeProfile == MonitoringActiveProfilePromptPayload(
             id: "coding",
             name: "Coding",

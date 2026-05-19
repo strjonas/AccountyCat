@@ -110,13 +110,6 @@ enum MonitoringLLMClient {
     }
 
     nonisolated static func encodePayload<T: Encodable>(_ payload: T) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(payload),
-              let string = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return string
+        MonitoringPromptPayloadEncoding.encode(payload)
     }
 }
