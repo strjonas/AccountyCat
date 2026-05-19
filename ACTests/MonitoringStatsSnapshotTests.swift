@@ -294,7 +294,10 @@ struct MonitoringStatsSnapshotTests {
 
         let snapshot = await MonitoringStatsSnapshot.load(from: store, window: .day)
 
-        #expect(snapshot.callsPerHour == "0.0")
+        #expect(snapshot.totalTokens == 150)
+        #expect(snapshot.totalLLMRequests == 1)
+        #expect(snapshot.callsPerWallHour == "0.0")
+        #expect(snapshot.monitoringCallsPerActiveHourValue > snapshot.callsPerWallHourValue)
         #expect(snapshot.averageTokenSummary == "120 / 30 / 40")
         #expect(snapshot.visionAttachRate == "100%")
         #expect(snapshot.visionRetryCount == 1)
@@ -309,5 +312,153 @@ struct MonitoringStatsSnapshotTests {
         #expect(snapshot.watchItems.first(where: { $0.label == "Vision retries" })?.status == .alert)
         #expect(snapshot.watchItems.first(where: { $0.label == "Vision retries" })?.message.contains("50%") == true)
         #expect(snapshot.watchItems.first(where: { $0.label == "Unclear rate" })?.status == .alert)
+        #expect(!snapshot.costProjections.isEmpty)
+    }
+
+    @Test
+    func activeMonitoringSecondsIgnoresIdleGaps() {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-3600)
+        let events: [TelemetryEvent] = [
+            makeActivityEvent(id: "a1", at: now.addingTimeInterval(-300)),
+            makeActivityEvent(id: "a2", at: now.addingTimeInterval(-240)),
+            makeIdleSkipEvent(id: "idle", at: now.addingTimeInterval(-180)),
+            makeActivityEvent(id: "a3", at: now.addingTimeInterval(-60)),
+        ]
+
+        let seconds = MonitoringStatsSnapshot.computeActiveMonitoringSeconds(
+            events: events,
+            cutoff: cutoff,
+            now: now
+        )
+
+        #expect(seconds > 0)
+        #expect(seconds < 3600)
+    }
+
+    @Test
+    func prefersLLMInteractionTokenTotals() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ac-monitoring-stats-llm-\(UUID().uuidString)", isDirectory: true)
+        let store = TelemetryStore(rootURL: rootURL)
+        let session = try await store.startSession(reason: "stats")
+        let timestamp = Date().addingTimeInterval(-30)
+
+        try await store.appendEvent(
+            TelemetryEvent(
+                id: "llm-1",
+                kind: .llmInteraction,
+                timestamp: timestamp,
+                sessionID: session.id,
+                episodeID: nil,
+                episode: nil,
+                session: nil,
+                observation: nil,
+                evaluation: nil,
+                modelInput: nil,
+                modelOutput: nil,
+                parsedOutput: nil,
+                policy: nil,
+                action: nil,
+                metric: nil,
+                reaction: nil,
+                annotation: nil,
+                failure: nil,
+                llmInteraction: LLMInteractionRecord(
+                    interactionID: "llm-1",
+                    kind: .chat,
+                    parentInteractionID: nil,
+                    runtime: .openAI,
+                    modelIdentifier: "gpt-test",
+                    promptMode: nil,
+                    startedAt: timestamp,
+                    endedAt: timestamp,
+                    latencyMs: 100,
+                    tokenUsage: TokenUsageRecord(
+                        promptTokens: 500,
+                        completionTokens: 100,
+                        totalTokens: 600,
+                        cacheReadTokens: nil,
+                        imageTokens: nil,
+                        costUSD: 0.002,
+                        estimated: false,
+                        includesScreenshot: false
+                    ),
+                    requestArtifacts: LLMInteractionRequestArtifacts(systemPrompt: nil, userPrompt: nil, payload: nil),
+                    responseArtifacts: LLMInteractionResponseArtifacts(rawStdout: nil, rawStderr: nil),
+                    stdoutPreview: nil,
+                    stderrPreview: nil,
+                    parsedOutputJSON: nil,
+                    summary: "chat",
+                    extractedFields: [:],
+                    failure: nil,
+                    isAnnotation: false
+                )
+            ),
+            sessionID: session.id
+        )
+
+        let snapshot = await MonitoringStatsSnapshot.load(from: store, window: .day)
+
+        #expect(snapshot.totalTokens == 600)
+        #expect(snapshot.totalLLMRequests == 1)
+        #expect(snapshot.totalCostUSD == "$0.0020")
+        #expect(snapshot.llmKindBreakdown.first?.label == "chat")
+    }
+
+    private func makeActivityEvent(id: String, at: Date) -> TelemetryEvent {
+        TelemetryEvent(
+            id: id,
+            kind: .evaluationRequested,
+            timestamp: at,
+            sessionID: "s",
+            episodeID: nil,
+            episode: nil,
+            session: nil,
+            observation: nil,
+            evaluation: EvaluationRequestRecord(
+                evaluationID: id,
+                reason: "stable_context",
+                promptMode: "decision",
+                promptVersion: "v1"
+            ),
+            modelInput: nil,
+            modelOutput: nil,
+            parsedOutput: nil,
+            policy: nil,
+            action: nil,
+            reaction: nil,
+            annotation: nil,
+            failure: nil
+        )
+    }
+
+    private func makeIdleSkipEvent(id: String, at: Date) -> TelemetryEvent {
+        TelemetryEvent(
+            id: id,
+            kind: .monitoringMetric,
+            timestamp: at,
+            sessionID: "s",
+            episodeID: nil,
+            episode: nil,
+            session: nil,
+            observation: nil,
+            evaluation: nil,
+            modelInput: nil,
+            modelOutput: nil,
+            parsedOutput: nil,
+            policy: nil,
+            action: nil,
+            metric: MonitoringMetricRecord(
+                kind: .evaluationSkipped,
+                reason: "idle",
+                activeProfileID: nil,
+                activeProfileName: nil,
+                detail: nil
+            ),
+            reaction: nil,
+            annotation: nil,
+            failure: nil
+        )
     }
 }

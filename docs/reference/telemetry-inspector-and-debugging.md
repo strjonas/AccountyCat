@@ -9,6 +9,9 @@ This doc explains the runtime-debugging surfaces. For actual live-debugging work
 - `AC/Core/TelemetryAdapters.swift`
 - `AC/Services/LLMTelemetryRecorder.swift`
 - `AC/Services/ACDebugBundleService.swift`
+- `AC/UI/DebugSheet.swift`
+- `AC/UI/StatsView.swift`
+- `ACShared/Telemetry/MonitoringStatsSnapshot.swift`
 - `ACShared/Evals/ACEvalModels.swift`
 - `ACShared/Evals/ACEvalStore.swift`
 - `ACInspector/InspectorController.swift`
@@ -46,6 +49,32 @@ Use the right artifact for the job:
 - telemetry events are the source of truth for reconstructing behavior
 - debug bundles are portable snapshots for offline triage
 - ACInspector is the best local UI for browsing episodes and prompt artifacts
+
+## Debug Stats (in-app)
+
+In **Debug builds**, the main app exposes a developer sheet (**hammer** icon in the chat panel header) with a **Stats** tab (`StatsView` → `MonitoringStatsSnapshot.load`).
+
+The panel aggregates telemetry for a selectable **24h** or **7d** window from `TelemetryStore`. It is intended for monitoring mix triage and rough cost planning, not billing accuracy.
+
+**Usage totals**
+
+- **Total tokens** and **LLM calls** — prefers `llm_interaction` events (all kinds: monitoring, chat, memory, etc.); falls back to legacy `model_output` token usage when no interaction events exist in the window.
+- **Reported cost** — shown only when runtimes attach `costUSD` on token usage records.
+
+**Rates**
+
+- **Monitoring / active hr** — `evaluation_requested` count divided by **active monitoring time** (see below). Use this for extrapolation.
+- **Monitoring / wall hr** — same count spread across the full calendar window (24h or 7d). Useful only as a lower bound when AC ran briefly.
+
+**Active monitoring time**
+
+Derived from telemetry activity markers (observations, evaluations, policy/model stages, monitoring `llm_interaction` kinds, session heartbeats). Periods end on `evaluation_skipped` metrics with reason `idle`, on gaps longer than 30s without activity, or at the window edge. Idle backoff time is excluded.
+
+**Cost estimate rows**
+
+Extrapolate observed per-active-hour token/call rates to **10h/day** and **10h × 7d/week**, plus calendar-day averages over the selected window. Short sessions produce noisy projections until enough active monitoring time is recorded.
+
+Refresh with the sheet’s reload control after more runtime; stats are cached per window on `AppController`.
 
 ## ACInspector
 
@@ -135,3 +164,4 @@ That skill is the intended triage path for telemetry-heavy debugging.
 - Preserve enough telemetry to explain decisions after the fact.
 - Keep Inspector assumptions aligned with emitted event schemas and artifact names.
 - Update debug-bundle summaries when new event kinds become operationally important.
+- Keep `MonitoringStatsSnapshot` and this doc aligned when stats definitions, active-time rules, or cost projection assumptions change.

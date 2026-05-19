@@ -22,6 +22,13 @@ enum StatsWindow: CaseIterable, Hashable, Sendable {
         case .week: return 7 * 24 * 60 * 60
         }
     }
+
+    var daysInWindow: Double {
+        switch self {
+        case .day: return 1
+        case .week: return 7
+        }
+    }
 }
 
 struct MonitoringStatsSnapshot: Sendable {
@@ -44,8 +51,26 @@ struct MonitoringStatsSnapshot: Sendable {
         var status: WatchStatus
     }
 
-    var callsPerHour: String
-    var callsPerHourValue: Double
+    /// Total LLM calls in the window (all kinds: monitoring, chat, memory, etc.).
+    var totalLLMRequests: Int
+    var totalLLMRequestsSummary: String
+    /// Sum of reported/estimated tokens across all LLM calls in the window.
+    var totalTokens: Int
+    var totalTokensSummary: String
+    /// Sum of `costUSD` when the runtime reported it; nil when no priced calls exist.
+    var totalCostUSD: String?
+    /// Wall-clock average: monitoring evaluations / full window length.
+    var callsPerWallHour: String
+    var callsPerWallHourValue: Double
+    /// Monitoring evaluations per hour while AC was actively watching (non-idle).
+    var monitoringCallsPerActiveHour: String
+    var monitoringCallsPerActiveHourValue: Double
+    /// Human-readable active monitoring duration in the window, e.g. `2.4h`.
+    var activeMonitoringTime: String
+    var activeMonitoringHoursValue: Double
+    /// Legacy alias used by watch-list heuristics.
+    var callsPerHour: String { monitoringCallsPerActiveHour }
+    var callsPerHourValue: Double { monitoringCallsPerActiveHourValue }
     var averageTokenSummary: String
     var visionAttachRate: String
     var visionAttachRateValue: Double
@@ -57,10 +82,21 @@ struct MonitoringStatsSnapshot: Sendable {
     var skipCauses: [Row]
     var stageBreakdown: [Row]
     var profileBreakdown: [Row]
+    var llmKindBreakdown: [Row]
+    var costProjections: [Row]
 
     static let empty = MonitoringStatsSnapshot(
-        callsPerHour: "0.0",
-        callsPerHourValue: 0,
+        totalLLMRequests: 0,
+        totalLLMRequestsSummary: "0",
+        totalTokens: 0,
+        totalTokensSummary: "0",
+        totalCostUSD: nil,
+        callsPerWallHour: "0.0",
+        callsPerWallHourValue: 0,
+        monitoringCallsPerActiveHour: "0.0",
+        monitoringCallsPerActiveHourValue: 0,
+        activeMonitoringTime: "0m",
+        activeMonitoringHoursValue: 0,
         averageTokenSummary: "0 / 0 / 0",
         visionAttachRate: "0%",
         visionAttachRateValue: 0,
@@ -71,7 +107,9 @@ struct MonitoringStatsSnapshot: Sendable {
         decisionMix: [],
         skipCauses: [],
         stageBreakdown: [],
-        profileBreakdown: []
+        profileBreakdown: [],
+        llmKindBreakdown: [],
+        costProjections: []
     )
 
     var watchItems: [WatchItem] {
@@ -97,11 +135,11 @@ struct MonitoringStatsSnapshot: Sendable {
             )
         }
 
-        if focusedRateValue > 90, callsPerHourValue >= 4 {
+        if focusedRateValue > 90, monitoringCallsPerActiveHourValue >= 4 {
             items.append(
                 WatchItem(
                     label: "Focused saturation",
-                    message: "\(Self.percentString(focusedRateValue)) focused at \(String(format: "%.1f", callsPerHourValue)) calls/hr. Skip logic may still be too eager.",
+                    message: "\(Self.percentString(focusedRateValue)) focused at \(String(format: "%.1f", monitoringCallsPerActiveHourValue)) monitoring calls/hr (active). Skip logic may still be too eager.",
                     status: .watch
                 )
             )
@@ -140,11 +178,11 @@ struct MonitoringStatsSnapshot: Sendable {
             events.append(contentsOf: loaded.filter { $0.timestamp >= cutoff && $0.timestamp <= now })
         }
 
-        // Single-pass accumulation instead of multiple filters.
         var evaluationCount = 0
         var tokenUsages: [(String, TokenUsageRecord)] = []
         var policyDecisions: [PolicyDecisionRecord] = []
         var metricsRecords: [MonitoringMetricRecord] = []
+        var llmInteractions: [LLMInteractionRecord] = []
 
         for event in events {
             if event.evaluation != nil { evaluationCount += 1 }
@@ -153,16 +191,36 @@ struct MonitoringStatsSnapshot: Sendable {
             }
             if let policy = event.policy { policyDecisions.append(policy) }
             if let metric = event.metric { metricsRecords.append(metric) }
+            if let record = event.llmInteraction, !record.isAnnotation {
+                llmInteractions.append(record)
+            }
         }
 
-        let hours = max(1.0, window.interval / 3600)
-        let callsPerHour = Double(evaluationCount) / hours
+        let activeSeconds = computeActiveMonitoringSeconds(events: events, cutoff: cutoff, now: now)
+        let activeHours = max(
+            activeSeconds / 3600,
+            evaluationCount > 0 || !llmInteractions.isEmpty ? 60 / 3600 : 0
+        )
+        let wallHours = max(1.0, window.interval / 3600)
+        let callsPerWallHour = Double(evaluationCount) / wallHours
+        let monitoringCallsPerActiveHour = Double(evaluationCount) / max(activeHours, 1.0 / 3600)
 
-        let avgPrompt = average(tokenUsages.map { $0.1.promptTokens })
-        let avgCompletion = average(tokenUsages.map { $0.1.completionTokens })
-        let avgImage = average(tokenUsages.map { $0.1.imageTokens ?? 0 })
-        let visionAttachCount = tokenUsages.filter { $0.1.includesScreenshot }.count
-        let visionRateValue = percentValue(part: visionAttachCount, total: tokenUsages.count)
+        let llmTokenUsages = llmInteractions.compactMap(\.tokenUsage)
+        let usesLLMInteractions = !llmTokenUsages.isEmpty
+        let totalTokens = usesLLMInteractions
+            ? llmTokenUsages.reduce(0) { $0 + $1.totalTokens }
+            : tokenUsages.map(\.1).reduce(0) { $0 + $1.totalTokens }
+        let totalLLMRequests = usesLLMInteractions ? llmInteractions.count : evaluationCount
+        let pricedCosts = (usesLLMInteractions ? llmTokenUsages : tokenUsages.map(\.1))
+            .compactMap(\.costUSD)
+        let totalCost = pricedCosts.isEmpty ? nil : pricedCosts.reduce(0, +)
+
+        let usageSource = usesLLMInteractions ? llmTokenUsages : tokenUsages.map(\.1)
+        let avgPrompt = average(usageSource.map(\.promptTokens))
+        let avgCompletion = average(usageSource.map(\.completionTokens))
+        let avgImage = average(usageSource.map { $0.imageTokens ?? 0 })
+        let visionAttachCount = usageSource.filter(\.includesScreenshot).count
+        let visionRateValue = percentValue(part: visionAttachCount, total: usageSource.count)
         let visionRate = percentString(visionRateValue)
 
         let focused = policyDecisions.filter { $0.model.assessment == .focused }.count
@@ -208,9 +266,34 @@ struct MonitoringStatsSnapshot: Sendable {
         }
         .sorted { $0.label < $1.label }
 
+        let llmKindRows = Dictionary(grouping: llmInteractions, by: { $0.kind.rawValue })
+            .map { kind, values in
+                let tokens = values.compactMap(\.tokenUsage).reduce(0) { $0 + $1.totalTokens }
+                return Row(label: kind, value: "\(values.count)x · \(formatCount(tokens)) tok")
+            }
+            .sorted { $0.label < $1.label }
+
+        let costProjections = makeCostProjections(
+            window: window,
+            totalTokens: totalTokens,
+            totalLLMRequests: totalLLMRequests,
+            monitoringEvaluations: evaluationCount,
+            activeHours: activeHours,
+            totalCostUSD: totalCost
+        )
+
         return MonitoringStatsSnapshot(
-            callsPerHour: String(format: "%.1f", callsPerHour),
-            callsPerHourValue: callsPerHour,
+            totalLLMRequests: totalLLMRequests,
+            totalLLMRequestsSummary: formatCount(totalLLMRequests),
+            totalTokens: totalTokens,
+            totalTokensSummary: formatCount(totalTokens),
+            totalCostUSD: totalCost.map { formatUSD($0) },
+            callsPerWallHour: String(format: "%.1f", callsPerWallHour),
+            callsPerWallHourValue: callsPerWallHour,
+            monitoringCallsPerActiveHour: String(format: "%.1f", monitoringCallsPerActiveHour),
+            monitoringCallsPerActiveHourValue: monitoringCallsPerActiveHour,
+            activeMonitoringTime: formatDuration(activeSeconds),
+            activeMonitoringHoursValue: activeHours,
             averageTokenSummary: "\(avgPrompt) / \(avgCompletion) / \(avgImage)",
             visionAttachRate: visionRate,
             visionAttachRateValue: visionRateValue,
@@ -221,9 +304,204 @@ struct MonitoringStatsSnapshot: Sendable {
             decisionMix: decisionMix,
             skipCauses: skipRows,
             stageBreakdown: stageRows,
-            profileBreakdown: profileRows
+            profileBreakdown: profileRows,
+            llmKindBreakdown: llmKindRows,
+            costProjections: costProjections
         )
     }
+
+    // MARK: - Active monitoring time
+
+    /// Seconds AC was actively monitoring (not in idle backoff), derived from telemetry gaps and idle-skip markers.
+    static func computeActiveMonitoringSeconds(
+        events: [TelemetryEvent],
+        cutoff: Date,
+        now: Date
+    ) -> TimeInterval {
+        let sorted = events.sorted { $0.timestamp < $1.timestamp }
+        let gapLimit: TimeInterval = 30
+
+        func isIdleEnd(_ event: TelemetryEvent) -> Bool {
+            event.metric?.kind == .evaluationSkipped && event.metric?.reason == "idle"
+        }
+
+        func isActivity(_ event: TelemetryEvent) -> Bool {
+            switch event.kind {
+            case .observation, .evaluationRequested, .modelOutputReceived, .modelOutputParsed, .policyDecided:
+                return true
+            case .monitoringMetric:
+                return !isIdleEnd(event)
+            case .llmInteraction:
+                guard let record = event.llmInteraction, !record.isAnnotation else { return false }
+                switch record.kind {
+                case .monitoringText, .monitoringVision:
+                    return true
+                default:
+                    return false
+                }
+            case .sessionStarted, .sessionHeartbeat:
+                return true
+            default:
+                return false
+            }
+        }
+
+        var intervals: [(start: Date, end: Date)] = []
+        var periodStart: Date?
+        var lastActivity: Date?
+
+        for event in sorted {
+            let timestamp = event.timestamp
+            guard timestamp >= cutoff, timestamp <= now else { continue }
+
+            if isIdleEnd(event) {
+                if let start = periodStart, let last = lastActivity {
+                    intervals.append((max(start, cutoff), min(last, timestamp)))
+                }
+                periodStart = nil
+                lastActivity = nil
+                continue
+            }
+
+            guard isActivity(event) else { continue }
+
+            if periodStart == nil {
+                periodStart = max(timestamp, cutoff)
+                lastActivity = timestamp
+            } else if let last = lastActivity, timestamp.timeIntervalSince(last) > gapLimit {
+                if let start = periodStart {
+                    intervals.append((max(start, cutoff), min(last, now)))
+                }
+                periodStart = max(timestamp, cutoff)
+                lastActivity = timestamp
+            } else {
+                lastActivity = timestamp
+            }
+        }
+
+        if let start = periodStart, let last = lastActivity {
+            let end: Date
+            if now.timeIntervalSince(last) <= gapLimit {
+                end = now
+            } else {
+                end = last.addingTimeInterval(gapLimit)
+            }
+            intervals.append((max(start, cutoff), min(end, now)))
+        }
+
+        return mergeIntervals(intervals).reduce(0) { $0 + $1.end.timeIntervalSince($1.start) }
+    }
+
+    private static func mergeIntervals(_ intervals: [(start: Date, end: Date)]) -> [(start: Date, end: Date)] {
+        guard !intervals.isEmpty else { return [] }
+        let sorted = intervals.sorted { $0.start < $1.start }
+        var merged: [(start: Date, end: Date)] = [sorted[0]]
+        for interval in sorted.dropFirst() {
+            var last = merged[merged.count - 1]
+            if interval.start <= last.end {
+                last.end = max(last.end, interval.end)
+                merged[merged.count - 1] = last
+            } else {
+                merged.append(interval)
+            }
+        }
+        return merged
+    }
+
+    // MARK: - Cost projections
+
+    private static func makeCostProjections(
+        window: StatsWindow,
+        totalTokens: Int,
+        totalLLMRequests: Int,
+        monitoringEvaluations: Int,
+        activeHours: Double,
+        totalCostUSD: Double?
+    ) -> [Row] {
+        guard activeHours > 0, totalTokens > 0 || totalLLMRequests > 0 else {
+            return [
+                Row(
+                    label: "Need more data",
+                    value: "Use AC while monitoring for a while, then refresh"
+                )
+            ]
+        }
+
+        let tokensPerActiveHour = Double(totalTokens) / activeHours
+        let llmPerActiveHour = Double(totalLLMRequests) / activeHours
+        let monitoringPerActiveHour = Double(monitoringEvaluations) / activeHours
+        let hoursPerDay = 10.0
+        let daysPerWeek = 7.0
+        let weeklyActiveHours = hoursPerDay * daysPerWeek
+
+        var rows: [Row] = [
+            Row(
+                label: "Tokens / active hr",
+                value: "\(formatCount(Int(tokensPerActiveHour.rounded()))) (observed)"
+            ),
+            Row(
+                label: "LLM calls / active hr",
+                value: String(format: "%.1f", llmPerActiveHour)
+            ),
+            Row(
+                label: "Monitoring evals / active hr",
+                value: String(format: "%.1f", monitoringPerActiveHour)
+            ),
+            Row(
+                label: "Tokens @ \(Int(hoursPerDay))h day",
+                value: formatCount(Int((tokensPerActiveHour * hoursPerDay).rounded()))
+            ),
+            Row(
+                label: "LLM calls @ \(Int(hoursPerDay))h day",
+                value: formatCount(Int((llmPerActiveHour * hoursPerDay).rounded()))
+            ),
+            Row(
+                label: "Tokens @ \(Int(hoursPerDay))h × \(Int(daysPerWeek))d",
+                value: formatCount(Int((tokensPerActiveHour * weeklyActiveHours).rounded()))
+            ),
+            Row(
+                label: "LLM calls @ \(Int(hoursPerDay))h × \(Int(daysPerWeek))d",
+                value: formatCount(Int((llmPerActiveHour * weeklyActiveHours).rounded()))
+            )
+        ]
+
+        if let totalCostUSD, activeHours > 0 {
+            let costPerActiveHour = totalCostUSD / activeHours
+            rows.append(
+                Row(
+                    label: "Cost @ \(Int(hoursPerDay))h day",
+                    value: formatUSD(costPerActiveHour * hoursPerDay)
+                )
+            )
+            rows.append(
+                Row(
+                    label: "Cost @ \(Int(hoursPerDay))h × \(Int(daysPerWeek))d",
+                    value: formatUSD(costPerActiveHour * weeklyActiveHours)
+                )
+            )
+        }
+
+        let dailyTokens = Int((Double(totalTokens) / window.daysInWindow).rounded())
+        let dailyRequests = Int((Double(totalLLMRequests) / window.daysInWindow).rounded())
+        rows.insert(
+            Row(
+                label: "Avg tokens / calendar day",
+                value: "\(formatCount(dailyTokens)) (in \(window.label) window)"
+            ),
+            at: 0
+        )
+        rows.insert(
+            Row(
+                label: "Avg LLM calls / calendar day",
+                value: "\(formatCount(dailyRequests)) (in \(window.label) window)"
+            ),
+            at: 1
+        )
+
+        return rows
+    }
+
+    // MARK: - Formatting
 
     private static func average(_ values: [Int]) -> Int {
         guard !values.isEmpty else { return 0 }
@@ -253,5 +531,35 @@ struct MonitoringStatsSnapshot: Sendable {
                 return lhs.count > rhs.count
             }
             .map { Row(label: $0.label, value: "\($0.count) · \(percent(part: $0.count, total: total))") }
+    }
+
+    static func formatCount(_ value: Int) -> String {
+        let absValue = abs(value)
+        switch absValue {
+        case 1_000_000...:
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        case 1_000...:
+            return String(format: "%.1fk", Double(value) / 1_000)
+        default:
+            return "\(value)"
+        }
+    }
+
+    static func formatUSD(_ value: Double) -> String {
+        if value >= 1 {
+            return String(format: "$%.2f", value)
+        }
+        if value >= 0.01 {
+            return String(format: "$%.3f", value)
+        }
+        return String(format: "$%.4f", value)
+    }
+
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        guard seconds > 0 else { return "0m" }
+        if seconds >= 3600 {
+            return String(format: "%.1fh", seconds / 3600)
+        }
+        return "\(max(1, Int((seconds / 60).rounded())))m"
     }
 }

@@ -18,7 +18,7 @@ struct StatsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Stats")
                         .font(.ac(16, weight: .semibold))
-                    Text("Telemetry-derived monitoring mix and token cost.")
+                    Text("Telemetry-derived usage, monitoring mix, and cost estimates.")
                         .font(.ac(11))
                         .foregroundStyle(.secondary)
                 }
@@ -40,10 +40,35 @@ struct StatsView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                statsCard("Calls/hr", snapshot.callsPerHour, "LLM evaluations requested")
-                statsCard("Avg tokens", snapshot.averageTokenSummary, "prompt / completion / image")
+                statsCard("Total tokens", snapshot.totalTokensSummary, tokenSubtitle)
+                statsCard("LLM calls", snapshot.totalLLMRequestsSummary, "All kinds in \(window.label) window")
+                statsCard(
+                    "Monitoring / active hr",
+                    snapshot.monitoringCallsPerActiveHour,
+                    "Evaluations while not idle · \(snapshot.activeMonitoringTime) active"
+                )
+                statsCard(
+                    "Monitoring / wall hr",
+                    snapshot.callsPerWallHour,
+                    "Spread across full \(window.label) window"
+                )
+                statsCard("Avg tokens", snapshot.averageTokenSummary, "prompt / completion / image per call")
                 statsCard("Vision", snapshot.visionAttachRate, "model calls with screenshot")
-                statsCard("Retries", "\(snapshot.visionRetryCount)", "text-only unclear -> vision")
+            }
+
+            if let cost = snapshot.totalCostUSD {
+                statsCard("Reported cost", cost, "Sum of runtime-reported costUSD in window")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            statsSection("Cost estimate") {
+                Text("Extrapolates observed rates from active monitoring time (excludes idle backoff). Use for planning 10h/day usage.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(snapshot.costProjections) { row in
+                    StatsRow(label: row.label, value: row.value)
+                }
             }
 
             statsSection("Decision mix") {
@@ -65,6 +90,18 @@ struct StatsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(snapshot.skipCauses) { row in
+                        StatsRow(label: row.label, value: row.value)
+                    }
+                }
+            }
+
+            statsSection("LLM calls by kind") {
+                if snapshot.llmKindBreakdown.isEmpty {
+                    Text("No llm_interaction events in this window (older sessions may only have model_output).")
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(snapshot.llmKindBreakdown) { row in
                         StatsRow(label: row.label, value: row.value)
                     }
                 }
@@ -93,6 +130,10 @@ struct StatsView: View {
                     }
                 }
             }
+
+            statsSection("Retries") {
+                StatsRow(label: "vision retried", value: "\(snapshot.visionRetryCount)")
+            }
         }
         .padding(20)
         .task(id: window) {
@@ -111,6 +152,13 @@ struct StatsView: View {
         }
     }
 
+    private var tokenSubtitle: String {
+        if let cost = snapshot.totalCostUSD {
+            return "In \(window.label) window · \(cost) reported"
+        }
+        return "In \(window.label) window"
+    }
+
     private func statsCard(_ title: String, _ value: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
@@ -123,6 +171,7 @@ struct StatsView: View {
             Text(subtitle)
                 .font(.ac(10))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -183,6 +232,7 @@ private struct StatsRow: View {
             Text(value)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
