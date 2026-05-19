@@ -230,6 +230,22 @@ enum ACPromptSets {
     - Ambiguous case: app="Google Chrome", title="Tab", no visible body, previous verdict focused → {"assessment":"unclear","suggested_action":"none","reason_tags":["title_too_generic","needs_vision"]}
     """
 
+    /// When to activate an existing focus profile vs create a new one (chat executor + policy memory).
+    private static let profileReuseMatchingBlock = """
+    Profile reuse vs create — read each candidate's name and description:
+    - Reuse an existing profile only when both fit the user's stated intent for this session.
+    - A similar keyword or broad archetype name is not enough if the existing description is broader, stricter, or otherwise different from what the user asked for right now.
+    - When the user narrows scope ("essay only", "pure writing, nothing else", "no tutorials"), do not activate a broader existing profile. Create a new profile whose description matches the narrowed intent.
+    - When the user states a broad archetype ("coding for an hour", "deep work") and a general matching profile already exists, reuse it.
+    """
+
+    private static let profileReuseMatchingExamples = """
+    Profile matching examples:
+    - User: "I'll focus on writing this essay — just writing, nothing else." availableProfiles contains id=thesis-1 name="Thesis" description="Thesis work: writing, research, reading sources, admin". → create — user wants pure essay writing; Thesis allows research/admin (scope mismatch).
+    - User: "Help me focus on coding for an hour." availableProfiles contains id=coding-1 name="Coding" description="Coding work, including implementation, debugging, docs, and tutorials". → activate coding-1 — broad request matches broad profile.
+    - User: "Deep work for 90 minutes." availableProfiles contains id=dw-1 name="Deep Work". → activate dw-1 — name and typical scope align.
+    """
+
     // MARK: - Policy stage prompt set
 
     nonisolated static let policyDefaultPromptSet = ACPromptSetDefinition(
@@ -414,13 +430,14 @@ enum ACPromptSets {
                 Do not copy assistant phrasing back into policy memory; use the user's intent.
 
                 Profiles (use the `availableProfiles` and `activeProfile` payload fields):
+                \(profileReuseMatchingBlock)
+                \(profileReuseMatchingExamples)
                 - User says "help me focus on coding for an hour":
-                  • If `availableProfiles` already has a "Coding"-like profile, emit `activate_profile {profileID:<that id>, profileDurationMinutes:60}`.
+                  • If `availableProfiles` has a Coding-like profile whose description fits (general coding scope), emit `activate_profile {profileID:<that id>, profileDurationMinutes:60}`.
                   • Otherwise emit `create_and_activate_profile {profileName:"Coding", profileDescription:"Coding work, including implementation, debugging, docs, references, and tutorials", profileDurationMinutes:60}`.
-                - User says "I'll work on the presentation until 5pm" → `create_and_activate_profile` with a duration matching now→17:00 (or activate an existing match).
+                - User says "I'll work on the presentation until 5pm" → `create_and_activate_profile` with a duration matching now→17:00 (or activate an existing profile only when name+description fit).
                 - User says "I'm done coding for today" while a coding profile is active → `end_active_profile`.
                 - If no duration is specified, omit `profileDurationMinutes` and let the controller pick its 90-min default.
-                - Match generously: "deep work", "writing", "research" etc. should reuse a similar existing profile rather than creating a new one each session.
                 - Never emit a profile op when the user's message is an everyday remark (vent, status, nudge feedback). Only when the user is explicitly choosing a focus mode.
 
                 Behavioral signals (`recentBehavioralSignals` array, may be absent):
@@ -642,6 +659,9 @@ enum ACPromptSets {
     Action kinds:
     - `profile`: start, switch, end, create, or update focus profiles and timed focus sessions.
       For recurring "always activate X at 9PM" requests, include `recurringSchedule` with hour/minute.
+      Reuse an existing profile only when its name and description both fit the user's request; a similar
+      name is not enough if that profile's scope is broader or different (e.g. pure essay writing vs a
+      broad "Thesis" profile that allows research). Prefer `create` when the user narrows scope.
     - `memory`: global durable preferences or vague/raw context future LLM calls should read.
       Memory is not a local safelist; use it for broad or ambiguous preferences.
       Use memory when the user says "always", "no matter what profile", "in general", or references
@@ -699,11 +719,15 @@ enum ACPromptSets {
     - end: no extra fields
     - update: requires profileID unless updating the active profile; include only changed profileName/profileDescription/durationMinutes
 
-    Use availableProfiles IDs when reusing a similar profile. Create only when no existing profile fits.
-    If no duration is specified, omit durationMinutes. Do not invent rules or memory here.
+    \(profileReuseMatchingBlock)
+    Use availableProfiles IDs only when an existing profile's name and description both fit.
+    Create when no existing profile fits the user's stated scope. If no duration is specified, omit durationMinutes.
+    Do not invent rules or memory here.
     For broad archetype profiles like Coding, Writing, Research, or Studying, use broad non-restrictive descriptions unless the user explicitly gives exclusions.
     Preserve important session-specific nuance in `reason` when the user mixes focus with temporary lenience, e.g. "coding, but browsing/order errands are okay right now". Do not silently collapse that into a strict code-only activation.
     Return JSON only.
+
+    \(profileReuseMatchingExamples)
 
     Examples:
     Hint: "switch to Feierabend mode" (availableProfiles contains id="fp-1" name="Feierabend")
@@ -720,6 +744,12 @@ enum ACPromptSets {
 
     Hint: "I want to code, but browsing in between is okay right now, I need to order some stuff"
     → {"action":{"kind":"profile","intent":"activate","profileID":"<existing coding id>","reason":"coding with browsing/order errands allowed right now"}}
+
+    Hint: "I'll focus on writing this essay — just writing, nothing else" (availableProfiles: Thesis id=thesis-1, description allows research/admin)
+    → {"action":{"kind":"profile","intent":"create","profileName":"Essay writing","profileDescription":"Pure essay drafting only; no research, reading, or admin","durationMinutes":90}}
+
+    Hint: "help me focus on coding for an hour" (availableProfiles: Coding id=coding-1, broad coding description)
+    → {"action":{"kind":"profile","intent":"activate","profileID":"coding-1","durationMinutes":60}}
     """
 
     nonisolated static let memoryActionExecutorSystemPrompt = """

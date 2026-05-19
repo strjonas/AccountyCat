@@ -119,7 +119,7 @@ The prompt file is the single source of truth for:
 
 - prompt text
 - stage schemas
-- chat workflow instructions
+- chat workflow instructions and staged action executors (including `profileActionExecutorSystemPrompt`)
 - memory-consolidation prompt
 - policy-memory prompt rendering
 
@@ -138,6 +138,8 @@ The monitoring payload is profile-aware.
 - `recentUserMessages` is scoped to the currently active profile window, including `Everyday` — up to `recentUserChatCount` messages, oldest→newest, capped by `recentUserChatTotalCharacters`.
 - `matchingRuleSummary` is the prompt-facing summary of active profile/context-matched policy rules. It is not the profile description.
 - Free-form memory remains globally visible, but entries carry profile labels as capture provenance, not scope.
+- Profile activation from chat or policy memory reuses an existing profile only when **both** its name and description fit the user's stated intent for the session. A similar keyword or broad archetype name is not enough if the stored description is broader, stricter, or otherwise different (e.g. pure essay writing vs a broad "Thesis" profile that also allows research). When the user narrows scope, create a new profile rather than activating a loose match. Broad requests ("coding for an hour") may activate a general Coding-like profile when descriptions align. Shared prompt copy and few-shot examples live in `ACPromptSets` (`profileReuseMatchingBlock`; policy-memory stage, chat system prompt, and `profileActionExecutorSystemPrompt`).
+- `ProfileActionParser` (`AC/Services/ProfileActionParser.swift`) is a fast path for explicit profile names in natural-language instructions; it does not perform semantic profile matching.
 
 ## Appeals, Rewards, and Escalation
 

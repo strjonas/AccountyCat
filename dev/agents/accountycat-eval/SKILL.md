@@ -45,6 +45,7 @@ AC_EVAL_OPENAI_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-run
 
 ## Cost And Safety
 
+- The XCTest hook `AgentEvalCommandRunnerTests` only runs when `AC_EVAL_ALLOW_TEST_HOST_RUN=1` is set (the `ac-eval-runner.swift` `run` command sets this). Keep eval-related environment variables scoped to deliberate runner invocations rather than global shell exports.
 - Local evals are the default. They use the installed local runtime, or `--runtime-path` if supplied.
 - Online evals are explicit and require `AC_EVAL_OPENROUTER_API_KEY` or `AC_EVAL_OPENAI_API_KEY`. The runner must not read Keychain.
 - Do not run broad online suites casually. Filter by id/category/importance and keep the count small.

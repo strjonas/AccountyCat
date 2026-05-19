@@ -113,6 +113,24 @@ struct MonitoringPromptModeTests {
     }
 
     @Test
+    func profileMatchingPromptsRequireScopeFitNotJustNameOverlap() {
+        let policy = ACPromptSets.policyMemorySystemPrompt()
+        let executor = ACPromptSets.profileActionExecutorSystemPrompt
+        let chat = ACPromptSets.chatSystemPrompt(withPersonality: "", workflow: .staged)
+
+        for prompt in [policy, executor] {
+            #expect(prompt.contains("name and description"))
+            #expect(prompt.contains("pure essay writing"))
+            #expect(prompt.contains("scope mismatch"))
+        }
+        #expect(chat.contains("name and description both fit"))
+        #expect(chat.contains("pure essay writing"))
+        #expect(executor.contains("\"intent\":\"create\""))
+        #expect(executor.contains("Pure essay drafting only"))
+        #expect(!policy.contains("Match generously"))
+    }
+
+    @Test
     func bothModesIncludeTitleRelatesSoftSignalClause() {
         let online = systemPrompt(for: .onlineDecision)
         let decision = systemPrompt(for: .decision)

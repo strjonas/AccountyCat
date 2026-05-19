@@ -144,6 +144,10 @@ If a run appears stuck after tests have mostly finished:
 
 A `Testing was canceled` failure on the last in-flight test after manually interrupting `xcodebuild` is runner state, not necessarily a product regression. Rerun the named test directly, then rerun the full `ACTests` command once the process list is clean.
 
+## Accidentally long test runs
+
+`ACTests/AgentEvalRunnerTests.swift` includes `AgentEvalCommandRunnerTests.run`, which can execute **every** saved eval case under `~/Library/Application Support/AC/evals` (local inference per case). That path is gated behind **`AC_EVAL_ALLOW_TEST_HOST_RUN=1`** so a stray `AC_EVAL_RUNNER_COMMAND=run` in the environment cannot hijack normal `xcodebuild test`. The supported entrypoint is `dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run`, which sets the allow flag together with the handoff request file path.
+
 ## If You Change This Area
 
 - Think about migration from existing `state.json` files.

@@ -115,6 +115,7 @@ This area owns local setup, remote calls, model defaults, and the backend select
 ### Learning and memory
 
 - `AC/Services/CompanionChatService.swift`
+- `AC/Services/ProfileActionParser.swift`
 - `AC/Core/AppController+ConversationLearning.swift`
 - `AC/Core/AppController+Profiles.swift`
 - `AC/Services/PolicyMemoryService.swift`

@@ -184,6 +184,9 @@ func runEval(_ args: Arguments) {
 
     var environment = ProcessInfo.processInfo.environment
     environment["AC_EVAL_RUNNER_COMMAND"] = "run"
+    // Required by `AgentEvalCommandRunnerTests` so stray shell exports cannot
+    // trigger a full eval run during normal `xcodebuild test` invocations.
+    environment["AC_EVAL_ALLOW_TEST_HOST_RUN"] = "1"
     environment["AC_EVAL_BACKEND"] = args.backend
     environment["AC_EVAL_ROOT"] = evalRootURL(args).path
     if !args.ids.isEmpty { environment["AC_EVAL_IDS"] = args.ids.joined(separator: ",") }
