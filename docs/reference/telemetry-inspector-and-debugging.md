@@ -60,6 +60,7 @@ The panel aggregates telemetry for a selectable **24h** or **7d** window from `T
 
 - **Total tokens** and **LLM calls** — prefers `llm_interaction` events (all kinds: monitoring, chat, memory, etc.); falls back to legacy `model_output` token usage when no interaction events exist in the window.
 - **Reported cost** — shown only when runtimes attach `costUSD` on token usage records.
+- **Vision** — percentage of token-usage records that included a screenshot. Current `llm_interaction` events set this from the recorded request image path; legacy fallback `model_output` records set it from the saved screenshot artifact.
 
 **Rates**
 

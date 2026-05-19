@@ -54,7 +54,7 @@ The monitoring path tries to avoid unnecessary LLM calls.
 Important fast paths:
 
 - explicit active `allow` rules can skip evaluation entirely
-- recently cached focused decisions can skip re-evaluation in the same context
+- recently cached focused decisions can skip re-evaluation in the same context and keep the normal focused follow-up cadence rather than checking again on the next polling tick
 - a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
 - a short global LLM cooldown (`lastLLMEvalAt`) suppresses rapid back-to-back fresh evaluations after app switching: 5s on `sharp`, 10s on `balanced`, 20s on `gentle`
 - cadence delays defer evaluation until a context has been stable long enough

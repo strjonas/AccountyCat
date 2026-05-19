@@ -133,7 +133,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         }
 
         if !hasRestrictiveRule, hasExplicitAllowRule {
-            recordDeterministicFocusedSkip(in: &state, contextKey: state.llmPolicy.currentContextKey, now: now)
+            recordDeterministicFocusedSkip(
+                in: &state,
+                contextKey: state.llmPolicy.currentContextKey,
+                now: now,
+                nextEvaluationAt: nil
+            )
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
                 reason: "explicit_allow_rule",
@@ -157,7 +162,17 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                configuration.cadenceMode.focusedDecisionCacheTTL,
                isDefaultProfile: isDefaultProfile
            ) {
-            recordDeterministicFocusedSkip(in: &state, contextKey: key, now: now)
+            recordDeterministicFocusedSkip(
+                in: &state,
+                contextKey: key,
+                now: now,
+                nextEvaluationAt: now.addingTimeInterval(
+                    configuration.cadenceMode.adjustedDelay(
+                        configuration.cadenceMode.focusedFollowUp,
+                        isDefaultProfile: isDefaultProfile
+                    )
+                )
+            )
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
                 reason: "cached_focused",
@@ -212,11 +227,13 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private func recordDeterministicFocusedSkip(
         in state: inout AlgorithmStateEnvelope,
         contextKey: String?,
-        now: Date
+        now: Date,
+        nextEvaluationAt: Date?
     ) {
         state.llmPolicy.distraction.contextKey = contextKey
         state.llmPolicy.distraction.lastAssessment = .focused
         state.llmPolicy.distraction.consecutiveDistractedCount = 0
+        state.llmPolicy.distraction.nextEvaluationAt = nextEvaluationAt
         state.llmPolicy.activeAppeal = nil
         state.llmPolicy.focusSignal.record(
             assessment: .focused,

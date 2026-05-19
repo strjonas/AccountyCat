@@ -175,7 +175,10 @@ actor LLMTelemetryRecorder {
                 startedAt: call.startedAt,
                 endedAt: call.endedAt,
                 latencyMs: call.endedAt.timeIntervalSince(call.startedAt) * 1000,
-                tokenUsage: tokenUsageRecord(from: call.tokenUsage),
+                tokenUsage: tokenUsageRecord(
+                    from: call.tokenUsage,
+                    includesScreenshot: call.imagePath != nil
+                ),
                 requestArtifacts: LLMInteractionRequestArtifacts(
                     systemPrompt: systemArtifact,
                     userPrompt: userArtifact,
@@ -289,7 +292,10 @@ actor LLMTelemetryRecorder {
         }
     }
 
-    private nonisolated func tokenUsageRecord(from usage: TokenUsage?) -> TokenUsageRecord? {
+    private nonisolated func tokenUsageRecord(
+        from usage: TokenUsage?,
+        includesScreenshot: Bool
+    ) -> TokenUsageRecord? {
         guard let usage else { return nil }
         return TokenUsageRecord(
             promptTokens: usage.promptTokens,
@@ -299,7 +305,7 @@ actor LLMTelemetryRecorder {
             imageTokens: usage.imageTokens,
             costUSD: usage.costUSD,
             estimated: usage.estimated,
-            includesScreenshot: false
+            includesScreenshot: includesScreenshot
         )
     }
 

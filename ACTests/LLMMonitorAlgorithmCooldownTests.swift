@@ -83,6 +83,53 @@ struct LLMMonitorAlgorithmCooldownTests {
         #expect(plan.reason == "scheduled_recheck")
     }
 
+    @Test
+    func cachedFocusedSkipSchedulesNextFollowUpInsteadOfImmediateRecheck() {
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 10_000)
+        let context = makeContext()
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: now.addingTimeInterval(-60), state: &state)
+        state.llmPolicy.decisionCacheByContext[context.contextKey] = CachedDecision(
+            assessment: .focused,
+            decidedAt: now.addingTimeInterval(-60),
+            contextKey: context.contextKey
+        )
+
+        let firstPlan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
+            now: now
+        )
+
+        let expectedFollowUp = now.addingTimeInterval(
+            MonitoringCadenceMode.balanced.adjustedDelay(
+                MonitoringCadenceMode.balanced.focusedFollowUp,
+                isDefaultProfile: true
+            )
+        )
+        #expect(!firstPlan.shouldEvaluate)
+        #expect(firstPlan.reason == "cached_focused")
+        #expect(state.llmPolicy.distraction.nextEvaluationAt == expectedFollowUp)
+
+        let nextTickPlan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
+            now: now.addingTimeInterval(10)
+        )
+
+        #expect(!nextTickPlan.shouldEvaluate)
+        #expect(nextTickPlan.reason == "scheduled_recheck")
+    }
+
     private func makeAlgorithm() -> LLMMonitorAlgorithm {
         let runtime = LocalModelRuntime()
         return LLMMonitorAlgorithm(
