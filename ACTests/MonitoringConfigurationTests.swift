@@ -89,6 +89,80 @@ struct MonitoringConfigurationTests {
     }
 
     @Test
+    func reconcileAIModelSelectionSyncsTierFromPersistedModels() {
+        var state = ACState()
+        state.aiTier = .economy
+        state.monitoringConfiguration = MonitoringConfiguration(
+            inferenceBackend: .openRouter,
+            onlineModelIdentifier: AITier.balanced.byokModelIdentifierImage,
+            onlineModelIdentifierText: AITier.balanced.byokModelIdentifierText,
+            onlineModelIdentifierImage: AITier.balanced.byokModelIdentifierImage
+        )
+
+        let changed = AppController.reconcileAIModelSelection(in: &state)
+
+        #expect(changed)
+        #expect(state.aiTier == .balanced)
+    }
+
+    @Test
+    func reconcileAIModelSelectionAppliesTierWhenCatalogModelsDrift() {
+        var state = ACState()
+        state.aiTier = .smartest
+        state.monitoringConfiguration = MonitoringConfiguration(
+            inferenceBackend: .openRouter,
+            onlineModelIdentifier: AITier.economy.byokModelIdentifierImage,
+            onlineModelIdentifierText: AITier.economy.byokModelIdentifierText,
+            onlineModelIdentifierImage: AITier.balanced.byokModelIdentifierImage
+        )
+
+        let changed = AppController.reconcileAIModelSelection(in: &state)
+
+        #expect(changed)
+        #expect(state.aiTier == .smartest)
+        #expect(
+            AppController.monitoringConfigurationMatchesTier(
+                .smartest,
+                configuration: state.monitoringConfiguration
+            )
+        )
+    }
+
+    @Test
+    func reconcileAIModelSelectionPreservesCustomAdvancedModels() {
+        var state = ACState()
+        state.aiTier = .balanced
+        state.monitoringConfiguration = MonitoringConfiguration(
+            inferenceBackend: .openRouter,
+            onlineModelIdentifier: "openai/gpt-4o-mini",
+            onlineModelIdentifierText: "openai/gpt-4o-mini",
+            onlineModelIdentifierImage: "openai/gpt-4o"
+        )
+
+        let changed = AppController.reconcileAIModelSelection(in: &state)
+
+        #expect(!changed)
+        #expect(state.monitoringConfiguration.onlineModelIdentifierText == "openai/gpt-4o-mini")
+        #expect(state.monitoringConfiguration.onlineModelIdentifierImage == "openai/gpt-4o")
+    }
+
+    @Test
+    func reconcileCadenceTitleLengthFixesStaleVisionGate() {
+        var state = ACState()
+        state.monitoringConfiguration.cadenceMode = .sharp
+        state.monitoringConfiguration.titleLengthForTextOnly =
+            MonitoringCadenceMode.gentle.recommendedTitleLengthForTextOnly
+
+        let changed = AppController.reconcileCadenceTitleLength(in: &state)
+
+        #expect(changed)
+        #expect(
+            state.monitoringConfiguration.titleLengthForTextOnly
+                == MonitoringCadenceMode.sharp.recommendedTitleLengthForTextOnly
+        )
+    }
+
+    @Test
     func normalizesFreeSuffixOutOfOnlineModelIdentifier() {
         let configuration = MonitoringConfiguration(
             inferenceBackend: .openRouter,

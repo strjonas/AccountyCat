@@ -293,6 +293,126 @@ extension AppController {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// Returns the tier whose preset text/image models match `configuration` for the active backend.
+    static func tierMatching(configuration: MonitoringConfiguration) -> AITier? {
+        AITier.allCases.first {
+            monitoringConfigurationMatchesTier($0, configuration: configuration)
+        }
+    }
+
+    /// Whether persisted model identifiers match the preset for `tier` on the active backend.
+    static func monitoringConfigurationMatchesTier(
+        _ tier: AITier,
+        configuration: MonitoringConfiguration
+    ) -> Bool {
+        switch configuration.inferenceBackend {
+        case .openRouter:
+            let text = configuration.onlineModelIdentifierText
+                ?? configuration.onlineModelIdentifierImage
+                ?? configuration.onlineModelIdentifier
+            let image = configuration.onlineModelIdentifierImage
+                ?? configuration.onlineModelIdentifierText
+                ?? configuration.onlineModelIdentifier
+            return OnlineModelService.modelIdentifiersEquivalent(text, tier.byokModelIdentifierText)
+                && OnlineModelService.modelIdentifiersEquivalent(image, tier.byokModelIdentifierImage)
+        case .local:
+            guard let text = configuration.localModelIdentifierText,
+                  let image = configuration.localModelIdentifierImage else {
+                return false
+            }
+            return text == tier.localModelIdentifierText
+                && image == tier.localModelIdentifierImage
+        }
+    }
+
+    /// Writes the tier's preset models into `monitoringConfiguration` for the active backend.
+    static func applyTierModels(_ tier: AITier, to configuration: inout MonitoringConfiguration) {
+        switch configuration.inferenceBackend {
+        case .openRouter:
+            configuration.onlineModelIdentifierText = tier.byokModelIdentifierText
+            configuration.onlineModelIdentifierImage = tier.byokModelIdentifierImage
+        case .local:
+            configuration.localModelIdentifierText = tier.localModelIdentifierText
+            configuration.localModelIdentifierImage = tier.localModelIdentifierImage
+        }
+    }
+
+    /// True when `identifier` is one of the built-in tier presets (not a custom Advanced pick).
+    static func isKnownTierCatalogModel(
+        _ identifier: String,
+        inferenceBackend: MonitoringInferenceBackend
+    ) -> Bool {
+        AITier.allCases.contains { tier in
+            let candidates: [String]
+            switch inferenceBackend {
+            case .openRouter:
+                candidates = [tier.byokModelIdentifierText, tier.byokModelIdentifierImage]
+            case .local:
+                candidates = [tier.localModelIdentifierText, tier.localModelIdentifierImage]
+            }
+            return candidates.contains {
+                inferenceBackend == .openRouter
+                    ? OnlineModelService.modelIdentifiersEquivalent($0, identifier)
+                    : $0 == identifier
+            }
+        }
+    }
+
+    /// Keeps `aiTier` aligned with the models AC will actually call. Settings shows tier from
+    /// `aiTier` but inference reads `monitoringConfiguration` — they can drift after migrations,
+    /// tier mapping updates, or partial saves.
+    @discardableResult
+    static func reconcileAIModelSelection(in state: inout ACState) -> Bool {
+        var changed = false
+        let configuration = state.monitoringConfiguration
+        if let matchingTier = tierMatching(configuration: configuration) {
+            if state.aiTier != matchingTier {
+                state.aiTier = matchingTier
+                changed = true
+            }
+        } else if !monitoringConfigurationMatchesTier(state.aiTier, configuration: configuration) {
+            let backend = configuration.inferenceBackend
+            let textModel: String?
+            let imageModel: String?
+            switch backend {
+            case .openRouter:
+                textModel = configuration.onlineModelIdentifierText
+                    ?? configuration.onlineModelIdentifierImage
+                imageModel = configuration.onlineModelIdentifierImage
+                    ?? configuration.onlineModelIdentifierText
+            case .local:
+                textModel = configuration.localModelIdentifierText
+                imageModel = configuration.localModelIdentifierImage
+            }
+            if let textModel,
+               let imageModel,
+               isKnownTierCatalogModel(textModel, inferenceBackend: backend),
+               isKnownTierCatalogModel(imageModel, inferenceBackend: backend) {
+                applyTierModels(state.aiTier, to: &state.monitoringConfiguration)
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    /// When cadence was persisted but the vision gate still reflects another cadence preset
+    /// (e.g. sharp cadence + gentle title-length threshold), monitoring feels like the wrong mode.
+    @discardableResult
+    static func reconcileCadenceTitleLength(in state: inout ACState) -> Bool {
+        let current = state.monitoringConfiguration.titleLengthForTextOnly
+        let expected = state.monitoringConfiguration.cadenceMode.recommendedTitleLengthForTextOnly
+        guard current != expected else { return false }
+
+        let matchesAnotherCadence = MonitoringCadenceMode.allCases.contains { mode in
+            mode != state.monitoringConfiguration.cadenceMode
+                && current == mode.recommendedTitleLengthForTextOnly
+        }
+        guard matchesAnotherCadence else { return false }
+
+        state.monitoringConfiguration.titleLengthForTextOnly = expected
+        return true
+    }
+
     func updateMonitoringInferenceBackend(_ backend: MonitoringInferenceBackend) {
         guard state.monitoringConfiguration.inferenceBackend != backend else { return }
         state.monitoringConfiguration.inferenceBackend = backend
@@ -465,17 +585,11 @@ extension AppController {
     }
 
     func applyTierToActiveBackend() {
+        Self.applyTierModels(state.aiTier, to: &state.monitoringConfiguration)
         switch state.monitoringConfiguration.inferenceBackend {
         case .openRouter:
-            state.monitoringConfiguration.onlineModelIdentifierText =
-                state.aiTier.byokModelIdentifierText
-            state.monitoringConfiguration.onlineModelIdentifierImage =
-                state.aiTier.byokModelIdentifierImage
+            break
         case .local:
-            state.monitoringConfiguration.localModelIdentifierText =
-                state.aiTier.localModelIdentifierText
-            state.monitoringConfiguration.localModelIdentifierImage =
-                state.aiTier.localModelIdentifierImage
             if !queueLocalModelDownloadIfNeeded(
                 targetModelIdentifier: state.aiTier.localModelIdentifierText,
                 fallbackIdentifier: activeLocalModelIdentifier()

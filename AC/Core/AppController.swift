@@ -141,10 +141,14 @@ final class AppController: ObservableObject {
         var state = loadedState
         Self.seedDefaultSafelistIfNeeded(into: &state)
         let migrated = Self.migrateDeprecatedOnlineModelIdentifiers(in: &state)
+        let reconciledModels = Self.reconcileAIModelSelection(in: &state)
+        let reconciledCadence = Self.reconcileCadenceTitleLength(in: &state)
         self.state = state
-        if migrated {
+        if migrated || reconciledModels || reconciledCadence {
             storageService.saveState(state)
-            Self.clearStaleOpenRouterHealthBans()
+            if migrated {
+                Self.clearStaleOpenRouterHealthBans()
+            }
         }
         self.onlineAPIKeyDraft = OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? ""
         self.directOpenAIAPIKeyDraft = OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? ""
@@ -153,6 +157,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
+        self.lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
@@ -199,10 +204,14 @@ final class AppController: ObservableObject {
         var state = loadedState
         Self.seedDefaultSafelistIfNeeded(into: &state)
         let migrated = Self.migrateDeprecatedOnlineModelIdentifiers(in: &state)
+        let reconciledModels = Self.reconcileAIModelSelection(in: &state)
+        let reconciledCadence = Self.reconcileCadenceTitleLength(in: &state)
         self.state = state
-        if migrated {
+        if migrated || reconciledModels || reconciledCadence {
             storageService.saveState(state)
-            Self.clearStaleOpenRouterHealthBans()
+            if migrated {
+                Self.clearStaleOpenRouterHealthBans()
+            }
         }
         self.onlineAPIKeyDraft = OnlineProviderCredentialStore.loadOpenRouterAPIKey() ?? ""
         self.directOpenAIAPIKeyDraft = OnlineProviderCredentialStore.loadDirectOpenAIAPIKey() ?? ""
@@ -211,6 +220,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
+        self.lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
