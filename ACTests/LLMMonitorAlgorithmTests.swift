@@ -45,7 +45,7 @@ struct LLMMonitorAlgorithmTests {
             contextKey: "com.google.Chrome|docs",
             stableSince: now.addingTimeInterval(-90),
             lastAssessment: .distracted,
-            consecutiveDistractedCount: 1,
+            consecutiveDistractedCount: 3,
             nextEvaluationAt: nil
         )
         state.llmPolicy.currentContextKey = "com.google.Chrome|docs"
@@ -95,7 +95,7 @@ struct LLMMonitorAlgorithmTests {
             contextKey: "com.google.Chrome|docs",
             stableSince: now.addingTimeInterval(-90),
             lastAssessment: .distracted,
-            consecutiveDistractedCount: 1,
+            consecutiveDistractedCount: 3,
             nextEvaluationAt: nil
         )
         state.llmPolicy.currentContextKey = "com.google.Chrome|docs"
@@ -113,9 +113,9 @@ struct LLMMonitorAlgorithmTests {
         )
 
         if case let .showOverlay(presentation) = result.policy.action {
-            #expect(presentation.headline == "Pause for a second.")
-            #expect(presentation.body == "This still looks off-track in Google Chrome.")
-            #expect(presentation.prompt == "This looks a bit off-track — what's going on?")
+            #expect(presentation.headline == "Quick gut-check.")
+            #expect(presentation.body == "You've been on Docs for a bit. Is this part of what you set out to do?")
+            #expect(presentation.prompt == "How does Docs help right now? If it doesn't, let's get back to it.")
             #expect(presentation.submitButtonTitle == "Explain")
             #expect(presentation.secondaryButtonTitle == "Back to work")
         } else {
@@ -179,7 +179,7 @@ struct LLMMonitorAlgorithmTests {
         )
 
         #expect(result.policy.action == .none)
-        #expect(result.policy.record.blockReason == "everyday_overlay_requires_stronger_evidence")
+        #expect(result.policy.record.blockReason == "overlay_below_min_threshold")
         #expect(result.updatedAlgorithmState.llmPolicy.activeAppeal == nil)
         #expect(result.updatedAlgorithmState.llmPolicy.lastOverlayAt == nil)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 1)
@@ -207,7 +207,7 @@ struct LLMMonitorAlgorithmTests {
         )
 
         #expect(result.policy.action == .none)
-        #expect(result.policy.record.blockReason == "overlay_requires_repeat_or_rule")
+        #expect(result.policy.record.blockReason == "overlay_below_min_threshold")
         #expect(result.updatedAlgorithmState.llmPolicy.activeAppeal == nil)
         #expect(result.updatedAlgorithmState.llmPolicy.lastOverlayAt == nil)
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 1)
@@ -690,6 +690,11 @@ struct LLMMonitorAlgorithmTests {
         let algorithm = makeAlgorithm()
         let now = try #require(makeLocalPromptDate("2026-04-25 10:52"))
 
+        // Sharp mode forces an overlay once matching nudges reach the mode max (4).
+        var configuration = MonitoringConfiguration()
+        configuration.cadenceMode = .sharp
+        configuration.pipelineProfileID = "title_only_default"
+
         let result = await algorithm.evaluate(
             input: makeDecisionInput(
                 now: now,
@@ -709,7 +714,9 @@ struct LLMMonitorAlgorithmTests {
                     ActionRecord(kind: .nudge, message: "That Instagram feed is distracting. Return to studying.", timestamp: now.addingTimeInterval(-120)),
                     ActionRecord(kind: .nudge, message: "You're looking at Instagram stories. Return to studying.", timestamp: now.addingTimeInterval(-240)),
                     ActionRecord(kind: .nudge, message: "Still scrolling Instagram — get back to your goals.", timestamp: now.addingTimeInterval(-360)),
-                ]
+                    ActionRecord(kind: .nudge, message: "Instagram again — your study block is still running.", timestamp: now.addingTimeInterval(-480)),
+                ],
+                configuration: configuration
             )
         )
 

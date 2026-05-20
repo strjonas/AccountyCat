@@ -765,33 +765,29 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             case .overlay:
                 if !shouldAllowOverlaySuggestion(
                     input: input,
-                    relevantActions: relevantActions,
                     distraction: distraction,
                     hasActiveRestrictiveRule: hasActiveRestrictiveRule
                 ) {
                     action = .none
-                    blockReason = input.activeProfileID == PolicyRule.defaultProfileID
-                        ? "everyday_overlay_requires_stronger_evidence"
-                        : "overlay_requires_repeat_or_rule"
+                    blockReason = "overlay_below_min_threshold"
                 } else {
-                    let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
+                    let isHard = shouldTriggerHardEscalation(input: input)
+                    let activity = Self.overlayActivityLabel(snapshot: input.snapshot)
                     let presentation = effectiveDecisionEnvelope?.asOverlayPresentation(
                         appName: input.snapshot.appName,
+                        activity: activity,
                         evaluationID: input.evaluationID
-                    ) ?? OverlayPresentation(
-                        headline: "Pause for a second.",
-                        body: "This still looks off-track in \(input.snapshot.appName).",
-                        prompt: "This looks a bit off-track — what's going on?",
+                    ) ?? OverlayPresentation.activityCheck(
                         appName: input.snapshot.appName,
-                        evaluationID: input.evaluationID,
-                        submitButtonTitle: "Explain",
-                        secondaryButtonTitle: "Back to work"
+                        activity: activity,
+                        evaluationID: input.evaluationID
                     )
                     let finalPresentation = isHard
-                        ? presentation.withHardEscalation(character: input.character)
+                        ? presentation.withHardEscalation(character: input.character, activity: activity)
                         : presentation
                     policyState.lastOverlayAt = input.now
                     policyState.lastInterventionAt = input.now
+                    distraction.consecutiveDistractedCount = 0
                     policyState.activeAppeal = MonitoringAppealSession(
                         evaluationID: input.evaluationID,
                         contextKey: distraction.contextKey ?? "unknown",
@@ -808,21 +804,23 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             case .nudge:
                 if shouldEscalateRepeatedNudgeToOverlay(
                     input: input,
-                    relevantActions: relevantActions,
                     distraction: distraction,
                     decision: decision,
                     hasActiveRestrictiveRule: hasActiveRestrictiveRule
                 ) {
-                    let isHard = shouldTriggerHardEscalation(input: input, distraction: distraction)
+                    let isHard = shouldTriggerHardEscalation(input: input)
+                    let activity = Self.overlayActivityLabel(snapshot: input.snapshot)
                     let basePresentation = OverlayPresentation.defaultRepeatedDistraction(
                         appName: input.snapshot.appName,
+                        activity: activity,
                         evaluationID: input.evaluationID
                     )
                     let presentation = isHard
-                        ? basePresentation.withHardEscalation
+                        ? basePresentation.withHardEscalation(character: input.character, activity: activity)
                         : basePresentation
                     policyState.lastOverlayAt = input.now
                     policyState.lastInterventionAt = input.now
+                    distraction.consecutiveDistractedCount = 0
                     policyState.activeAppeal = MonitoringAppealSession(
                         evaluationID: input.evaluationID,
                         contextKey: distraction.contextKey ?? "unknown",
@@ -1932,7 +1930,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     private func shouldEscalateRepeatedNudgeToOverlay(
         input: MonitoringDecisionInput,
-        relevantActions: [ActionRecord],
         distraction: DistractionMetadata,
         decision: LLMDecision,
         hasActiveRestrictiveRule: Bool
@@ -1944,76 +1941,69 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             return false
         }
 
-        // Much shorter cooldown: only 3 minutes. If user keeps getting distracted after overlay,
-        // they need escalation, not a long wait period.
         if let lastOverlayAt = input.algorithmState.llmPolicy.lastOverlayAt,
            input.now.timeIntervalSince(lastOverlayAt) < 3 * 60 {
             return false
         }
 
-        // Escalate if already 2+ consecutive distractions in this context
-        let matchingRecentNudges = matchingRecentNudgeCount(
-            input: input,
-            relevantActions: relevantActions
-        )
-
-        let isSharp = input.configuration.cadenceMode == .sharp
-
-        if input.activeProfileID == PolicyRule.defaultProfileID,
-           !hasActiveRestrictiveRule {
-            let threshold = isSharp ? 2 : 3
-            return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
-        }
-
-        let namedThreshold = isSharp ? 1 : 2
-        if distraction.consecutiveDistractedCount >= namedThreshold {
-            return true
-        }
-
-        // Escalate if 3+ recent nudges for the same context in 30 mins.
-        return matchingRecentNudges >= 3
+        let matchingRecentNudges = matchingRecentNudgeCount(input: input)
+        let max = overlayMaxCount(for: input.configuration.cadenceMode, restrictive: hasActiveRestrictiveRule)
+        return distraction.consecutiveDistractedCount >= max || matchingRecentNudges >= max
     }
 
     private func shouldAllowOverlaySuggestion(
         input: MonitoringDecisionInput,
-        relevantActions: [ActionRecord],
         distraction: DistractionMetadata,
         hasActiveRestrictiveRule: Bool
     ) -> Bool {
-        let matchingRecentNudges = matchingRecentNudgeCount(
-            input: input,
-            relevantActions: relevantActions
-        )
-
-        let isSharp = input.configuration.cadenceMode == .sharp
-
-        if input.activeProfileID == PolicyRule.defaultProfileID {
-            if hasActiveRestrictiveRule {
-                let threshold = isSharp ? 1 : 2
-                return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
-            }
-
-            let threshold = isSharp ? 2 : 3
-            return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
-        }
-
-        if hasActiveRestrictiveRule {
-            return distraction.consecutiveDistractedCount >= 1 || matchingRecentNudges >= 1
-        }
-
-        let threshold = isSharp ? 1 : 2
-        return distraction.consecutiveDistractedCount >= threshold || matchingRecentNudges >= threshold
+        let matchingRecentNudges = matchingRecentNudgeCount(input: input)
+        let min = overlayMinCount(for: input.configuration.cadenceMode, restrictive: hasActiveRestrictiveRule)
+        return distraction.consecutiveDistractedCount >= min || matchingRecentNudges >= min
     }
 
-    private func matchingRecentNudgeCount(
-        input: MonitoringDecisionInput,
-        relevantActions: [ActionRecord]
-    ) -> Int {
-        relevantActions
+    // Earliest consecutive-distraction (or matching-nudge) count at which the model may
+    // request an overlay. Below this, overlay suggestions are blocked and the model must
+    // nudge. An active restrictive rule means the user explicitly banned this context, so
+    // the model may overlay on the first distraction.
+    private func overlayMinCount(for mode: MonitoringCadenceMode, restrictive: Bool) -> Int {
+        if restrictive { return 1 }
+        switch mode {
+        case .sharp: return 2
+        case .balanced: return 3
+        case .gentle: return 5
+        }
+    }
+
+    // Count at which the code forces an overlay even if the model keeps suggesting a nudge.
+    // The model has full discretion between min and max. An active restrictive rule forces
+    // the overlay as soon as the mode's normal minimum is reached.
+    private func overlayMaxCount(for mode: MonitoringCadenceMode, restrictive: Bool) -> Int {
+        if restrictive { return overlayMinCount(for: mode, restrictive: false) }
+        switch mode {
+        case .sharp: return 4
+        case .balanced: return 6
+        case .gentle: return 10
+        }
+    }
+
+    // Counts delivered nudges for the current context in the last 30 minutes. This reads the
+    // full recent-action history rather than the prompt-capped `relevantActions`, so the
+    // escalation signal isn't silently limited to the 3 actions that fit in the prompt.
+    private func matchingRecentNudgeCount(input: MonitoringDecisionInput) -> Int {
+        input.recentActions
             .filter { $0.kind == .nudge }
             .filter { input.now.timeIntervalSince($0.timestamp) <= 30 * 60 }
             .filter { actionMentionsCurrentContext($0, snapshot: input.snapshot) }
             .count
+    }
+
+    // The specific activity to name in overlay copy. The window title is the real activity
+    // for browsers and most apps; fall back to the app name when no title is available.
+    private static func overlayActivityLabel(snapshot: AppSnapshot) -> String {
+        if let title = snapshot.windowTitle?.cleanedSingleLine, !title.isEmpty {
+            return title.truncatedForPrompt(maxLength: 80)
+        }
+        return snapshot.appName
     }
 
     private static func hasActiveRestrictiveRule(input: MonitoringDecisionInput) -> Bool {
@@ -2028,19 +2018,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     }
 
     private func shouldTriggerHardEscalation(
-        input: MonitoringDecisionInput,
-        distraction: DistractionMetadata
+        input: MonitoringDecisionInput
     ) -> Bool {
-        // Hard escalation fires when we'd already escalate to overlay AND:
-        // - 3+ consecutive distracted counts (user really won't stop), OR
-        // - An overlay was already shown for this context (user ignored the gentler escalation)
+        // The first overlay stays soft so the user sees the model's (or activity-specific)
+        // copy. Hard escalation is reserved for when an earlier overlay was already shown and
+        // the user ignored it — kept going without appealing. The consecutive-distraction
+        // count is reset whenever an overlay fires, so it can't drive this on its own.
         let hadPriorOverlay = input.algorithmState.llmPolicy.lastOverlayAt != nil
-
-        // Check if the user ignored the last intervention (no feedback)
         let hasIgnoredIntervention = input.algorithmState.llmPolicy.activeAppeal == nil
-
-        return distraction.consecutiveDistractedCount >= 3
-            || (hadPriorOverlay && hasIgnoredIntervention)
+        return hadPriorOverlay && hasIgnoredIntervention
     }
 
     private func actionMentionsCurrentContext(_ action: ActionRecord, snapshot: AppSnapshot) -> Bool {
@@ -2118,18 +2104,24 @@ private extension MonitoringDecisionEnvelope {
 
     func asOverlayPresentation(
         appName: String,
+        activity: String,
         evaluationID: String
     ) -> OverlayPresentation {
-        OverlayPresentation(
+        let fallback = OverlayPresentation.activityCheck(
+            appName: appName,
+            activity: activity,
+            evaluationID: evaluationID
+        )
+        return OverlayPresentation(
             headline: overlayHeadline?.cleanedSingleLine.isEmpty == false
                 ? overlayHeadline!.cleanedSingleLine
-                : "Pause for a second.",
+                : fallback.headline,
             body: overlayBody?.cleanedSingleLine.isEmpty == false
                 ? overlayBody!.cleanedSingleLine
-                : "This still looks off-track in \(appName).",
+                : fallback.body,
             prompt: overlayPrompt?.cleanedSingleLine.isEmpty == false
                 ? overlayPrompt!.cleanedSingleLine
-                : "This looks a bit off-track — what's going on?",
+                : fallback.prompt,
             appName: appName,
             evaluationID: evaluationID,
             submitButtonTitle: submitButtonTitle?.cleanedSingleLine.isEmpty == false
@@ -2143,14 +2135,16 @@ private extension MonitoringDecisionEnvelope {
 }
 
 private extension OverlayPresentation {
-    static func defaultRepeatedDistraction(
+    // Neutral activity-aware fallback used when an overlay has no model-authored copy.
+    static func activityCheck(
         appName: String,
+        activity: String,
         evaluationID: String
     ) -> OverlayPresentation {
         OverlayPresentation(
-            headline: "Pause for a second.",
-            body: "This still looks off-track in \(appName), even after a few nudges.",
-            prompt: "This looks a bit off-track — what's going on?",
+            headline: "Quick gut-check.",
+            body: "You've been on \(activity) for a bit. Is this part of what you set out to do?",
+            prompt: "How does \(activity) help right now? If it doesn't, let's get back to it.",
             appName: appName,
             evaluationID: evaluationID,
             submitButtonTitle: "Explain",
@@ -2158,26 +2152,29 @@ private extension OverlayPresentation {
         )
     }
 
-    var withHardEscalation: OverlayPresentation {
+    static func defaultRepeatedDistraction(
+        appName: String,
+        activity: String,
+        evaluationID: String
+    ) -> OverlayPresentation {
         OverlayPresentation(
-            headline: "I need to ask…",
-            body: "Tell me why I should let you continue on \(appName). Does it really serve your goals?",
-            prompt: "Explain why \(appName) is actually helping right now…",
+            headline: "Still here?",
+            body: "You're still on \(activity), even after a few nudges.",
+            prompt: "How does \(activity) help what you're working on right now?",
             appName: appName,
             evaluationID: evaluationID,
-            submitButtonTitle: "Submit",
-            secondaryButtonTitle: "Back to work",
-            isHardEscalation: true
+            submitButtonTitle: "Explain",
+            secondaryButtonTitle: "Back to work"
         )
     }
 
-    func withHardEscalation(character: ACCharacter) -> OverlayPresentation {
+    func withHardEscalation(character: ACCharacter, activity: String) -> OverlayPresentation {
         switch character {
         case .mochi:
             return OverlayPresentation(
                 headline: "Hey, can I ask you something?",
-                body: "I've noticed you're spending time on \(appName). I just want to make sure — is this really helping you move forward right now?",
-                prompt: "Tell me why \(appName) is supporting your goals…",
+                body: "I've noticed you keep coming back to \(activity). I just want to make sure — is this really helping you move forward right now?",
+                prompt: "Tell me how \(activity) is supporting your goals…",
                 appName: appName,
                 evaluationID: evaluationID,
                 submitButtonTitle: "Let me explain",
@@ -2187,8 +2184,8 @@ private extension OverlayPresentation {
         case .misty:
             return OverlayPresentation(
                 headline: "A moment of reflection.",
-                body: "You've returned to \(appName) several times. Rather than nudging again, I'd like to understand — does this serve your deeper goals?",
-                prompt: "Why is \(appName) the right place for you right now?",
+                body: "You've returned to \(activity) several times. Rather than nudging again, I'd like to understand — does this serve your deeper goals?",
+                prompt: "Why is \(activity) the right place for you right now?",
                 appName: appName,
                 evaluationID: evaluationID,
                 submitButtonTitle: "Reflect",
@@ -2198,8 +2195,8 @@ private extension OverlayPresentation {
         case .onyx:
             return OverlayPresentation(
                 headline: "Accountability check.",
-                body: "You're on \(appName) again. Two nudges haven't helped, and no feedback from your side. Tell me why I should let this slide.",
-                prompt: "Is \(appName) actually serving your goals right now? Convince me.",
+                body: "You're back on \(activity). Nudges haven't helped, and no feedback from your side. Tell me why I should let this slide.",
+                prompt: "Is \(activity) actually serving your goals right now? Convince me.",
                 appName: appName,
                 evaluationID: evaluationID,
                 submitButtonTitle: "Make your case",

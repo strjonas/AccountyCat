@@ -178,7 +178,7 @@ enum ACPromptSets {
     - Include `confidence` only when uncertainty matters. Otherwise omit it.
     - If `nudge`: include `nudge`; keep it to one sentence under 18 words, specific to this activity, distinct from recent nudges.
     - If `abstain`: `abstain_reason` is optional; include it only when it adds useful specificity.
-    - If `overlay`: include `overlay_headline`, `overlay_body`, `overlay_prompt`.
+    - If `overlay`: include `overlay_headline`, `overlay_body`, `overlay_prompt`, written in AC's current voice. Name the *specific* activity you see (from the title or visible content), never just the bare app (write "those cat videos" or the actual video/page, not "Google Chrome"). The `overlay_prompt` asks the user to justify why *this specific thing* helps their goal right now; if they can't, it points them back to work; if AC misjudged, it invites them to explain. One short sentence per field.
     - Do not emit `submit_button_title` or `secondary_button_title` unless you must override AC's defaults.
     - Never emit keys with `null`, empty strings, or placeholder values.
     - Never mention hidden fields, counters, or that you are reading memory/history.
