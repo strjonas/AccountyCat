@@ -159,6 +159,8 @@ enum ACPromptSets {
     - If actual activity fits the expected lane, or matches an allowance the user just stated → `focused` + `none`.
     - If actual activity clearly conflicts with the expected lane or an active restriction AND the user has not relaxed it in chat → `distracted`.
     - If the evidence is sparse, stale, generic, or ambiguous → `unclear` + `abstain`.
+    - Do not infer distraction from a generic app/site shell alone. AI/chat/search start surfaces such as "Google Gemini", "ChatGPT", "Claude", "New Chat", or "New Tab" are ambiguous until the title, screenshot/perception, or visible conversation reveals the actual task.
+    - In the first minute on a generic browser/chat surface, require strong visible evidence before nudging. If the screenshot/perception is missing, tiny, unreadable, or only shows navigation chrome, return `unclear` + `abstain`.
     - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
     - First clear distraction → `nudge`. Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity) AND no newer allowance/correction → `overlay`.
     - Trust the current screenshot/frontmost app, perception, and `recentActivityTimeline` more than stale `usage` or older intervention text when they conflict.

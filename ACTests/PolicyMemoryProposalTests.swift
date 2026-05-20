@@ -76,6 +76,47 @@ struct PolicyMemoryProposalTests {
         #expect(memory.rules.first?.summary == "Allow YouTube")
     }
 
+    @Test
+    func policyMemoryUpdateDecodesModelRuleWithOmittedDefaults() throws {
+        let json = """
+        {
+          "operations": [
+            {
+              "type": "add_rule",
+              "rule": {
+                "kind": "allow",
+                "profileID": "descartes",
+                "scope": {
+                  "appName": "Google Chrome",
+                  "bundleIdentifier": "com.google.Chrome",
+                  "titleContains": "Google Gemini"
+                },
+                "source": "explicit_feedback",
+                "summary": "Allow this specific Gemini title after explicit feedback.",
+                "schedule": {}
+              }
+            }
+          ]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let response = try decoder.decode(
+            PolicyMemoryUpdateResponse.self,
+            from: Data(json.utf8)
+        )
+
+        let rule = try #require(response.operations.first?.rule)
+        #expect(rule.id.isEmpty == false)
+        #expect(rule.active)
+        #expect(rule.priority == 50)
+        #expect(rule.scope.titleContains == ["Google Gemini"])
+        #expect(rule.schedule.weekdays.isEmpty)
+        #expect(rule.allowedTopics.isEmpty)
+        #expect(rule.profileID == "descartes")
+    }
+
     // MARK: - ProposedPolicyChange model
 
     @Test

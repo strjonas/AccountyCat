@@ -71,6 +71,12 @@ struct SnapshotServiceTests {
     }
 
     @Test
+    func activeWindowCaptureRejectsToolbarStripRects() {
+        #expect(!SnapshotService.isPlausibleCaptureRect(CGRect(x: 0, y: 0, width: 1512, height: 41)))
+        #expect(SnapshotService.isPlausibleCaptureRect(CGRect(x: 0, y: 0, width: 900, height: 600)))
+    }
+
+    @Test
     func detectsScreenCaptureKitPermissionErrors() {
         let permissionError = NSError(
             domain: "com.apple.ScreenCaptureKit.CoreGraphicsErrorDomain",

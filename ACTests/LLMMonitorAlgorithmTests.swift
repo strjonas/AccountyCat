@@ -438,7 +438,7 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
-    func browserContextsUseShortStableDelayEvenInEverydayMode() {
+    func browserContextsHonorCadenceStableDelayInEverydayMode() {
         let algorithm = makeAlgorithm()
         let context = FrontmostContext(
             bundleIdentifier: "com.google.Chrome",
@@ -459,8 +459,21 @@ struct LLMMonitorAlgorithmTests {
             now: start.addingTimeInterval(5)
         )
 
-        #expect(plan.shouldEvaluate == true)
+        #expect(plan.shouldEvaluate == false)
         #expect(plan.reason == "stable_context")
+
+        let readyPlan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(browser: true),
+            policyMemory: PolicyMemory(),
+            configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
+            now: start.addingTimeInterval(46)
+        )
+
+        #expect(readyPlan.shouldEvaluate == true)
+        #expect(readyPlan.reason == "stable_context")
     }
 
     @Test
@@ -811,8 +824,12 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
-    func cachedDistractedFollowUpUsesSyntheticDecisionWithoutLLMAttempts() async throws {
-        let runtimeFixture = try FakeRuntimeFixture()
+    func distractedFollowUpRunsFreshEvaluationEvenWithCachedOldVerdict() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.nudgeCopy = """
+        {"nudge":"Fresh nudge."}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
         let algorithm = makeAlgorithm()
         let now = Date(timeIntervalSince1970: 8_100)
         var state = AlgorithmStateEnvelope()
@@ -857,21 +874,20 @@ struct LLMMonitorAlgorithmTests {
             )
         )
 
-        // A non-escalating follow-up reuses the cached verdict and nudges with no LLM attempt.
-        #expect(result.evaluation.attempts.isEmpty)
-        #expect(result.decision.reasonTags.contains("cached_distracted"))
+        #expect(!result.evaluation.attempts.isEmpty)
+        #expect(!result.decision.reasonTags.contains("cached_distracted"))
         #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 1)
+        #expect(result.updatedAlgorithmState.llmPolicy.decisionCacheByContext[cacheKey] == nil)
         if case let .showNudge(message) = result.policy.action {
-            #expect(message == "Back to the build.")
+            #expect(message == "Fresh nudge.")
         } else {
-            Issue.record("Expected cached follow-up to nudge from the cached verdict")
+            Issue.record("Expected fresh follow-up to nudge from the new evaluation")
         }
     }
 
     @Test
-    func cachedDistractedEscalationInBalancedRunsFreshEvalNotSyntheticOverlay() async throws {
-        // In balanced/gentle, escalating to an overlay must be backed by a fresh evaluation rather
-        // than reused from cache — the synthetic path only ever nudges.
+    func distractedEscalationInBalancedRunsFreshEvalNotSyntheticOverlay() async throws {
+        // Escalation must be backed by a fresh evaluation rather than reused from cache.
         let runtimeFixture = try FakeRuntimeFixture()
         let algorithm = makeAlgorithm()
         let now = Date(timeIntervalSince1970: 8_100)
@@ -921,12 +937,12 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
-    func switchIntoCachedDistractedSettlesThenSyntheticallyNudges() {
+    func switchIntoPreviouslyDistractedContextUsesNormalStableDelay() {
         let algorithm = makeAlgorithm()
         let now = Date(timeIntervalSince1970: 8_100)
         var state = AlgorithmStateEnvelope()
         let snapshot = makeSnapshot(now: now)
-        // Fresh switch-in: distracted state was reset, but the cached verdict survives.
+        // Fresh switch-in: distracted state was reset, but a stale cached verdict survives.
         state.llmPolicy.currentContextKey = snapshot.contextKey
         state.llmPolicy.currentContextEnteredAt = now
         state.llmPolicy.distraction = DistractionMetadata(
@@ -964,33 +980,33 @@ struct LLMMonitorAlgorithmTests {
         configuration.cadenceMode = .balanced
         configuration.pipelineProfileID = "title_only_default"
 
-        // Within the graded settle window (balanced = 60s): no evaluation yet.
+        // Within the normal browser settle window: no evaluation yet.
         var settling = state
         let earlyPlan = algorithm.evaluationPlan(
             state: &settling,
             context: context,
-            heuristics: makeHeuristics(browser: false),
+            heuristics: makeHeuristics(browser: true),
             policyMemory: PolicyMemory(),
             configuration: configuration,
             activeProfileID: "coding",
-            now: now.addingTimeInterval(30)
+            now: now.addingTimeInterval(20)
         )
         #expect(earlyPlan.shouldEvaluate == false)
-        #expect(earlyPlan.reason == "cached_distracted_settling")
+        #expect(earlyPlan.reason == "stable_context")
 
-        // After the settle window: evaluate (the synthetic nudge fires in evaluate()).
+        // After the normal settle window: evaluate fresh.
         var ready = state
         let readyPlan = algorithm.evaluationPlan(
             state: &ready,
             context: context,
-            heuristics: makeHeuristics(browser: false),
+            heuristics: makeHeuristics(browser: true),
             policyMemory: PolicyMemory(),
             configuration: configuration,
             activeProfileID: "coding",
-            now: now.addingTimeInterval(61)
+            now: now.addingTimeInterval(31)
         )
         #expect(readyPlan.shouldEvaluate == true)
-        #expect(readyPlan.reason == "cached_distracted")
+        #expect(readyPlan.reason == "stable_context")
     }
 
     @Test

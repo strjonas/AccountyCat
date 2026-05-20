@@ -351,7 +351,7 @@ final class BrainService: NSObject {
                 state.monitoringConfiguration.cadenceMode.stableContextDelay,
                 isDefaultProfile: isDefaultProfile
             )
-            let requiredSeconds = heuristics.browser ? min(defaultDelay, 5) : defaultDelay
+            let requiredSeconds = heuristics.browser ? max(defaultDelay, 10) : defaultDelay
             let scope = heuristics.browser ? "browser/tab settle" : "context settle"
             let title = context.windowTitle ?? "untitled"
             return "\(context.appName) · \(scope) \(Int(observedSeconds))s/\(Int(requiredSeconds))s · \(title)"

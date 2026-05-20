@@ -23,6 +23,7 @@ final class AppController: ObservableObject {
     @Published var overlayVisible = false
     @Published var activeOverlay: OverlayPresentation?
     @Published var overlayAppealDraft = ""
+    @Published var composerDraft = ""
     @Published var sendingOverlayAppeal = false
     @Published var installingRuntime = false
     @Published var installingDependencies = false

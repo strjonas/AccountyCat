@@ -53,6 +53,33 @@ nonisolated struct PolicyRuleScope: Codable, Hashable, Sendable {
     var bundleIdentifier: String?
     var appName: String?
     var titleContains: [String] = []
+
+    init(
+        bundleIdentifier: String? = nil,
+        appName: String? = nil,
+        titleContains: [String] = []
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.appName = appName
+        self.titleContains = titleContains
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bundleIdentifier, appName, titleContains
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bundleIdentifier = try c.decodeIfPresent(String.self, forKey: .bundleIdentifier)
+        appName = try c.decodeIfPresent(String.self, forKey: .appName)
+        if let values = try? c.decode([String].self, forKey: .titleContains) {
+            titleContains = values
+        } else if let value = try c.decodeIfPresent(String.self, forKey: .titleContains) {
+            titleContains = value.cleanedSingleLine.isEmpty ? [] : [value]
+        } else {
+            titleContains = []
+        }
+    }
 }
 
 nonisolated struct PolicyRuleSchedule: Codable, Hashable, Sendable {
@@ -60,6 +87,30 @@ nonisolated struct PolicyRuleSchedule: Codable, Hashable, Sendable {
     var endHour: Int?
     var weekdays: [Int] = []
     var expiresAt: Date?
+
+    init(
+        startHour: Int? = nil,
+        endHour: Int? = nil,
+        weekdays: [Int] = [],
+        expiresAt: Date? = nil
+    ) {
+        self.startHour = startHour
+        self.endHour = endHour
+        self.weekdays = weekdays
+        self.expiresAt = expiresAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case startHour, endHour, weekdays, expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        startHour = try c.decodeIfPresent(Int.self, forKey: .startHour)
+        endHour = try c.decodeIfPresent(Int.self, forKey: .endHour)
+        weekdays = (try c.decodeIfPresent([Int].self, forKey: .weekdays)) ?? []
+        expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
+    }
 }
 
 nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
@@ -131,20 +182,20 @@ nonisolated struct PolicyRule: Codable, Hashable, Identifiable, Sendable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
+        id = (try c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
         kind = try c.decode(PolicyRuleKind.self, forKey: .kind)
         summary = try c.decode(String.self, forKey: .summary)
         source = try c.decode(PolicyRuleSource.self, forKey: .source)
-        createdAt = try c.decode(Date.self, forKey: .createdAt)
-        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
-        priority = try c.decode(Int.self, forKey: .priority)
-        scope = try c.decode(PolicyRuleScope.self, forKey: .scope)
-        schedule = try c.decode(PolicyRuleSchedule.self, forKey: .schedule)
-        allowedTopics = try c.decode([String].self, forKey: .allowedTopics)
-        disallowedTopics = try c.decode([String].self, forKey: .disallowedTopics)
+        createdAt = (try c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
+        updatedAt = (try c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? createdAt
+        priority = (try c.decodeIfPresent(Int.self, forKey: .priority)) ?? 50
+        scope = (try c.decodeIfPresent(PolicyRuleScope.self, forKey: .scope)) ?? PolicyRuleScope()
+        schedule = (try c.decodeIfPresent(PolicyRuleSchedule.self, forKey: .schedule)) ?? PolicyRuleSchedule()
+        allowedTopics = (try c.decodeIfPresent([String].self, forKey: .allowedTopics)) ?? []
+        disallowedTopics = (try c.decodeIfPresent([String].self, forKey: .disallowedTopics)) ?? []
         maxMinutesPerDay = try c.decodeIfPresent(Int.self, forKey: .maxMinutesPerDay)
         tonePreference = try c.decodeIfPresent(PolicyTonePreference.self, forKey: .tonePreference)
-        active = try c.decode(Bool.self, forKey: .active)
+        active = (try c.decodeIfPresent(Bool.self, forKey: .active)) ?? true
         isLocked = (try? c.decode(Bool.self, forKey: .isLocked)) ?? false
         profileID = try? c.decode(String.self, forKey: .profileID)
     }

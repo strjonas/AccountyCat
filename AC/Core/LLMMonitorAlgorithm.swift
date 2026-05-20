@@ -52,11 +52,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     /// Beyond it the user may have moved on within the same app, so re-evaluate.
     /// Keep the per-context decision cache bounded so state.json stays small.
     private let decisionCacheCapacity = 32
-    /// Browser tab switches are semantically much stronger than "same native app, different
-    /// panel" and already get debounced by the 5-second context-change probe. Keep their
-    /// initial settle time short so obvious off-task tabs do not hide behind the generic
-    /// stable-context delay.
-    private let browserStableContextDelay: TimeInterval = 5
+    /// Even browser tab switches need enough dwell time before AC makes a user-visible call.
+    /// A tab or chat surface can be a momentary hop; judging it after only a few seconds creates
+    /// false positives that feel worse than a slightly later nudge.
+    private let minimumBrowserStableContextDelay: TimeInterval = 10
     /// Keep observation history bounded — evict by least recently seen.
     private let observationCapacity = 64
 
@@ -245,33 +244,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let shouldEvaluate: Bool
         let reason: String
 
-        if distraction.lastAssessment == .distracted,
-           let key = contextKey,
-           let cached = cachedDecision,
-           cached.contextKey == key,
-           cached.assessment == .distracted {
-            shouldEvaluate = true
-            reason = "cached_distracted"
-        } else if distraction.lastAssessment == nil,
-                  !hasRestrictiveRule,
-                  let key = contextKey,
-                  let cached = cachedDecision,
-                  cached.contextKey == key,
-                  cached.assessment == .distracted,
-                  let enteredAt = state.llmPolicy.currentContextEnteredAt {
-            // Switched back into a context AC already judged off-task (cache survives only if no
-            // chat/dislike/profile change invalidated it). Re-nudge from cache after a
-            // sharpness-graded settle instead of paying for a fresh evaluation.
-            let settle = configuration.cadenceMode.adjustedDelay(
-                configuration.cadenceMode.cachedDistractionNudgeDelay,
-                isDefaultProfile: isDefaultProfile
-            )
-            shouldEvaluate = now.timeIntervalSince(enteredAt) >= settle
-            reason = shouldEvaluate ? "cached_distracted" : "cached_distracted_settling"
-        } else if distraction.lastAssessment == nil,
-                  !hasRestrictiveRule,
-                  let lastLLMEvalAt = state.llmPolicy.lastLLMEvalAt,
-                  now.timeIntervalSince(lastLLMEvalAt) < configuration.cadenceMode.minimumEvalGap {
+        if distraction.lastAssessment == nil,
+           !hasRestrictiveRule,
+           let lastLLMEvalAt = state.llmPolicy.lastLLMEvalAt,
+           now.timeIntervalSince(lastLLMEvalAt) < configuration.cadenceMode.minimumEvalGap {
             shouldEvaluate = false
             reason = "cooldown"
         } else if distraction.lastAssessment == nil,
@@ -280,7 +256,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 configuration.cadenceMode.stableContextDelay,
                 isDefaultProfile: isDefaultProfile
             )
-            let delay = heuristics.browser ? min(defaultDelay, browserStableContextDelay) : defaultDelay
+            let delay = heuristics.browser ? max(defaultDelay, minimumBrowserStableContextDelay) : defaultDelay
             shouldEvaluate = now.timeIntervalSince(stableSince) >= delay
             reason = "stable_context"
         } else if distraction.lastAssessment != nil {
@@ -598,65 +574,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         var effectiveDecisionEnvelope: MonitoringDecisionEnvelope?
         var decision: LLMDecision = .unclear
 
-        // Reuse a still-valid cached `distracted` verdict instead of paying for inference, both for
-        // follow-ups while staying on the distraction and for switching back into it. The synthetic
-        // path only ever nudges; escalating to an overlay is intrusive enough that — outside `sharp`
-        // — it must be backed by a fresh evaluation, so we fall through to a real call when an
-        // overlay would otherwise be due.
-        let cachedDistracted: CachedDecision? = {
-            guard let cached = currentCachedDecision,
-                  let activeContextKey = workingState.llmPolicy.currentContextKey,
-                  cached.assessment == .distracted,
-                  cached.contextKey == activeContextKey else {
-                return nil
-            }
-            let last = workingState.llmPolicy.distraction.lastAssessment
-            return (last == .distracted || last == nil) ? cached : nil
-        }()
-        var useSyntheticDistracted = cachedDistracted != nil
-        if useSyntheticDistracted, let cached = cachedDistracted, cadence != .sharp {
-            // Mirror the increment the `.distracted` switch will apply, so the gate sees the same
-            // streak the escalation predicate will see and never lets a synthetic verdict overlay.
-            var projected = workingState.llmPolicy.distraction
-            if projected.lastAssessment == .distracted {
-                projected.consecutiveDistractedCount += 1
-            }
-            let provisional = LLMDecision(
-                assessment: .distracted,
-                suggestedAction: .nudge,
-                confidence: cached.confidence,
-                reasonTags: [],
-                nudge: nil,
-                abstainReason: nil
-            )
-            if cached.suggestedAction == .overlay
-                || shouldEscalateRepeatedNudgeToOverlay(
-                    input: input,
-                    relevantActions: relevantActions,
-                    distraction: projected,
-                    decision: provisional,
-                    hasActiveRestrictiveRule: hasActiveRestrictiveRule
-                ) {
-                useSyntheticDistracted = false
-            }
-        }
-
-        if useSyntheticDistracted, let cached = cachedDistracted {
-            var tags = cached.reasonTags
-            if !tags.contains("cached_distracted") {
-                tags.append("cached_distracted")
-            }
-            decision = LLMDecision(
-                assessment: .distracted,
-                suggestedAction: .nudge,
-                confidence: cached.confidence,
-                reasonTags: tags,
-                nudge: cached.nudge?.cleanedSingleLine.isEmpty == false
-                    ? cached.nudge?.cleanedSingleLine
-                    : "This still looks off-track.",
-                abstainReason: nil
-            )
-        } else if usesOnlineInference {
+        if usesOnlineInference {
             let onlineDecisionEnvelope = await runOnlineDecisionStage(
                 input: input,
                 compactAppName: compactAppName,
@@ -961,29 +879,34 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             at: input.now
         )
 
-        // Per-context volatile verdict cache. The storage key includes profile/pipeline/prompt so
-        // AC never reuses an old verdict under a changed policy contract.
+        // Per-context volatile verdict cache. Focused and unclear verdicts help reduce repeated
+        // calls without interrupting the user. Distracted verdicts are deliberately not cached:
+        // every user-visible nudge should be backed by fresh evidence and fresh copy.
         if let contextKey = policyState.currentContextKey,
            let cacheStorageKey = currentDecisionCacheKey {
             if decision.assessment != .unclear {
                 visionBackedUnclearCount = 0
                 clarificationAskedAt = nil
             }
-            policyState.decisionCacheByContext[cacheStorageKey] = CachedDecision(
-                assessment: decision.assessment,
-                decidedAt: input.now,
-                contextKey: contextKey,
-                suggestedAction: decision.suggestedAction,
-                confidence: decision.confidence,
-                reasonTags: decision.reasonTags,
-                nudge: decision.nudge,
-                activeProfileID: input.activeProfileID,
-                pipelineProfileID: pipelineProfile.descriptor.id,
-                promptVersion: descriptor.version,
-                screenshotIncluded: input.snapshot.screenshotPath != nil,
-                visionBackedUnclearCount: visionBackedUnclearCount,
-                clarificationAskedAt: clarificationAskedAt
-            )
+            if decision.assessment == .distracted {
+                policyState.decisionCacheByContext.removeValue(forKey: cacheStorageKey)
+            } else {
+                policyState.decisionCacheByContext[cacheStorageKey] = CachedDecision(
+                    assessment: decision.assessment,
+                    decidedAt: input.now,
+                    contextKey: contextKey,
+                    suggestedAction: decision.suggestedAction,
+                    confidence: decision.confidence,
+                    reasonTags: decision.reasonTags,
+                    nudge: nil,
+                    activeProfileID: input.activeProfileID,
+                    pipelineProfileID: pipelineProfile.descriptor.id,
+                    promptVersion: descriptor.version,
+                    screenshotIncluded: input.snapshot.screenshotPath != nil,
+                    visionBackedUnclearCount: visionBackedUnclearCount,
+                    clarificationAskedAt: clarificationAskedAt
+                )
+            }
             evictOldestDecisionCacheEntries(from: &policyState.decisionCacheByContext)
         }
         if !attempts.isEmpty {

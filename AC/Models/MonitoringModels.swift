@@ -74,19 +74,6 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         focusedFollowUp * 3
     }
 
-    /// Delay before re-nudging from a still-valid cached `distracted` verdict when the user
-    /// switches *into* a context AC already judged off-task (no fresh user input or profile
-    /// change since). No inference happens on this path, so the anti-churn floor that guards
-    /// `distractedFollowUp` does not apply — the user picked this cadence to set how soon AC
-    /// steps in once it already knows the activity is a distraction.
-    nonisolated var cachedDistractionNudgeDelay: TimeInterval {
-        switch self {
-        case .sharp: return 10
-        case .balanced: return 60
-        case .gentle: return 180
-        }
-    }
-
     nonisolated var minimumEvalGap: TimeInterval {
         switch self {
         case .sharp: return 5

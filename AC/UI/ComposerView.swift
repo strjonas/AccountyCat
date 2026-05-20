@@ -10,13 +10,12 @@ import SwiftUI
 struct ComposerView: View {
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
-    @State private var draft = ""
     @FocusState private var inputFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
             // Pill input
-            TextField("tell \(controller.state.character.displayName.lowercased()) what you're working on…", text: $draft, axis: .vertical)
+            TextField("tell \(controller.state.character.displayName.lowercased()) what you're working on…", text: $controller.composerDraft, axis: .vertical)
                 .font(.ac(13))
                 .lineLimit(1...4)
                 .textFieldStyle(.plain)
@@ -58,13 +57,13 @@ struct ComposerView: View {
     private var canSend: Bool {
         controller.shouldPresentChatAsAvailable
             && !controller.sendingChatMessage
-            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !controller.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func sendDraft() {
         guard canSend else { return }
-        let text = draft
-        draft = ""
+        let text = controller.composerDraft
+        controller.composerDraft = ""
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
         controller.sendChatMessage(text)
     }

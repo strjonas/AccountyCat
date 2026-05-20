@@ -201,7 +201,7 @@ struct BrainServiceConfigurationTests {
             now: now
         )
 
-        #expect(detail.contains("browser/tab settle 3s/5s"))
+        #expect(detail.contains("browser/tab settle 3s/45s"))
         #expect(detail.contains("YouTube - Cat videos"))
     }
 

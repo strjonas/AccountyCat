@@ -377,8 +377,8 @@ enum SnapshotService {
         return isPlausibleCaptureRect(rect) ? rect : nil
     }
 
-    private static func isPlausibleCaptureRect(_ rect: CGRect) -> Bool {
-        rect.width > 40 && rect.height > 40 && rect.width < 8000 && rect.height < 8000
+    static func isPlausibleCaptureRect(_ rect: CGRect) -> Bool {
+        rect.width >= 160 && rect.height >= 120 && rect.width < 8000 && rect.height < 8000
     }
 
     private static func cgWindowTitle(for pid: pid_t) -> String? {

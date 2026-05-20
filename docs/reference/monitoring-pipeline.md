@@ -55,11 +55,11 @@ Important fast paths:
 
 - explicit active `allow` rules can skip evaluation entirely
 - recently cached focused decisions can skip re-evaluation in the same context and keep the normal focused follow-up cadence rather than checking again on the next polling tick
-- a still-valid cached `distracted` verdict for the same context can be re-served synthetically (no inference): as a follow-up while the user stays on it, and after a sharpness-graded settle (`cachedDistractionNudgeDelay`, 10s/60s/180s) when the user switches back into it. The synthetic path only ever nudges — escalating to an overlay requires a fresh evaluation outside `sharp` mode. The cache survives only while no chat input, nudge dislike, or profile change has invalidated it.
+- `distracted` verdicts are not re-served synthetically. Every user-visible nudge must be backed by fresh evidence and fresh copy, so stale cached distraction results cannot replay after the user switches away and back.
 - a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
 - a short global LLM cooldown (`lastLLMEvalAt`) suppresses rapid back-to-back fresh evaluations after app switching: 5s on `sharp`, 10s on `balanced`, 20s on `gentle`
 - cadence delays defer evaluation until a context has been stable long enough
-- browser contexts still pass through the stable-context gate, but use a much shorter settle window than native apps so tab switches are checked quickly
+- browser contexts still pass through the stable-context gate; they no longer get a tiny special-case settle because a generic tab/chat surface can be a momentary hop
 - title-only context can suppress screenshots for non-ambiguous apps
 - online monitoring does a read-only connectivity gate before any provider call; true offline state skips evaluation quickly with a banner and a short recheck
 - repeated online vision timeouts can temporarily degrade the *effective* pipeline to online text-only for a few minutes; this is transient runtime state in `BrainService`, not a persisted settings change
@@ -83,7 +83,7 @@ Biases:
 - browsers can still take a cheaper text-first look (`MonitoringHeuristics.canUseBrowserTextFirst`, mode-graded by title length/strength) before paying for a screenshot, while weak/generic titles stay vision-backed
 - a text-only verdict that came back `unclear` forces a screenshot on the next look in that context when the vision pipeline is available, instead of looping on text. In a named profile, repeated vision-backed `unclear` (3×) triggers one gentle clarification nudge rather than nagging
 
-`ScreenshotCaptureMode` supports active-window vs full-screen capture, with a periodic full-screen safety check.
+`ScreenshotCaptureMode` supports active-window vs full-screen capture, with a periodic full-screen safety check. Active-window capture rejects implausibly small capture rects such as toolbar/header strips, then tries another shareable window or falls back to the broader screenshot path.
 
 When transient online text-only degradation is active, the effective pipeline for that tick no longer requires a screenshot, so AC skips capture/upload until the short degradation window expires or monitoring succeeds again on the normal path.
 
@@ -154,6 +154,7 @@ The monitoring payload is profile-aware.
 - Overlay appeals go back through `LLMMonitorAlgorithm.reviewAppeal(...)`.
 - An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` keeps browsers and other title-scoped surfaces narrow so one tab/thread correction does not exempt unrelated content in the same app a moment later. Less ambiguous native apps still use the exact current context key. Duration is set per cadence mode.
 - Chat actions that mutate monitored state (profile changes, memory writes, focus-policy changes including safelist-like allows/disallows) call `BrainService.invalidateContextAndCooldown(reason:)`. This clears the current-context decision cache and resets the global cooldown without scheduling an immediate tick; the next natural app/context change drives a fresh evaluation. Any in-flight appeal session is preserved so a correction in chat does not silently dismiss an open appeal sheet.
+- Policy-memory rule decoding tolerates model output that omits generated/default fields (`id`, timestamps, priority, scope defaults, schedule defaults, active flag, topic arrays). The model still needs to provide the semantic fields such as `kind`, `source`, and `summary`.
 
 ## Safelist Promotion
 
