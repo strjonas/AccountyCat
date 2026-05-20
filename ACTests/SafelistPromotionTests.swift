@@ -153,6 +153,21 @@ struct SafelistPromotionTests {
     }
 
     @Test
+    func recentPromotionAttemptIsThrottledInNamedProfilesToo() {
+        var stat = makeStat(focused: 4)
+        let now = Date(timeIntervalSince1970: 10_000)
+        stat.promotionAttemptedAt = now.addingTimeInterval(-60 * 60)
+        let result = SafelistPromotionPolicy.eligibility(
+            for: stat,
+            policyMemory: PolicyMemory(),
+            context: makeContext(),
+            now: now,
+            inNamedProfile: true
+        )
+        #expect(result == .ineligible(reason: "throttled"))
+    }
+
+    @Test
     func userRestrictionBlocksPromotion() {
         let stat = makeStat(focused: 4)
         var policyMemory = PolicyMemory()

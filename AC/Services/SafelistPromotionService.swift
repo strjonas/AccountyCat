@@ -3,8 +3,9 @@
 //  AC
 //
 //  Watches focused-observation history per app/title-context and, when an app
-//  has been seen as focused enough times, asks the LLM (one cheap text-only
-//  call) whether it's plausibly always-productive. On approval, an `allow`
+//  has been seen as focused enough times, asks the LLM (cheap text first, with
+//  vision confirmation only for high-risk title-scoped approvals) whether it's
+//  plausibly always-productive. On approval, an `allow`
 //  PolicyRule with a graduated TTL is emitted so the existing fast-path in
 //  LLMMonitorAlgorithm.evaluationPlan(...) skips evaluation for that
 //  context until expiry.
@@ -132,8 +133,7 @@ enum SafelistPromotionPolicy {
 
     /// Decide whether `stat` qualifies for promotion right now.
     /// `inNamedProfile` lowers the trusted-tier bar (1 day instead of 2 distinct days, 4
-    /// observations instead of 6) and bypasses the post-throttle cooldown — named profiles
-    /// are explicit user-scoped sessions where aggressive safelisting is the whole point.
+    /// observations instead of 6), but denied/error attempts still cool down in every profile.
     static func eligibility(
         for stat: FocusedObservationStat,
         policyMemory: PolicyMemory,
@@ -145,8 +145,7 @@ enum SafelistPromotionPolicy {
             return .ineligible(reason: "distracted_history")
         }
 
-        if !inNamedProfile,
-           let attempt = stat.promotionAttemptedAt,
+        if let attempt = stat.promotionAttemptedAt,
            now.timeIntervalSince(attempt) < promotionAttemptCooldown {
             return .ineligible(reason: "throttled")
         }

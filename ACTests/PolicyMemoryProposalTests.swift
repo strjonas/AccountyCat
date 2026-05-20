@@ -635,4 +635,129 @@ struct PolicyMemoryProposalControllerTests {
         let updatedRule = controller.state.policyMemory.rules.first { $0.id == "auto-rule" }
         #expect(updatedRule?.active == false)
     }
+
+    @Test
+    func removeAllowFocusPolicyExpiresMatchingActiveProfileAllowRule() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        var state = ACState()
+        let coding = FocusProfile(id: "coding", name: "Coding")
+        state.profiles = [FocusProfile.makeDefault(), coding]
+        state.activeProfileID = "coding"
+        state.policyMemory.rules = [
+            PolicyRule(
+                id: "youtube-allow",
+                kind: .allow,
+                summary: "Allow YouTube research",
+                source: .userChat,
+                scope: PolicyRuleScope(titleContains: ["youtube.com"]),
+                active: true,
+                profileID: "coding"
+            ),
+            PolicyRule(
+                id: "slack-allow",
+                kind: .allow,
+                summary: "Allow Slack",
+                source: .userChat,
+                scope: PolicyRuleScope(appName: "Slack"),
+                active: true,
+                profileID: "coding"
+            ),
+        ]
+        controller.state = state
+
+        let applied = controller.applyFocusPolicyChatAction(
+            CompanionChatAction(
+                kind: .focusPolicy,
+                intent: "remove_allow",
+                scope: "active_profile",
+                target: CompanionChatActionTarget(type: "site", value: "youtube.com")
+            ),
+            context: nil
+        )
+
+        #expect(applied)
+        #expect(controller.state.policyMemory.rules.first { $0.id == "youtube-allow" }?.active == false)
+        #expect(controller.state.policyMemory.rules.first { $0.id == "slack-allow" }?.active == true)
+    }
+
+    @Test
+    func blanketClearAllowsIsNotAppliedAtFocusPolicyLayer() {
+        // A broad "everything is a distraction now" change must never silently wipe the user's
+        // allowlist; the model is steered to switch/create a stricter profile instead.
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        var state = ACState()
+        let coding = FocusProfile(id: "coding", name: "Coding")
+        state.profiles = [FocusProfile.makeDefault(), coding]
+        state.activeProfileID = "coding"
+        state.policyMemory.rules = [
+            PolicyRule(
+                id: "youtube-allow",
+                kind: .allow,
+                summary: "Allow YouTube research",
+                source: .userChat,
+                scope: PolicyRuleScope(titleContains: ["youtube.com"]),
+                active: true,
+                profileID: "coding"
+            ),
+        ]
+        controller.state = state
+
+        let applied = controller.applyFocusPolicyChatAction(
+            CompanionChatAction(
+                kind: .focusPolicy,
+                intent: "clear_allows",
+                scope: "active_profile",
+                target: CompanionChatActionTarget(type: "all")
+            ),
+            context: nil
+        )
+
+        #expect(!applied)
+        #expect(controller.state.policyMemory.rules.first { $0.id == "youtube-allow" }?.active == true)
+    }
+
+    @Test
+    func removeAllowSkipsLockedRules() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        var state = ACState()
+        let coding = FocusProfile(id: "coding", name: "Coding")
+        state.profiles = [FocusProfile.makeDefault(), coding]
+        state.activeProfileID = "coding"
+        state.policyMemory.rules = [
+            PolicyRule(
+                id: "youtube-allow",
+                kind: .allow,
+                summary: "Allow YouTube research",
+                source: .userChat,
+                scope: PolicyRuleScope(titleContains: ["youtube.com"]),
+                active: true,
+                isLocked: true,
+                profileID: "coding"
+            ),
+        ]
+        controller.state = state
+
+        let applied = controller.applyFocusPolicyChatAction(
+            CompanionChatAction(
+                kind: .focusPolicy,
+                intent: "remove_allow",
+                scope: "active_profile",
+                target: CompanionChatActionTarget(type: "site", value: "youtube.com")
+            ),
+            context: nil
+        )
+
+        // The removal intent is recognized (handled), but a locked rule is protected.
+        #expect(applied)
+        #expect(controller.state.policyMemory.rules.first { $0.id == "youtube-allow" }?.active == true)
+    }
 }

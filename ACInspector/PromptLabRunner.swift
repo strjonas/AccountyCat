@@ -241,7 +241,6 @@ actor PromptLabRunner {
                 appName: compactAppName,
                 bundleIdentifier: scenario.bundleIdentifier.nilIfBlank,
                 windowTitle: compactWindowTitle,
-                recentSwitches: compactSwitches,
                 recentActivityTimeline: compactSwitches,
                 usage: compactUsage,
                 recentInterventions: compactInterventions,

@@ -74,6 +74,19 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         focusedFollowUp * 3
     }
 
+    /// Delay before re-nudging from a still-valid cached `distracted` verdict when the user
+    /// switches *into* a context AC already judged off-task (no fresh user input or profile
+    /// change since). No inference happens on this path, so the anti-churn floor that guards
+    /// `distractedFollowUp` does not apply — the user picked this cadence to set how soon AC
+    /// steps in once it already knows the activity is a distraction.
+    nonisolated var cachedDistractionNudgeDelay: TimeInterval {
+        switch self {
+        case .sharp: return 10
+        case .balanced: return 60
+        case .gentle: return 180
+        }
+    }
+
     nonisolated var minimumEvalGap: TimeInterval {
         switch self {
         case .sharp: return 5
@@ -475,8 +488,104 @@ struct FocusedObservationStat: Codable, Sendable, Equatable {
 
 struct CachedDecision: Codable, Sendable, Equatable {
     var assessment: MonitoringVerdict
+    var suggestedAction: ModelSuggestedAction
+    var confidence: Double?
+    var reasonTags: [String]
+    var nudge: String?
+    var activeProfileID: String?
+    var pipelineProfileID: String?
+    var promptVersion: String?
     var decidedAt: Date
     var contextKey: String
+    var screenshotIncluded: Bool
+    var visionBackedUnclearCount: Int
+    var clarificationAskedAt: Date?
+
+    nonisolated static func cacheKey(
+        activeProfileID: String,
+        pipelineProfileID: String,
+        promptVersion: String,
+        contextKey: String
+    ) -> String {
+        "profile=\(activeProfileID)|pipeline=\(pipelineProfileID)|prompt=\(promptVersion)|context=\(contextKey)"
+    }
+
+    init(
+        assessment: MonitoringVerdict,
+        decidedAt: Date,
+        contextKey: String,
+        suggestedAction: ModelSuggestedAction? = nil,
+        confidence: Double? = nil,
+        reasonTags: [String] = [],
+        nudge: String? = nil,
+        activeProfileID: String? = nil,
+        pipelineProfileID: String? = nil,
+        promptVersion: String? = nil,
+        screenshotIncluded: Bool = false,
+        visionBackedUnclearCount: Int = 0,
+        clarificationAskedAt: Date? = nil
+    ) {
+        self.assessment = assessment
+        self.suggestedAction = suggestedAction ?? Self.defaultSuggestedAction(for: assessment)
+        self.confidence = confidence
+        self.reasonTags = reasonTags
+        self.nudge = nudge
+        self.activeProfileID = activeProfileID
+        self.pipelineProfileID = pipelineProfileID
+        self.promptVersion = promptVersion
+        self.decidedAt = decidedAt
+        self.contextKey = contextKey
+        self.screenshotIncluded = screenshotIncluded
+        self.visionBackedUnclearCount = visionBackedUnclearCount
+        self.clarificationAskedAt = clarificationAskedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case assessment
+        case suggestedAction
+        case confidence
+        case reasonTags
+        case nudge
+        case activeProfileID
+        case pipelineProfileID
+        case promptVersion
+        case decidedAt
+        case contextKey
+        case screenshotIncluded
+        case visionBackedUnclearCount
+        case clarificationAskedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        assessment = try c.decode(MonitoringVerdict.self, forKey: .assessment)
+        suggestedAction = try c.decodeIfPresent(ModelSuggestedAction.self, forKey: .suggestedAction)
+            ?? Self.defaultSuggestedAction(for: assessment)
+        confidence = try c.decodeIfPresent(Double.self, forKey: .confidence)
+        reasonTags = try c.decodeIfPresent([String].self, forKey: .reasonTags) ?? []
+        nudge = try c.decodeIfPresent(String.self, forKey: .nudge)
+        activeProfileID = try c.decodeIfPresent(String.self, forKey: .activeProfileID)
+        pipelineProfileID = try c.decodeIfPresent(String.self, forKey: .pipelineProfileID)
+        promptVersion = try c.decodeIfPresent(String.self, forKey: .promptVersion)
+        decidedAt = try c.decode(Date.self, forKey: .decidedAt)
+        contextKey = try c.decode(String.self, forKey: .contextKey)
+        screenshotIncluded = try c.decodeIfPresent(Bool.self, forKey: .screenshotIncluded) ?? false
+        visionBackedUnclearCount = try c.decodeIfPresent(Int.self, forKey: .visionBackedUnclearCount) ?? 0
+        clarificationAskedAt = try c.decodeIfPresent(Date.self, forKey: .clarificationAskedAt)
+    }
+
+    private nonisolated static func defaultSuggestedAction(
+        for assessment: MonitoringVerdict
+    ) -> ModelSuggestedAction {
+        switch assessment {
+        case .focused:
+            return .none
+        case .distracted:
+            return .nudge
+        case .unclear:
+            return .abstain
+        }
+    }
 }
 
 struct FocusSignalState: Codable, Sendable, Equatable {

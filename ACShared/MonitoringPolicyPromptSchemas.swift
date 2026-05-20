@@ -23,9 +23,9 @@ enum MonitoringPromptContextBudget {
     nonisolated static let recentNudgeCount = 3
     /// Last user chat messages passed into decision + nudge stages as a safety net
     /// against memory extraction lag.
-    nonisolated static let recentUserChatCount = 8
+    nonisolated static let recentUserChatCount = 3
     nonisolated static let recentUserChatCharacters = 320
-    nonisolated static let recentUserChatTotalCharacters = 1800
+    nonisolated static let recentUserChatTotalCharacters = 1000
 }
 
 nonisolated struct MonitoringPromptHeuristicSummary: Codable, Hashable, Sendable {
@@ -241,7 +241,6 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var appName: String
     var bundleIdentifier: String?
     var windowTitle: String?
-    var recentSwitches: [MonitoringPromptSwitchRecord]
     var recentActivityTimeline: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var currentContextSeconds: TimeInterval?
@@ -268,7 +267,6 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var appName: String
     var bundleIdentifier: String?
     var windowTitle: String?
-    var recentSwitches: [MonitoringPromptSwitchRecord]
     var recentActivityTimeline: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var currentContextSeconds: TimeInterval?
@@ -392,7 +390,6 @@ nonisolated enum MonitoringPromptPayloadEncoding {
             field("appName", payload.appName),
             optionalField("bundleIdentifier", payload.bundleIdentifier),
             optionalField("windowTitle", payload.windowTitle),
-            field("recentSwitches", payload.recentSwitches),
             field("recentActivityTimeline", payload.recentActivityTimeline),
             field("usage", payload.usage),
             optionalField("currentContextSeconds", payload.currentContextSeconds),
@@ -418,7 +415,6 @@ nonisolated enum MonitoringPromptPayloadEncoding {
             field("appName", payload.appName),
             optionalField("bundleIdentifier", payload.bundleIdentifier),
             optionalField("windowTitle", payload.windowTitle),
-            field("recentSwitches", payload.recentSwitches),
             field("recentActivityTimeline", payload.recentActivityTimeline),
             field("usage", payload.usage),
             optionalField("currentContextSeconds", payload.currentContextSeconds),

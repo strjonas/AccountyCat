@@ -107,13 +107,15 @@ struct MonitoringConfigurationTests {
 
     @Test
     func reconcileAIModelSelectionAppliesTierWhenCatalogModelsDrift() {
+        // smartest.text (kimi-k2.6) + economy.image (qwen3.5-9b) is a genuinely mixed pair
+        // that doesn't resolve to any single tier, so reconcile should re-apply aiTier.
         var state = ACState()
         state.aiTier = .smartest
         state.monitoringConfiguration = MonitoringConfiguration(
             inferenceBackend: .openRouter,
             onlineModelIdentifier: AITier.economy.byokModelIdentifierImage,
-            onlineModelIdentifierText: AITier.economy.byokModelIdentifierText,
-            onlineModelIdentifierImage: AITier.balanced.byokModelIdentifierImage
+            onlineModelIdentifierText: AITier.smartest.byokModelIdentifierText,
+            onlineModelIdentifierImage: AITier.economy.byokModelIdentifierImage
         )
 
         let changed = AppController.reconcileAIModelSelection(in: &state)

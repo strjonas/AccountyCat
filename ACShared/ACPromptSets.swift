@@ -103,7 +103,7 @@ enum ACPromptSets {
     """
 
     private static let usageSemanticsClause = """
-    `usage` is all-day app-level usage (`scope=today_app_total`), not current tab/site/window time. For browsers, never infer "30 minutes on Reddit" from Chrome/Safari usage. Use `currentContextSeconds`, `recentSwitches`, title/perception, and screenshot for current-session duration.
+    `usage` is all-day app-level usage (`scope=today_app_total`), not current tab/site/window time. For browsers, never infer "30 minutes on Reddit" from Chrome/Safari usage. Use `currentContextSeconds`, `recentActivityTimeline`, title/perception, and screenshot for current-session duration.
     `recentActivityTimeline` is the short chronology of the user's last visible windows/apps. Prefer it over `usage` when they conflict.
     """
 
@@ -161,7 +161,7 @@ enum ACPromptSets {
     - If the evidence is sparse, stale, generic, or ambiguous → `unclear` + `abstain`.
     - `recentInterventions` are not proof the user is wrong. Use them to avoid repetition and to escalate only when the same active context truly continues with no newer correction.
     - First clear distraction → `nudge`. Repeated distraction (`distraction.distractedStreak >= 2` or multiple recent nudges for the same activity) AND no newer allowance/correction → `overlay`.
-    - Trust the current screenshot/frontmost app, perception, and `recentActivityTimeline` more than stale `usage`, `recentSwitches`, or older intervention text when they conflict.
+    - Trust the current screenshot/frontmost app, perception, and `recentActivityTimeline` more than stale `usage` or older intervention text when they conflict.
     - If the visible surface is a review/debugger/inspector/prompt-lab/meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
     - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
     - When the screenshot is missing (`screenshotIncluded=false` or no vision perception), prefer `focused` or `unclear` unless the text context is clearly distracting.
@@ -223,11 +223,10 @@ enum ACPromptSets {
     - Everyday after expiry: activeProfile.isDefault=true, recentUserMessages=[], current title="Sonnencreme Gesicht | dm" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","life_admin_allowed"]}
     - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
     - Generic coding profile: activeProfile.name="Coding", activeProfile.description missing, current title="README tutorial for macOS apps - YouTube" → {"assessment":"focused","suggested_action":"none","reason_tags":["broad_profile_archetype","adjacent_learning"]}
-    - Coding session with lenience: activeProfile.name="Coding", activeProfile.goalSummary="coding with browsing/order errands allowed right now", current title="Google Calendar - Week of May 18, 2026" → {"assessment":"focused","suggested_action":"none","reason_tags":["session_goal_lenience","adjacent_errand_allowed"]}
     - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
     - Everyday with a real rule: activeProfile.isDefault=true, matchingRuleSummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
-    - Ambiguous case: app="Google Chrome", title="Tab", no visible body, previous verdict focused → {"assessment":"unclear","suggested_action":"none","reason_tags":["title_too_generic","needs_vision"]}
+    - Ambiguous case: app="Google Chrome", title="Tab", no visible body, previous verdict focused → {"assessment":"unclear","suggested_action":"abstain","reason_tags":["title_too_generic","needs_vision"]}
     """
 
     /// When to activate an existing focus profile vs create a new one (chat executor + policy memory).
@@ -670,6 +669,14 @@ enum ACPromptSets {
     - `focus_policy`: concrete local allow/block/limit/discourage behavior AC can apply structurally.
       Always profile-scoped. Use it when the user wants a specific rule *within the current profile*:
       "block Reddit while coding", "this window is okay right now", "limit YouTube during this session".
+      If a profile start/switch request explicitly names an allowed app/site/current context, emit both
+      the `profile` action and a profile-scoped `focus_policy` allow action. Do not infer allow rules
+      from broad profile names like Coding, Writing, Research, or Studying.
+      To undo a specific allowance, use intent `remove_allow` (or `unsafelist`) with the named/current
+      target. For a broad change of heart — "everything is a distraction now", "be much stricter" —
+      do NOT mass-remove allowances; instead create or switch to a stricter profile that reflects the
+      new intent, so the user's allowlist is preserved. As a rule of thumb, if more than ~3 allowances
+      would have to go, prefer a `profile` action over many removals.
     - `recurring_nudge`: a recurring daily reminder. Use when the user asks for a nudge at a specific
       time every day, e.g. "nudge me every day at 8am" or "remind me to take a break at 3PM on weekdays".
 
@@ -685,6 +692,7 @@ enum ACPromptSets {
     - memory (global pref): {"kind":"memory","text":"User prefers Reddit judged by context, not treated as automatically bad."}
     - memory (cross-profile rule): {"kind":"memory","text":"User wants Instagram blocked regardless of which profile is active."}
     - focus_policy: {"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"current_context"},"duration":"profile_session","locked":false,"reason":"user corrected current window"}
+    - profile + explicit allowance: [{"kind":"profile","instruction":"start coding for an hour"},{"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"site","value":"youtube.com"},"duration":"profile_session","reason":"user explicitly allowed YouTube for this session"}]
     - recurring_nudge: {"kind":"recurring_nudge","hour":8,"minute":0,"text":"Good morning! Time to plan your day.","weekdays":[2,3,4,5,6]}
 
     Scheduled actions:
@@ -779,10 +787,13 @@ enum ACPromptSets {
     You resolve one AccountyCat focus-policy action into minimal JSON.
     Return exactly one JSON object: {"action":{...}}.
     The action MUST have kind "focus_policy".
-    Supported intents: allow, disallow, discourage, limit.
+    Supported intents: allow, disallow, discourage, limit, remove_allow, unsafelist.
     Use focus_policy only for concrete local behavior AC can apply structurally.
     Use target {"type":"current_context"} when the user refers to the currently open app/window.
     Use target {"type":"app","value":"Name"} or {"type":"site","value":"domain"} for explicit named targets.
+    Use intent "remove_allow" or "unsafelist" to remove an allowance for one named/current target.
+    For a broad "everything is a distraction now" change, do NOT try to clear the whole allowlist —
+    return kind "profile" to switch to or create a stricter profile instead.
     Rules are always profile-scoped. If the hint implies "no matter what profile" or cross-profile
     behavior, return kind "memory" with descriptive text instead — rules cannot span profiles.
     Use scope "active_profile" for all structural rules.
@@ -800,6 +811,9 @@ enum ACPromptSets {
 
     Hint: "YouTube is fine during this session, I'm using it for research"
     → {"action":{"kind":"focus_policy","intent":"allow","target":{"type":"site","value":"youtube.com"},"scope":"active_profile","duration":"profile_session"}}
+
+    Hint: "actually don't safelist YouTube anymore"
+    → {"action":{"kind":"focus_policy","intent":"remove_allow","target":{"type":"site","value":"youtube.com"},"scope":"active_profile"}}
 
     Hint: "always allow Spotify, no matter what profile I'm in"
     → {"action":{"kind":"memory","text":"User wants Spotify allowed regardless of which profile is active."}}

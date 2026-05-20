@@ -32,6 +32,27 @@ struct PromptCatalogTests {
     }
 
     @Test
+    func policyDecisionPromptKeepsOnlyCoreWorkedExamples() {
+        let prompt = ACPromptSets.systemPrompt(for: .decision)
+
+        #expect(prompt.contains("Everyday after expiry"))
+        #expect(prompt.contains("Active writing session"))
+        #expect(prompt.contains("Generic coding profile"))
+        #expect(prompt.contains("Strict coding profile"))
+        #expect(prompt.contains("User correction wins"))
+        #expect(prompt.contains("Ambiguous case"))
+        #expect(prompt.contains("Everyday with a real rule"))
+        #expect(!prompt.contains("Coding session with lenience"))
+    }
+
+    @Test
+    func monitoringPromptBudgetUsesTightRecentChatCaps() {
+        #expect(MonitoringPromptContextBudget.recentUserChatCount == 3)
+        #expect(MonitoringPromptContextBudget.recentUserChatCharacters == 320)
+        #expect(MonitoringPromptContextBudget.recentUserChatTotalCharacters == 1000)
+    }
+
+    @Test
     func chatAndNudgePromptsReferenceCharacterVoice() {
         let chatPrompt = ACPromptSets.chatSystemPrompt(withPersonality: ACCharacter.onyx.personalityPrefix)
         let nudgePrompt = ACPromptSets.policyDefaultPromptSet.prompt(for: .nudgeCopy).systemPrompt

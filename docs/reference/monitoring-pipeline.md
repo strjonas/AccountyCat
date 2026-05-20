@@ -55,6 +55,7 @@ Important fast paths:
 
 - explicit active `allow` rules can skip evaluation entirely
 - recently cached focused decisions can skip re-evaluation in the same context and keep the normal focused follow-up cadence rather than checking again on the next polling tick
+- a still-valid cached `distracted` verdict for the same context can be re-served synthetically (no inference): as a follow-up while the user stays on it, and after a sharpness-graded settle (`cachedDistractionNudgeDelay`, 10s/60s/180s) when the user switches back into it. The synthetic path only ever nudges — escalating to an overlay requires a fresh evaluation outside `sharp` mode. The cache survives only while no chat input, nudge dislike, or profile change has invalidated it.
 - a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
 - a short global LLM cooldown (`lastLLMEvalAt`) suppresses rapid back-to-back fresh evaluations after app switching: 5s on `sharp`, 10s on `balanced`, 20s on `gentle`
 - cadence delays defer evaluation until a context has been stable long enough
@@ -79,6 +80,8 @@ Biases:
 - known ambiguous-content apps keep screenshots
 - clearly productive IDE/editor titles can skip screenshots more easily
 - descriptive titles can skip screenshots even outside IDEs
+- browsers can still take a cheaper text-first look (`MonitoringHeuristics.canUseBrowserTextFirst`, mode-graded by title length/strength) before paying for a screenshot, while weak/generic titles stay vision-backed
+- a text-only verdict that came back `unclear` forces a screenshot on the next look in that context when the vision pipeline is available, instead of looping on text. In a named profile, repeated vision-backed `unclear` (3×) triggers one gentle clarification nudge rather than nagging
 
 `ScreenshotCaptureMode` supports active-window vs full-screen capture, with a periodic full-screen safety check.
 
@@ -146,7 +149,7 @@ The monitoring payload is profile-aware.
 - Nudges can receive explicit positive/negative feedback from the user.
 - `BrainService` converts those reactions into normalized reward signals and passes them back into the active algorithm. The current `LLMMonitorAlgorithm` treats this as telemetry/reinforcement plumbing only; it does not update behavior from numeric rewards directly.
 - A positive nudge rating records telemetry plus a `postNudgeReturnToFocus` behavioral signal. It should not create persistent "liked nudge" memory or policy rules.
-- A negative "it's fine" nudge rating is explicit false-positive correction. It records app/title/profile context, emits `nudgeMarkedFine`, installs a short recent-interaction allowance, and can drive a narrow profile-scoped rule or proposal through the policy-memory pipeline. For browser, media, social, chat, and email surfaces, this signal must not allow the whole app by itself.
+- A negative "it's fine" nudge rating is explicit false-positive correction. It records app/title/profile context, emits `nudgeMarkedFine`, installs a short recent-interaction allowance, invalidates the cached verdict for that context (so a stale `distracted` entry cannot re-fire once the allowance lapses), and can drive a narrow profile-scoped rule or proposal through the policy-memory pipeline. For browser, media, social, chat, and email surfaces, this signal must not allow the whole app by itself.
 - Hard escalations can reopen if the user returns to the blocked app.
 - Overlay appeals go back through `LLMMonitorAlgorithm.reviewAppeal(...)`.
 - An approved appeal or a chat-based correction installs a short cooldown on the intervened activity. `RecentInteractionAllowance.make` keeps browsers and other title-scoped surfaces narrow so one tab/thread correction does not exempt unrelated content in the same app a moment later. Less ambiguous native apps still use the exact current context key. Duration is set per cadence mode.
@@ -161,7 +164,10 @@ Important constraints:
 - browsers and title-scoped apps must safelist by title, never by whole app
 - restrictive user rules block auto-promotion
 - trusted promotions require more evidence than probationary ones
-- named profiles are allowed to promote faster than Everyday mode
+- named profiles are allowed to promote faster than Everyday mode, but a denied/error promotion attempt cools down in every profile
+- high-risk (browser/title-scoped) approvals require a vision confirmation pass before the `allow` rule is emitted
+
+Allowances are reversible from chat, but only narrowly. `remove_allow` / `unsafelist` expire one named or current-context `allow` rule in the active profile. Locked rules and AC/ACInspector self-allows are protected. There is deliberately no blanket "clear the whole allowlist" action: a broad "everything is a distraction now" intent is steered to creating or switching to a stricter profile instead, so the user's allowlist is never silently destroyed.
 
 ## If You Change This Area
 

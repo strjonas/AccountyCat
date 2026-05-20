@@ -125,19 +125,61 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             isBrowser: heuristics.browser,
             titleLengthThreshold: configuration.titleLengthForTextOnly
         )
-        let requiresScreenshot = profile.descriptor.requiresScreenshot && !canSkipScreenshot
+        let contextKey = state.llmPolicy.currentContextKey
+        let cacheStorageKey = contextKey.map {
+            decisionCacheKey(
+                activeProfileID: activeProfileID,
+                pipelineProfileID: profile.descriptor.id,
+                contextKey: $0
+            )
+        }
+        let cachedDecision = cachedDecision(
+            from: state.llmPolicy.decisionCacheByContext,
+            cacheKey: cacheStorageKey
+        )
+        let focusedSafetyDue = cachedDecision.map {
+            shouldRunFocusedCacheSafetyCheck(
+                cached: $0,
+                context: context,
+                configuration: configuration,
+                isDefaultProfile: isDefaultProfile,
+                now: now
+            )
+        } ?? false
+        let canUseBrowserTextFirst = MonitoringHeuristics.canUseBrowserTextFirst(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            windowTitle: context.windowTitle,
+            cadenceMode: configuration.cadenceMode,
+            titleRelatesToDeclaredFocus: heuristics.titleRelatesToDeclaredFocus
+        )
+        // A text-only verdict that came back `unclear` couldn't resolve the surface. If the vision
+        // pipeline is available, escalate the next look to a screenshot instead of looping on text.
+        let cachedUnclearNeedsVision = cachedDecision.map {
+            $0.assessment == .unclear
+                && $0.screenshotIncluded == false
+                && $0.contextKey == contextKey
+        } ?? false
+        let requiresScreenshot = profile.descriptor.requiresScreenshot
+            && (cachedUnclearNeedsVision
+                || (!canSkipScreenshot && !(canUseBrowserTextFirst && !focusedSafetyDue)))
         let matchingRules = policyMemory.activeRules(at: now, matching: context)
         let hasExplicitAllowRule = matchingRules.contains { $0.kind == .allow }
         let hasRestrictiveRule = matchingRules.contains {
             $0.kind == .disallow || $0.kind == .discourage || $0.kind == .limit
         }
+        let distraction = state.llmPolicy.distraction
 
         if !hasRestrictiveRule, hasExplicitAllowRule {
             recordDeterministicFocusedSkip(
                 in: &state,
                 contextKey: state.llmPolicy.currentContextKey,
+                cacheStorageKey: cacheStorageKey,
+                activeProfileID: activeProfileID,
+                pipelineProfileID: profile.descriptor.id,
                 now: now,
-                nextEvaluationAt: nil
+                nextEvaluationAt: nil,
+                shouldCache: true
             )
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
@@ -149,29 +191,46 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
         }
 
-        // Per-context short-term cache: a recently-confirmed focused decision in the exact same
-        // context can be reused, sparing the LLM call on rapid A→B→A switching.
-        let contextKey = state.llmPolicy.currentContextKey
+        if let nextEvaluationAt = distraction.nextEvaluationAt,
+           now < nextEvaluationAt {
+            return MonitoringEvaluationPlan(
+                shouldEvaluate: false,
+                reason: "scheduled_recheck",
+                visualCheckReason: nil,
+                requiresScreenshot: requiresScreenshot,
+                promptMode: profile.descriptor.id,
+                promptVersion: descriptor.version
+            )
+        }
+
+        // Per-context volatile cache: exact same title/profile/pipeline verdicts can be reused
+        // until AC-side context changes. Ambiguous surfaces still get rare vision safety checks.
         if !hasRestrictiveRule,
            let key = contextKey,
-           let cached = state.llmPolicy.decisionCacheByContext[key],
+           let cached = cachedDecision,
            cached.contextKey == key,
            cached.assessment == .focused,
-           state.llmPolicy.distraction.lastAssessment == nil,
-           now.timeIntervalSince(cached.decidedAt) < configuration.cadenceMode.adjustedDelay(
-               configuration.cadenceMode.focusedDecisionCacheTTL,
-               isDefaultProfile: isDefaultProfile
+           shouldReuseFocusedCache(
+               cached: cached,
+               context: context,
+               configuration: configuration,
+               isDefaultProfile: isDefaultProfile,
+               now: now
            ) {
             recordDeterministicFocusedSkip(
                 in: &state,
                 contextKey: key,
+                cacheStorageKey: cacheStorageKey,
+                activeProfileID: activeProfileID,
+                pipelineProfileID: profile.descriptor.id,
                 now: now,
                 nextEvaluationAt: now.addingTimeInterval(
                     configuration.cadenceMode.adjustedDelay(
                         configuration.cadenceMode.focusedFollowUp,
                         isDefaultProfile: isDefaultProfile
                     )
-                )
+                ),
+                shouldCache: false
             )
             return MonitoringEvaluationPlan(
                 shouldEvaluate: false,
@@ -183,14 +242,32 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
         }
 
-        let distraction = state.llmPolicy.distraction
         let shouldEvaluate: Bool
         let reason: String
 
-        if let nextEvaluationAt = distraction.nextEvaluationAt,
-           now < nextEvaluationAt {
-            shouldEvaluate = false
-            reason = "scheduled_recheck"
+        if distraction.lastAssessment == .distracted,
+           let key = contextKey,
+           let cached = cachedDecision,
+           cached.contextKey == key,
+           cached.assessment == .distracted {
+            shouldEvaluate = true
+            reason = "cached_distracted"
+        } else if distraction.lastAssessment == nil,
+                  !hasRestrictiveRule,
+                  let key = contextKey,
+                  let cached = cachedDecision,
+                  cached.contextKey == key,
+                  cached.assessment == .distracted,
+                  let enteredAt = state.llmPolicy.currentContextEnteredAt {
+            // Switched back into a context AC already judged off-task (cache survives only if no
+            // chat/dislike/profile change invalidated it). Re-nudge from cache after a
+            // sharpness-graded settle instead of paying for a fresh evaluation.
+            let settle = configuration.cadenceMode.adjustedDelay(
+                configuration.cadenceMode.cachedDistractionNudgeDelay,
+                isDefaultProfile: isDefaultProfile
+            )
+            shouldEvaluate = now.timeIntervalSince(enteredAt) >= settle
+            reason = shouldEvaluate ? "cached_distracted" : "cached_distracted_settling"
         } else if distraction.lastAssessment == nil,
                   !hasRestrictiveRule,
                   let lastLLMEvalAt = state.llmPolicy.lastLLMEvalAt,
@@ -227,8 +304,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private func recordDeterministicFocusedSkip(
         in state: inout AlgorithmStateEnvelope,
         contextKey: String?,
+        cacheStorageKey: String?,
+        activeProfileID: String,
+        pipelineProfileID: String,
         now: Date,
-        nextEvaluationAt: Date?
+        nextEvaluationAt: Date?,
+        shouldCache: Bool
     ) {
         state.llmPolicy.distraction.contextKey = contextKey
         state.llmPolicy.distraction.lastAssessment = .focused
@@ -240,14 +321,112 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             confidence: 1.0,
             at: now
         )
-        if let contextKey {
-            state.llmPolicy.decisionCacheByContext[contextKey] = CachedDecision(
+        if shouldCache, let contextKey, let cacheStorageKey {
+            state.llmPolicy.decisionCacheByContext[cacheStorageKey] = CachedDecision(
                 assessment: .focused,
                 decidedAt: now,
-                contextKey: contextKey
+                contextKey: contextKey,
+                suggestedAction: ModelSuggestedAction.none,
+                confidence: 1.0,
+                reasonTags: ["deterministic_focused_skip"],
+                activeProfileID: activeProfileID,
+                pipelineProfileID: pipelineProfileID,
+                promptVersion: descriptor.version
             )
             evictOldestDecisionCacheEntries(from: &state.llmPolicy.decisionCacheByContext)
         }
+    }
+
+    private func decisionCacheKey(
+        activeProfileID: String,
+        pipelineProfileID: String,
+        contextKey: String
+    ) -> String {
+        CachedDecision.cacheKey(
+            activeProfileID: activeProfileID,
+            pipelineProfileID: pipelineProfileID,
+            promptVersion: descriptor.version,
+            contextKey: contextKey
+        )
+    }
+
+    private func cachedDecision(
+        from cache: [String: CachedDecision],
+        cacheKey: String?
+    ) -> CachedDecision? {
+        guard let cacheKey else { return nil }
+        return cache[cacheKey]
+    }
+
+    private func shouldReuseFocusedCache(
+        cached: CachedDecision,
+        context: FrontmostContext,
+        configuration: MonitoringConfiguration,
+        isDefaultProfile: Bool,
+        now: Date
+    ) -> Bool {
+        guard cached.assessment == .focused else { return false }
+        if let interval = focusedCacheRefreshInterval(
+            context: context,
+            configuration: configuration,
+            isDefaultProfile: isDefaultProfile
+        ) {
+            return now.timeIntervalSince(cached.decidedAt) < interval
+        }
+        return true
+    }
+
+    private func shouldRunFocusedCacheSafetyCheck(
+        cached: CachedDecision,
+        context: FrontmostContext,
+        configuration: MonitoringConfiguration,
+        isDefaultProfile: Bool,
+        now: Date
+    ) -> Bool {
+        guard cached.assessment == .focused,
+              let interval = focusedCacheRefreshInterval(
+                context: context,
+                configuration: configuration,
+                isDefaultProfile: isDefaultProfile
+              ) else {
+            return false
+        }
+        return now.timeIntervalSince(cached.decidedAt) >= interval
+    }
+
+    private func focusedCacheRefreshInterval(
+        context: FrontmostContext,
+        configuration: MonitoringConfiguration,
+        isDefaultProfile: Bool
+    ) -> TimeInterval? {
+        if MonitoringHeuristics.requiresNarrowFeedbackAllowance(bundleIdentifier: context.bundleIdentifier) {
+            let base: TimeInterval
+            switch configuration.cadenceMode {
+            case .sharp:
+                base = 10 * 60
+            case .balanced:
+                base = 30 * 60
+            case .gentle:
+                base = 60 * 60
+            }
+            return configuration.cadenceMode.adjustedDelay(base, isDefaultProfile: isDefaultProfile)
+        }
+
+        let informativeTitle = MonitoringHeuristics.canRelyOnTitleAlone(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            windowTitle: context.windowTitle,
+            isBrowser: false,
+            titleLengthThreshold: configuration.titleLengthForTextOnly
+        )
+        if informativeTitle {
+            return nil
+        }
+
+        return configuration.cadenceMode.adjustedDelay(
+            configuration.cadenceMode.focusedDecisionCacheTTL,
+            isDefaultProfile: isDefaultProfile
+        )
     }
 
     func distractionMetadata(from state: AlgorithmStateEnvelope) -> DistractionMetadata {
@@ -322,6 +501,17 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             max(0, input.now.timeIntervalSince($0))
         }
         let compactInterventions = compactInterventionSummary(relevantActions)
+        let currentDecisionCacheKey = input.algorithmState.llmPolicy.currentContextKey.map {
+            decisionCacheKey(
+                activeProfileID: input.activeProfileID,
+                pipelineProfileID: pipelineProfile.descriptor.id,
+                contextKey: $0
+            )
+        }
+        let currentCachedDecision = cachedDecision(
+            from: workingState.llmPolicy.decisionCacheByContext,
+            cacheKey: currentDecisionCacheKey
+        )
         if Self.hasActiveExplicitAllowanceOverride(
             snapshot: input.snapshot,
             now: input.now,
@@ -405,10 +595,68 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
         var titlePerception: MonitoringPerceptionEnvelope?
         var visionPerception: MonitoringPerceptionEnvelope?
-        let effectiveDecisionEnvelope: MonitoringDecisionEnvelope?
-        var decision: LLMDecision
+        var effectiveDecisionEnvelope: MonitoringDecisionEnvelope?
+        var decision: LLMDecision = .unclear
 
-        if usesOnlineInference {
+        // Reuse a still-valid cached `distracted` verdict instead of paying for inference, both for
+        // follow-ups while staying on the distraction and for switching back into it. The synthetic
+        // path only ever nudges; escalating to an overlay is intrusive enough that — outside `sharp`
+        // — it must be backed by a fresh evaluation, so we fall through to a real call when an
+        // overlay would otherwise be due.
+        let cachedDistracted: CachedDecision? = {
+            guard let cached = currentCachedDecision,
+                  let activeContextKey = workingState.llmPolicy.currentContextKey,
+                  cached.assessment == .distracted,
+                  cached.contextKey == activeContextKey else {
+                return nil
+            }
+            let last = workingState.llmPolicy.distraction.lastAssessment
+            return (last == .distracted || last == nil) ? cached : nil
+        }()
+        var useSyntheticDistracted = cachedDistracted != nil
+        if useSyntheticDistracted, let cached = cachedDistracted, cadence != .sharp {
+            // Mirror the increment the `.distracted` switch will apply, so the gate sees the same
+            // streak the escalation predicate will see and never lets a synthetic verdict overlay.
+            var projected = workingState.llmPolicy.distraction
+            if projected.lastAssessment == .distracted {
+                projected.consecutiveDistractedCount += 1
+            }
+            let provisional = LLMDecision(
+                assessment: .distracted,
+                suggestedAction: .nudge,
+                confidence: cached.confidence,
+                reasonTags: [],
+                nudge: nil,
+                abstainReason: nil
+            )
+            if cached.suggestedAction == .overlay
+                || shouldEscalateRepeatedNudgeToOverlay(
+                    input: input,
+                    relevantActions: relevantActions,
+                    distraction: projected,
+                    decision: provisional,
+                    hasActiveRestrictiveRule: hasActiveRestrictiveRule
+                ) {
+                useSyntheticDistracted = false
+            }
+        }
+
+        if useSyntheticDistracted, let cached = cachedDistracted {
+            var tags = cached.reasonTags
+            if !tags.contains("cached_distracted") {
+                tags.append("cached_distracted")
+            }
+            decision = LLMDecision(
+                assessment: .distracted,
+                suggestedAction: .nudge,
+                confidence: cached.confidence,
+                reasonTags: tags,
+                nudge: cached.nudge?.cleanedSingleLine.isEmpty == false
+                    ? cached.nudge?.cleanedSingleLine
+                    : "This still looks off-track.",
+                abstainReason: nil
+            )
+        } else if usesOnlineInference {
             let onlineDecisionEnvelope = await runOnlineDecisionStage(
                 input: input,
                 compactAppName: compactAppName,
@@ -476,7 +724,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     appName: compactAppName,
                     bundleIdentifier: input.snapshot.bundleIdentifier,
                     windowTitle: compactWindowTitle,
-                    recentSwitches: compactSwitches,
                     recentActivityTimeline: compactSwitches,
                     usage: compactUsage,
                     currentContextSeconds: currentContextSeconds,
@@ -556,9 +803,17 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         var policyState = updatedState.llmPolicy
         var distraction = policyState.distraction
         distraction.contextKey = policyState.currentContextKey
+        let visionBackedDecision = input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration)
+        let priorVisionUnclearCount = currentCachedDecision?.assessment == .unclear
+            ? currentCachedDecision?.visionBackedUnclearCount ?? 0
+            : 0
+        var visionBackedUnclearCount = decision.assessment == .unclear && visionBackedDecision
+            ? priorVisionUnclearCount + 1
+            : 0
+        var clarificationAskedAt = currentCachedDecision?.clarificationAskedAt
 
-        let action: CompanionAction
-        let blockReason: String?
+        var action: CompanionAction
+        var blockReason: String?
 
         switch decision.assessment {
         case .focused:
@@ -684,6 +939,21 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             }
         }
 
+        if decision.assessment == .unclear,
+           visionBackedDecision,
+           !isDefaultProfile,
+           visionBackedUnclearCount >= 3,
+           clarificationAskedAt == nil {
+            let clarification = "Quick check: is this part of your focus right now?"
+            policyState.lastNudgeAt = input.now
+            policyState.lastInterventionAt = input.now
+            policyState.recentNudgeMessages.insert(clarification, at: 0)
+            policyState.recentNudgeMessages = Array(policyState.recentNudgeMessages.prefix(3))
+            action = .showNudge(clarification)
+            blockReason = nil
+            clarificationAskedAt = input.now
+        }
+
         policyState.distraction = distraction
         policyState.focusSignal.record(
             assessment: decision.assessment,
@@ -691,12 +961,28 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             at: input.now
         )
 
-        // Per-context decision cache (Optimization 2) — short-term reuse of focused outcomes.
-        if let contextKey = policyState.currentContextKey {
-            policyState.decisionCacheByContext[contextKey] = CachedDecision(
+        // Per-context volatile verdict cache. The storage key includes profile/pipeline/prompt so
+        // AC never reuses an old verdict under a changed policy contract.
+        if let contextKey = policyState.currentContextKey,
+           let cacheStorageKey = currentDecisionCacheKey {
+            if decision.assessment != .unclear {
+                visionBackedUnclearCount = 0
+                clarificationAskedAt = nil
+            }
+            policyState.decisionCacheByContext[cacheStorageKey] = CachedDecision(
                 assessment: decision.assessment,
                 decidedAt: input.now,
-                contextKey: contextKey
+                contextKey: contextKey,
+                suggestedAction: decision.suggestedAction,
+                confidence: decision.confidence,
+                reasonTags: decision.reasonTags,
+                nudge: decision.nudge,
+                activeProfileID: input.activeProfileID,
+                pipelineProfileID: pipelineProfile.descriptor.id,
+                promptVersion: descriptor.version,
+                screenshotIncluded: input.snapshot.screenshotPath != nil,
+                visionBackedUnclearCount: visionBackedUnclearCount,
+                clarificationAskedAt: clarificationAskedAt
             )
             evictOldestDecisionCacheEntries(from: &policyState.decisionCacheByContext)
         }
@@ -874,7 +1160,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             activeProfile: requestScope.activeProfile,
             configuration: input.configuration,
             runtimeOverride: input.runtimeOverride,
-            screenshotPath: visionEnabled(for: input.configuration) ? input.snapshot.screenshotPath : nil
+            screenshotPath: nil
         ) else {
             workingStat.lastPromotionOutcome = .error
             workingStat.lastPromotionReason = "Safelist appeal failed or returned invalid JSON."
@@ -901,9 +1187,51 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
             return nil
         }
+        var approvedEnvelope = envelope
+
+        if shouldConfirmSafelistApprovalWithVision(observation: observation),
+           visionEnabled(for: input.configuration),
+           let screenshotPath = input.snapshot.screenshotPath {
+            guard let visionEnvelope = await safelistAppealService.runAppeal(
+                observation: observation,
+                sampleWindowTitles: workingStat.sampleWindowTitles,
+                focusedCount: workingStat.focusedCount,
+                distinctDays: workingStat.distinctDayCount,
+                freeFormMemory: requestScope.freeFormMemory,
+                activeProfile: requestScope.activeProfile,
+                configuration: input.configuration,
+                runtimeOverride: input.runtimeOverride,
+                screenshotPath: screenshotPath
+            ) else {
+                workingStat.lastPromotionOutcome = .error
+                workingStat.lastPromotionReason = "Safelist vision confirmation failed or returned invalid JSON."
+                workingStat.lastPromotionCheckedAt = input.now
+                policyState.focusedObservations[observation.fingerprint] = workingStat
+                await ActivityLogService.shared.append(
+                    category: "safelist-promotion-denied",
+                    message: "\(observation.appName): vision confirmation failed for \(observation.titleSignature ?? observation.fingerprint)"
+                )
+                return nil
+            }
+            guard visionEnvelope.approve else {
+                workingStat.lastPromotionOutcome = .denied
+                workingStat.lastPromotionReason = Self.cleanedPromotionReason(
+                    visionEnvelope.reason,
+                    fallback: "Vision confirmation denied safelist promotion."
+                )
+                workingStat.lastPromotionCheckedAt = input.now
+                policyState.focusedObservations[observation.fingerprint] = workingStat
+                await ActivityLogService.shared.append(
+                    category: "safelist-promotion-denied",
+                    message: "\(observation.appName): \(workingStat.lastPromotionReason ?? "vision denied")"
+                )
+                return nil
+            }
+            approvedEnvelope = visionEnvelope
+        }
 
         guard let rule = SafelistPromotionPolicy.buildRule(
-            from: envelope,
+            from: approvedEnvelope,
             observation: observation,
             tier: tier,
             now: input.now,
@@ -928,7 +1256,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         stored.previousAutoAllowOutcome = nil
         stored.lastPromotionOutcome = .approved
         stored.lastPromotionReason = Self.cleanedPromotionReason(
-            envelope.reason,
+            approvedEnvelope.reason,
             fallback: "Approved by safelist appeal."
         )
         stored.lastPromotionCheckedAt = input.now
@@ -953,6 +1281,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     private static func cleanedPromotionReason(_ reason: String?, fallback: String) -> String {
         let trimmed = reason?.cleanedSingleLine ?? ""
         return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private func shouldConfirmSafelistApprovalWithVision(
+        observation: SafelistObservationContext
+    ) -> Bool {
+        observation.isBrowser || observation.requiresTitleScope
     }
 
     private func evictOldestDecisionCacheEntries(from cache: inout [String: CachedDecision]) {
@@ -1251,7 +1585,6 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             appName: compactAppName,
             bundleIdentifier: input.snapshot.bundleIdentifier,
             windowTitle: compactWindowTitle,
-            recentSwitches: compactSwitches,
             recentActivityTimeline: compactSwitches,
             usage: compactUsage,
             currentContextSeconds: input.algorithmState.llmPolicy.currentContextEnteredAt.map {
@@ -1289,8 +1622,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 options: applyOverrides(runtimeProfile.options(for: .onlineDecision), configuration: input.configuration),
                 payload: payload,
                 attempts: &attempts,
-                decoder: MonitoringDecisionEnvelope.self,
-                systemPromptPrefix: input.characterPersonalityPrefix
+                decoder: MonitoringDecisionEnvelope.self
             )
         }
 
@@ -1302,8 +1634,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             options: applyOverrides(runtimeProfile.options(for: .onlineDecision), configuration: input.configuration),
             payload: payload,
             attempts: &attempts,
-            decoder: MonitoringDecisionEnvelope.self,
-            systemPromptPrefix: input.characterPersonalityPrefix
+            decoder: MonitoringDecisionEnvelope.self
         )
     }
 

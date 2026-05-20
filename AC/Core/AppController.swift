@@ -157,7 +157,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
-        self.lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        self.lastUsedModelIdentifier = nil
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 
@@ -220,7 +220,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
-        self.lastUsedModelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        self.lastUsedModelIdentifier = nil
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
 

@@ -90,7 +90,15 @@ struct LLMMonitorAlgorithmCooldownTests {
         let context = makeContext()
         var state = AlgorithmStateEnvelope()
         _ = algorithm.noteContext(context.contextKey, at: now.addingTimeInterval(-60), state: &state)
-        state.llmPolicy.decisionCacheByContext[context.contextKey] = CachedDecision(
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: PolicyRule.defaultProfileID,
+            pipelineProfileID: LLMPolicyCatalog.pipelineProfile(
+                id: MonitoringConfiguration().pipelineProfileID
+            ).descriptor.id,
+            promptVersion: algorithm.descriptor.version,
+            contextKey: context.contextKey
+        )
+        state.llmPolicy.decisionCacheByContext[cacheKey] = CachedDecision(
             assessment: .focused,
             decidedAt: now.addingTimeInterval(-60),
             contextKey: context.contextKey
@@ -130,6 +138,65 @@ struct LLMMonitorAlgorithmCooldownTests {
         #expect(nextTickPlan.reason == "scheduled_recheck")
     }
 
+    @Test
+    func focusedCacheIsScopedToProfileAndExactTitle() {
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 10_500)
+        let context = FrontmostContext(
+            bundleIdentifier: "com.apple.TextEdit",
+            appName: "TextEdit",
+            windowTitle: "Focused essay draft - Notes"
+        )
+        var configuration = MonitoringConfiguration()
+        configuration.pipelineProfileID = "title_only_default"
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: now.addingTimeInterval(-120), state: &state)
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: "writing",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version,
+            contextKey: context.contextKey
+        )
+        state.llmPolicy.decisionCacheByContext[cacheKey] = CachedDecision(
+            assessment: .focused,
+            decidedAt: now.addingTimeInterval(-60),
+            contextKey: context.contextKey,
+            activeProfileID: "writing",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version
+        )
+
+        let differentProfilePlan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(browser: false),
+            policyMemory: PolicyMemory(),
+            configuration: configuration,
+            activeProfileID: "coding",
+            now: now
+        )
+        #expect(differentProfilePlan.shouldEvaluate)
+        #expect(differentProfilePlan.reason == "stable_context")
+
+        let changedContext = FrontmostContext(
+            bundleIdentifier: "com.apple.TextEdit",
+            appName: "TextEdit",
+            windowTitle: "Different essay draft - Notes"
+        )
+        _ = algorithm.noteContext(changedContext.contextKey, at: now.addingTimeInterval(-120), state: &state)
+        let changedTitlePlan = algorithm.evaluationPlan(
+            state: &state,
+            context: changedContext,
+            heuristics: makeHeuristics(browser: false),
+            policyMemory: PolicyMemory(),
+            configuration: configuration,
+            activeProfileID: "writing",
+            now: now
+        )
+        #expect(changedTitlePlan.shouldEvaluate)
+        #expect(changedTitlePlan.reason == "stable_context")
+    }
+
     private func makeAlgorithm() -> LLMMonitorAlgorithm {
         let runtime = LocalModelRuntime()
         return LLMMonitorAlgorithm(
@@ -150,10 +217,10 @@ struct LLMMonitorAlgorithmCooldownTests {
         )
     }
 
-    private func makeHeuristics() -> TelemetryHeuristicSnapshot {
+    private func makeHeuristics(browser: Bool = true) -> TelemetryHeuristicSnapshot {
         TelemetryHeuristicSnapshot(
             clearlyProductive: false,
-            browser: true,
+            browser: browser,
             helpfulWindowTitle: true,
             periodicVisualReason: nil
         )

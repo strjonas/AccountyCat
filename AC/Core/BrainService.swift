@@ -178,6 +178,7 @@ final class BrainService: NSObject {
                     timestamp: now,
                     interruptionPolicy: .deferred
                 ))
+            state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
             return .autoExtended(profileName: activeProfile.name, until: extendedExpiry)
         }
 
@@ -200,6 +201,7 @@ final class BrainService: NSObject {
             goalSummary: activeProfile.createdReason
         )
         state.sessionCelebrationPending = true
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         let modeChange =
             "You did it — \(activeProfile.name) wrapped. You're back in everyday mode. Take a well-earned break."
         state.chatHistory.append(
@@ -547,13 +549,7 @@ final class BrainService: NSObject {
     func invalidateContextAndCooldown(reason: String) {
         guard let baseState = stateProvider?() else { return }
         var state = baseState
-        let keys = Set([
-            state.algorithmState.llmPolicy.currentContextKey,
-            state.algorithmState.llmPolicy.distraction.contextKey,
-        ].compactMap { $0 })
-        for key in keys {
-            state.algorithmState.llmPolicy.decisionCacheByContext.removeValue(forKey: key)
-        }
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         // Preserve an in-flight appeal sheet: chat-side policy or memory changes should
         // invalidate the monitored-context verdict, not silently abort the user's appeal.
         state.algorithmState.llmPolicy.distraction.lastAssessment = nil
@@ -945,6 +941,7 @@ final class BrainService: NSObject {
                 )
             }
             state.activeProfileID = scheduledProfile.id
+            state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
             state.chatHistory.append(
                 ChatMessage(
                     role: .assistant,
@@ -1676,6 +1673,7 @@ final class BrainService: NSObject {
             // Rules carry their own profile scoping (nil = global, value = profile-scoped).
             // Don't stamp them here — the LLM or safelist builder decides the scope.
             state.policyMemory.apply(policyMemoryUpdate, now: now)
+            state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         }
 
         await appendPolicyDecisionEvent(

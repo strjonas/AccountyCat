@@ -116,6 +116,10 @@ extension AppController {
                 },
                 fallbackAppName: recentNudge?.appName
             )
+            // Drop the cached `distracted` verdict for this context so it can't re-fire a synthetic
+            // nudge once the short allowance window lapses. The allowance covers the immediate
+            // suppression; the next look here is a fresh evaluation.
+            brainService?.invalidateContextAndCooldown(reason: "nudge_marked_fine")
         }
         logActivity("feedback", positive ? "👍 nudge: \(nudgeText)" : "👎 nudge: \(nudgeText)")
 

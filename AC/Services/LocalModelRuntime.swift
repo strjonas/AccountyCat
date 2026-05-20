@@ -592,10 +592,7 @@ actor LocalModelRuntime {
 
         let status: Int32
         do {
-            status = try await withTimeout(seconds: options.timeoutSeconds) {
-                process.waitUntilExit()
-                return process.terminationStatus
-            }
+            status = try await waitForProcessExit(process, timeoutSeconds: options.timeoutSeconds)
         } catch is CancellationError {
             cancellationBox.cancel()
             _ = await waitForTermination(of: process, timeoutMilliseconds: 1_000)
@@ -1276,6 +1273,21 @@ actor LocalModelRuntime {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         return !process.isRunning
+    }
+
+    private func waitForProcessExit(
+        _ process: Process,
+        timeoutSeconds: UInt64
+    ) async throws -> Int32 {
+        let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+        while process.isRunning {
+            try Task.checkCancellation()
+            guard Date() < deadline else {
+                throw LLMError.timeout
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return process.terminationStatus
     }
 
     private func waitForSharedServerToBecomeIdle() async throws {

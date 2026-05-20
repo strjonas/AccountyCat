@@ -125,7 +125,7 @@ struct BrainServiceConfigurationTests {
 
         #expect(state.algorithmState.llmPolicy.activeAppeal?.evaluationID == "appeal-1")
         #expect(state.algorithmState.llmPolicy.decisionCacheByContext[currentKey] == nil)
-        #expect(state.algorithmState.llmPolicy.decisionCacheByContext[otherKey] != nil)
+        #expect(state.algorithmState.llmPolicy.decisionCacheByContext[otherKey] == nil)
         #expect(state.algorithmState.llmPolicy.distraction.lastAssessment == nil)
         #expect(state.algorithmState.llmPolicy.distraction.consecutiveDistractedCount == 0)
         #expect(state.algorithmState.llmPolicy.distraction.nextEvaluationAt == nil)

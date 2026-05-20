@@ -157,4 +157,53 @@ struct MonitoringHeuristicsTests {
             ) == false
         )
     }
+
+    @Test
+    func browserTextFirstHeuristicUsesModeSpecificConservatism() {
+        let sharpTitle = "AC Monitoring Efficiency Plan - Composite Cache and Prompt Budget Notes - Google Docs"
+        let balancedTitle = "Monitoring cache design notes for AccountyCat - Google Docs"
+        let gentleTitle = "Research outline for AC cache"
+
+        #expect(MonitoringHeuristics.canUseBrowserTextFirst(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: sharpTitle,
+            cadenceMode: .sharp,
+            titleRelatesToDeclaredFocus: true
+        ))
+        #expect(MonitoringHeuristics.canUseBrowserTextFirst(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: balancedTitle,
+            cadenceMode: .balanced,
+            titleRelatesToDeclaredFocus: false
+        ))
+        #expect(MonitoringHeuristics.canUseBrowserTextFirst(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: gentleTitle,
+            cadenceMode: .gentle,
+            titleRelatesToDeclaredFocus: nil
+        ) == false)
+        #expect(MonitoringHeuristics.canUseBrowserTextFirst(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Research outline for AccountyCat cache",
+            cadenceMode: .gentle,
+            titleRelatesToDeclaredFocus: nil
+        ))
+    }
+
+    @Test
+    func browserTextFirstRejectsGenericTitles() {
+        for title in ["Home", "New Tab", "YouTube"] {
+            #expect(MonitoringHeuristics.canUseBrowserTextFirst(
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                windowTitle: title,
+                cadenceMode: .gentle,
+                titleRelatesToDeclaredFocus: true
+            ) == false)
+        }
+    }
 }

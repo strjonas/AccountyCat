@@ -85,7 +85,10 @@ enum LLMOutputParsing {
         let profileIntents: Set<String> = ["end", "stop", "end_active", "end_active_profile",
                                            "activate", "switch", "start",
                                            "create", "create_and_activate", "update"]
-        let focusPolicyIntents: Set<String> = ["allow", "disallow", "discourage", "limit"]
+        let focusPolicyIntents: Set<String> = [
+            "allow", "disallow", "discourage", "limit",
+            "remove_allow", "unsafelist",
+        ]
 
         let remappedKind: CompanionChatActionKind
         switch expectedKind {

@@ -212,6 +212,64 @@ enum MonitoringHeuristics {
         return titleHasStructuralContentMarker(title)
     }
 
+    /// Browser-only cheap first pass. This does not mean the title is enough to decide forever;
+    /// it only says the monitor can ask the text model before paying for a screenshot.
+    nonisolated static func canUseBrowserTextFirst(
+        bundleIdentifier: String?,
+        appName: String,
+        windowTitle: String?,
+        cadenceMode: MonitoringCadenceMode,
+        titleRelatesToDeclaredFocus: Bool?
+    ) -> Bool {
+        guard isBrowser(bundleIdentifier: bundleIdentifier) else { return false }
+        guard let title = windowTitle?.cleanedSingleLine, !title.isEmpty else { return false }
+        guard !isUnhelpfulWindowTitle(title, appName: appName) else { return false }
+        guard !isGenericBrowserTitle(title) else { return false }
+
+        let hasStructuralMarker = titleHasStructuralContentMarker(title)
+        switch cadenceMode {
+        case .sharp:
+            return title.count >= 70 && (titleRelatesToDeclaredFocus == true || hasStructuralMarker)
+        case .balanced:
+            return title.count >= 45 && (hasStructuralMarker || hasNonGenericBrowserContentWording(title))
+        case .gentle:
+            return title.count >= 30
+        }
+    }
+
+    nonisolated private static func isGenericBrowserTitle(_ title: String) -> Bool {
+        let normalized = title.cleanedSingleLine.lowercased()
+        let genericTitles: Set<String> = [
+            "home",
+            "new tab",
+            "start page",
+            "favorites",
+            "bookmarks",
+            "tab",
+            "untitled",
+            "about:blank",
+            "google",
+            "youtube",
+            "gmail",
+            "inbox",
+            "search",
+        ]
+        if genericTitles.contains(normalized) { return true }
+        if normalized.hasPrefix("new tab ") { return true }
+        if normalized.hasPrefix("about:") { return true }
+        return false
+    }
+
+    nonisolated private static func hasNonGenericBrowserContentWording(_ title: String) -> Bool {
+        let tokens = focusMatchingTokens(in: title)
+        guard tokens.count >= 3 else { return false }
+        let siteOnlyTokens: Set<String> = [
+            "google", "chrome", "safari", "youtube", "gmail", "reddit", "twitter",
+            "instagram", "facebook", "linkedin", "netflix", "twitch"
+        ]
+        return !tokens.isSubset(of: siteOnlyTokens)
+    }
+
     /// Stopwords excluded from focus-overlap matching. Tokens shorter than 4 characters
     /// are also dropped — too many of them collide ("on", "is", "for", "AC", etc.).
     /// Intentionally narrow: only generic glue words and AC-internal meta-vocabulary

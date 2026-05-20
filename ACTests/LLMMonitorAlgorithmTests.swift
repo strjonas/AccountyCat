@@ -297,6 +297,7 @@ struct LLMMonitorAlgorithmTests {
         let payload = decisionAttempt.payloadJSON
         #expect(payload.contains(#""goalSummary":"coding with browsing"#))
         #expect(payload.contains(#""recentActivityTimeline""#))
+        #expect(!payload.contains(#""recentSwitches""#))
         #expect(payload.contains(#""matchingRuleSummary""#))
         #expect(payload.contains(#""decisionFrame""#))
         #expect(!payload.contains(#""policySummary""#))
@@ -323,7 +324,6 @@ struct LLMMonitorAlgorithmTests {
             appName: "Xcode",
             bundleIdentifier: "com.apple.dt.Xcode",
             windowTitle: "ACPromptSets.swift",
-            recentSwitches: [],
             recentActivityTimeline: [],
             usage: [],
             currentContextSeconds: 42,
@@ -757,7 +757,7 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
-    func cachedFocusedDecisionSuppressesExactTitleRevisitButNotSameContextFollowUp() {
+    func cachedFocusedDecisionSuppressesExactTitleRevisitAndSameContextFollowUp() {
         let algorithm = makeAlgorithm()
         let context = FrontmostContext(
             bundleIdentifier: "com.google.Chrome",
@@ -769,7 +769,13 @@ struct LLMMonitorAlgorithmTests {
         configuration.pipelineProfileID = "title_only_default"
         var revisitState = AlgorithmStateEnvelope()
         _ = algorithm.noteContext(context.contextKey, at: start, state: &revisitState)
-        revisitState.llmPolicy.decisionCacheByContext[context.contextKey] = CachedDecision(
+        let revisitCacheKey = CachedDecision.cacheKey(
+            activeProfileID: PolicyRule.defaultProfileID,
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version,
+            contextKey: context.contextKey
+        )
+        revisitState.llmPolicy.decisionCacheByContext[revisitCacheKey] = CachedDecision(
             assessment: .focused,
             decidedAt: start,
             contextKey: context.contextKey
@@ -800,8 +806,320 @@ struct LLMMonitorAlgorithmTests {
 
         #expect(revisitPlan.shouldEvaluate == false)
         #expect(revisitPlan.reason == "cached_focused")
-        #expect(sameContextPlan.shouldEvaluate == true)
-        #expect(sameContextPlan.reason == "scheduled_recheck")
+        #expect(sameContextPlan.shouldEvaluate == false)
+        #expect(sameContextPlan.reason == "cached_focused")
+    }
+
+    @Test
+    func cachedDistractedFollowUpUsesSyntheticDecisionWithoutLLMAttempts() async throws {
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 8_100)
+        var state = AlgorithmStateEnvelope()
+        let snapshot = makeSnapshot(now: now)
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-120)
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: snapshot.contextKey,
+            stableSince: now.addingTimeInterval(-120),
+            lastAssessment: .distracted,
+            consecutiveDistractedCount: 0,
+            nextEvaluationAt: now.addingTimeInterval(-1)
+        )
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: "coding",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version,
+            contextKey: snapshot.contextKey
+        )
+        state.llmPolicy.decisionCacheByContext[cacheKey] = CachedDecision(
+            assessment: .distracted,
+            decidedAt: now.addingTimeInterval(-120),
+            contextKey: snapshot.contextKey,
+            suggestedAction: .nudge,
+            confidence: 0.9,
+            reasonTags: ["off_task"],
+            nudge: "Back to the build.",
+            activeProfileID: "coding",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version
+        )
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-cached-distracted",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: snapshot,
+                activeProfileID: "coding",
+                activeProfileName: "Coding"
+            )
+        )
+
+        // A non-escalating follow-up reuses the cached verdict and nudges with no LLM attempt.
+        #expect(result.evaluation.attempts.isEmpty)
+        #expect(result.decision.reasonTags.contains("cached_distracted"))
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 1)
+        if case let .showNudge(message) = result.policy.action {
+            #expect(message == "Back to the build.")
+        } else {
+            Issue.record("Expected cached follow-up to nudge from the cached verdict")
+        }
+    }
+
+    @Test
+    func cachedDistractedEscalationInBalancedRunsFreshEvalNotSyntheticOverlay() async throws {
+        // In balanced/gentle, escalating to an overlay must be backed by a fresh evaluation rather
+        // than reused from cache — the synthetic path only ever nudges.
+        let runtimeFixture = try FakeRuntimeFixture()
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 8_100)
+        var state = AlgorithmStateEnvelope()
+        let snapshot = makeSnapshot(now: now)
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-120)
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: snapshot.contextKey,
+            stableSince: now.addingTimeInterval(-120),
+            lastAssessment: .distracted,
+            consecutiveDistractedCount: 2,
+            nextEvaluationAt: now.addingTimeInterval(-1)
+        )
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: "coding",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version,
+            contextKey: snapshot.contextKey
+        )
+        state.llmPolicy.decisionCacheByContext[cacheKey] = CachedDecision(
+            assessment: .distracted,
+            decidedAt: now.addingTimeInterval(-120),
+            contextKey: snapshot.contextKey,
+            suggestedAction: .nudge,
+            confidence: 0.9,
+            reasonTags: ["off_task"],
+            nudge: "Back to the build.",
+            activeProfileID: "coding",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version
+        )
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-cached-distracted-escalate",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: snapshot,
+                activeProfileID: "coding",
+                activeProfileName: "Coding"
+            )
+        )
+
+        #expect(!result.evaluation.attempts.isEmpty)
+    }
+
+    @Test
+    func switchIntoCachedDistractedSettlesThenSyntheticallyNudges() {
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 8_100)
+        var state = AlgorithmStateEnvelope()
+        let snapshot = makeSnapshot(now: now)
+        // Fresh switch-in: distracted state was reset, but the cached verdict survives.
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: snapshot.contextKey,
+            stableSince: now,
+            lastAssessment: nil,
+            consecutiveDistractedCount: 0,
+            nextEvaluationAt: nil
+        )
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: "coding",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version,
+            contextKey: snapshot.contextKey
+        )
+        state.llmPolicy.decisionCacheByContext[cacheKey] = CachedDecision(
+            assessment: .distracted,
+            decidedAt: now.addingTimeInterval(-30),
+            contextKey: snapshot.contextKey,
+            suggestedAction: .nudge,
+            confidence: 0.9,
+            reasonTags: ["off_task"],
+            nudge: "Back to the build.",
+            activeProfileID: "coding",
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version
+        )
+
+        let context = FrontmostContext(
+            bundleIdentifier: snapshot.bundleIdentifier,
+            appName: snapshot.appName,
+            windowTitle: snapshot.windowTitle
+        )
+        var configuration = MonitoringConfiguration()
+        configuration.cadenceMode = .balanced
+        configuration.pipelineProfileID = "title_only_default"
+
+        // Within the graded settle window (balanced = 60s): no evaluation yet.
+        var settling = state
+        let earlyPlan = algorithm.evaluationPlan(
+            state: &settling,
+            context: context,
+            heuristics: makeHeuristics(browser: false),
+            policyMemory: PolicyMemory(),
+            configuration: configuration,
+            activeProfileID: "coding",
+            now: now.addingTimeInterval(30)
+        )
+        #expect(earlyPlan.shouldEvaluate == false)
+        #expect(earlyPlan.reason == "cached_distracted_settling")
+
+        // After the settle window: evaluate (the synthetic nudge fires in evaluate()).
+        var ready = state
+        let readyPlan = algorithm.evaluationPlan(
+            state: &ready,
+            context: context,
+            heuristics: makeHeuristics(browser: false),
+            policyMemory: PolicyMemory(),
+            configuration: configuration,
+            activeProfileID: "coding",
+            now: now.addingTimeInterval(61)
+        )
+        #expect(readyPlan.shouldEvaluate == true)
+        #expect(readyPlan.reason == "cached_distracted")
+    }
+
+    @Test
+    func repeatedVisionBackedUnclearInNamedProfileAsksOneClarification() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"unclear","suggested_action":"abstain","confidence":0.4,"reason_tags":["ambiguous"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 8_200)
+        let snapshot = makeSnapshot(
+            now: now,
+            windowTitle: "Ambiguous research tab",
+            screenshotPath: "/tmp/ac-test-screenshot.png"
+        )
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-120)
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: "research",
+            pipelineProfileID: MonitoringConfiguration.defaultPipelineProfileID,
+            promptVersion: algorithm.descriptor.version,
+            contextKey: snapshot.contextKey
+        )
+        state.llmPolicy.decisionCacheByContext[cacheKey] = CachedDecision(
+            assessment: .unclear,
+            decidedAt: now.addingTimeInterval(-60),
+            contextKey: snapshot.contextKey,
+            suggestedAction: .abstain,
+            activeProfileID: "research",
+            pipelineProfileID: MonitoringConfiguration.defaultPipelineProfileID,
+            promptVersion: algorithm.descriptor.version,
+            screenshotIncluded: true,
+            visionBackedUnclearCount: 2
+        )
+        var visionConfiguration = MonitoringConfiguration()
+        visionConfiguration.cadenceMode = .sharp
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-unclear-clarification",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: snapshot,
+                configuration: visionConfiguration,
+                activeProfileID: "research",
+                activeProfileName: "Research"
+            )
+        )
+
+        #expect(result.decision.assessment == .unclear)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .unclear)
+        #expect(result.updatedAlgorithmState.llmPolicy.decisionCacheByContext[cacheKey]?.visionBackedUnclearCount == 3)
+        #expect(result.updatedAlgorithmState.llmPolicy.decisionCacheByContext[cacheKey]?.clarificationAskedAt == now)
+        #expect(result.policy.action == .showNudge("Quick check: is this part of your focus right now?"))
+    }
+
+    @Test
+    func safelistAppealIsTextOnlyUntilHighRiskApprovalNeedsVisionConfirmation() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"focused","suggested_action":"none","confidence":0.9,"reason_tags":["focused"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let appealService = RecordingSafelistAppealService(envelopes: [
+            MonitoringSafelistAppealEnvelope(
+                approve: true,
+                scopeKind: .titlePattern,
+                titlePattern: "AC idea log",
+                summary: "Research notes",
+                reason: "looks stable"
+            ),
+            MonitoringSafelistAppealEnvelope(
+                approve: true,
+                scopeKind: .titlePattern,
+                titlePattern: "AC idea log",
+                summary: "Research notes",
+                reason: "vision confirmed"
+            ),
+        ])
+        let runtime = LocalModelRuntime()
+        let algorithm = LLMMonitorAlgorithm(
+            runtime: runtime,
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(runtime: runtime, onlineModelService: OnlineModelService()),
+            safelistAppealService: appealService
+        )
+        let now = Date(timeIntervalSince1970: 8_300)
+        let snapshot = makeSnapshot(
+            now: now,
+            windowTitle: "AC idea log - Google Docs",
+            screenshotPath: "/tmp/ac-test-screenshot.png"
+        )
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-120)
+        let fingerprint = "coding::com.google.Chrome::AC idea log - Google Docs"
+        state.llmPolicy.focusedObservations[fingerprint] = FocusedObservationStat(
+            contextFingerprint: fingerprint,
+            appName: "Google Chrome",
+            bundleIdentifier: "com.google.Chrome",
+            titleSignature: "AC idea log - Google Docs",
+            sampleWindowTitles: ["AC idea log - Google Docs"],
+            focusedCount: 1,
+            firstSeenAt: now.addingTimeInterval(-300),
+            lastSeenAt: now.addingTimeInterval(-60),
+            distinctDayKeys: [now.acDayKey]
+        )
+        var visionConfiguration = MonitoringConfiguration()
+        visionConfiguration.cadenceMode = .sharp
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-safelist-vision-confirm",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: snapshot,
+                configuration: visionConfiguration,
+                activeProfileID: "coding",
+                activeProfileName: "Coding"
+            )
+        )
+        let paths = await appealService.screenshotPaths()
+
+        #expect(paths == [nil, "/tmp/ac-test-screenshot.png"])
+        #expect(result.policyMemoryUpdate?.operations.first?.rule?.kind == .allow)
     }
 
     @Test
@@ -1195,5 +1513,34 @@ private actor StubOnlineModelService: OnlineModelServing {
 
     func requests() -> [OnlineModelRequest] {
         recordedRequests
+    }
+}
+
+private actor RecordingSafelistAppealService: SafelistAppealEvaluating {
+    private var envelopes: [MonitoringSafelistAppealEnvelope]
+    private var recordedScreenshotPaths: [String?] = []
+
+    init(envelopes: [MonitoringSafelistAppealEnvelope]) {
+        self.envelopes = envelopes
+    }
+
+    func runAppeal(
+        observation: SafelistObservationContext,
+        sampleWindowTitles: [String],
+        focusedCount: Int,
+        distinctDays: Int,
+        freeFormMemory: String,
+        activeProfile: MonitoringActiveProfilePromptPayload,
+        configuration: MonitoringConfiguration,
+        runtimeOverride: String?,
+        screenshotPath: String?
+    ) async -> MonitoringSafelistAppealEnvelope? {
+        recordedScreenshotPaths.append(screenshotPath)
+        guard !envelopes.isEmpty else { return nil }
+        return envelopes.removeFirst()
+    }
+
+    func screenshotPaths() -> [String?] {
+        recordedScreenshotPaths
     }
 }

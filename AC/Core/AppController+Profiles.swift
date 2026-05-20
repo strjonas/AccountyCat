@@ -42,6 +42,7 @@ extension AppController {
         state.policyMemory.apply(PolicyMemoryUpdateResponse(operations: [
             PolicyMemoryOperation(type: .addRule, rule: rule)
         ]))
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("brain", "User added rule: \(trimmed)")
     }
@@ -63,6 +64,7 @@ extension AppController {
         }
         state.policyMemory.rules.removeAll { $0.id == id }
         state.policyMemory.lastUpdatedAt = Date()
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("brain", "User deleted rule: \(id)")
     }
@@ -177,6 +179,7 @@ extension AppController {
         guard let i = state.policyMemory.rules.firstIndex(where: { $0.id == id }) else { return }
         state.policyMemory.rules[i].isLocked.toggle()
         state.policyMemory.rules[i].updatedAt = Date()
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("brain", "Rule \(state.policyMemory.rules[i].isLocked ? "locked" : "unlocked"): \(id)")
     }
@@ -229,6 +232,7 @@ extension AppController {
             state.recentlyEndedSession = nil
         }
         state.activeProfileID = profile.id
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("profile", "Activated profile '\(profile.name)' until \(profile.expiresAt.map { ISO8601DateFormatter().string(from: $0) } ?? "default-no-expiry")")
         appendMonitoringMetric(kind: .profileChanged, reason: "activated", profile: profile, detail: reason)
@@ -290,6 +294,7 @@ extension AppController {
         // New named profile: prior recently-ended anchor is no longer relevant.
         state.recentlyEndedSession = nil
         state.activeProfileID = profile.id
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("profile", "Created+activated profile '\(profile.name)' for \(Int(durationToUse / 60))m")
         appendMonitoringMetric(kind: .profileChanged, reason: "created", profile: profile, detail: reason)
@@ -328,6 +333,7 @@ extension AppController {
             state.recentlyEndedSession = endedSnapshot
             state.sessionCelebrationPending = true
         }
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("profile", "Ended active profile, back to default")
         appendMonitoringMetric(kind: .profileChanged, reason: "ended", profile: state.activeProfile, detail: nil)
@@ -455,6 +461,7 @@ extension AppController {
         if let color { state.profiles[index].color = color }
         if let defaultDurationMin { state.profiles[index].defaultDurationMin = defaultDurationMin }
         state.profiles[index].recurringSchedule = recurringSchedule
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("profile", "Updated profile metadata: \(id)")
     }
@@ -479,6 +486,7 @@ extension AppController {
         if state.activeProfileID == id {
             state.activeProfileID = PolicyRule.defaultProfileID
         }
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         logActivity("profile", "Deleted profile: \(id)")
     }

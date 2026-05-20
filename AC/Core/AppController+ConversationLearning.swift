@@ -1035,6 +1035,10 @@ extension AppController {
         _ action: CompanionChatAction,
         context: FrontmostContext?
     ) -> Bool {
+        if applyFocusPolicyRemovalAction(action, context: context) {
+            return true
+        }
+
         let intent = normalizedFocusPolicyIntent(action.intent)
         guard let kind = intent.kind else { return false }
 
@@ -1067,6 +1071,56 @@ extension AppController {
             ]),
             now: now
         )
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
+        persistState()
+        return true
+    }
+
+    func applyFocusPolicyRemovalAction(
+        _ action: CompanionChatAction,
+        context: FrontmostContext?
+    ) -> Bool {
+        guard isFocusPolicyAllowRemovalIntent(action.intent) else { return false }
+        let now = Date()
+        let profileID = resolvedPolicyProfileID(scope: action.scope)
+
+        // Only targeted removals are honored. A blanket "clear everything" wipe is deliberately not
+        // supported: the model is steered to create or switch to a stricter profile for broad intent
+        // (see the focus-policy prompt), so the user's allowlist is never silently destroyed.
+        guard let removalScope = makePolicyRuleScope(for: action, context: context, kind: .allow) else {
+            return false
+        }
+
+        let matchingRuleIDs = state.policyMemory.rules
+            .filter { rule in
+                guard rule.kind == .allow,
+                      rule.active,
+                      !rule.isLocked,
+                      rule.profileID == profileID,
+                      !isProtectedSelfAllowRule(rule) else {
+                    return false
+                }
+                return policyRule(rule, matchesRemovalScope: removalScope)
+            }
+            .map(\.id)
+
+        guard !matchingRuleIDs.isEmpty else {
+            return true
+        }
+
+        state.policyMemory.apply(
+            PolicyMemoryUpdateResponse(
+                operations: matchingRuleIDs.map { ruleID in
+                    PolicyMemoryOperation(
+                        type: .expireRule,
+                        ruleID: ruleID,
+                        reason: action.reason ?? "allow_rule_removed_from_chat"
+                    )
+                }
+            ),
+            now: now
+        )
+        state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
         persistState()
         return true
     }
@@ -1100,6 +1154,50 @@ extension AppController {
         default:
             return (nil, "")
         }
+    }
+
+    func isFocusPolicyAllowRemovalIntent(_ intent: String?) -> Bool {
+        switch intent?.cleanedSingleLine.lowercased() {
+        case "remove_allow", "unsafelist":
+            return true
+        default:
+            return false
+        }
+    }
+
+    func policyRule(_ rule: PolicyRule, matchesRemovalScope scope: PolicyRuleScope) -> Bool {
+        if let bundleIdentifier = scope.bundleIdentifier, !bundleIdentifier.isEmpty {
+            return rule.scope.bundleIdentifier == bundleIdentifier
+        }
+        if let appName = scope.appName?.cleanedSingleLine, !appName.isEmpty {
+            if rule.scope.appName?.cleanedSingleLine.caseInsensitiveCompare(appName) == .orderedSame {
+                return true
+            }
+        }
+        if !scope.titleContains.isEmpty {
+            let requested = scope.titleContains.map { $0.cleanedSingleLine.lowercased() }
+            let existing = rule.scope.titleContains.map { $0.cleanedSingleLine.lowercased() }
+            if requested.contains(where: { target in
+                existing.contains { stored in stored.contains(target) || target.contains(stored) }
+            }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    func isProtectedSelfAllowRule(_ rule: PolicyRule) -> Bool {
+        let bundleID = rule.scope.bundleIdentifier?.cleanedSingleLine
+        let protectedBundleIDs = Set([
+            Bundle.main.bundleIdentifier ?? "",
+            "dev.jon.AC",
+            "dev.jon.ACInspector",
+        ].filter { !$0.isEmpty })
+        if let bundleID, protectedBundleIDs.contains(bundleID) {
+            return true
+        }
+        let appName = rule.scope.appName?.cleanedSingleLine.lowercased()
+        return appName == "accountycat" || appName == "ac" || appName == "acinspector"
     }
 
     func resolvedPolicyProfileID(scope: String?) -> String? {
