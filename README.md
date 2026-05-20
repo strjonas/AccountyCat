@@ -72,7 +72,7 @@ AccountyCat intelligently selects the right model based on what you're doing:
 | Default | DeepSeek V4 Flash | Qwen 3.6 35B | $1.50–$3.00 |
 | Smartest | Kimi K2.6 | Kimi K2.6 | $3.00–$5.00 |
 
-\* Varies with how much you actually use your Mac. Model selection and prices are kept current as OpenRouter's catalog evolves. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
+\* Estimates reflect steady-state usage after the first week or two. The first few days tend to run slightly higher — AC hasn't yet learned which apps and contexts are clearly on-task for you, so more decisions reach the model. As AC builds up your safelist, common contexts get recognized and skipped before any model call happens, which is the main driver of cost over time. Varies with how much you actually use your Mac. Model selection and prices are kept current as OpenRouter's catalog evolves. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
 
 > **Managed mode (waitlist):** A fully hosted option is in planning — pay a flat monthly fee, no OpenRouter account needed, just works out of the box. [Join the waitlist](https://www.accountycat.com/#waitlist) to signal demand and get early access.
 
