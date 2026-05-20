@@ -16,11 +16,14 @@ struct OverlayView: View {
     @FocusState private var appealFocused: Bool
 
     var body: some View {
+        let returnDest = controller.state.lastFocusedAppName
         let presentation = controller.activeOverlay ?? OverlayPresentation(
             headline: "Psst — come back! 🐾",
-            body: "Your focus streak is so close. Ready to hop back into \(controller.state.rescueApp.displayName)?",
+            body: returnDest != nil
+                ? "Your focus streak is so close. Ready to hop back into \(returnDest!)?"
+                : "Your focus streak is so close. Ready to get back on track?",
             prompt: nil,
-            appName: controller.state.rescueApp.displayName,
+            appName: returnDest ?? "your work",
             evaluationID: nil,
             submitButtonTitle: "Back to work",
             secondaryButtonTitle: "Not yet",

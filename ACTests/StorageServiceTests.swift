@@ -18,14 +18,15 @@ struct StorageServiceTests {
         var state = ACState()
         state.goalsText = "Write a novel"
         state.debugMode = false
-        state.rescueApp = RescueAppTarget(displayName: "Xcode", bundleIdentifier: "com.apple.dt.Xcode")
+        state.lastFocusedAppName = "Xcode"
+        state.lastFocusedBundleIdentifier = "com.apple.dt.Xcode"
 
         storage.saveState(state)
         let loaded = storage.loadState()
 
         #expect(loaded.goalsText == "Write a novel")
         #expect(loaded.debugMode == false)
-        #expect(loaded.rescueApp.bundleIdentifier == "com.apple.dt.Xcode")
+        #expect(loaded.lastFocusedBundleIdentifier == "com.apple.dt.Xcode")
     }
 
     @Test

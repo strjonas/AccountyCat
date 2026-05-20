@@ -233,7 +233,7 @@ extension AppController {
         state.recentActions = Array(state.recentActions.prefix(12))
         activeOverlay = OverlayPresentation(
             headline: "Pause for a second.",
-            body: "Debug overlay for \(state.rescueApp.displayName).",
+            body: "Debug overlay.",
             prompt: "This looks a bit off-track — what's going on?",
             appName: "Debug",
             evaluationID: nil,
@@ -249,28 +249,12 @@ extension AppController {
         persistState()
     }
 
-    func chooseRescueApp() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowedContentTypes = [.application]
-        panel.allowsMultipleSelection = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-            let bundle = Bundle(url: url)
-            state.rescueApp = RescueAppTarget(
-                displayName: url.deletingPathExtension().lastPathComponent,
-                bundleIdentifier: bundle?.bundleIdentifier ?? state.rescueApp.bundleIdentifier,
-                applicationPath: url.path
-            )
-            logActivity("app", "Selected rescue app: \(state.rescueApp.displayName)")
-            persistState()
+    private func activateLastFocusedApp() {
+        guard let bundleID = state.lastFocusedBundleIdentifier else { return }
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
+            logActivity("action", "Returning to \(state.lastFocusedAppName ?? bundleID)")
+            app.activate(options: .activateIgnoringOtherApps)
         }
-    }
-
-    func openRescueApp() {
-        logActivity("action", "Opened rescue app: \(state.rescueApp.displayName)")
-        executiveArm?.openRescueApp(state.rescueApp)
     }
 
     func handleBackToWork() {
@@ -280,21 +264,22 @@ extension AppController {
         activeOverlay = nil
         overlayAppealDraft = ""
         state.hardEscalation = nil
+        let returnDestination = state.lastFocusedAppName
         brainService?.recordUserReaction(
             UserReactionRecord(
                 kind: .backToWorkSelected,
                 relatedAction: TelemetryCompanionActionRecord(kind: .overlay, message: overlayMessage),
                 positive: true,
-                details: state.rescueApp.displayName
+                details: returnDestination ?? "no_destination"
             ),
             endEpisodeReason: .rescueReturn
         )
-        openRescueApp()
+        activateLastFocusedApp()
         let context = SnapshotService.frontmostContext()
         state.recentActions.insert(ActionRecord(
             id: UUID().uuidString,
             kind: .backToWork,
-            message: state.rescueApp.displayName,
+            message: returnDestination ?? "back to work",
             timestamp: Date(),
             contextKey: context?.contextKey,
             appName: context?.appName,

@@ -302,18 +302,6 @@ enum CompanionMood: String, Sendable {
     case paused
 }
 
-struct RescueAppTarget: Codable, Sendable {
-    var displayName: String
-    var bundleIdentifier: String
-    var applicationPath: String?
-
-    static let xcode = RescueAppTarget(
-        displayName: "Xcode",
-        bundleIdentifier: "com.apple.dt.Xcode",
-        applicationPath: nil
-    )
-}
-
 struct AppSwitchRecord: Codable, Hashable, Sendable {
     var fromAppName: String?
     var toAppName: String
@@ -930,7 +918,8 @@ struct ACState: Codable, Sendable {
     var minimumLogLevel = LogLevel.defaultForBuild
     var goalsText = Self.defaultGoalsText
     var userName: String = ""
-    var rescueApp = RescueAppTarget.xcode
+    var lastFocusedAppName: String?
+    var lastFocusedBundleIdentifier: String?
     var runtimePathOverride: String?
     var monitoringConfiguration = MonitoringConfiguration()
     var algorithmState = AlgorithmStateEnvelope()
@@ -1035,7 +1024,8 @@ struct ACState: Codable, Sendable {
         case minimumLogLevel
         case goalsText
         case userName
-        case rescueApp
+        case lastFocusedAppName
+        case lastFocusedBundleIdentifier
         case runtimePathOverride
         case monitoringConfiguration
         case algorithmState
@@ -1119,8 +1109,9 @@ struct ACState: Codable, Sendable {
         goalsText =
             try container.decodeIfPresent(String.self, forKey: .goalsText) ?? Self.defaultGoalsText
         userName = try container.decodeIfPresent(String.self, forKey: .userName) ?? ""
-        rescueApp =
-            try container.decodeIfPresent(RescueAppTarget.self, forKey: .rescueApp) ?? .xcode
+        lastFocusedAppName = try container.decodeIfPresent(String.self, forKey: .lastFocusedAppName)
+        lastFocusedBundleIdentifier = try container.decodeIfPresent(
+            String.self, forKey: .lastFocusedBundleIdentifier)
         let decodedOverride = try container.decodeIfPresent(
             String.self, forKey: .runtimePathOverride)
         runtimePathOverride = Self.sanitizeRuntimePathOverride(decodedOverride)
@@ -1266,7 +1257,8 @@ struct ACState: Codable, Sendable {
         try container.encode(minimumLogLevel, forKey: .minimumLogLevel)
         try container.encode(goalsText, forKey: .goalsText)
         try container.encode(userName, forKey: .userName)
-        try container.encode(rescueApp, forKey: .rescueApp)
+        try container.encodeIfPresent(lastFocusedAppName, forKey: .lastFocusedAppName)
+        try container.encodeIfPresent(lastFocusedBundleIdentifier, forKey: .lastFocusedBundleIdentifier)
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
         try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
         try container.encode(algorithmState, forKey: .algorithmState)

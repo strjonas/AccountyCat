@@ -1170,6 +1170,13 @@ final class BrainService: NSObject {
                 heuristics: heuristics,
                 now: now
             )
+            // Confirmed-focused skips: remember this context so "Back to Work" can return here
+            if evaluationPlan.reason == "explicit_allow_rule"
+                || evaluationPlan.reason == "cached_focused"
+            {
+                state.lastFocusedAppName = context.appName
+                state.lastFocusedBundleIdentifier = context.bundleIdentifier
+            }
             await appendMonitoringMetric(
                 kind: .evaluationSkipped,
                 reason: evaluationPlan.reason ?? "not_due",
@@ -1773,6 +1780,10 @@ final class BrainService: NSObject {
             )
 
         case .none:
+            if decisionResult.decision.assessment == .focused {
+                state.lastFocusedAppName = context.appName
+                state.lastFocusedBundleIdentifier = context.bundleIdentifier
+            }
             moodSink?(.watching)
             statusSink?("No action needed in \(context.appName).")
             stateSink?(baseState, state)
@@ -2018,7 +2029,8 @@ final class BrainService: NSObject {
             where: { pending in
                 pending.episodeID == activeEpisode?.id
                     && now.timeIntervalSince(pending.issuedAt) <= 150
-                    && context.bundleIdentifier == state.rescueApp.bundleIdentifier
+                    && state.lastFocusedBundleIdentifier != nil
+                    && context.bundleIdentifier == state.lastFocusedBundleIdentifier
             }
         ) {
             await recordImplicitReaction(

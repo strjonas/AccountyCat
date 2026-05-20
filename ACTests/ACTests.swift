@@ -18,7 +18,7 @@ struct ACTests {
         let state = try JSONDecoder().decode(ACState.self, from: data)
 
         #expect(state.debugMode == true)
-        #expect(state.rescueApp.displayName == "Xcode")
+        #expect(state.lastFocusedAppName == nil)
     }
 
     @Test

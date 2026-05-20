@@ -60,17 +60,4 @@ final class ExecutiveArm {
         showCompanion()
     }
 
-    func openRescueApp(_ target: RescueAppTarget) {
-        if let applicationPath = target.applicationPath,
-           FileManager.default.fileExists(atPath: applicationPath) {
-            let configuration = NSWorkspace.OpenConfiguration()
-            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: applicationPath), configuration: configuration)
-            return
-        }
-
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: target.bundleIdentifier) {
-            let configuration = NSWorkspace.OpenConfiguration()
-            NSWorkspace.shared.openApplication(at: url, configuration: configuration)
-        }
-    }
 }
