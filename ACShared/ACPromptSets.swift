@@ -236,15 +236,27 @@ enum ACPromptSets {
     Profile reuse vs create — read each candidate's name and description:
     - Reuse an existing profile only when both fit the user's stated intent for this session.
     - A similar keyword or broad archetype name is not enough if the existing description is broader, stricter, or otherwise different from what the user asked for right now.
+    - A candidate whose description is empty or so vague it does not actually confirm the work fits is NOT a confident match. Do not reuse a profile just because its NAME loosely overlaps when its description can't vouch for the fit — prefer creating a new profile with a description that captures what the user said.
     - When the user narrows scope ("essay only", "pure writing, nothing else", "no tutorials"), do not activate a broader existing profile. Create a new profile whose description matches the narrowed intent.
-    - When the user states a broad archetype ("coding for an hour", "deep work") and a general matching profile already exists, reuse it.
+    - Balance: reuse is still the default for genuine matches. When the user states a broad archetype ("coding for an hour", "deep work") and a general matching profile already exists with a description that plausibly covers it, reuse it — don't spawn near-duplicates.
+    """
+
+    /// How to write/maintain a profile's description (chat executor + policy memory).
+    private static let profileDescriptionGuidance = """
+    Writing the profile description (this is what future focus checks read to judge fit):
+    - On create, always write a `profileDescription` derived from what the user actually said — what counts as on-task, and any explicit exclusions. Do NOT just echo the profile name; a name-only/blank description is what causes bad reuse later.
+    - The richer the user's message, the more specific the description (e.g. "read Descartes' Principia and take notes for tomorrow's discussion" → "Reading a philosophy paper and taking notes for an upcoming discussion"). If the user gave only a bare archetype ("code for an hour"), a short broad description is fine — don't invent constraints they didn't state.
+    - If intent is too thin to describe meaningfully and you still need a profile, you may ask one short clarifying question in `reply` instead of guessing a narrow description.
+    - When the user later clarifies or narrows the active session ("actually, sources only, no drafting"), emit an `update` to refine the existing profile's description so it stays accurate.
+    - Never rewrite a description the user has locked (marked as theirs). If `descriptionLocked` is true for the target profile, leave the description as-is and only change other fields.
     """
 
     private static let profileReuseMatchingExamples = """
     Profile matching examples:
     - User: "I'll focus on writing this essay — just writing, nothing else." availableProfiles contains id=thesis-1 name="Thesis" description="Thesis work: writing, research, reading sources, admin". → create — user wants pure essay writing; Thesis allows research/admin (scope mismatch).
     - User: "Help me focus on coding for an hour." availableProfiles contains id=coding-1 name="Coding" description="Coding work, including implementation, debugging, docs, and tutorials". → activate coding-1 — broad request matches broad profile.
-    - User: "Deep work for 90 minutes." availableProfiles contains id=dw-1 name="Deep Work". → activate dw-1 — name and typical scope align.
+    - User: "Deep work for 90 minutes." availableProfiles contains id=dw-1 name="Deep Work" description="Deep, undistracted work across any current project". → activate dw-1 — name and description both cover it.
+    - User: "I want to read Descartes and take notes for tomorrow's discussion." availableProfiles contains id=essay-1 name="Essay" description="" (empty). → create — "Essay" only loosely overlaps and its empty description can't confirm reading+notes fits. Make a new profile e.g. "Reading & Notes" with a description built from what the user said.
     """
 
     // MARK: - Policy stage prompt set
@@ -432,6 +444,7 @@ enum ACPromptSets {
 
                 Profiles (use the `availableProfiles` and `activeProfile` payload fields):
                 \(profileReuseMatchingBlock)
+                \(profileDescriptionGuidance)
                 \(profileReuseMatchingExamples)
                 - User says "help me focus on coding for an hour":
                   • If `availableProfiles` has a Coding-like profile whose description fits (general coding scope), emit `activate_profile {profileID:<that id>, profileDurationMinutes:60}`.
@@ -662,7 +675,12 @@ enum ACPromptSets {
       For recurring "always activate X at 9PM" requests, include `recurringSchedule` with hour/minute.
       Reuse an existing profile only when its name and description both fit the user's request; a similar
       name is not enough if that profile's scope is broader or different (e.g. pure essay writing vs a
-      broad "Thesis" profile that allows research). Prefer `create` when the user narrows scope.
+      broad "Thesis" profile that allows research). A profile with an empty or vague description that
+      can't confirm the fit is not a confident match — prefer `create`. Prefer `create` when the user
+      narrows scope, but reuse genuine broad-archetype matches rather than spawning near-duplicates.
+      When you `create`, set `profileDescription` from what the user actually said (what's on-task plus any
+      exclusions) — never just echo the name. If the user later clarifies the session, emit an `update` to
+      refine the description. Don't rewrite a description the user has locked as theirs.
     - `memory`: global durable preferences or vague/raw context future LLM calls should read.
       Memory is not a local safelist; use it for broad or ambiguous preferences.
       Use memory when the user says "always", "no matter what profile", "in general", or references
@@ -733,6 +751,7 @@ enum ACPromptSets {
     Use availableProfiles IDs only when an existing profile's name and description both fit.
     Create when no existing profile fits the user's stated scope. If no duration is specified, omit durationMinutes.
     Do not invent rules or memory here.
+    \(profileDescriptionGuidance)
     For broad archetype profiles like Coding, Writing, Research, or Studying, use broad non-restrictive descriptions unless the user explicitly gives exclusions.
     Preserve important session-specific nuance in `reason` when the user mixes focus with temporary lenience, e.g. "coding, but browsing/order errands are okay right now". Do not silently collapse that into a strict code-only activation.
     Return JSON only.

@@ -242,6 +242,35 @@ struct ProfilesTab: View {
                     .foregroundStyle(.secondary)
                     .italic()
             } else {
+                HStack(spacing: 6) {
+                    Text("description")
+                        .font(.acCaption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        controller.toggleProfileDescriptionLocked(id: editingProfile.id)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: editingProfile.descriptionLocked ? "lock.fill" : "lock.open")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(editingProfile.descriptionLocked ? "yours" : "AC may edit")
+                                .font(.acCaption)
+                        }
+                        .foregroundStyle(editingProfile.descriptionLocked ? accent : Color.secondary.opacity(0.6))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(editingProfile.descriptionLocked ? accent.opacity(0.10) : Color.clear)
+                                .overlay(Capsule().stroke(editingProfile.descriptionLocked ? accent.opacity(0.20) : Color.acHairline.opacity(0.6), lineWidth: 1))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help(editingProfile.descriptionLocked
+                        ? "Locked — AC won't rewrite this description. Click to let AC keep it updated."
+                        : "AC may refine this description as it learns the session. Click to lock it as yours.")
+                }
+
                 TextEditor(text: $descriptionDraft)
                     .font(.ac(12))
                     .scrollContentBackground(.hidden)

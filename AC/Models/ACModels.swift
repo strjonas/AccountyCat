@@ -1436,6 +1436,10 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var name: String
     var isDefault: Bool
     var description: String?
+    /// When true, the user owns this description: AC must not rewrite or replace it
+    /// from chat/policy updates. The user can still edit it manually. Defaults to
+    /// false so AC keeps the description fresh as it learns the session's intent.
+    var descriptionLocked: Bool
     /// Emoji shown in the profile bar and picker (e.g. "✎").
     var emoji: String
     /// Hex color for the profile (e.g. "#7BA3D9").
@@ -1470,6 +1474,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         name: String,
         isDefault: Bool = false,
         description: String? = nil,
+        descriptionLocked: Bool = false,
         emoji: String = "◎",
         color: String = "#9aa1a8",
         defaultDurationMin: Int? = nil,
@@ -1487,6 +1492,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.name = name
         self.isDefault = isDefault
         self.description = description
+        self.descriptionLocked = descriptionLocked
         self.emoji = emoji
         self.color = color
         self.defaultDurationMin = defaultDurationMin
@@ -1503,7 +1509,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, isDefault, description
+        case id, name, isDefault, description, descriptionLocked
         case emoji, color, defaultDurationMin
         case createdAt, lastUsedAt, activatedAt, expiresAt, createdReason
         case recurringSchedule, lastScheduleFireDate
@@ -1517,6 +1523,7 @@ struct FocusProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
         name = try c.decode(String.self, forKey: .name)
         isDefault = try c.decode(Bool.self, forKey: .isDefault)
         description = try c.decodeIfPresent(String.self, forKey: .description)
+        descriptionLocked = try c.decodeIfPresent(Bool.self, forKey: .descriptionLocked) ?? false
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji) ?? "◎"
         color = try c.decodeIfPresent(String.self, forKey: .color) ?? "#9aa1a8"
         defaultDurationMin = try c.decodeIfPresent(Int.self, forKey: .defaultDurationMin)

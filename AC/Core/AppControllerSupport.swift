@@ -243,16 +243,21 @@ enum AppControllerChatSupport {
 
         let availableText = availableProfiles
             .map { profile in
-                let desc = profile.description.map { " — \($0)" } ?? ""
+                let lockMark = profile.descriptionLocked ? " (description locked by user)" : ""
+                let desc = profile.description.map { " — \($0)\(lockMark)" } ?? ""
                 let sched = profile.recurringSchedule.map { " [scheduled: \($0.scheduleDescription())]" } ?? ""
                 return "- \(profile.name) (id: \(profile.id))\(desc)\(sched)"
             }
             .joined(separator: "\n")
 
+        let activeDescription = activeProfile.description.map {
+            activeProfile.descriptionLocked ? "\($0) (description locked by user — don't rewrite)" : $0
+        }
+
         return ACPromptSets.chatProfileContextSection(
             activeProfileID: activeProfile.id,
             activeProfileName: activeProfile.name,
-            activeProfileDescription: activeProfile.description,
+            activeProfileDescription: activeDescription,
             activeProfileIsDefault: activeProfile.isDefault,
             activeProfileExpiresAtLabel: expiryLabel,
             activeProfileScheduleLabel: scheduleLabel,

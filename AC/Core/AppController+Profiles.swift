@@ -184,6 +184,15 @@ extension AppController {
         logActivity("brain", "Rule \(state.policyMemory.rules[i].isLocked ? "locked" : "unlocked"): \(id)")
     }
 
+    /// Toggle whether a profile's description is user-owned. When locked, AC-driven
+    /// chat/policy updates won't rewrite it; the user can still edit it manually.
+    func toggleProfileDescriptionLocked(id: String) {
+        guard let i = state.profiles.firstIndex(where: { $0.id == id }) else { return }
+        state.profiles[i].descriptionLocked.toggle()
+        persistState()
+        logActivity("profile", "Description \(state.profiles[i].descriptionLocked ? "locked" : "unlocked"): \(id)")
+    }
+
     // MARK: - Focus profiles
 
     /// Activate an existing profile by id with an optional explicit expiry.
@@ -446,17 +455,21 @@ extension AppController {
         emoji: String? = nil,
         color: String? = nil,
         defaultDurationMin: Int? = nil,
-        recurringSchedule: RecurringSchedule? = nil
+        recurringSchedule: RecurringSchedule? = nil,
+        fromModel: Bool = false
     ) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty,
               let index = state.profiles.firstIndex(where: { $0.id == id }) else { return }
-        let trimmedDescription = description?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
         state.profiles[index].name = trimmedName
-        state.profiles[index].description = (trimmedDescription?.isEmpty == false)
-            ? trimmedDescription
-            : nil
+        // A locked description is user-owned: AC-driven updates leave it untouched.
+        if !(fromModel && state.profiles[index].descriptionLocked) {
+            let trimmedDescription = description?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            state.profiles[index].description = (trimmedDescription?.isEmpty == false)
+                ? trimmedDescription
+                : nil
+        }
         if let emoji { state.profiles[index].emoji = emoji }
         if let color { state.profiles[index].color = color }
         if let defaultDurationMin { state.profiles[index].defaultDurationMin = defaultDurationMin }
@@ -550,6 +563,7 @@ extension AppController {
             name: profile.name,
             isDefault: profile.isDefault,
             description: profile.description,
+            descriptionLocked: profile.descriptionLocked,
             rulesSummary: rulesSummary,
             lastUsedAt: profile.lastUsedAt,
             expiresAt: profile.expiresAt

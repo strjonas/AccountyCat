@@ -1011,7 +1011,8 @@ extension AppController {
                 name: action.profileName?.cleanedSingleLine.isEmpty == false ? action.profileName! : current.name,
                 description: action.profileDescription ?? current.description,
                 defaultDurationMin: action.durationMinutes ?? current.defaultDurationMin,
-                recurringSchedule: schedule
+                recurringSchedule: schedule,
+                fromModel: true
             )
             return true
 

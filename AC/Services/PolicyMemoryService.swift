@@ -34,6 +34,8 @@ struct ProfilePromptSummary: Sendable, Codable, Hashable {
     var name: String
     var isDefault: Bool
     var description: String?
+    /// True when the user owns the description — AC must not rewrite it via an update.
+    var descriptionLocked: Bool
     /// One-line summary of the rules currently scoped to this profile (allow/disallow names).
     var rulesSummary: String?
     var lastUsedAt: Date?
@@ -44,6 +46,7 @@ struct ProfilePromptSummary: Sendable, Codable, Hashable {
         name: String,
         isDefault: Bool,
         description: String? = nil,
+        descriptionLocked: Bool = false,
         rulesSummary: String? = nil,
         lastUsedAt: Date? = nil,
         expiresAt: Date? = nil
@@ -52,6 +55,7 @@ struct ProfilePromptSummary: Sendable, Codable, Hashable {
         self.name = name
         self.isDefault = isDefault
         self.description = description
+        self.descriptionLocked = descriptionLocked
         self.rulesSummary = rulesSummary
         self.lastUsedAt = lastUsedAt
         self.expiresAt = expiresAt
