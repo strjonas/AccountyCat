@@ -1,8 +1,10 @@
 # AccountyCat
 
-A focus companion for macOS that actually understands context.
+A focus companion for macOS that actually understands context
 
-<img width="1000" height="600" alt="AccountyCat in the menu bar" src="https://github.com/user-attachments/assets/9f197866-1215-41cd-9791-d6ddc64df4c9" />
+
+https://github.com/user-attachments/assets/b76c14f7-dfa0-49a4-823b-0f8454981b49
+
 
 ---
 
