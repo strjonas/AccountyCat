@@ -647,9 +647,9 @@ extension AppController {
         let message: String
         if active.isDefault {
             if trimmedReason == "ended", let sessionName = state.recentlyEndedSession?.name {
-                message = "Switched back to Everyday — you wrapped \(sessionName). Nice work."
+                message = profileCompletionAnnouncement(sessionName: sessionName)
             } else if trimmedReason.isEmpty {
-                message = "Switched back to your Everyday profile."
+                message = "Back to Everyday mode."
             } else {
                 message = "Switched back to Everyday — \(trimmedReason)"
             }
@@ -670,12 +670,24 @@ extension AppController {
             role: .assistant,
             text: message,
             timestamp: Date(),
+            style: .profileEvent,
             interruptionPolicy: .deferred
         )
         state.chatHistory.append(chatMessage)
         chatMessages.append(chatMessage)
         recomputeUnreadChatBadge()
         logActivity("profile", "Announced profile switch: \(message)")
+    }
+
+    private func profileCompletionAnnouncement(sessionName: String) -> String {
+        switch state.character {
+        case .mochi:
+            return "\(sessionName) is wrapped. Nicely done. Back to Everyday mode for a clean little exhale."
+        case .misty:
+            return "\(sessionName) is wrapped. Good work. You're back in Everyday mode now; let the pace soften for a minute."
+        case .onyx:
+            return "\(sessionName) wrapped. Good finish. Everyday mode is back on; reset cleanly and continue with intent."
+        }
     }
 
     /// Trigger the consolidation pass if the memory exceeds the soft cap, or if a full

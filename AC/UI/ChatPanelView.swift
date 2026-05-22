@@ -72,6 +72,13 @@ struct ChatPanelView: View {
                         insertion: .opacity.combined(with: .offset(x: 24)),
                         removal: .opacity.combined(with: .offset(x: -24))
                     ))
+            } else if showProfilePicker {
+                ProfilePickerView(isPresented: $showProfilePicker)
+                    .environmentObject(controller)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(x: 24)),
+                        removal: .opacity.combined(with: .offset(x: -24))
+                    ))
             } else {
                 chatContent
                     .transition(.asymmetric(
@@ -86,16 +93,6 @@ struct ChatPanelView: View {
         }
         .frame(width: ACD.popoverWidth)
         .background(panelBackground)
-        .overlay(alignment: .topTrailing) {
-            if showProfilePicker {
-                ProfilePickerView(isPresented: $showProfilePicker)
-                    .environmentObject(controller)
-                    .padding(.top, 54)
-                    .padding(.trailing, 14)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
-                    .zIndex(5)
-            }
-        }
         .overlay(alignment: .bottom) {
             if let toast = controller.learnedToast {
                 LearnedToastView(

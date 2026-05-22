@@ -133,6 +133,7 @@ final class BrainService: NSObject {
                     role: .assistant,
                     text: warning,
                     timestamp: now,
+                    style: .profileEvent,
                     interruptionPolicy: .deferred
                 ))
             return .preWarned(profileName: activeProfile.name, minutesLeft: minutesLeft)
@@ -176,6 +177,7 @@ final class BrainService: NSObject {
                     text:
                         "Still in the zone — extending \(activeProfile.name) to \(untilText). Wrap up when you're ready.",
                     timestamp: now,
+                    style: .profileEvent,
                     interruptionPolicy: .deferred
                 ))
             state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
@@ -202,16 +204,33 @@ final class BrainService: NSObject {
         )
         state.sessionCelebrationPending = true
         state.algorithmState.llmPolicy.decisionCacheByContext.removeAll()
-        let modeChange =
-            "You did it — \(activeProfile.name) wrapped. You're back in everyday mode. Take a well-earned break."
+        let modeChange = profileCompletionMessage(
+            for: activeProfile,
+            character: state.character
+        )
         state.chatHistory.append(
             ChatMessage(
                 role: .assistant,
                 text: modeChange,
                 timestamp: now,
+                style: .profileEvent,
                 interruptionPolicy: .deferred
             ))
         return .ended(profileName: activeProfile.name)
+    }
+
+    nonisolated private static func profileCompletionMessage(
+        for profile: FocusProfile,
+        character: ACCharacter
+    ) -> String {
+        switch character {
+        case .mochi:
+            return "Session complete — \(profile.name) is wrapped. Nicely done. You're back in everyday mode now; take a clean breather before the next thing."
+        case .misty:
+            return "\(profile.name) is complete. That was a solid block. You're back in everyday mode now, and a small reset would suit the landing."
+        case .onyx:
+            return "\(profile.name) complete. Good finish. You're back in everyday mode; step out cleanly, then decide the next move."
+        }
     }
 
     /// Pull the last `limit` user chat messages (oldest→newest) from the stored history.

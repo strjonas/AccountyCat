@@ -127,6 +127,7 @@ struct ProfileManagementTests {
         let message = try #require(controller.state.chatHistory.last)
         #expect(message.interruptionPolicy == .deferred)
         #expect(message.isUnread)
+        #expect(message.style == .profileEvent)
         #expect(message.text.contains("Switching to your Coding profile"))
         #expect(message.text.contains("Deep repo work"))
         #expect(controller.chatMessages.last == message)
@@ -166,8 +167,8 @@ struct ProfileManagementTests {
         let message = try #require(controller.state.chatHistory.last)
         #expect(message.interruptionPolicy == .deferred)
         #expect(message.isUnread)
-        #expect(message.text.contains("Switched back"))
-        #expect(message.text.contains(FocusProfile.defaultDisplayName))
+        #expect(message.style == .profileEvent)
+        #expect(message.text.contains("Everyday"))
         #expect(controller.hasUnreadChatMessages)
     }
 
@@ -206,6 +207,7 @@ struct ProfileManagementTests {
         let message = try #require(controller.state.chatHistory.last)
         #expect(message.interruptionPolicy == .deferred)
         #expect(message.isUnread)
+        #expect(message.style == .profileEvent)
         #expect(message.text.contains("Deep Work"))
         #expect(message.text.contains("deep work mode"))
         #expect(controller.hasUnreadChatMessages)
@@ -518,7 +520,12 @@ struct ProfileManagementTests {
         current.activeProfileID = writing.id
         current.chatHistory = [
             ChatMessage(role: .user, text: "Help me focus on writing."),
-            ChatMessage(role: .assistant, text: "Switching to your Writing profile.", interruptionPolicy: .deferred)
+            ChatMessage(
+                role: .assistant,
+                text: "Switching to your Writing profile.",
+                style: .profileEvent,
+                interruptionPolicy: .deferred
+            )
         ]
 
         var updated = base

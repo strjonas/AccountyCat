@@ -253,7 +253,7 @@ extension AppController {
         guard let bundleID = state.lastFocusedBundleIdentifier else { return }
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
             logActivity("action", "Returning to \(state.lastFocusedAppName ?? bundleID)")
-            app.activate(options: .activateIgnoringOtherApps)
+            app.activate()
         }
     }
 

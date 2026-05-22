@@ -2,8 +2,8 @@
 //  ProfilePickerView.swift
 //  AC
 //
-//  In-panel profile picker matching the reference: everyday first, duration
-//  chips for named profiles, and a single start CTA.
+//  Inline content view (not an overlay) so clicks are never stolen by the
+//  chat scroll view. Flow: tap row → duration chips for named profiles → start.
 //
 
 import SwiftUI
@@ -29,28 +29,54 @@ struct ProfilePickerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("pick a focus")
-                    .font(.ac(12, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                Spacer()
-                Button {
-                    withAnimation(.acSnap) { isPresented = false }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(profiles) { profile in
+                        profileRow(profile)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
 
-            VStack(spacing: 6) {
-                ForEach(profiles) { profile in
-                    profileRow(profile)
-                }
-            }
+            footer
+        }
+        .onAppear { resetSelection() }
+        .onChange(of: isPresented) { _, presented in
+            if presented { resetSelection() }
+        }
+    }
 
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button {
+                withAnimation(.acSnap) { isPresented = false }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+
+            Text("pick a focus")
+                .font(.ac(13, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Footer (duration + start)
+
+    private var footer: some View {
+        VStack(spacing: 10) {
             if !selectedProfile.isDefault {
                 HStack(spacing: 6) {
                     ForEach([25, 45, 60, 90], id: \.self) { minutes in
@@ -60,133 +86,103 @@ struct ProfilePickerView: View {
                 }
             }
 
-            HStack(spacing: 6) {
-                Spacer()
-                Button {
-                    NotificationCenter.default.post(name: .acOpenSettings, object: nil)
-                    NotificationCenter.default.post(name: .acSelectSettingsTab, object: SettingsTab.profiles.rawValue)
-                    withAnimation(.acSnap) { isPresented = false }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("add profile")
-                            .font(.ac(11, weight: .medium))
-                    }
-                    .foregroundStyle(accent.opacity(0.85))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.acSurface)
-                            .overlay(Capsule(style: .continuous).stroke(Color.acHairline, lineWidth: 0.5))
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-
             Button {
                 startSelectedProfile()
             } label: {
                 HStack {
-                    Text(selectedProfile.isDefault ? "use everyday mode" : "start \(selectedProfile.name) →")
+                    Spacer()
+                    Text(startLabel)
                     Spacer()
                 }
             }
             .buttonStyle(ACPrimaryButton())
+            .disabled(isAlreadyActive)
+            .opacity(isAlreadyActive ? 0.5 : 1)
         }
-        .padding(14)
-        .frame(width: 342)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 14)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: NSColor(name: nil) { appearance in
-                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                        ? NSColor(white: 0.16, alpha: 0.92)
-                        : NSColor(white: 1.0, alpha: 0.92)
-                }))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.acBubbleStroke, lineWidth: 0.5)
-                )
-                .shadow(color: Color.black.opacity(0.18), radius: 22, y: 12)
+            Rectangle()
+                .fill(Color.acSurface.opacity(0.4))
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.acHairline).frame(height: 0.5)
+                }
         )
-        .onAppear {
-            selectedProfileID = controller.state.activeProfileID
-            selectedDuration = selectedProfile.defaultDurationMin ?? 60
-        }
     }
+
+    private var isAlreadyActive: Bool {
+        controller.state.activeProfileID == selectedProfile.id
+    }
+
+    private var startLabel: String {
+        if isAlreadyActive { return "already active" }
+        if selectedProfile.isDefault { return "switch to everyday" }
+        return "start \(selectedProfile.name)  ·  \(chipLabel(for: selectedDuration))"
+    }
+
+    // MARK: - Profile row
 
     private func profileRow(_ profile: FocusProfile) -> some View {
         let color = Color(acHexString: profile.color) ?? accent
-        let selected = profile.id == (selectedProfileID ?? controller.state.activeProfileID)
-        return HStack(spacing: 8) {
-            Button {
-                selectProfile(profile)
-            } label: {
-                HStack(spacing: 10) {
-                    Text(profile.emoji)
-                        .font(.system(size: 15))
+        let selected = profile.id == selectedProfile.id
+
+        return Button {
+            withAnimation(.acSnap) {
+                selectedProfileID = profile.id
+                if !profile.isDefault {
+                    selectedDuration = profile.defaultDurationMin ?? selectedDuration
+                }
+            }
+        } label: {
+            HStack(spacing: 11) {
+                Text(profile.emoji.isEmpty ? (profile.isDefault ? "☀️" : "🎯") : profile.emoji)
+                    .font(.system(size: 16))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(color.opacity(0.16)))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.isDefault ? "everyday" : profile.name)
+                        .font(.ac(13, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary)
+                    Text(profile.description ?? (profile.isDefault ? "passive watching, no timer" : "focused session"))
+                        .font(.ac(11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                if controller.state.activeProfileID == profile.id {
+                    Text("active")
+                        .font(.ac(9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule(style: .continuous).fill(color))
+                } else if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(color)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(color.opacity(0.14)))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(profile.isDefault ? "everyday" : profile.name)
-                            .font(.ac(12, weight: .semibold))
-                            .foregroundStyle(Color.acTextPrimary)
-                        Text(profile.description ?? (profile.isDefault ? "passive watching, no timer" : "focused session"))
-                            .font(.ac(10.5))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer()
-
-                    if controller.state.activeProfileID == profile.id {
-                        Text("active")
-                            .font(.ac(9, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule(style: .continuous).fill(color))
-                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-
-            if !profile.isDefault {
-                Button {
-                    NotificationCenter.default.post(name: .acOpenSettings, object: nil)
-                    NotificationCenter.default.post(name: .acSelectSettingsTab, object: SettingsTab.profiles.rawValue)
-                    withAnimation(.acSnap) { isPresented = false }
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Color.secondary.opacity(0.5))
-                        .frame(width: 22, height: 22)
-                        .background(
-                            Circle()
-                                .fill(Color.acSurface)
-                                .overlay(Circle().stroke(Color.acHairline, lineWidth: 1))
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("Edit profile in settings")
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? color.opacity(0.12) : Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(selected ? color.opacity(0.45) : Color.acHairline, lineWidth: selected ? 1 : 0.5)
+                    )
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(selected ? color.opacity(0.10) : Color.acSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(selected ? color.opacity(0.36) : Color.acHairline, lineWidth: 0.5)
-                )
-        )
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
+
+    // MARK: - Duration chip
 
     private func durationChip(_ minutes: Int) -> some View {
         let selected = selectedDuration == minutes
@@ -196,15 +192,16 @@ struct ProfilePickerView: View {
             Text(chipLabel(for: minutes))
                 .font(.ac(11, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? Color.white : Color.acTextPrimary.opacity(0.72))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(selected ? accent.opacity(0.86) : Color.acSurface)
+                        .fill(selected ? accent.opacity(0.9) : Color.acSurface)
                         .overlay(Capsule(style: .continuous).stroke(selected ? Color.clear : Color.acHairline, lineWidth: 0.5))
                 )
         }
         .buttonStyle(.plain)
+        .contentShape(Capsule(style: .continuous))
     }
 
     private func chipLabel(for minutes: Int) -> String {
@@ -212,12 +209,13 @@ struct ProfilePickerView: View {
         if minutes == 60 { return "1h" }
         let hours = minutes / 60
         let mins = minutes % 60
-        if mins == 0 { return "\(hours)h" }
-        return "\(hours)h \(mins)m"
+        return mins == 0 ? "\(hours)h" : "\(hours)h \(mins)m"
     }
 
+    // MARK: - Actions
+
     private func startSelectedProfile() {
-        guard controller.state.activeProfileID != selectedProfile.id else {
+        guard !isAlreadyActive else {
             withAnimation(.acSnap) { isPresented = false }
             return
         }
@@ -229,13 +227,8 @@ struct ProfilePickerView: View {
         withAnimation(.acSnap) { isPresented = false }
     }
 
-    private func selectProfile(_ profile: FocusProfile) {
-        let duration = profile.id == selectedProfileID
-            ? selectedDuration
-            : (profile.defaultDurationMin ?? selectedDuration)
-        withAnimation(.acSnap) {
-            selectedProfileID = profile.id
-            selectedDuration = duration
-        }
+    private func resetSelection() {
+        selectedProfileID = controller.state.activeProfileID
+        selectedDuration = selectedProfile.defaultDurationMin ?? 60
     }
 }

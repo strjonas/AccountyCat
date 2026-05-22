@@ -262,7 +262,10 @@ final class AppController: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updateLocalModelLowPowerNotice()
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.updateLocalModelLowPowerNotice()
+            }
         }
     }
 

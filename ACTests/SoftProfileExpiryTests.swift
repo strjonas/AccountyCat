@@ -35,6 +35,7 @@ struct SoftProfileExpiryTests {
         let stamped = try #require(state.profiles.first(where: { $0.id == profile.id }))
         #expect(stamped.prewarnSentAt != nil)
         #expect(state.chatHistory.last?.text.contains("session ends in 3 min") == true)
+        #expect(state.chatHistory.last?.style == .profileEvent)
 
         // Second pass within the same activation must NOT re-warn (idempotent).
         let secondOutcome = BrainService.applySoftProfileLifecycle(
@@ -85,6 +86,7 @@ struct SoftProfileExpiryTests {
         let recentlyEnded = try #require(state.recentlyEndedSession)
         #expect(recentlyEnded.name == profile.name)
         #expect(recentlyEnded.goalSummary == "Essay sprint")
+        #expect(state.chatHistory.last?.style == .profileEvent)
         #expect(state.chatHistory.last?.text.contains("everyday mode") == true)
     }
 

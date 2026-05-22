@@ -663,6 +663,7 @@ enum ChatMessageStyle: String, Codable, Sendable {
     case standard
     case nudge
     case celebration
+    case profileEvent
     /// Inline calendar/profile suggestion — renders Accept/Dismiss action buttons.
     case suggestion
 }

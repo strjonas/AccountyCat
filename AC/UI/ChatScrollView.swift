@@ -89,6 +89,8 @@ private struct ChatMessageRow: View {
             switch message.style {
             case .celebration:
                 WinCard(message: message)
+            case .profileEvent:
+                ProfileEventCard(message: message)
             case .nudge:
                 NudgeCard(message: message)
             case .suggestion:
@@ -194,6 +196,55 @@ private struct ChatMessageRow: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "h:mm a"
         return formatter.string(from: message.timestamp)
+    }
+}
+
+private struct ProfileEventCard: View {
+    @Environment(\.acAccent) private var accent
+    let message: ChatMessage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "scope")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.9))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(accent.opacity(0.12))
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("focus session")
+                    .font(.ac(10.5, weight: .semibold))
+                    .foregroundStyle(accent.opacity(0.9))
+                Text(message.text)
+                    .font(.ac(12))
+                    .lineSpacing(2)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.88))
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            accent.opacity(0.10),
+                            Color.acSurface
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(accent.opacity(0.22), lineWidth: 0.5)
+                )
+        )
     }
 }
 
