@@ -82,6 +82,7 @@ nonisolated struct MonitoringPromptSwitchRecord: Codable, Hashable, Sendable {
     var toAppName: String
     var toWindowTitle: String?
     var timestamp: Date
+    var durationSeconds: TimeInterval? = nil
 }
 
 nonisolated struct MonitoringPromptUsageRecord: Codable, Hashable, Sendable {
@@ -244,6 +245,8 @@ nonisolated struct MonitoringOnlineDecisionPromptPayload: Encodable, Sendable {
     var recentActivityTimeline: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var currentContextSeconds: TimeInterval?
+    var cadenceMode: String
+    var toleratedWindowSeconds: TimeInterval
     var recentInterventions: MonitoringPromptInterventionSummary
     var distraction: MonitoringPromptDistractionSummary
     var heuristics: MonitoringPromptHeuristicSummary
@@ -270,6 +273,8 @@ nonisolated struct MonitoringDecisionPromptPayload: Encodable, Sendable {
     var recentActivityTimeline: [MonitoringPromptSwitchRecord]
     var usage: [MonitoringPromptUsageRecord]
     var currentContextSeconds: TimeInterval?
+    var cadenceMode: String
+    var toleratedWindowSeconds: TimeInterval
     var recentInterventions: MonitoringPromptInterventionSummary
     var distraction: MonitoringPromptDistractionSummary
     var titlePerception: MonitoringPerceptionEnvelope?
@@ -393,6 +398,8 @@ nonisolated enum MonitoringPromptPayloadEncoding {
             field("recentActivityTimeline", payload.recentActivityTimeline),
             field("usage", payload.usage),
             optionalField("currentContextSeconds", payload.currentContextSeconds),
+            field("cadenceMode", payload.cadenceMode),
+            field("toleratedWindowSeconds", payload.toleratedWindowSeconds),
             field("recentInterventions", payload.recentInterventions),
             field("distraction", payload.distraction),
             field("heuristics", payload.heuristics),
@@ -418,6 +425,8 @@ nonisolated enum MonitoringPromptPayloadEncoding {
             field("recentActivityTimeline", payload.recentActivityTimeline),
             field("usage", payload.usage),
             optionalField("currentContextSeconds", payload.currentContextSeconds),
+            field("cadenceMode", payload.cadenceMode),
+            field("toleratedWindowSeconds", payload.toleratedWindowSeconds),
             field("recentInterventions", payload.recentInterventions),
             field("distraction", payload.distraction),
             optionalField("titlePerception", payload.titlePerception),
@@ -579,6 +588,7 @@ nonisolated struct MonitoringDecisionEnvelope: Codable, Sendable {
     var overlayPrompt: String?
     var submitButtonTitle: String?
     var secondaryButtonTitle: String?
+    var recheckSeconds: Int?
 
     init(
         assessment: ModelAssessment,
@@ -591,7 +601,8 @@ nonisolated struct MonitoringDecisionEnvelope: Codable, Sendable {
         overlayBody: String?,
         overlayPrompt: String?,
         submitButtonTitle: String?,
-        secondaryButtonTitle: String?
+        secondaryButtonTitle: String?,
+        recheckSeconds: Int? = nil
     ) {
         self.assessment = assessment
         self.suggestedAction = suggestedAction
@@ -604,6 +615,7 @@ nonisolated struct MonitoringDecisionEnvelope: Codable, Sendable {
         self.overlayPrompt = overlayPrompt
         self.submitButtonTitle = submitButtonTitle
         self.secondaryButtonTitle = secondaryButtonTitle
+        self.recheckSeconds = recheckSeconds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -618,6 +630,7 @@ nonisolated struct MonitoringDecisionEnvelope: Codable, Sendable {
         case overlayPrompt = "overlay_prompt"
         case submitButtonTitle = "submit_button_title"
         case secondaryButtonTitle = "secondary_button_title"
+        case recheckSeconds = "recheck_seconds"
     }
 }
 

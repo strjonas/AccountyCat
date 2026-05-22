@@ -266,6 +266,9 @@ struct LLMDecision: Codable, Sendable, Equatable {
     var reasonTags: [String]
     var nudge: String?
     var abstainReason: String?
+    /// Model-proposed seconds until the next `tolerated` recheck. Clamped by the algorithm;
+    /// nil falls back to the cadence baseline. Ignored for non-tolerated assessments.
+    var recheckSeconds: Int? = nil
 
     var verdict: MonitoringVerdict {
         assessment
@@ -384,7 +387,7 @@ enum FocusSegmentAssessment: String, Codable, Sendable {
             self = .focused
         case .distracted:
             self = .distracted
-        case .unclear, .none:
+        case .tolerated, .unclear, .none:
             self = .unclear
         }
     }

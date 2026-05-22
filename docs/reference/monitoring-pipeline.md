@@ -55,6 +55,7 @@ Important fast paths:
 
 - explicit active `allow` rules can skip evaluation entirely
 - recently cached focused decisions can skip re-evaluation in the same context and keep the normal focused follow-up cadence rather than checking again on the next polling tick
+- `tolerated` verdicts are acceptable for now but not counted as focused work. They use a shorter recheck and are not cached, so breaks and detours cannot inherit long focused silence. The model may propose `recheck_seconds`; the algorithm clamps it between the tolerated baseline and the focused follow-up (see `docs/experiments/model-driven-tolerated-recheck.md`).
 - `distracted` verdicts are not re-served synthetically. Every user-visible nudge must be backed by fresh evidence and fresh copy, so stale cached distraction results cannot replay after the user switches away and back.
 - a recent user correction or approved appeal installs a short, cadence-scaled cooldown (`recentInteractionAllowances` on `LLMPolicyAlgorithmState`) so AC doesn't immediately re-flag the same activity
 - a short global LLM cooldown (`lastLLMEvalAt`) suppresses rapid back-to-back fresh evaluations after app switching: 5s on `sharp`, 10s on `balanced`, 20s on `gentle`
@@ -100,6 +101,13 @@ When transient online text-only degradation is active, the effective pipeline fo
 - prompt-stage execution
 - appeal review
 - optional policy-memory updates such as safelist promotions
+
+The decision assessment states are:
+
+- `focused`: genuinely on-task/productive; may be cached and can contribute to focused observations.
+- `tolerated`: acceptable right now, but not focused work; short recheck, no decision cache, no safelist promotion, neutral in focus stats.
+- `distracted`: off-track; fresh evidence required for each intervention.
+- `unclear`: insufficient evidence; abstain and recheck.
 
 Historical algorithm ids still decode, but normalize to the current algorithm.
 

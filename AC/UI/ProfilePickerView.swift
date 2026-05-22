@@ -119,33 +119,42 @@ struct ProfilePickerView: View {
     private func profileRow(_ profile: FocusProfile) -> some View {
         let color = Color(acHexString: profile.color) ?? accent
         let selected = profile.id == (selectedProfileID ?? controller.state.activeProfileID)
-        return HStack(spacing: 10) {
-            Text(profile.emoji)
-                .font(.system(size: 15))
-                .foregroundStyle(color)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(color.opacity(0.14)))
+        return HStack(spacing: 8) {
+            Button {
+                selectProfile(profile)
+            } label: {
+                HStack(spacing: 10) {
+                    Text(profile.emoji)
+                        .font(.system(size: 15))
+                        .foregroundStyle(color)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(color.opacity(0.14)))
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.isDefault ? "everyday" : profile.name)
-                    .font(.ac(12, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary)
-                Text(profile.description ?? (profile.isDefault ? "passive watching, no timer" : "focused session"))
-                    .font(.ac(10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(profile.isDefault ? "everyday" : profile.name)
+                            .font(.ac(12, weight: .semibold))
+                            .foregroundStyle(Color.acTextPrimary)
+                        Text(profile.description ?? (profile.isDefault ? "passive watching, no timer" : "focused session"))
+                            .font(.ac(10.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    if controller.state.activeProfileID == profile.id {
+                        Text("active")
+                            .font(.ac(9, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule(style: .continuous).fill(color))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-
-            Spacer()
-
-            if controller.state.activeProfileID == profile.id {
-                Text("active")
-                    .font(.ac(9, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule(style: .continuous).fill(color))
-            }
+            .buttonStyle(.plain)
 
             if !profile.isDefault {
                 Button {
@@ -177,13 +186,6 @@ struct ProfilePickerView: View {
                         .stroke(selected ? color.opacity(0.36) : Color.acHairline, lineWidth: 0.5)
                 )
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.acSnap) {
-                selectedProfileID = profile.id
-                selectedDuration = profile.defaultDurationMin ?? selectedDuration
-            }
-        }
     }
 
     private func durationChip(_ minutes: Int) -> some View {
@@ -225,5 +227,15 @@ struct ProfilePickerView: View {
             _ = controller.activateProfile(id: selectedProfile.id, durationMinutes: selectedDuration, announce: true)
         }
         withAnimation(.acSnap) { isPresented = false }
+    }
+
+    private func selectProfile(_ profile: FocusProfile) {
+        let duration = profile.id == selectedProfileID
+            ? selectedDuration
+            : (profile.defaultDurationMin ?? selectedDuration)
+        withAnimation(.acSnap) {
+            selectedProfileID = profile.id
+            selectedDuration = duration
+        }
     }
 }

@@ -344,6 +344,7 @@ nonisolated struct ModelInputRecord: Codable, Hashable, Sendable {
 
 nonisolated enum ModelAssessment: String, Codable, Sendable {
     case focused
+    case tolerated
     case distracted
     case unclear
 }

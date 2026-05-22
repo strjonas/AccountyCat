@@ -23,12 +23,16 @@ extension AppController {
         _ summary: String,
         kind: PolicyRuleKind,
         appName: String? = nil,
+        scope explicitScope: PolicyRuleScope? = nil,
         profileID: String? = nil
     ) {
         let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        var scope = PolicyRuleScope()
-        if let name = appName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+        // A precise scope (e.g. from the window picker, carrying bundleIdentifier) lets the
+        // monitoring gate match this rule deterministically. Free-text falls back to appName.
+        var scope = explicitScope ?? PolicyRuleScope()
+        if explicitScope == nil,
+           let name = appName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
             scope.appName = name
         }
         let rule = PolicyRule(
@@ -546,6 +550,7 @@ extension AppController {
                 let kindShort: String
                 switch rule.kind {
                 case .allow: kindShort = "allow"
+                case .tolerate: kindShort = "tolerate"
                 case .disallow: kindShort = "disallow"
                 case .discourage: kindShort = "discourage"
                 case .limit: kindShort = "limit"

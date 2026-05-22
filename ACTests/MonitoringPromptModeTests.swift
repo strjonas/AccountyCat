@@ -53,6 +53,8 @@ struct MonitoringPromptModeTests {
         let online = systemPrompt(for: .onlineDecision)
         // Everyday block emphasises ambient life; session block emphasises opt-in checking.
         #expect(online.contains("errands") || online.contains("life admin"))
+        #expect(online.contains("tolerated"))
+        #expect(online.contains("toleratedWindowSeconds"))
         #expect(online.contains("opted in to being checked"))
         #expect(online.contains("Prefer `unclear` + `abstain` over `nudge`"))
         #expect(online.contains("expired profile or stale chat context"))
@@ -97,6 +99,8 @@ struct MonitoringPromptModeTests {
         #expect(online.contains("Everyday after expiry"))
         #expect(online.contains("Sonnencreme Gesicht"))
         #expect(online.contains("life_admin_allowed"))
+        #expect(online.contains("Everyday short break"))
+        #expect(online.contains("Everyday drift"))
         #expect(online.contains("User correction wins"))
         #expect(online.contains("Generic coding profile"))
         #expect(online.contains("Strict coding profile"))
@@ -156,7 +160,7 @@ struct MonitoringPromptModeTests {
         let cadence = MonitoringCadenceMode.sharp
         // All delay flavours that the algorithm uses should be subject to the multiplier
         // so the everyday-mode lean shows up consistently across the pipeline.
-        for base in [cadence.stableContextDelay, cadence.focusedFollowUp, cadence.unclearFollowUp,
+        for base in [cadence.stableContextDelay, cadence.focusedFollowUp, cadence.toleratedFollowUp, cadence.unclearFollowUp,
                      cadence.distractedFollowUp, cadence.focusedDecisionCacheTTL] {
             let everyday = cadence.adjustedDelay(base, isDefaultProfile: true)
             #expect(everyday == base * MonitoringCadenceMode.everydayDelayMultiplier)

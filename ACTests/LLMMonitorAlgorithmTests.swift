@@ -157,6 +157,108 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
+    func toleratedDecisionSchedulesShortFollowUpDoesNotCacheOrPromote() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"tolerated","suggested_action":"none","confidence":0.84,"reason_tags":["short_break"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_550)
+        let snapshot = makeSnapshot(
+            now: now,
+            appName: "Instagram",
+            windowTitle: "Reels",
+            bundleIdentifier: "com.burbn.instagram"
+        )
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-90)
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: snapshot.contextKey,
+            stableSince: now.addingTimeInterval(-90),
+            lastAssessment: nil,
+            consecutiveDistractedCount: 0,
+            nextEvaluationAt: nil
+        )
+        let cacheKey = CachedDecision.cacheKey(
+            activeProfileID: PolicyRule.defaultProfileID,
+            pipelineProfileID: "title_only_default",
+            promptVersion: algorithm.descriptor.version,
+            contextKey: snapshot.contextKey
+        )
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-tolerated",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: snapshot
+            )
+        )
+
+        let expectedFollowUp = MonitoringCadenceMode.balanced.adjustedDelay(
+            MonitoringCadenceMode.balanced.toleratedFollowUp,
+            isDefaultProfile: true
+        )
+        #expect(result.policy.action == .none)
+        #expect(result.policy.record.blockReason == "tolerated_assessment")
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .tolerated)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount == 0)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(expectedFollowUp))
+        #expect(result.updatedAlgorithmState.llmPolicy.decisionCacheByContext[cacheKey] == nil)
+        #expect(result.updatedAlgorithmState.llmPolicy.focusedObservations.isEmpty)
+        #expect(result.updatedAlgorithmState.llmPolicy.focusSignal.lastFocusedBlockStartedAt == nil)
+        #expect(FocusSegmentAssessment(distractionAssessment: .tolerated) == .unclear)
+    }
+
+    @Test
+    func toleratedRecheckSecondsIsClampedToFocusedUpperBound() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        // 600s exceeds the everyday focused follow-up (450s) → must clamp down to that ceiling.
+        outputs.decision = """
+        {"assessment":"tolerated","suggested_action":"none","recheck_seconds":600,"reason_tags":["user_allowance"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let algorithm = makeAlgorithm()
+        let now = Date(timeIntervalSince1970: 7_550)
+        let snapshot = makeSnapshot(
+            now: now,
+            appName: "Instagram",
+            windowTitle: "Reels",
+            bundleIdentifier: "com.burbn.instagram"
+        )
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.currentContextKey = snapshot.contextKey
+        state.llmPolicy.currentContextEnteredAt = now.addingTimeInterval(-90)
+        state.llmPolicy.distraction = DistractionMetadata(
+            contextKey: snapshot.contextKey,
+            stableSince: now.addingTimeInterval(-90),
+            lastAssessment: nil,
+            consecutiveDistractedCount: 0,
+            nextEvaluationAt: nil
+        )
+
+        let result = await algorithm.evaluate(
+            input: makeDecisionInput(
+                now: now,
+                evaluationID: "eval-tolerated-clamp",
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                snapshot: snapshot
+            )
+        )
+
+        let upperBound = MonitoringCadenceMode.balanced.adjustedDelay(
+            MonitoringCadenceMode.balanced.focusedFollowUp,
+            isDefaultProfile: true
+        )
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .tolerated)
+        #expect(result.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(upperBound))
+    }
+
+    @Test
     func everydayFirstOverlaySuggestionStillRequiresStrongerEvidence() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.decision = """
@@ -246,6 +348,8 @@ struct LLMMonitorAlgorithmTests {
         })
         #expect(decisionAttempt.payloadJSON.contains(#""scope":"today_app_total""#))
         #expect(decisionAttempt.payloadJSON.contains(#""currentContextSeconds":300"#))
+        #expect(decisionAttempt.payloadJSON.contains(#""cadenceMode":"balanced""#))
+        #expect(decisionAttempt.payloadJSON.contains(#""toleratedWindowSeconds":225"#))
     }
 
     @Test
@@ -297,6 +401,8 @@ struct LLMMonitorAlgorithmTests {
         let payload = decisionAttempt.payloadJSON
         #expect(payload.contains(#""goalSummary":"coding with browsing"#))
         #expect(payload.contains(#""recentActivityTimeline""#))
+        #expect(payload.contains(#""durationSeconds":10"#))
+        #expect(payload.contains(#""durationSeconds":5"#))
         #expect(!payload.contains(#""recentSwitches""#))
         #expect(payload.contains(#""matchingRuleSummary""#))
         #expect(payload.contains(#""decisionFrame""#))
@@ -327,6 +433,8 @@ struct LLMMonitorAlgorithmTests {
             recentActivityTimeline: [],
             usage: [],
             currentContextSeconds: 42,
+            cadenceMode: MonitoringCadenceMode.balanced.rawValue,
+            toleratedWindowSeconds: MonitoringCadenceMode.balanced.toleratedFollowUp,
             recentInterventions: MonitoringPromptInterventionSummary(
                 recentNudges: [],
                 lastActionKind: nil,
@@ -542,34 +650,36 @@ struct LLMMonitorAlgorithmTests {
     }
 
     @Test
-    func plainLanguageAllowForNowOverridesOlderMemoryBlock() async throws {
-        let runtimeFixture = try FakeRuntimeFixture()
+    func conditionalProseAllowanceDefersToModelInsteadOfPermanentOverride() async throws {
+        // "short time on X is okay" is a conditional preference, not a permanent allow. It must
+        // not short-circuit to a focused override; the model decides (here: tolerated).
+        var outputs = FakeRuntimeOutputSet()
+        outputs.decision = """
+        {"assessment":"tolerated","suggested_action":"none","recheck_seconds":180,"reason_tags":["short_break"]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
         let algorithm = makeAlgorithm()
         let now = try #require(makeLocalPromptDate("2026-04-25 14:15"))
 
         let result = await algorithm.evaluate(
             input: makeDecisionInput(
                 now: now,
-                evaluationID: "eval-allow-for-now",
+                evaluationID: "eval-conditional-allow",
                 runtimeOverride: runtimeFixture.runtimePath,
                 snapshot: makeSnapshot(
                     now: now,
-                    windowTitle: "Instagram"
+                    windowTitle: "Home / X"
                 ),
-                memory: """
-                [2026-04-25 12:00] do not allow instagram
-                """,
                 recentUserMessages: [
-                    "[2026-04-25 14:10] allow instagram for now",
+                    "[2026-04-25 14:10] short time on X is okay",
                 ]
             )
         )
 
-        #expect(result.policy.action == .none)
-        #expect(result.decision.assessment == .focused)
-        #expect(result.decision.reasonTags == ["recent_allow_override"])
-        #expect(result.policy.record.blockReason == "recent_allow_override")
-        #expect(result.evaluation.attempts.isEmpty)
+        #expect(result.decision.reasonTags != ["recent_allow_override"])
+        #expect(result.policy.record.blockReason != "recent_allow_override")
+        #expect(result.evaluation.attempts.isEmpty == false)
+        #expect(result.decision.assessment == .tolerated)
     }
 
     @Test
@@ -1158,6 +1268,8 @@ struct LLMMonitorAlgorithmTests {
 
         _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
 
+        // A user-created allow rule must deterministically skip the LLM, same as a system
+        // safelist rule — explicit user intent should never cost a model call.
         let allowRule = PolicyRule(
             kind: .allow,
             summary: "Always allow Docs for this work block.",
@@ -1182,6 +1294,50 @@ struct LLMMonitorAlgorithmTests {
         #expect(state.llmPolicy.distraction.lastAssessment == .focused)
         #expect(state.llmPolicy.distraction.nextEvaluationAt == nil)
         #expect(state.llmPolicy.focusSignal.lastFocusedBlockStartedAt == start.addingTimeInterval(30))
+    }
+
+    @Test
+    func tolerateRuleDoesNotDeterministicallySkipAndSurfacesToModel() {
+        let algorithm = makeAlgorithm()
+        let context = FrontmostContext(
+            bundleIdentifier: "com.burbn.instagram",
+            appName: "Instagram",
+            windowTitle: "Reels"
+        )
+        let start = Date(timeIntervalSince1970: 7_920)
+        var state = AlgorithmStateEnvelope()
+        _ = algorithm.noteContext(context.contextKey, at: start, state: &state)
+
+        // A `tolerate` rule is a soft preference, not a permanent allow: it must NOT short-circuit
+        // the LLM, so the model can return `tolerated` and escalate if the detour drags on.
+        let tolerateRule = PolicyRule(
+            kind: .tolerate,
+            summary: "Short check-ins on Instagram are okay.",
+            source: .userChat,
+            priority: 80,
+            scope: PolicyRuleScope(appName: "Instagram"),
+            profileID: PolicyRule.defaultProfileID
+        )
+        let policyMemory = PolicyMemory(rules: [tolerateRule], tonePreference: nil, lastUpdatedAt: start)
+
+        let plan = algorithm.evaluationPlan(
+            state: &state,
+            context: context,
+            heuristics: makeHeuristics(),
+            policyMemory: policyMemory,
+            configuration: MonitoringConfiguration(),
+            activeProfileID: PolicyRule.defaultProfileID,
+            now: start.addingTimeInterval(30)
+        )
+
+        // No deterministic focused skip: that path is reserved for `allow` rules and would set
+        // reason "explicit_allow_rule" and stamp lastAssessment = .focused.
+        #expect(plan.reason != "explicit_allow_rule")
+        #expect(state.llmPolicy.distraction.lastAssessment == nil)
+
+        // The tolerate rule is active and matches the context, so it reaches the model as context.
+        let matching = policyMemory.activeRules(at: start.addingTimeInterval(30), matching: context)
+        #expect(matching.contains { $0.kind == .tolerate })
     }
 
     @Test
@@ -1372,7 +1528,11 @@ struct LLMMonitorAlgorithmTests {
         #expect(result?.updatedAlgorithmState.llmPolicy.currentContextKey == "com.google.Chrome|docs")
         #expect(result?.updatedAlgorithmState.llmPolicy.distraction.contextKey == "com.google.Chrome|docs")
         #expect(result?.updatedAlgorithmState.llmPolicy.distraction.lastAssessment == .focused)
-        #expect(result?.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(45))
+        let expectedAppealFollowUp = MonitoringCadenceMode.balanced.adjustedDelay(
+            MonitoringCadenceMode.balanced.focusedFollowUp,
+            isDefaultProfile: true
+        )
+        #expect(result?.updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt == now.addingTimeInterval(expectedAppealFollowUp))
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.count == 1)
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.appName == "Google Chrome")
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.contextKey == nil)

@@ -585,6 +585,7 @@ extension AppController {
         let kind: String
         switch rule.kind {
         case .allow: kind = "allowed"
+        case .tolerate: kind = "tolerated"
         case .disallow: kind = "blocked"
         case .discourage: kind = "discouraged"
         case .limit: kind = "limited"
@@ -1146,6 +1147,8 @@ extension AppController {
         switch intent?.cleanedSingleLine.lowercased() {
         case "allow", "safelist", "safe", "ok", "okay":
             return (.allow, "Allow")
+        case "tolerate", "briefly", "sometimes":
+            return (.tolerate, "Tolerate")
         case "block", "disallow", "badlist", "deny":
             return (.disallow, "Block")
         case "discourage", "nudge":

@@ -22,6 +22,11 @@ struct ProfilesTab: View {
     @State private var showingDeleteConfirm = false
     @State private var newRuleKind: PolicyRuleKind = .allow
     @State private var newRuleItem = ""
+    // Set when the user picks a target, so the rule carries a precise scope (bundle id or
+    // window title) and matches deterministically. Cleared when they edit the text by hand.
+    @State private var newRuleScope: PolicyRuleScope?
+    // The field text at the moment of picking, so a manual edit (not the pick itself) clears scope.
+    @State private var pickedText: String?
     @State private var scheduleHourDraft: Int = 9
     @State private var scheduleMinuteDraft: Int = 0
     @State private var scheduleEveryDay: Bool = true
@@ -84,13 +89,53 @@ struct ProfilesTab: View {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    private var runningAppNames: [String] {
+    // A pickable target carries a precise scope so the rule matches deterministically.
+    // Window entries scope by title (essential for browsers — a bare "Google Chrome" rule
+    // would match every tab); app entries scope by bundle identifier.
+    private struct RuleTarget: Identifiable, Hashable {
+        var id: String { display }
+        var display: String
+        var summary: String
+        var scope: PolicyRuleScope
+    }
+
+    /// Recent windows the user actually visited, newest first, title-scoped. Source is AC's own
+    /// switch history (`recentSwitches`) — no window enumeration, so no extra permissions.
+    private var recentWindowTargets: [RuleTarget] {
+        var seen = Set<String>()
+        var targets: [RuleTarget] = []
+        for record in controller.state.recentSwitches {
+            guard let rawTitle = record.toWindowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawTitle.isEmpty else { continue }
+            let app = record.toAppName
+            let title = String(rawTitle.prefix(60))
+            let key = (app + "|" + title).lowercased()
+            guard seen.insert(key).inserted else { continue }
+            targets.append(RuleTarget(
+                display: "\(app) · \(title)",
+                summary: "\(app) — \(title)",
+                scope: PolicyRuleScope(appName: app, titleContains: [title])
+            ))
+            if targets.count >= 6 { break }
+        }
+        return targets
+    }
+
+    /// Whole-app targets from running apps, bundle-scoped.
+    private var runningAppTargets: [RuleTarget] {
         var seen = Set<String>()
         return NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular }
-            .compactMap { $0.localizedName }
-            .filter { seen.insert($0.lowercased()).inserted }
-            .sorted()
+            .compactMap { app -> RuleTarget? in
+                guard let name = app.localizedName else { return nil }
+                return RuleTarget(
+                    display: name,
+                    summary: name,
+                    scope: PolicyRuleScope(bundleIdentifier: app.bundleIdentifier, appName: name)
+                )
+            }
+            .filter { seen.insert($0.display.lowercased()).inserted }
+            .sorted { $0.display < $1.display }
     }
 
     var body: some View {
@@ -677,11 +722,14 @@ struct ProfilesTab: View {
     }
 
     private var addRuleRow: some View {
-        // Single contained form: [kind ▾] | [text field] [pick app ▾] | [add]
+        VStack(alignment: .leading, spacing: 7) {
+            // SHOW the pickable targets up front so picking — not typing — is the obvious path.
+            ruleTargetChips
+
         HStack(spacing: 0) {
             // Kind dropdown — leftmost, sets the rule type
             Menu {
-                ForEach([PolicyRuleKind.allow, .disallow, .discourage], id: \.self) { kind in
+                ForEach([PolicyRuleKind.allow, .tolerate, .disallow, .discourage], id: \.self) { kind in
                     Button {
                         withAnimation(.acSnap) { newRuleKind = kind }
                     } label: {
@@ -706,30 +754,17 @@ struct ProfilesTab: View {
 
             Rectangle().fill(Color.acHairline).frame(width: 1).padding(.vertical, 7)
 
-            // Text field — picks up focus, also filled by app picker
-            TextField("app, site, or window title…", text: $newRuleItem)
+            // Text field — secondary path. Editing by hand drops any precise picked scope so we
+            // don't attach a stale bundle id / title to freshly typed text.
+            TextField("or type an app, site, or window title…", text: $newRuleItem)
                 .textFieldStyle(.plain)
                 .font(.ac(11))
                 .padding(.leading, 9)
                 .padding(.vertical, 8)
-                .onSubmit { submitRule() }
-
-            // App picker — fills the field, does NOT add immediately
-            if !runningAppNames.isEmpty {
-                Menu {
-                    ForEach(runningAppNames, id: \.self) { app in
-                        Button(app) { newRuleItem = app }
-                    }
-                } label: {
-                    Image(systemName: "list.bullet")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.secondary.opacity(0.38))
-                        .frame(width: 30, height: 30)
+                .onChange(of: newRuleItem) { _, newValue in
+                    if newValue != pickedText { newRuleScope = nil; pickedText = nil }
                 }
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .help("Pick from running apps")
-            }
+                .onSubmit { submitRule() }
 
             Rectangle().fill(Color.acHairline).frame(width: 1).padding(.vertical, 7)
 
@@ -750,6 +785,50 @@ struct ProfilesTab: View {
                 .overlay(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(Color.acHairline, lineWidth: 1))
         )
         .clipShape(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private var ruleTargetChips: some View {
+        let recents = recentWindowTargets
+        let apps = runningAppTargets
+        if !recents.isEmpty || !apps.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(recents) { ruleTargetChip($0, isWindow: true) }
+                    ForEach(apps.prefix(8).map { $0 }) { ruleTargetChip($0, isWindow: false) }
+                }
+                .padding(.bottom, 1)
+            }
+        }
+    }
+
+    private func ruleTargetChip(_ target: RuleTarget, isWindow: Bool) -> some View {
+        let isSelected = pickedText == target.summary
+        return Button { stage(target) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isWindow ? "macwindow" : "app.dashed")
+                    .font(.system(size: 8, weight: .semibold))
+                Text(target.display)
+                    .font(.ac(10, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? accent : Color.acTextPrimary.opacity(0.7))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(isSelected ? accent.opacity(0.14) : Color.acSurface)
+                    .overlay(Capsule().stroke(isSelected ? accent.opacity(0.5) : Color.acHairline, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
+        .help(isWindow ? "Match this specific window/site" : "Match the whole app")
+    }
+
+    private func stage(_ target: RuleTarget) {
+        newRuleItem = target.summary
+        newRuleScope = target.scope
+        pickedText = target.summary
     }
 
     // MARK: - Rule helpers
@@ -763,6 +842,7 @@ struct ProfilesTab: View {
     private func ruleKindLabel(_ kind: PolicyRuleKind) -> String {
         switch kind {
         case .allow:          return "allow"
+        case .tolerate:       return "tolerate"
         case .disallow:       return "block"
         case .discourage:     return "limit"
         case .limit:          return "cap"
@@ -773,6 +853,7 @@ struct ProfilesTab: View {
     private func ruleKindColor(_ kind: PolicyRuleKind) -> Color {
         switch kind {
         case .allow:          return Color(red: 0.28, green: 0.72, blue: 0.49)
+        case .tolerate:       return Color(red: 0.40, green: 0.70, blue: 0.66)
         case .disallow:       return Color(red: 0.86, green: 0.36, blue: 0.36)
         case .discourage:     return Color(red: 0.92, green: 0.62, blue: 0.25)
         case .limit:          return Color(red: 0.46, green: 0.62, blue: 0.88)
@@ -788,7 +869,18 @@ struct ProfilesTab: View {
                 && ($0.profileID == nil || $0.profileID == resolvedEditingID)
         }
         guard !exists else { return }
-        controller.addUserRule(trimmed, kind: newRuleKind, appName: trimmed, profileID: resolvedEditingID)
+        // Prefer the picked scope; otherwise try to resolve typed text to a running app so even
+        // hand-typed entries pick up a precise bundleIdentifier when one obviously matches.
+        let resolvedScope = newRuleScope ?? runningAppTargets
+            .first { $0.display.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }?
+            .scope
+        controller.addUserRule(
+            trimmed,
+            kind: newRuleKind,
+            appName: trimmed,
+            scope: resolvedScope,
+            profileID: resolvedEditingID
+        )
     }
 
     private func submitRule() {
@@ -796,6 +888,8 @@ struct ProfilesTab: View {
         guard !trimmed.isEmpty else { return }
         addRule(trimmed)
         newRuleItem = ""
+        newRuleScope = nil
+        pickedText = nil
     }
 
     // MARK: - Drafts

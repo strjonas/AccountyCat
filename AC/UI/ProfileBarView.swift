@@ -44,9 +44,11 @@ struct ProfileBarView: View {
                     .font(.system(size: 9.5, weight: .bold, design: .rounded))
                     .tracking(0.08)
                     .foregroundStyle(Color.acTextPrimary.opacity(0.42))
-                Text("no focus active")
-                    .font(.ac(12, weight: .semibold))
+                Text("watching gently · start a focus to go strict")
+                    .font(.ac(11, weight: .semibold))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.76))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
 
             Spacer()
@@ -80,7 +82,9 @@ struct ProfileBarView: View {
                         .stroke(active.swiftUIColor.opacity(0.22), lineWidth: 2.5)
                     Circle()
                         .trim(from: 0, to: 1 - elapsedFraction)
-                        .stroke(active.swiftUIColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .stroke(
+                            active.swiftUIColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                        )
                         .rotationEffect(.degrees(-90))
                     Text(active.emoji)
                         .font(.system(size: 10))
@@ -142,12 +146,13 @@ struct ProfileBarView: View {
             Rectangle().fill(Color.acSurface.opacity(0.74))
             LinearGradient(
                 colors: [
-                    Color(nsColor: NSColor(name: nil) { appearance in
-                        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                            ? NSColor(white: 1.0, alpha: 0.06)
-                            : NSColor(white: 1.0, alpha: 0.20)
-                    }),
-                    Color.clear
+                    Color(
+                        nsColor: NSColor(name: nil) { appearance in
+                            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                                ? NSColor(white: 1.0, alpha: 0.06)
+                                : NSColor(white: 1.0, alpha: 0.20)
+                        }),
+                    Color.clear,
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -166,12 +171,13 @@ struct ProfileBarView: View {
             Rectangle().fill(active.swiftUIColor.opacity(0.08))
             LinearGradient(
                 colors: [
-                    Color(nsColor: NSColor(name: nil) { appearance in
-                        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                            ? NSColor(white: 1.0, alpha: 0.08)
-                            : NSColor(white: 1.0, alpha: 0.24)
-                    }),
-                    active.swiftUIColor.opacity(0.04)
+                    Color(
+                        nsColor: NSColor(name: nil) { appearance in
+                            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                                ? NSColor(white: 1.0, alpha: 0.08)
+                                : NSColor(white: 1.0, alpha: 0.24)
+                        }),
+                    active.swiftUIColor.opacity(0.04),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -189,7 +195,8 @@ struct ProfileBarView: View {
 
     private var elapsedFraction: CGFloat {
         guard let activatedAt = active.activatedAt,
-              let expiresAt = active.expiresAt else { return 0 }
+            let expiresAt = active.expiresAt
+        else { return 0 }
         let total = expiresAt.timeIntervalSince(activatedAt)
         let elapsed = nowTick.timeIntervalSince(activatedAt)
         guard total > 0 else { return 0 }
@@ -221,7 +228,9 @@ private struct ProfileBarCTAButton: ButtonStyle {
             .background(
                 Capsule(style: .continuous)
                     .fill(accent.opacity(configuration.isPressed ? 0.76 : 0.92))
-                    .overlay(Capsule(style: .continuous).stroke(Color.acBubbleStroke, lineWidth: 0.5))
+                    .overlay(
+                        Capsule(style: .continuous).stroke(Color.acBubbleStroke, lineWidth: 0.5)
+                    )
                     .shadow(color: accent.opacity(0.22), radius: 7, y: 2)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
@@ -247,18 +256,19 @@ private struct ProfileBarQuietButton: ButtonStyle {
 
 // MARK: - Profile color helper
 
-private extension FocusProfile {
-    var swiftUIColor: Color {
+extension FocusProfile {
+    fileprivate var swiftUIColor: Color {
         Color(hexString: color) ?? Color.acProfileEveryday
     }
 }
 
-private extension Color {
-    init?(hexString: String) {
+extension Color {
+    fileprivate init?(hexString: String) {
         let trimmed = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
         let hex = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
         guard hex.count == 6,
-              let value = UInt(hex, radix: 16) else { return nil }
+            let value = UInt(hex, radix: 16)
+        else { return nil }
         self.init(
             red: Double((value >> 16) & 0xFF) / 255.0,
             green: Double((value >> 8) & 0xFF) / 255.0,

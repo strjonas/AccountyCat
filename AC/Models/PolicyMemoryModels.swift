@@ -7,6 +7,7 @@ import Foundation
 
 nonisolated enum PolicyRuleKind: String, Codable, CaseIterable, Sendable {
     case allow
+    case tolerate
     case discourage
     case disallow
     case limit

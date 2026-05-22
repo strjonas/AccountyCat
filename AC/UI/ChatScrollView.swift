@@ -259,6 +259,17 @@ private struct NudgeCard: View {
                     Spacer()
                 }
 
+                HStack {
+                    Spacer()
+                    Button {
+                        controller.composerDraft = "Wrong nudge — "
+                    } label: {
+                        Text("wrong call? →")
+                            .font(.ac(10, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.38))
+                    }
+                    .buttonStyle(.plain)
+                }
 
             }
             .padding(.horizontal, 12)
@@ -346,7 +357,7 @@ private struct EmptyV2ChatState: View {
                 .frame(width: 34, height: 34)
 
                 Text(
-                    "Hey — I'm AC. I look over your shoulder and gently nudge you when you drift. Tell me what you're focusing on, what you want to avoid, or just say hi."
+                    "Hey — I'm AC. I look over your shoulder and gently nudge you when you drift. Tell me what you're focusing on or what you want to avoid — and if I ever get it wrong, just say so and I'll remember."
                 )
                 .font(.ac(13))
                 .lineSpacing(2)

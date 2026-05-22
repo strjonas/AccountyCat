@@ -71,7 +71,7 @@ struct DistractionLadder: Sendable {
     /// - Repeated → escalating follow-up delays, eventual overlayEligible
     mutating func record(assessment: ModelAssessment, at now: Date) -> DistractionSignal {
         switch assessment {
-        case .focused, .unclear:
+        case .focused, .tolerated, .unclear:
             metadata.lastAssessment = assessment
             metadata.consecutiveDistractedCount = 0
             metadata.nextEvaluationAt = nil

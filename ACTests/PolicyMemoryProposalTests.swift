@@ -412,6 +412,38 @@ struct PolicyMemoryProposalTests {
 struct PolicyMemoryProposalControllerTests {
 
     @Test
+    func addUserRuleWithExplicitScopePersistsBundleAndMatchesContext() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        defer { controller.state = originalState }
+
+        var state = ACState()
+        state.activeProfileID = PolicyRule.defaultProfileID
+        controller.state = state
+
+        // The window picker supplies a precise scope carrying the real bundle identifier.
+        controller.addUserRule(
+            "Instagram",
+            kind: .tolerate,
+            appName: "Instagram",
+            scope: PolicyRuleScope(bundleIdentifier: "com.burbn.instagram", appName: "Instagram"),
+            profileID: PolicyRule.defaultProfileID
+        )
+
+        let rule = try? #require(controller.state.policyMemory.rules.first { $0.kind == .tolerate })
+        #expect(rule?.scope.bundleIdentifier == "com.burbn.instagram")
+        #expect(rule?.scope.appName == "Instagram")
+
+        let context = FrontmostContext(
+            bundleIdentifier: "com.burbn.instagram",
+            appName: "Instagram",
+            windowTitle: "Reels"
+        )
+        let matching = controller.state.policyMemory.activeRules(at: Date(), matching: context)
+        #expect(matching.contains { $0.kind == .tolerate })
+    }
+
+    @Test
     func acceptedOverlayAppealLearnsAndClosesWithoutBackToWorkAction() async throws {
         var outputs = FakeRuntimeOutputSet()
         outputs.appealReview = """

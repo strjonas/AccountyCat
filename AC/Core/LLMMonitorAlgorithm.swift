@@ -38,7 +38,7 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
 final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     let descriptor = MonitoringAlgorithmDescriptor(
         id: MonitoringConfiguration.currentLLMMonitorAlgorithmID,
-        version: "1.0",
+        version: "1.1",
         displayName: "LLM Monitor",
         summary: "Current staged LLM monitor with structured policy memory, perception, decisions, and typed appeals."
     )
@@ -467,7 +467,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
         let compactSwitches = compactRecentSwitches(
             input.snapshot.recentSwitches,
-            limit: MonitoringPromptContextBudget.decisionSwitchCount
+            limit: MonitoringPromptContextBudget.decisionSwitchCount,
+            now: input.now
         )
         let compactUsage = compactUsage(
             input.snapshot.perAppDurations,
@@ -476,6 +477,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         let currentContextSeconds = input.algorithmState.llmPolicy.currentContextEnteredAt.map {
             max(0, input.now.timeIntervalSince($0))
         }
+        let toleratedWindowSeconds = cadence.adjustedDelay(
+            cadence.toleratedFollowUp,
+            isDefaultProfile: isDefaultProfile
+        )
         let compactInterventions = compactInterventionSummary(relevantActions)
         let currentDecisionCacheKey = input.algorithmState.llmPolicy.currentContextKey.map {
             decisionCacheKey(
@@ -645,6 +650,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     recentActivityTimeline: compactSwitches,
                     usage: compactUsage,
                     currentContextSeconds: currentContextSeconds,
+                    cadenceMode: cadence.rawValue,
+                    toleratedWindowSeconds: toleratedWindowSeconds,
                     recentInterventions: compactInterventions,
                     distraction: MonitoringPromptDistractionSummary(
                         state: input.algorithmState.llmPolicy.distraction.telemetryState
@@ -743,6 +750,23 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             policyState.activeAppeal = nil
             action = .none
             blockReason = nil
+
+        case .tolerated:
+            distraction.lastAssessment = .tolerated
+            distraction.consecutiveDistractedCount = 0
+            // The model proposes how long this detour is reasonably fine; clamp it between the
+            // tolerated baseline (never nag faster) and the focused follow-up (never go silent as
+            // long as genuine focus) so a bad value can't make AC brittle in either direction.
+            let toleratedUpperBound = cadence.adjustedDelay(
+                cadence.focusedFollowUp,
+                isDefaultProfile: isDefaultProfile
+            )
+            let proposedRecheck = decision.recheckSeconds.map { TimeInterval($0) } ?? toleratedWindowSeconds
+            let toleratedRecheck = min(max(proposedRecheck, toleratedWindowSeconds), toleratedUpperBound)
+            distraction.nextEvaluationAt = input.now.addingTimeInterval(toleratedRecheck)
+            policyState.activeAppeal = nil
+            action = .none
+            blockReason = "tolerated_assessment"
 
         case .unclear:
             distraction.lastAssessment = .unclear
@@ -878,15 +902,15 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         )
 
         // Per-context volatile verdict cache. Focused and unclear verdicts help reduce repeated
-        // calls without interrupting the user. Distracted verdicts are deliberately not cached:
-        // every user-visible nudge should be backed by fresh evidence and fresh copy.
+        // calls without interrupting the user. Distracted and tolerated verdicts are deliberately
+        // not cached: nudges need fresh evidence, and tolerated detours need short fresh rechecks.
         if let contextKey = policyState.currentContextKey,
            let cacheStorageKey = currentDecisionCacheKey {
             if decision.assessment != .unclear {
                 visionBackedUnclearCount = 0
                 clarificationAskedAt = nil
             }
-            if decision.assessment == .distracted {
+            if decision.assessment == .distracted || decision.assessment == .tolerated {
                 policyState.decisionCacheByContext.removeValue(forKey: cacheStorageKey)
             } else {
                 policyState.decisionCacheByContext[cacheStorageKey] = CachedDecision(
@@ -1008,7 +1032,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     policyState.focusedObservations[observationContext.fingerprint] = stat
                 }
 
-            case .unclear:
+            case .tolerated, .unclear:
                 if var stat = policyState.focusedObservations[observationContext.fingerprint] {
                     stat.lastSeenAt = input.now
                     policyState.focusedObservations[observationContext.fingerprint] = stat
@@ -1391,7 +1415,12 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             updatedAlgorithmState.llmPolicy.distraction.contextKey = approvedContextKey
             updatedAlgorithmState.llmPolicy.distraction.lastAssessment = .focused
             updatedAlgorithmState.llmPolicy.distraction.consecutiveDistractedCount = 0
-            updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(45)
+            updatedAlgorithmState.llmPolicy.distraction.nextEvaluationAt = input.now.addingTimeInterval(
+                input.configuration.cadenceMode.adjustedDelay(
+                    input.configuration.cadenceMode.focusedFollowUp,
+                    isDefaultProfile: input.activeProfileID == PolicyRule.defaultProfileID
+                )
+            )
             updatedAlgorithmState.llmPolicy.focusSignal.record(
                 assessment: .focused,
                 confidence: 1.0,
@@ -1496,6 +1525,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         runtimeProfile: MonitoringRuntimeProfile,
         attempts: inout [LLMEvaluationAttempt]
     ) async -> MonitoringDecisionEnvelope? {
+        let isDefaultProfile = input.activeProfileID == PolicyRule.defaultProfileID
+        let cadence = input.configuration.cadenceMode
         let payload = MonitoringOnlineDecisionPromptPayload(
             activeProfile: requestScope.activeProfile,
             matchingRuleSummary: requestScope.matchingRuleSummary,
@@ -1511,6 +1542,11 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             currentContextSeconds: input.algorithmState.llmPolicy.currentContextEnteredAt.map {
                 max(0, input.now.timeIntervalSince($0))
             },
+            cadenceMode: cadence.rawValue,
+            toleratedWindowSeconds: cadence.adjustedDelay(
+                cadence.toleratedFollowUp,
+                isDefaultProfile: isDefaultProfile
+            ),
             recentInterventions: compactInterventions,
             distraction: MonitoringPromptDistractionSummary(
                 state: input.algorithmState.llmPolicy.distraction.telemetryState
@@ -1878,14 +1914,19 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     private func compactRecentSwitches(
         _ records: [AppSwitchRecord],
-        limit: Int
+        limit: Int,
+        now: Date
     ) -> [MonitoringPromptSwitchRecord] {
-        records.prefix(limit).map {
-            MonitoringPromptSwitchRecord(
-                fromAppName: $0.fromAppName?.truncatedForPrompt(maxLength: 60),
-                toAppName: $0.toAppName.truncatedForPrompt(maxLength: 60),
-                toWindowTitle: $0.toWindowTitle?.truncatedForPrompt(maxLength: 140),
-                timestamp: $0.timestamp
+        let limited = Array(records.prefix(limit))
+        return limited.enumerated().map { index, record in
+            let endTimestamp = index == 0 ? now : limited[index - 1].timestamp
+            let duration = max(0, endTimestamp.timeIntervalSince(record.timestamp))
+            return MonitoringPromptSwitchRecord(
+                fromAppName: record.fromAppName?.truncatedForPrompt(maxLength: 60),
+                toAppName: record.toAppName.truncatedForPrompt(maxLength: 60),
+                toWindowTitle: record.toWindowTitle?.truncatedForPrompt(maxLength: 140),
+                timestamp: record.timestamp,
+                durationSeconds: duration
             )
         }
     }
@@ -2085,20 +2126,35 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             overlayBody: nil,
             overlayPrompt: nil,
             submitButtonTitle: nil,
-            secondaryButtonTitle: nil
+            secondaryButtonTitle: nil,
+            recheckSeconds: decision.recheckSeconds
         )
     }
 }
 
 private extension MonitoringDecisionEnvelope {
     var asLLMDecision: LLMDecision {
-        LLMDecision(
+        let normalizedSuggestedAction: ModelSuggestedAction
+        switch assessment {
+        case .focused, .tolerated:
+            normalizedSuggestedAction = .none
+        case .unclear:
+            normalizedSuggestedAction = .abstain
+        case .distracted:
+            if suggestedAction == .overlay || suggestedAction == .nudge {
+                normalizedSuggestedAction = suggestedAction
+            } else {
+                normalizedSuggestedAction = nudge?.cleanedSingleLine.isEmpty == false ? .nudge : .abstain
+            }
+        }
+        return LLMDecision(
             assessment: assessment,
-            suggestedAction: suggestedAction,
+            suggestedAction: normalizedSuggestedAction,
             confidence: confidence,
             reasonTags: reasonTags,
             nudge: nudge?.cleanedSingleLine,
-            abstainReason: abstainReason?.cleanedSingleLine
+            abstainReason: abstainReason?.cleanedSingleLine,
+            recheckSeconds: recheckSeconds
         )
     }
 

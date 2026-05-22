@@ -85,7 +85,7 @@ struct ACRuntimeDefinition: Codable, Hashable, Identifiable, Sendable {
 
 enum ACPromptSets {
     private static let decisionSchema = """
-    {"assessment":"focused|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","abstain_reason":"optional","overlay_headline":"optional","overlay_body":"optional","overlay_prompt":"optional","submit_button_title":"optional","secondary_button_title":"optional"}
+    {"assessment":"focused|tolerated|distracted|unclear","suggested_action":"none|nudge|overlay|abstain","confidence":0.0,"reason_tags":["tag"],"nudge":"optional short nudge","recheck_seconds":0,"abstain_reason":"optional","overlay_headline":"optional","overlay_body":"optional","overlay_prompt":"optional","submit_button_title":"optional","secondary_button_title":"optional"}
     """
 
     /// Shared rule about how `matchingRuleSummary` interacts with current-session chat.
@@ -93,7 +93,7 @@ enum ACPromptSets {
     /// relaxes a rule for this exact activity wins. A future "accountability mode"
     /// may introduce non-negotiable rules; not implemented yet.
     private static let authoritativeRulesClause = """
-    Rules in `matchingRuleSummary` are the active structural rules for this profile/context. `disallow`/`discourage`/`limit` rules are strong evidence for `distracted` and `allow` rules are strong evidence for `focused` — but a clear, current-session user message about this exact activity outranks them. If the user statement is vague, the structural rule wins.
+    Rules in `matchingRuleSummary` are the active structural rules for this profile/context. `disallow`/`discourage`/`limit` rules are strong evidence for `distracted`. `allow` rules mean "do not intervene for this activity"; classify genuinely on-task work as `focused`, and allowed non-work or breaks as `tolerated`. A `tolerate` rule means this activity is acceptable in short doses but is not focused work: return `tolerated` (no nudge, short recheck) while it stays brief, and escalate to `distracted` once `currentContextSeconds`/`recentActivityTimeline` show it has clearly gone on too long with no further allowance. A clear, current-session user message about this exact activity outranks structural rules. If the user statement is vague, the structural rule wins.
     """
 
     /// Shared soft-signal clause for the `titleRelatesToDeclaredFocus` heuristic.
@@ -104,7 +104,8 @@ enum ACPromptSets {
 
     private static let usageSemanticsClause = """
     `usage` is all-day app-level usage (`scope=today_app_total`), not current tab/site/window time. For browsers, never infer "30 minutes on Reddit" from Chrome/Safari usage. Use `currentContextSeconds`, `recentActivityTimeline`, title/perception, and screenshot for current-session duration.
-    `recentActivityTimeline` is the short chronology of the user's last visible windows/apps. Prefer it over `usage` when they conflict.
+    `recentActivityTimeline` is the short chronology of the user's last visible windows/apps; each entry's `durationSeconds` is time spent in that visible window/app until the next switch. Prefer it over `usage` when they conflict.
+    `cadenceMode` and `toleratedWindowSeconds` show AC's baseline strictness for re-checking tolerated detours. Use them as rough timing context, not hard caps; clear user messages, memory, and rules can allow longer.
     """
 
     /// Mode-specific instruction block for everyday (default profile) operation.
@@ -115,6 +116,8 @@ enum ACPromptSets {
     private static let everydayModeBlock = """
     Mode: EVERYDAY (default profile, no focus session active).
     - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
+    - Use `tolerated` + `none` for acceptable non-work right now: short breaks, errands, life admin, casual messaging, or brief leisure. Do not call that `focused` unless it is genuinely productive work.
+    - Escalate tolerated non-work to `distracted` once it has clearly gone on too long for this cadence/memory/rules, or when the recent timeline shows repeated drift.
     - Only flag activity that has been clearly going on for a while AND conflicts with current-session user intent, memory, or a `disallow`/`discourage` rule listed in `matchingRuleSummary`.
     - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
     - In Everyday mode, judge what is active right now. Do not infer a current obligation from an expired profile or stale chat context.
@@ -133,6 +136,7 @@ enum ACPromptSets {
     - `activeProfile.goalSummary` is the current activation intent and outranks the static profile description for this run. If it mentions temporary lenience like browsing, ordering, errands, or admin being okay right now, treat that as a session allowance unless a newer matching restrictive rule says otherwise.
     - Specific profile descriptions and active rules narrow the scope. If the user says "code writing only", "no tutorials", "drafting only", or similar, enforce that stricter scope.
     - Research, reading, planning, drafting, and tooling that plausibly relate to the declared session topic count as `focused`. Don't flag those as distractions.
+    - Brief off-task detours can be `tolerated` + `none` when the user is composing a quick message, handling a tiny errand, or taking a clearly short break. Sustained or repeated off-task activity is `distracted`.
     - If `activeProfile.activatedAt` is recent (roughly the first 10 minutes), calibrate carefully: require strong evidence before nudging plausible adjacent work, but still nudge clear unrelated drift.
     - Productive work that doesn't fit the session scope can still be a distraction (e.g. coding during "Presentation prep").
     """
@@ -156,7 +160,8 @@ enum ACPromptSets {
     - If no recent message speaks to this exact activity, identify the expected lane from `activeProfile` + `matchingRuleSummary`.
     - Then use `freeFormMemory` as softer cross-mode background, then `calendarContext` as a tiebreaker.
     - Finally identify the actual current activity from app/title/timeline/perception/screenshot.
-    - If actual activity fits the expected lane, or matches an allowance the user just stated → `focused` + `none`.
+    - If actual activity is genuinely on-task productive work → `focused` + `none`.
+    - If actual activity is acceptable for now but not productive work, or it matches a temporary/non-work allowance the user stated → `tolerated` + `none`.
     - If actual activity clearly conflicts with the expected lane or an active restriction AND the user has not relaxed it in chat → `distracted`.
     - If the evidence is sparse, stale, generic, or ambiguous → `unclear` + `abstain`.
     - Do not infer distraction from a generic app/site shell alone. AI/chat/search start surfaces such as "Google Gemini", "ChatGPT", "Claude", "New Chat", or "New Tab" are ambiguous until the title, screenshot/perception, or visible conversation reveals the actual task.
@@ -166,14 +171,15 @@ enum ACPromptSets {
     - Trust the current screenshot/frontmost app, perception, and `recentActivityTimeline` more than stale `usage` or older intervention text when they conflict.
     - If the visible surface is a review/debugger/inspector/prompt-lab/meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
     - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
-    - When the screenshot is missing (`screenshotIncluded=false` or no vision perception), prefer `focused` or `unclear` unless the text context is clearly distracting.
+    - When the screenshot is missing (`screenshotIncluded=false` or no vision perception), prefer `focused`, `tolerated`, or `unclear` unless the text context is clearly distracting.
     - Prefer silence over a false positive.
     """
 
     private static let decisionOutputRules = """
     Output rules:
     - Return exactly one JSON object and omit every unused key.
-    - `assessment` and `suggested_action` must agree: focused→none, unclear→abstain, distracted→nudge|overlay.
+    - `assessment` and `suggested_action` must agree: focused→none, tolerated→none, unclear→abstain, distracted→nudge|overlay.
+    - For `tolerated` only, you may set `recheck_seconds` to how long this detour is reasonably fine before AC should glance again (a quick message ≈ 90-150; an explicit longer allowance like "15 min after lunch" ≈ 600). AC clamps it to a safe range, so estimate honestly and omit it when unsure. Omit it for all other assessments.
     - Always include `reason_tags`.
     - Include `confidence` only when uncertainty matters. Otherwise omit it.
     - If `nudge`: include `nudge`; keep it to one sentence under 18 words, specific to this activity, distinct from recent nudges.
@@ -222,11 +228,15 @@ enum ACPromptSets {
     /// right thing with ranked context, not merely parroting abstract policy text.
     private static let monitoringDecisionExamples = """
     Worked examples:
-    - Everyday after expiry: activeProfile.isDefault=true, recentUserMessages=[], current title="Sonnencreme Gesicht | dm" → {"assessment":"focused","suggested_action":"none","reason_tags":["everyday_mode","life_admin_allowed"]}
+    - Everyday after expiry: activeProfile.isDefault=true, recentUserMessages=[], current title="Sonnencreme Gesicht | dm" → {"assessment":"tolerated","suggested_action":"none","reason_tags":["everyday_mode","life_admin_allowed"]}
     - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
     - Generic coding profile: activeProfile.name="Coding", activeProfile.description missing, current title="README tutorial for macOS apps - YouTube" → {"assessment":"focused","suggested_action":"none","reason_tags":["broad_profile_archetype","adjacent_learning"]}
     - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
+    - Everyday short break: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=80, current title="Instagram Reels", recentActivityTimeline shows mostly work before this → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":180,"reason_tags":["short_break","within_everyday_tolerance"]}
+    - Everyday drift: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=620, current title="Instagram Reels", recentActivityTimeline shows social/video dominating, no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["leisure_over_tolerance","timeline_drift"],"nudge":"This has turned into a scroll; time to come back."}
+    - Explicit longer allowance: activeProfile.isDefault=true, newest user message="15 minutes of scrolling after lunch is fine", currentContextSeconds=520, current title="Instagram Reels" → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":600,"reason_tags":["user_allowance","break_allowed"]}
+    - Focus-session quick message: activeProfile.name="Coding", current title="WhatsApp", currentContextSeconds=90, visible activity is composing one personal reply → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":120,"reason_tags":["brief_detour","message_composing"]}
     - Everyday with a real rule: activeProfile.isDefault=true, matchingRuleSummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
     - Ambiguous case: app="Google Chrome", title="Tab", no visible body, previous verdict focused → {"assessment":"unclear","suggested_action":"abstain","reason_tags":["title_too_generic","needs_vision"]}
     """
@@ -277,6 +287,7 @@ enum ACPromptSets {
                 Rules:
                 - Name the likely task or content when the title supports it.
                 - Prefer concrete activity labels over generic app labels.
+                - `focus_guess` is a rough surface guess only; the final policy step handles tolerated allowances and timing.
                 - Research, reading, planning, messaging, and drafting can still be focused.
                 - If the title is weak, keep uncertainty inside `activity_summary`.
                 - `notes` may be omitted or empty.
@@ -301,6 +312,7 @@ enum ACPromptSets {
                 Rules:
                 - Name the likely task or content when visible.
                 - Distinguish typing or replying from passive scrolling when the screenshot supports it.
+                - `focus_guess` is a rough surface guess only; the final policy step handles tolerated allowances and timing.
                 - Research, reading, planning, messaging, and drafting can still be focused.
                 - Avoid personal names, private message text, email addresses, and raw URLs.
                 - `notes` may be omitted or empty.
@@ -438,6 +450,7 @@ enum ACPromptSets {
                 - User says "WhatsApp is okay for the next hour" → add_rule {kind:"allow", profileID: activeProfile.id, scope:"app", target:"WhatsApp", expiresAt: now+1h}
                 - User says "I'm taking a break" → add_rule {kind:"allow", profileID: activeProfile.id, scope:"any", expiresAt: now+30m}
                 - User says "you can let me watch YouTube" → add_rule {kind:"allow", profileID: activeProfile.id, scope:"app", target:"YouTube"}
+                - User states a standing soft preference for brief non-work — "short check-ins on X are fine", "quick social breaks are okay", "I glance at messages sometimes" → add_rule {kind:"tolerate", profileID: activeProfile.id, scope:"app", target:"X"}. Use `tolerate` (not `allow`) for "briefly okay / not a rabbit hole" preferences; it lets AC stay quiet for a short spell but re-check and step in if it becomes sustained. Reserve `allow` for genuine work or firm/time-boxed permission. `tolerate` rules are usually open-ended (no `expiresAt`).
                 Convert relative scopes ("today", "this evening", "for the next hour") into explicit `expiresAt` values relative to `now`.
                 Prefer updating existing rules over duplicating them. The user's most recent statement is authoritative — expire or update the old rule when it contradicts.
                 Do not copy assistant phrasing back into policy memory; use the user's intent.
@@ -808,7 +821,8 @@ enum ACPromptSets {
     You resolve one AccountyCat focus-policy action into minimal JSON.
     Return exactly one JSON object: {"action":{...}}.
     The action MUST have kind "focus_policy".
-    Supported intents: allow, disallow, discourage, limit, remove_allow, unsafelist.
+    Supported intents: allow, tolerate, disallow, discourage, limit, remove_allow, unsafelist.
+    Use `tolerate` for "briefly okay but not focused work" (short social check-ins, quick breaks); use `allow` only for genuine work or firm/time-boxed permission.
     Use focus_policy only for concrete local behavior AC can apply structurally.
     Use target {"type":"current_context"} when the user refers to the currently open app/window.
     Use target {"type":"app","value":"Name"} or {"type":"site","value":"domain"} for explicit named targets.

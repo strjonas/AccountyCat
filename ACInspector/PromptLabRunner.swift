@@ -7,6 +7,9 @@ import Foundation
 
 actor PromptLabRunner {
     private let runtime = PromptLabRuntime()
+    private static let defaultCadenceMode = "balanced"
+    private static let balancedToleratedFollowUp: TimeInterval = 150
+    private static let everydayDelayMultiplier: TimeInterval = 1.5
 
     nonisolated static var defaultRuntimePath: String {
         let preferred = TelemetryPaths.applicationSupportURL()
@@ -159,13 +162,17 @@ actor PromptLabRunner {
         let activeProfile = scenario.activeProfile ?? MonitoringActiveProfilePromptPayload()
         let compactSwitches = compactRecentSwitches(
             scenario.recentSwitches,
-            limit: MonitoringPromptContextBudget.decisionSwitchCount
+            limit: MonitoringPromptContextBudget.decisionSwitchCount,
+            now: scenario.timestamp
         )
         let compactUsage = compactUsage(
             scenario.usage,
             limit: MonitoringPromptContextBudget.decisionUsageCount
         )
         let compactInterventions = compactInterventionSummary(scenario.recentActions)
+        let currentContextSeconds = scenario.distraction.stableSince.map {
+            max(0, scenario.timestamp.timeIntervalSince($0))
+        }
 
         let titlePerception: MonitoringPerceptionEnvelope?
         if pipeline.usesTitlePerception {
@@ -243,6 +250,11 @@ actor PromptLabRunner {
                 windowTitle: compactWindowTitle,
                 recentActivityTimeline: compactSwitches,
                 usage: compactUsage,
+                currentContextSeconds: currentContextSeconds,
+                cadenceMode: Self.defaultCadenceMode,
+                toleratedWindowSeconds: activeProfile.isDefault
+                    ? Self.balancedToleratedFollowUp * Self.everydayDelayMultiplier
+                    : Self.balancedToleratedFollowUp,
                 recentInterventions: compactInterventions,
                 distraction: MonitoringPromptDistractionSummary(state: scenario.distraction.telemetryRecord),
                 titlePerception: titlePerception,
@@ -250,7 +262,7 @@ actor PromptLabRunner {
                 decisionFrame: MonitoringDecisionFramePromptPayload.make(
                     appName: compactAppName,
                     windowTitle: compactWindowTitle,
-                    currentContextSeconds: nil,
+                    currentContextSeconds: currentContextSeconds,
                     matchingRuleSummary: compactMatchingRuleSummary,
                     recentUserMessages: compactRecentUserMessages,
                     activeProfile: activeProfile
@@ -271,6 +283,16 @@ actor PromptLabRunner {
                 ) + " • salvaged_partial_json"
                 stageResults[lastIndex].errorMessage = nil
             }
+        }
+        if let normalizedDecision = decision.map(Self.normalizedDecisionEnvelope) {
+            decision = normalizedDecision
+            Self.updateLastDecisionStageSummary(
+                in: &stageResults,
+                decision: normalizedDecision,
+                suffix: stageResults.last?.parsedSummary.contains("salvaged_partial_json") == true
+                    ? " • salvaged_partial_json"
+                    : ""
+            )
         }
 
         var finalNudge = decision?.nudge?.cleanedSingleLine
@@ -525,7 +547,7 @@ actor PromptLabRunner {
                     nudge: dictionary["nudge"] as? String
                 )
 
-            let suggestedAction = ModelSuggestedAction(rawValue: suggestedActionRaw) ?? .abstain
+            let parsedSuggestedAction = ModelSuggestedAction(rawValue: suggestedActionRaw) ?? .abstain
             let confidence = dictionary["confidence"] as? Double
             let reasonTags =
                 (dictionary["reason_tags"] as? [String]) ??
@@ -535,6 +557,22 @@ actor PromptLabRunner {
             let abstainReason =
                 (dictionary["abstain_reason"] as? String) ??
                 (dictionary["abstainReason"] as? String)
+            let recheckSeconds =
+                (dictionary["recheck_seconds"] as? Int) ??
+                (dictionary["recheckSeconds"] as? Int)
+            let suggestedAction: ModelSuggestedAction
+            switch assessment {
+            case .focused, .tolerated:
+                suggestedAction = .none
+            case .unclear:
+                suggestedAction = .abstain
+            case .distracted:
+                if parsedSuggestedAction == .overlay || parsedSuggestedAction == .nudge {
+                    suggestedAction = parsedSuggestedAction
+                } else {
+                    suggestedAction = nudge?.isEmpty == false ? .nudge : .abstain
+                }
+            }
 
             return MonitoringDecisionEnvelope(
                 assessment: assessment,
@@ -547,11 +585,62 @@ actor PromptLabRunner {
                 overlayBody: nil,
                 overlayPrompt: nil,
                 submitButtonTitle: nil,
-                secondaryButtonTitle: nil
+                secondaryButtonTitle: nil,
+                recheckSeconds: recheckSeconds
             )
         }
 
         return nil
+    }
+
+    private static func normalizedDecisionEnvelope(
+        _ envelope: MonitoringDecisionEnvelope
+    ) -> MonitoringDecisionEnvelope {
+        let sanitizedNudge = envelope.nudge?.cleanedSingleLine
+        let normalizedAction: ModelSuggestedAction
+        switch envelope.assessment {
+        case .focused, .tolerated:
+            normalizedAction = .none
+        case .unclear:
+            normalizedAction = .abstain
+        case .distracted:
+            if envelope.suggestedAction == .overlay || envelope.suggestedAction == .nudge {
+                normalizedAction = envelope.suggestedAction
+            } else {
+                normalizedAction = sanitizedNudge?.isEmpty == false ? .nudge : .abstain
+            }
+        }
+
+        return MonitoringDecisionEnvelope(
+            assessment: envelope.assessment,
+            suggestedAction: normalizedAction,
+            confidence: envelope.confidence,
+            reasonTags: envelope.reasonTags,
+            nudge: sanitizedNudge,
+            abstainReason: envelope.abstainReason?.cleanedSingleLine,
+            overlayHeadline: envelope.overlayHeadline,
+            overlayBody: envelope.overlayBody,
+            overlayPrompt: envelope.overlayPrompt,
+            submitButtonTitle: envelope.submitButtonTitle,
+            secondaryButtonTitle: envelope.secondaryButtonTitle,
+            recheckSeconds: envelope.recheckSeconds
+        )
+    }
+
+    private static func updateLastDecisionStageSummary(
+        in stageResults: inout [PromptLabStageRunResult],
+        decision: MonitoringDecisionEnvelope,
+        suffix: String = ""
+    ) {
+        guard let index = stageResults.indices.last,
+              stageResults[index].stage == .decision else {
+            return
+        }
+        stageResults[index].parsedSummary = Self.summary(
+            for: .decision,
+            decoded: decision,
+            rawOutput: stageResults[index].rawOutput
+        ) + suffix
     }
 
     private static func inferredSuggestedAction(
@@ -563,6 +652,8 @@ actor PromptLabRunner {
         }
         switch assessment {
         case .focused:
+            return ModelSuggestedAction.none.rawValue
+        case .tolerated:
             return ModelSuggestedAction.none.rawValue
         case .distracted:
             return ModelSuggestedAction.abstain.rawValue
@@ -605,14 +696,19 @@ actor PromptLabRunner {
 
     private func compactRecentSwitches(
         _ records: [PromptLabSwitchRecord],
-        limit: Int
+        limit: Int,
+        now: Date
     ) -> [MonitoringPromptSwitchRecord] {
-        records.prefix(limit).map {
-            MonitoringPromptSwitchRecord(
-                fromAppName: $0.fromAppName.truncatedForPrompt(maxLength: 60),
-                toAppName: $0.toAppName.truncatedForPrompt(maxLength: 60),
-                toWindowTitle: $0.toWindowTitle.truncatedForPrompt(maxLength: 140),
-                timestamp: $0.timestamp
+        let limited = Array(records.prefix(limit))
+        return limited.enumerated().map { index, record in
+            let endTimestamp = index == 0 ? now : limited[index - 1].timestamp
+            let duration = max(0, endTimestamp.timeIntervalSince(record.timestamp))
+            return MonitoringPromptSwitchRecord(
+                fromAppName: record.fromAppName.truncatedForPrompt(maxLength: 60),
+                toAppName: record.toAppName.truncatedForPrompt(maxLength: 60),
+                toWindowTitle: record.toWindowTitle.truncatedForPrompt(maxLength: 140),
+                timestamp: record.timestamp,
+                durationSeconds: duration
             )
         }
     }

@@ -438,6 +438,7 @@ struct YouTab: View {
         case .rule:
             switch proposal.proposedRule?.kind {
             case .allow: return "checkmark.shield"
+            case .tolerate: return "hand.raised"
             case .disallow, .discourage: return "exclamationmark.shield"
             case .limit: return "timer"
             case .tonePreference, nil: return "sparkles"
@@ -458,6 +459,7 @@ struct YouTab: View {
             let kind: String
             switch rule.kind {
             case .allow: kind = "Allow"
+            case .tolerate: kind = "Tolerate"
             case .disallow: kind = "Block"
             case .discourage: kind = "Discourage"
             case .limit: kind = "Limit"

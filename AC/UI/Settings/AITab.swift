@@ -70,6 +70,10 @@ struct AITab: View {
 
                 // Cadence row
                 VStack(alignment: .leading, spacing: 6) {
+                    Text("HOW PERSISTENT SHOULD I BE?")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .tracking(0.06)
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.38))
                     cadencePills
                     Text(cadenceDescription)
                         .font(.acCaption)
@@ -206,9 +210,9 @@ struct AITab: View {
 
     private var cadenceDescription: String {
         switch config.cadenceMode {
-        case .gentle:   return "fewer checks · lower token cost · may react slower to drift"
-        case .balanced: return "standard watch interval · moderate cost · good for most sessions"
-        case .sharp:    return "watches more closely · reacts faster · higher token usage"
+        case .gentle:   return "nudges rarely — gives you room to breathe, reacts slower to drift"
+        case .balanced: return "nudges when you clearly drift — good default for most"
+        case .sharp:    return "catches drift quickly, nudges more often — more model calls so slightly higher cost"
         }
     }
 

@@ -150,6 +150,9 @@ enum LLMOutputParsing {
             let abstainReason =
                 (object["abstain_reason"] as? String) ??
                 (object["abstainReason"] as? String)
+            let recheckSeconds =
+                (object["recheck_seconds"] as? Int) ??
+                (object["recheckSeconds"] as? Int)
             let normalizedSuggestedAction = normalizedSuggestedAction(
                 suggestedAction,
                 assessment: assessment,
@@ -162,7 +165,8 @@ enum LLMOutputParsing {
                 confidence: confidence,
                 reasonTags: reasonTags,
                 nudge: nudge,
-                abstainReason: abstainReason?.cleanedSingleLine
+                abstainReason: abstainReason?.cleanedSingleLine,
+                recheckSeconds: recheckSeconds
             )
         }
 
@@ -332,6 +336,8 @@ enum LLMOutputParsing {
         switch assessment {
         case .focused:
             return "none"
+        case .tolerated:
+            return "none"
         case .unclear:
             return "abstain"
         case .distracted:
@@ -346,6 +352,8 @@ enum LLMOutputParsing {
     ) -> ModelSuggestedAction {
         switch assessment {
         case .focused:
+            return .none
+        case .tolerated:
             return .none
         case .unclear:
             return .abstain

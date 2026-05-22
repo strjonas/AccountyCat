@@ -40,6 +40,30 @@ struct StructuredOutputJSONTests {
     }
 
     @Test
+    func normalizesToleratedDecisionToNone() {
+        let output = """
+        {"assessment":"tolerated","suggested_action":"nudge","confidence":0.8,"reason_tags":["short_break"],"nudge":"Back to it."}
+        """
+
+        let decision = LLMOutputParsing.extractDecision(from: output)
+
+        #expect(decision?.assessment == .tolerated)
+        #expect(decision?.suggestedAction == .some(.none))
+    }
+
+    @Test
+    func decodesToleratedRecheckSeconds() {
+        let output = """
+        {"assessment":"tolerated","suggested_action":"none","recheck_seconds":600,"reason_tags":["user_allowance"]}
+        """
+
+        let decision = LLMOutputParsing.extractDecision(from: output)
+
+        #expect(decision?.assessment == .tolerated)
+        #expect(decision?.recheckSeconds == 600)
+    }
+
+    @Test
     func perceptionEnvelopeDecodesStringNotes() {
         let output = """
         > The screenshot is attached.

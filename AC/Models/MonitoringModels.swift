@@ -59,6 +59,15 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
         }
     }
 
+    /// Re-check acceptable-but-not-focused detours before they can quietly become drift.
+    nonisolated var toleratedFollowUp: TimeInterval {
+        switch self {
+        case .sharp: return 60
+        case .balanced: return 150
+        case .gentle: return 5 * 60
+        }
+    }
+
     /// Probe sooner than `focusedFollowUp` after an `unclear` verdict to catch ambiguous activity.
     nonisolated var unclearFollowUp: TimeInterval {
         max(60, focusedFollowUp / 2)
@@ -567,6 +576,8 @@ struct CachedDecision: Codable, Sendable, Equatable {
         switch assessment {
         case .focused:
             return .none
+        case .tolerated:
+            return .none
         case .distracted:
             return .nudge
         case .unclear:
@@ -598,6 +609,9 @@ struct FocusSignalState: Codable, Sendable, Equatable {
             if lastFocusedBlockStartedAt == nil {
                 lastFocusedBlockStartedAt = now
             }
+        case .tolerated:
+            evidence = 0.45
+            lastFocusedBlockStartedAt = nil
         case .unclear:
             evidence = 0.45
         case .distracted:

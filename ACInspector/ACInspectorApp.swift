@@ -749,7 +749,7 @@ private struct EvalCaseEditorView: View {
         }
     }
 
-    private static let assessments: [ModelAssessment] = [.focused, .distracted, .unclear]
+    private static let assessments: [ModelAssessment] = [.focused, .tolerated, .distracted, .unclear]
     private static let actions: [ModelSuggestedAction] = [.none, .nudge, .overlay, .abstain]
     private static let chatActionKinds: [CompanionChatActionKind] = [.profile, .memory, .focusPolicy, .recurringNudge]
 }
@@ -1273,7 +1273,7 @@ private struct PromptLabDetailView: View {
             }
         )) {
             Text("Any").tag("")
-            ForEach([ModelAssessment.focused, .distracted, .unclear], id: \.rawValue) { value in
+            ForEach([ModelAssessment.focused, .tolerated, .distracted, .unclear], id: \.rawValue) { value in
                 Text(value.rawValue).tag(value.rawValue)
             }
         }

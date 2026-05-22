@@ -224,6 +224,7 @@ struct MonitoringStatsSnapshot: Sendable {
         let visionRate = percentString(visionRateValue)
 
         let focused = policyDecisions.filter { $0.model.assessment == .focused }.count
+        let tolerated = policyDecisions.filter { $0.model.assessment == .tolerated }.count
         let distracted = policyDecisions.filter { $0.model.assessment == .distracted }.count
         let unclear = policyDecisions.filter { $0.model.assessment == .unclear }.count
         let abstain = policyDecisions.filter { $0.model.suggestedAction == .abstain }.count
@@ -234,6 +235,7 @@ struct MonitoringStatsSnapshot: Sendable {
         let visionRetryRateValue = percentValue(part: visionRetryCount, total: decisionTotal)
         let decisionMix = [
             Row(label: "focused", value: "\(focused) · \(percent(part: focused, total: decisionTotal))"),
+            Row(label: "tolerated", value: "\(tolerated) · \(percent(part: tolerated, total: decisionTotal))"),
             Row(label: "distracted", value: "\(distracted) · \(percent(part: distracted, total: decisionTotal))"),
             Row(label: "unclear", value: "\(unclear) · \(percent(part: unclear, total: decisionTotal))"),
             Row(label: "abstain action", value: "\(abstain) · \(percent(part: abstain, total: decisionTotal))")
@@ -260,9 +262,10 @@ struct MonitoringStatsSnapshot: Sendable {
         })
         .map { profile, values in
             let f = values.filter { $0.model.assessment == .focused }.count
+            let t = values.filter { $0.model.assessment == .tolerated }.count
             let d = values.filter { $0.model.assessment == .distracted }.count
             let u = values.filter { $0.model.assessment == .unclear }.count
-            return Row(label: profile, value: "\(values.count)x · F \(f) / D \(d) / U \(u)")
+            return Row(label: profile, value: "\(values.count)x · F \(f) / T \(t) / D \(d) / U \(u)")
         }
         .sorted { $0.label < $1.label }
 

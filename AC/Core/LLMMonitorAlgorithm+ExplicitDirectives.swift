@@ -78,10 +78,15 @@ extension LLMMonitorAlgorithm {
         if let relativeAllow = parseRelativeAllowance(body: body, lowerBody: lowerBody, sourceTime: sourceTime) {
             return relativeAllow
         }
-        if let simpleAllowTarget = parseSimpleAllowTarget(body: body, lowerBody: lowerBody) {
+        // Only standing "never flag X" / "do not disturb on X" commands are honored
+        // deterministically as an unbounded allow. Bare prose like "short time on X is okay"
+        // or "allow X for now" is conditional — parsing it as a permanent allow strips the
+        // qualifier and masks the model. Those fall through to the decision model, which weighs
+        // the same message + memory and answers `tolerated`/`focused` with a short recheck.
+        if let standingAllowTarget = parseNoInterventionAllowTarget(body: body, lowerBody: lowerBody) {
             return ExplicitDirective(
                 kind: .allow,
-                target: simpleAllowTarget,
+                target: standingAllowTarget,
                 sourceTime: sourceTime,
                 expiresAt: nil
             )
@@ -127,30 +132,6 @@ extension LLMMonitorAlgorithm {
         return nil
     }
 
-    nonisolated private static func parseSimpleAllowTarget(body: String, lowerBody: String) -> String? {
-        if let target = parsePrefixedTarget(
-            body: body,
-            lowerBody: lowerBody,
-            prefixes: ["allow ", "let me use "]
-        ) {
-            return target
-        }
-
-        let suffixes = [" is okay", " is allowed"]
-        for suffix in suffixes where lowerBody.contains(suffix) {
-            guard let range = lowerBody.range(of: suffix) else { continue }
-            let target = body[..<range.lowerBound]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !target.isEmpty else { continue }
-            return cleanedDirectiveTarget(target)
-        }
-
-        if let target = parseNoInterventionAllowTarget(body: body, lowerBody: lowerBody) {
-            return target
-        }
-
-        return nil
-    }
 
     nonisolated private static func parseNoInterventionAllowTarget(body: String, lowerBody: String) -> String? {
         let disturbPrefixes = [
