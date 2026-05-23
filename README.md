@@ -1,7 +1,14 @@
 # AccountyCat
 
-A focus companion for macOS that actually understands context
+**A focus companion for macOS that actually understands context.**
 
+<p align="center">
+  <img src="docs/media/ac-release.png" alt="AccountyCat sitting in the macOS menu bar" width="820">
+</p>
+
+Tell AC what you're working on. It watches the apps you switch to, checks the screen only when it has to, and nudges you when you drift — quietly, and only when it matters.
+
+**Watch AC in action** — a 33-second walkthrough:
 
 https://github.com/user-attachments/assets/b76c14f7-dfa0-49a4-823b-0f8454981b49
 
