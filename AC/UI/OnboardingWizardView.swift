@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Wizard step
@@ -36,21 +37,40 @@ struct OnboardingWizardView: View {
     @State private var step: WizardStep = .welcome
     @State private var selectedMode: OnboardingMode = .byok
 
+    /// Set once the user taps "Grant Screen Recording". macOS only applies a fresh
+    /// Screen Recording grant after the process relaunches, so we surface a restart
+    /// affordance instead of leaving the user stuck on a refresh button that can't help.
+    @State private var attemptedScreenRecording = false
+
+    /// Polls permission state while the permissions step is visible so a grant made
+    /// in System Settings is reflected automatically — no manual refresh needed.
+    private let permissionPollTimer = Timer.publish(every: 1.5, on: .main, in: .common)
+        .autoconnect()
+
+    private static let savedStepKey = "acOnboardingResumeStep"
+    private static let savedModeKey = "acOnboardingResumeMode"
+
     /// Whether the wizard was ever completed before (e.g. after a dev reset).
-    /// When true we skip already-configured steps and land on the first missing one.
     private var hasBeenCompletedBefore: Bool {
         UserDefaults.standard.bool(forKey: "acOnboardingWizardEverCompleted")
     }
 
-    /// Inferred starting step based on current controller state.
-    private var inferredStep: WizardStep {
-        guard hasBeenCompletedBefore else { return .welcome }
+    /// Starting step on appear. We persist the current step as the user advances
+    /// so an app relaunch — e.g. macOS forcing a restart after Screen Recording is
+    /// granted — resumes exactly where they were instead of the welcome screen.
+    private var resumeStep: WizardStep {
+        if let raw = UserDefaults.standard.object(forKey: Self.savedStepKey) as? Int,
+            let saved = WizardStep(rawValue: raw)
+        {
+            return saved
+        }
 
+        // No saved progress. If the wizard was completed before (dev reset / re-entry),
+        // skip to the first still-missing step; otherwise start clean at welcome.
+        guard hasBeenCompletedBefore else { return .welcome }
         let perms = LLMPolicyCatalog.permissionRequirements(
             for: controller.state.monitoringConfiguration)
-        if !controller.state.permissions.satisfies(perms) {
-            return .permissions
-        }
+        if !controller.state.permissions.satisfies(perms) { return .permissions }
         if controller.usingOnlineMonitoring && !controller.hasOnlineAPIKeyConfigured {
             return .apiKey
         }
@@ -60,14 +80,33 @@ struct OnboardingWizardView: View {
         return .welcome
     }
 
-    /// Inferred mode based on the already-selected backend.
-    /// For first-time users we default to BYOK (online) since it provides the best experience.
-    private var inferredMode: OnboardingMode {
+    /// Resumed mode: a persisted choice wins, then the already-selected backend,
+    /// else BYOK (best first-time experience).
+    private var resumeMode: OnboardingMode {
+        if let raw = UserDefaults.standard.string(forKey: Self.savedModeKey) {
+            switch raw {
+            case "offline": return .offline
+            case "managed": return .managed
+            case "byok": return .byok
+            default: break
+            }
+        }
         guard hasBeenCompletedBefore else { return .byok }
         switch controller.state.monitoringConfiguration.inferenceBackend {
         case .openRouter: return .byok
         default: return .offline
         }
+    }
+
+    private func persistProgress() {
+        UserDefaults.standard.set(step.rawValue, forKey: Self.savedStepKey)
+        let modeRaw: String
+        switch selectedMode {
+        case .offline: modeRaw = "offline"
+        case .byok: modeRaw = "byok"
+        case .managed: modeRaw = "managed"
+        }
+        UserDefaults.standard.set(modeRaw, forKey: Self.savedModeKey)
     }
 
     var body: some View {
@@ -94,9 +133,11 @@ struct OnboardingWizardView: View {
         }
         .padding(20)
         .onAppear {
-            selectedMode = inferredMode
-            step = inferredStep
+            selectedMode = resumeMode
+            step = resumeStep
         }
+        .onChange(of: step) { persistProgress() }
+        .onChange(of: selectedMode) { persistProgress() }
     }
 
     // MARK: - Step indicator
@@ -307,7 +348,10 @@ struct OnboardingWizardView: View {
                     description:
                         "Takes a screenshot every few minutes to understand what you're working on. Analyzed and immediately discarded — nothing is stored or sent except to the AI you configured.",
                     state: controller.state.permissions.screenRecording,
-                    onRequest: { controller.requestScreenRecordingPermission() }
+                    onRequest: {
+                        attemptedScreenRecording = true
+                        controller.requestScreenRecordingPermission()
+                    }
                 )
 
                 WizardPermissionRow(
@@ -377,6 +421,34 @@ struct OnboardingWizardView: View {
                 .transition(.opacity)
             }
 
+            if attemptedScreenRecording
+                && controller.state.permissions.screenRecording != .granted
+            {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .foregroundStyle(accent)
+                        .font(.system(size: 12))
+                    Text(
+                        "Already enabled Screen Recording in System Settings? macOS needs AccountyCat to restart to apply it."
+                    )
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("Restart") { AppRelocationService.relaunch() }
+                        .buttonStyle(ACSecondaryButton())
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(accent.opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                                accent.opacity(0.22), lineWidth: 1))
+                )
+                .transition(.opacity)
+            }
+
             HStack {
                 Button("← Back") { withAnimation(.acSpring) { step = .tierSelection } }
                     .buttonStyle(ACSecondaryButton())
@@ -398,7 +470,12 @@ struct OnboardingWizardView: View {
             }
         }
         .animation(.acSnap, value: controller.state.permissions.accessibility)
+        .animation(.acSnap, value: controller.state.permissions.screenRecording)
+        .animation(.acSnap, value: attemptedScreenRecording)
         .onAppear { controller.refreshSystemState(persist: false) }
+        .onReceive(permissionPollTimer) { _ in
+            controller.refreshSystemState(persist: false)
+        }
     }
 
     // MARK: - Screen 5: API key (BYOK only)

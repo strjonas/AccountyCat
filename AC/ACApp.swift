@@ -56,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard !ACTestEnvironment.isRunning else { return }
         NSApp.setActivationPolicy(.accessory)
 
+        // Must run before any setup/permission work: if AC is translocated or
+        // running outside /Applications, TCC grants won't stick. This moves the
+        // app and relaunches; when it returns true we stop launching this instance.
+        if AppRelocationService.relocateIfNeeded() { return }
+
         controller.bootstrap()
 
         // Close the popover whenever the user clicks outside of AC — .transient

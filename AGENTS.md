@@ -26,6 +26,7 @@ Load on demand:
 - `docs/reference/eval-suite.md` — offline judgment eval suite: synthetic cases, seeder, run workflow, what evals measure, results, known limitations
 - `dev/agents/accountycat-debugger/SKILL.md` — live/runtime debugging from telemetry, logs, Inspector output, or an exported debug bundle
 - `dev/agents/accountycat-eval/SKILL.md` — seeding/listing/running local eval cases (synthetic suite + Inspector-captured)
+- `dev/agents/accountycat-release/SKILL.md` — public macOS release packaging: Developer ID signing, notarization, DMG creation, GitHub release upload, and website download update
 
 Do not load the whole `docs/` tree into every session. `core/` is the default context; `reference/` and `experiments/` are on-demand.
 
