@@ -415,8 +415,8 @@ extension AppController {
                 recentUserMessages: BrainService.monitoringRecentUserMessages(
                     chatHistory: state.chatHistory,
                     activeProfile: activeProfile,
-                    limit: MonitoringPromptContextBudget.recentUserChatCount
-                ),
+                        limit: MonitoringPromptContextBudget.recentUserChatCount
+                    ),
                 policyMemory: state.policyMemory,
                 configuration: state.monitoringConfiguration,
                 algorithmState: state.algorithmState,
@@ -426,7 +426,10 @@ extension AppController {
                 activeProfileDescription: activeProfileDescription?.isEmpty == false ? activeProfileDescription : nil,
                 activeProfileGoalSummary: activeProfileGoalSummary?.isEmpty == false ? activeProfileGoalSummary : nil,
                 activeProfileActivatedAt: activeProfile.activatedAt,
-                activeProfileExpiresAt: activeProfile.expiresAt
+                activeProfileExpiresAt: activeProfile.expiresAt,
+                availableProfiles: state.profiles
+                    .filter { $0.id != activeProfile.id }
+                    .map { makeProfilePromptSummary($0) }
             )
 
             let output = try? await monitoringAlgorithmRegistry.reviewAppeal(input: reviewInput)

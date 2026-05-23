@@ -689,7 +689,8 @@ actor OnlineModelService: OnlineModelServing {
             stdout: content,
             stderr: Self.usageSummary(from: json),
             usedModelIdentifier: usedModelIdentifier,
-            tokenUsage: usage
+            tokenUsage: usage,
+            imageWasProcessed: request.imagePath != nil
         )
     }
 

@@ -104,6 +104,7 @@ struct MonitoringAppealReviewInput: Sendable {
     var activeProfileGoalSummary: String? = nil
     var activeProfileActivatedAt: Date? = nil
     var activeProfileExpiresAt: Date? = nil
+    var availableProfiles: [ProfilePromptSummary] = []
 }
 
 struct MonitoringAppealReviewOutput: Sendable {

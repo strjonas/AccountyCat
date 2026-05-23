@@ -14,6 +14,10 @@ struct RuntimeProcessOutput: Sendable {
     var stderr: String
     var usedModelIdentifier: String?
     var tokenUsage: TokenUsage?
+    /// True only when an image was actually sent to the runtime/provider. A
+    /// screenshot path in AC's snapshot is not enough; text-only fallbacks must
+    /// not be counted as vision-backed decisions.
+    var imageWasProcessed: Bool
     /// Set by `OnlineModelService` (and the local-chat path) when a telemetry
     /// `.llmInteraction` event was emitted for this call. Callers should pass
     /// this id back to `LLMTelemetryRecorder.annotate(...)` once the raw text
@@ -26,12 +30,14 @@ struct RuntimeProcessOutput: Sendable {
         stderr: String,
         usedModelIdentifier: String? = nil,
         tokenUsage: TokenUsage? = nil,
+        imageWasProcessed: Bool = false,
         interactionID: String? = nil
     ) {
         self.stdout = stdout
         self.stderr = stderr
         self.usedModelIdentifier = usedModelIdentifier
         self.tokenUsage = tokenUsage
+        self.imageWasProcessed = imageWasProcessed
         self.interactionID = interactionID
     }
 }
@@ -407,21 +413,15 @@ actor LocalModelRuntime {
                 }
             }
 
-            // Text-only local models (no multimodal projector) cannot process images.
-            // Downgrade vision input to text so the CLI doesn't pass --image to a
-            // model that will refuse it (e.g. Phi-4-mini-instruct).
-            let cliInput: RuntimeInferenceInput
-            if case let .vision(_, userPrompt) = input,
+            if case .vision = input,
                case let .local(artifacts) = modelSource,
                artifacts.multimodalProjectorPath == nil {
-                cliInput = .text(userPrompt: userPrompt)
-            } else {
-                cliInput = input
+                throw LLMError.visionUnavailable(modelIdentifier)
             }
 
             return try await runCLIInference(
                 runtimePath: runtimePath,
-                input: cliInput,
+                input: input,
                 systemPrompt: systemPrompt,
                 modelSource: modelSource,
                 options: options,
@@ -514,7 +514,12 @@ actor LocalModelRuntime {
             let assistantMessage = try extractAssistantMessage(from: data)
             let usage = Self.parseLocalServerUsage(from: data)
                 ?? TokenUsage.estimate(promptText: systemPrompt, completionText: assistantMessage)
-            return RuntimeProcessOutput(stdout: assistantMessage, stderr: "", tokenUsage: usage)
+            return RuntimeProcessOutput(
+                stdout: assistantMessage,
+                stderr: "",
+                tokenUsage: usage,
+                imageWasProcessed: input.imagePath != nil
+            )
         } catch is CancellationError {
             requestTask.cancel()
             throw CancellationError()
@@ -634,7 +639,8 @@ actor LocalModelRuntime {
             stdout: output.stdout,
             stderr: output.stderr,
             usedModelIdentifier: output.usedModelIdentifier,
-            tokenUsage: usage
+            tokenUsage: usage,
+            imageWasProcessed: input.imagePath != nil
         )
     }
 
@@ -1554,6 +1560,7 @@ actor LocalModelRuntime {
 enum LLMError: LocalizedError, Equatable {
     case timeout
     case commandFailed(Int32, String)
+    case visionUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -1561,6 +1568,8 @@ enum LLMError: LocalizedError, Equatable {
             return "llama.cpp timed out."
         case let .commandFailed(status, output):
             return "llama.cpp exited with \(status): \(output)"
+        case let .visionUnavailable(modelIdentifier):
+            return "Local model \(modelIdentifier) is missing a multimodal projector and cannot process screenshots."
         }
     }
 }

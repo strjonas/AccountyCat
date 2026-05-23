@@ -1,13 +1,19 @@
 ---
 name: accountycat-eval
-description: List, select, and run AccountyCat local eval cases captured from ACInspector. Use when improving AC prompts, monitoring decisions, chat actions, focus nudges, memory/profile/focus-policy behavior, or when the user asks to run evals before or after algorithm changes.
+description: Seed, list, select, and run AccountyCat local eval cases — a curated synthetic suite plus cases captured from ACInspector. Use when improving AC prompts, monitoring decisions, chat actions, focus nudges, memory/profile/focus-policy behavior, or when the user asks to run evals before or after algorithm changes.
 ---
 
 # AccountyCat Eval Runner
 
-Use this skill when AC behavior should be checked against saved human-reviewed eval cases. Evals are private local files under `~/Library/Application Support/AC/evals/`; do not assume they are in git.
+Use this skill when AC behavior should be checked against saved human-reviewed eval cases. Evals are private local files under `~/Library/Application Support/AC/evals/`; do not assume they are in git. For the wider design — what the evals measure, the suite composition, results, and known limitations — see `docs/reference/eval-suite.md`.
 
 ## Workflow
+
+0. (When the synthetic suite changed, or on a fresh machine) write/refresh it. This rebuilds the test target and writes `SyntheticEvalCases.all` into the eval root:
+
+```bash
+swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift seed
+```
 
 1. List available cases before choosing what to run:
 
@@ -29,11 +35,13 @@ swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend loc
 swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend local --ids <case-id> <case-id> --json
 ```
 
-4. Use online evals only when the case requires the hosted model or vision behavior:
+4. The pass bar is the balanced online tier. A single run uses ONE `--online-model`, so run title-only and vision cases separately:
 
 ```bash
-AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend online --online-model <model> --ids <case-id> --json
-AC_EVAL_OPENAI_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend online --online-model <model> --ids <case-id> --json
+# Title-only (everyday/session focus + chat + chat-action) — text model
+AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend online --online-model deepseek/deepseek-v4-flash --ids <case-id> --json
+# Vision cases (cases with a screenshot) — vision model
+AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift run --backend online --online-model qwen/qwen3.6-35b-a3b --ids <case-id> --json
 ```
 
 ## Selection Rules
@@ -45,11 +53,12 @@ AC_EVAL_OPENAI_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval-run
 
 ## Cost And Safety
 
-- The XCTest hook `AgentEvalCommandRunnerTests` only runs when `AC_EVAL_ALLOW_TEST_HOST_RUN=1` is set (the `ac-eval-runner.swift` `run` command sets this). Keep eval-related environment variables scoped to deliberate runner invocations rather than global shell exports.
+- `xcodebuild` does not forward the runner's environment to the test host, so `run` (`AgentEvalCommandRunnerTests`) and `seed` (`ACEvalSeedTests`) are gated by a short-lived handoff file at a fixed `/tmp` path carrying `allowTestHostRun: true` + an expiry, which each command writes immediately before invoking `xcodebuild`. A normal `xcodebuild test` finds no fresh handoff and no-ops. Keep eval-related environment variables scoped to deliberate runner invocations rather than global shell exports.
 - Local evals are the default. They use the installed local runtime, or `--runtime-path` if supplied.
-- Online evals are explicit and require `AC_EVAL_OPENROUTER_API_KEY` or `AC_EVAL_OPENAI_API_KEY`. The runner must not read Keychain.
+- Online evals are explicit and require `AC_EVAL_OPENROUTER_API_KEY` or `AC_EVAL_OPENAI_API_KEY`. The runner must not read Keychain. Pass the key inline per invocation; never commit it or write it to files/memory.
 - Do not run broad online suites casually. Filter by id/category/importance and keep the count small.
 - Eval files can contain personal titles, messages, and screenshots. Do not copy them into git or broad debug output.
+- If a run appears stuck, the build is rarely the cause (`xcodebuild build-for-testing` completes in seconds). A stale `debugserver` / `xcodebuild` / `AC.app` test-host process from a prior run can wedge the test-host launch and hang `xcodebuild test` indefinitely. Clear them (`pkill -f LLDB.framework/Resources/debugserver`) before retrying — do not start overlapping runs that share build/test paths.
 
 ## Interpreting Results
 

@@ -124,6 +124,8 @@ struct RunRequest: Codable {
     var openRouterAPIKey: String?
     var openAIAPIKey: String?
     var resultPath: String
+    var allowTestHostRun: Bool
+    var expiresAt: TimeInterval
 }
 
 let args = Arguments(Array(CommandLine.arguments.dropFirst()))
@@ -133,6 +135,8 @@ case "list":
     runList(args)
 case "run":
     runEval(args)
+case "seed":
+    runSeed(args)
 case "help", "--help", "-h":
     printUsage()
 default:
@@ -213,7 +217,9 @@ func runEval(_ args: Arguments) {
         runtimePath: args.runtimePath,
         openRouterAPIKey: environment["AC_EVAL_OPENROUTER_API_KEY"],
         openAIAPIKey: environment["AC_EVAL_OPENAI_API_KEY"],
-        resultPath: resultURL.path
+        resultPath: resultURL.path,
+        allowTestHostRun: true,
+        expiresAt: Date().addingTimeInterval(120).timeIntervalSince1970
     )
     let requestData = (try? JSONEncoder().encode(request)) ?? Data("{}".utf8)
     do {
@@ -260,6 +266,94 @@ func runEval(_ args: Arguments) {
             exit(0)
         }
         exit(Int32(process.terminationStatus))
+    }
+
+    fputs(output, stderr)
+    try? FileManager.default.removeItem(at: requestURL)
+    if process.terminationStatus != 0 {
+        exit(Int32(process.terminationStatus))
+    }
+    fail("eval runner did not produce a JSON result; the test host likely did not receive the handoff request.")
+}
+
+struct SeedRequest: Codable {
+    var root: String
+    var resultPath: String
+    var allowTestHostRun: Bool
+    var expiresAt: TimeInterval
+}
+
+func runSeed(_ args: Arguments) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    process.arguments = [
+        "xcodebuild",
+        "test",
+        "-project", "AC.xcodeproj",
+        "-scheme", "AC",
+        "-destination", "platform=macOS",
+        "-only-testing:ACTests/ACEvalSeedTests",
+        "CODE_SIGNING_ALLOWED=NO",
+    ]
+    process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+
+    // xcodebuild does not forward this process's environment to the test host, so
+    // the seeder is gated by a short-lived handoff file at a fixed /tmp path (the
+    // same mechanism `run` uses). No handoff file → `ACEvalSeedTests` no-ops.
+    let handoffID = UUID().uuidString
+    let requestURL = URL(fileURLWithPath: "/tmp/ac-eval-seed-request.json")
+    let resultURL = URL(fileURLWithPath: "/tmp/ac-eval-seed-\(handoffID)-result.json")
+    try? FileManager.default.removeItem(at: requestURL)
+    try? FileManager.default.removeItem(at: resultURL)
+    let request = SeedRequest(
+        root: evalRootURL(args).path,
+        resultPath: resultURL.path,
+        allowTestHostRun: true,
+        // Generous enough to outlast a cold build; the test also deletes the file
+        // on read so it cannot trigger a later, unrelated `xcodebuild test`.
+        expiresAt: Date().addingTimeInterval(1_200).timeIntervalSince1970
+    )
+    let requestData = (try? JSONEncoder().encode(request)) ?? Data("{}".utf8)
+    do {
+        try requestData.write(to: requestURL, options: .atomic)
+    } catch {
+        fail("Could not write seed request: \(error.localizedDescription)")
+    }
+
+    var environment = ProcessInfo.processInfo.environment
+    environment["AC_EVAL_SEED_REQUEST_PATH"] = requestURL.path
+    environment["AC_EVAL_SEED_RESULT_PATH"] = resultURL.path
+    process.environment = environment
+
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+
+    do {
+        try process.run()
+    } catch {
+        fail("Could not start xcodebuild: \(error.localizedDescription)")
+    }
+    process.waitUntilExit()
+
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let output = String(data: data, encoding: .utf8) ?? ""
+    if let resultData = try? Data(contentsOf: resultURL),
+       let resultJSON = String(data: resultData, encoding: .utf8) {
+        print(resultJSON)
+        try? FileManager.default.removeItem(at: resultURL)
+        try? FileManager.default.removeItem(at: requestURL)
+        exit(process.terminationStatus == 0 ? 0 : Int32(process.terminationStatus))
+    }
+
+    let marker = "AC_EVAL_SEED_RESULT "
+    if let resultLine = output
+        .components(separatedBy: .newlines)
+        .last(where: { $0.contains(marker) }),
+       let range = resultLine.range(of: marker) {
+        print(String(resultLine[range.upperBound...]))
+        try? FileManager.default.removeItem(at: requestURL)
+        exit(process.terminationStatus == 0 ? 0 : Int32(process.terminationStatus))
     }
 
     fputs(output, stderr)
@@ -333,6 +427,7 @@ func printUsage() {
       ac-eval-runner.swift list [--json] [--kind focus|chat|chat-action] [--importance high,critical] [--category false_positive]
       ac-eval-runner.swift run --backend local [--ids id1 id2 | --importance critical,high --limit 30] [--json]
       ac-eval-runner.swift run --backend online --online-model <model> --ids <id> [--json]
+      ac-eval-runner.swift seed [--root <eval-root>]   # write the synthetic eval suite (ACEvalSeedTests)
 
     Optional:
       --root <eval-root>          Defaults to ~/Library/Application Support/AC/evals

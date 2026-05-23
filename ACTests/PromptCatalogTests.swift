@@ -72,6 +72,14 @@ struct PromptCatalogTests {
     }
 
     @Test
+    func nudgePromptUsesDecisionTruthHierarchy() {
+        let nudgeTemplate = ACPromptSets.policyDefaultPromptSet.prompt(for: .nudgeCopy).userTemplate
+
+        #expect(nudgeTemplate.contains("newest current-session user statement first"))
+        #expect(!nudgeTemplate.contains("active profile and matching rules first, then newest"))
+    }
+
+    @Test
     func memoryConsolidationPromptPrefersLatestUserInstruction() {
         let prompt = ACPromptSets.memoryConsolidationSystemPrompt
 

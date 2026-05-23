@@ -1539,6 +1539,84 @@ struct LLMMonitorAlgorithmTests {
         #expect(result?.updatedAlgorithmState.llmPolicy.recentInteractionAllowances.first?.windowTitle == "Docs")
     }
 
+    @Test
+    func appealReviewScopesLearnedRulesToActiveProfileAndPreservesOtherProfiles() async throws {
+        var outputs = FakeRuntimeOutputSet()
+        outputs.appealReview = """
+        {"decision":"allow","message":"That explanation fits the coding session."}
+        """
+        outputs.policyMemory = """
+        {"operations":[{"type":"add_rule","rule":{"id":"appeal-coding-docs","kind":"allow","summary":"Allow docs tabs when the user explains their coding relevance.","source":"appeal","createdAt":"2026-04-21T10:00:00Z","updatedAt":"2026-04-21T10:00:00Z","priority":95,"scope":{"appName":"Google Chrome","titleContains":["Docs"]},"schedule":{"startHour":null,"endHour":null,"weekdays":[],"expiresAt":null},"allowedTopics":["documentation"],"disallowedTopics":[],"maxMinutesPerDay":null,"tonePreference":null,"active":true}}]}
+        """
+        let runtimeFixture = try FakeRuntimeFixture(outputs: outputs)
+        let runtime = LocalModelRuntime()
+        let algorithm = LLMMonitorAlgorithm(
+            runtime: runtime,
+            onlineModelService: OnlineModelService(),
+            policyMemoryService: PolicyMemoryService(
+                runtime: runtime,
+                onlineModelService: OnlineModelService()
+            )
+        )
+        let now = Date(timeIntervalSince1970: 8_050)
+        var state = AlgorithmStateEnvelope()
+        state.llmPolicy.activeAppeal = MonitoringAppealSession(
+            evaluationID: "eval-profile-appeal",
+            contextKey: "com.google.Chrome|Docs",
+            appName: "Google Chrome",
+            prompt: "Why should I let you continue?",
+            createdAt: now.addingTimeInterval(-20),
+            lastSubmittedAt: nil,
+            lastResult: nil
+        )
+
+        let codingRule = PolicyRule(
+            id: "coding-docs",
+            kind: .allow,
+            summary: "Coding docs are useful in Coding.",
+            source: .userChat,
+            priority: 80,
+            scope: PolicyRuleScope(appName: "Google Chrome", titleContains: ["Docs"]),
+            profileID: "coding"
+        )
+        let writingRule = PolicyRule(
+            id: "writing-docs",
+            kind: .disallow,
+            summary: "Writing-only Docs rule should be hidden from Coding appeals.",
+            source: .userChat,
+            priority: 80,
+            scope: PolicyRuleScope(appName: "Google Chrome", titleContains: ["Docs"]),
+            profileID: "writing"
+        )
+        let policyMemory = PolicyMemory(
+            rules: [codingRule, writingRule],
+            tonePreference: nil,
+            lastUpdatedAt: now
+        )
+
+        let result = await algorithm.reviewAppeal(
+            input: makeAppealInput(
+                now: now,
+                runtimeOverride: runtimeFixture.runtimePath,
+                state: state,
+                policyMemory: policyMemory,
+                activeProfileID: "coding",
+                activeProfileName: "Coding",
+                activeProfileDescription: "Deep implementation work",
+                availableProfiles: [
+                    ProfilePromptSummary(id: "writing", name: "Writing", isDefault: false)
+                ]
+            )
+        )
+
+        let updatedRules = result?.updatedPolicyMemory.rules ?? []
+        #expect(updatedRules.contains { $0.id == "writing-docs" })
+        #expect(updatedRules.first { $0.id == "appeal-coding-docs" }?.profileID == "coding")
+        let appealPayload = try #require(result?.evaluation.attempts.first?.payloadJSON)
+        #expect(appealPayload.contains("Coding docs are useful in Coding."))
+        #expect(!appealPayload.contains("Writing-only Docs rule should be hidden"))
+    }
+
     private func makeAlgorithm(
         onlineModelService: any OnlineModelServing = OnlineModelService()
     ) -> LLMMonitorAlgorithm {
@@ -1602,7 +1680,12 @@ struct LLMMonitorAlgorithmTests {
     private func makeAppealInput(
         now: Date,
         runtimeOverride: String,
-        state: AlgorithmStateEnvelope
+        state: AlgorithmStateEnvelope,
+        policyMemory: PolicyMemory = PolicyMemory(),
+        activeProfileID: String = PolicyRule.defaultProfileID,
+        activeProfileName: String = FocusProfile.defaultDisplayName,
+        activeProfileDescription: String? = nil,
+        availableProfiles: [ProfilePromptSummary] = []
     ) -> MonitoringAppealReviewInput {
         var configuration = MonitoringConfiguration()
         configuration.pipelineProfileID = "title_only_default"
@@ -1614,10 +1697,14 @@ struct LLMMonitorAlgorithmTests {
             goals: "Ship AC and stay focused on engineering work.",
             recentActions: [],
             memory: "Keep social media short during focused work.",
-            policyMemory: PolicyMemory(),
+            policyMemory: policyMemory,
             configuration: configuration,
             algorithmState: state,
-            runtimeOverride: runtimeOverride
+            runtimeOverride: runtimeOverride,
+            activeProfileID: activeProfileID,
+            activeProfileName: activeProfileName,
+            activeProfileDescription: activeProfileDescription,
+            availableProfiles: availableProfiles
         )
     }
 

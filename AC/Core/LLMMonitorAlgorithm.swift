@@ -21,7 +21,8 @@ struct MonitoringRequestScopeContext: Sendable, Equatable {
         matchingRuleSummary = LLMMonitorAlgorithm.makeMatchingRuleSummary(
             policyMemory: input.policyMemory,
             snapshot: input.snapshot,
-            now: input.now
+            now: input.now,
+            activeProfileID: input.activeProfileID
         )
         activeProfile = MonitoringActiveProfilePromptPayload(
             id: input.activeProfileID,
@@ -728,7 +729,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         var policyState = updatedState.llmPolicy
         var distraction = policyState.distraction
         distraction.contextKey = policyState.currentContextKey
-        let visionBackedDecision = input.snapshot.screenshotPath != nil && visionEnabled(for: input.configuration)
+        let visionBackedDecision = attempts.contains {
+            $0.runtimeOutput?.imageWasProcessed == true
+        }
         let priorVisionUnclearCount = currentCachedDecision?.assessment == .unclear
             ? currentCachedDecision?.visionBackedUnclearCount ?? 0
             : 0
@@ -924,7 +927,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     activeProfileID: input.activeProfileID,
                     pipelineProfileID: pipelineProfile.descriptor.id,
                     promptVersion: descriptor.version,
-                    screenshotIncluded: input.snapshot.screenshotPath != nil,
+                    screenshotIncluded: visionBackedDecision,
                     visionBackedUnclearCount: visionBackedUnclearCount,
                     clarificationAskedAt: clarificationAskedAt
                 )
@@ -1306,6 +1309,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
             )
         }
 
+        let scopedPolicyMemory = Self.scopedPolicyMemory(
+            input.policyMemory,
+            activeProfileID: input.activeProfileID
+        )
         var attempts: [LLMEvaluationAttempt] = []
         let envelope = await runTextStage(
             stage: .appealReview,
@@ -1324,9 +1331,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     expiresAt: input.activeProfileExpiresAt
                 ),
                 matchingRuleSummary: Self.makeMatchingRuleSummary(
-                    policyMemory: input.policyMemory,
+                    policyMemory: scopedPolicyMemory,
                     snapshot: input.snapshot,
-                    now: input.now
+                    now: input.now,
+                    activeProfileID: input.activeProfileID
                 ),
                 recentUserMessages: Self.compactRecentUserMessages(input.recentUserMessages),
                 appealText: input.appealText,
@@ -1363,7 +1371,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 now: input.now,
                 goals: input.goals,
                 freeFormMemory: input.memory,
-                policyMemory: input.policyMemory,
+                policyMemory: scopedPolicyMemory,
                 eventSummary: "User appeal: \(input.appealText.cleanedSingleLine)\nReview result: \(result.decision.rawValue) — \(result.message.cleanedSingleLine)",
                 recentActions: input.recentActions,
                 context: input.snapshot.map {
@@ -1379,15 +1387,21 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                 onlineTextModelIdentifier: input.configuration.onlineModelIdentifierText,
                 localModelIdentifier: input.configuration.localModelIdentifierText,
                 activeProfile: ProfilePromptSummary(
-                    id: PolicyRule.defaultProfileID,
-                    name: FocusProfile.defaultDisplayName,
-                    isDefault: true
+                    id: input.activeProfileID,
+                    name: input.activeProfileName,
+                    isDefault: input.activeProfileID == PolicyRule.defaultProfileID,
+                    description: input.activeProfileDescription,
+                    expiresAt: input.activeProfileExpiresAt
                 ),
-                availableProfiles: []
+                availableProfiles: input.availableProfiles
             ),
             runtimeOverride: input.runtimeOverride
         ) {
-            updatedPolicyMemory.apply(update, now: input.now)
+            let scopedUpdate = Self.scopePolicyRulesToActiveProfile(
+                update,
+                activeProfileID: input.activeProfileID
+            )
+            updatedPolicyMemory.apply(scopedUpdate, now: input.now)
         }
 
         var updatedAlgorithmState = input.algorithmState
@@ -1488,7 +1502,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
     static func makeMatchingRuleSummary(
         policyMemory: PolicyMemory,
         snapshot: AppSnapshot?,
-        now: Date
+        now: Date,
+        activeProfileID: String? = nil
     ) -> String {
         let usageByDay = [
             now.acDayKey: Dictionary(
@@ -1507,11 +1522,48 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         var policyMemory = policyMemory
         policyMemory.expireRules(at: now)
         return policyMemory
-            .monitoringSummary(for: context, usageByDay: usageByDay, now: now, limit: 6)
+            .monitoringSummary(
+                for: context,
+                usageByDay: usageByDay,
+                now: now,
+                limit: 6,
+                profileID: activeProfileID
+            )
             .truncatedMultilineForPrompt(
                 maxLength: MonitoringPromptContextBudget.matchingRuleSummaryCharacters,
                 maxLines: MonitoringPromptContextBudget.matchingRuleSummaryLines
             )
+    }
+
+    private static func scopedPolicyMemory(
+        _ policyMemory: PolicyMemory,
+        activeProfileID: String
+    ) -> PolicyMemory {
+        var scoped = policyMemory
+        scoped.rules = scoped.rules.filter {
+            $0.profileID == nil || $0.profileID == activeProfileID
+        }
+        return scoped
+    }
+
+    private static func scopePolicyRulesToActiveProfile(
+        _ response: PolicyMemoryUpdateResponse,
+        activeProfileID: String
+    ) -> PolicyMemoryUpdateResponse {
+        let operations = response.operations.map { operation in
+            guard operation.type == .addRule || operation.type == .updateRule else {
+                return operation
+            }
+            var scoped = operation
+            if var rule = scoped.rule,
+               rule.kind != .tonePreference,
+               rule.profileID == nil {
+                rule.profileID = activeProfileID
+                scoped.rule = rule
+            }
+            return scoped
+        }
+        return PolicyMemoryUpdateResponse(operations: operations)
     }
 
     private func runOnlineDecisionStage(

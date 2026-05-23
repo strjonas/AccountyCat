@@ -8,17 +8,16 @@ struct AgentEvalCommandRunnerTests {
     @Test
     func run() async throws {
         let env = ProcessInfo.processInfo.environment
+        let request = Self.loadFileRequest(environment: env)
         // This test can load every eval case under Application Support and run
         // full local/online inference — hours of work if triggered accidentally.
-        // Normal `xcodebuild test` must never inherit `AC_EVAL_RUNNER_COMMAND=run`
-        // from a shell profile and silently run the suite. The Swift eval script
-        // (`dev/agents/accountycat-eval/scripts/ac-eval-runner.swift`) sets
-        // `AC_EVAL_ALLOW_TEST_HOST_RUN=1` alongside the runner env vars.
-        guard env["AC_EVAL_ALLOW_TEST_HOST_RUN"] == "1" else {
+        // Normal `xcodebuild test` must never inherit runner settings from a shell
+        // profile and silently run the suite. The Swift eval script provides either
+        // `AC_EVAL_ALLOW_TEST_HOST_RUN=1` or a short-lived signed handoff file.
+        guard env["AC_EVAL_ALLOW_TEST_HOST_RUN"] == "1" || request?.allowTestHostRun == true else {
             return
         }
 
-        let request = Self.loadFileRequest(environment: env)
         guard env["AC_EVAL_RUNNER_COMMAND"] == "run" || request != nil else {
             return
         }
@@ -55,21 +54,29 @@ struct AgentEvalCommandRunnerTests {
     }
 
     private static func loadFileRequest(environment: [String: String]) -> ACEvalRunnerFileRequest? {
-        // Only honor explicit paths. A stale `/tmp/ac-eval-runner-request.json`
-        // (or any file touched within the freshness window) must not hijack
-        // unrelated `xcodebuild test` runs — the eval script sets
-        // `AC_EVAL_REQUEST_PATH` to the handoff file it just wrote.
         var urls: [URL] = []
         if let path = environment["AC_EVAL_REQUEST_PATH"], !path.isEmpty {
             urls.append(URL(fileURLWithPath: path))
+        } else {
+            urls.append(URL(fileURLWithPath: "/tmp/ac-eval-runner-request.json"))
         }
 
         for url in urls {
             guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
                   let modifiedAt = attributes[.modificationDate] as? Date,
-                  abs(modifiedAt.timeIntervalSinceNow) < 60,
+                  abs(modifiedAt.timeIntervalSinceNow) < 180,
                   let data = try? Data(contentsOf: url),
                   let request = try? JSONDecoder().decode(ACEvalRunnerFileRequest.self, from: data) else {
+                continue
+            }
+            guard request.allowTestHostRun == true,
+                  request.resultPath.hasPrefix("/tmp/ac-eval-runner-"),
+                  request.resultPath.hasSuffix("-result.json") else {
+                continue
+            }
+            if let expiresAt = request.expiresAt,
+               Date().timeIntervalSince1970 > expiresAt {
+                try? FileManager.default.removeItem(at: url)
                 continue
             }
             try? FileManager.default.removeItem(at: url)
@@ -386,6 +393,8 @@ private struct ACEvalRunnerFileRequest: Codable {
     var openRouterAPIKey: String?
     var openAIAPIKey: String?
     var resultPath: String
+    var allowTestHostRun: Bool?
+    var expiresAt: TimeInterval?
 }
 
 private struct ACEvalRunnerOutput: Codable {
@@ -802,7 +811,8 @@ private actor EnvKeyOnlineModelService: OnlineModelServing {
                     totalTokens: $0.totalTokens,
                     estimated: false
                 )
-            }
+            },
+            imageWasProcessed: request.imagePath != nil
         )
     }
 

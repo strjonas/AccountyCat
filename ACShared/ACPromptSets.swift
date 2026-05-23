@@ -232,9 +232,11 @@ enum ACPromptSets {
     - Active writing session: activeProfile.isDefault=false, activeProfile.name="Writing", current title="Sonnencreme Gesicht | dm", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_session_mismatch"],"nudge":"Sunscreen can wait; your writing block is active."}
     - Generic coding profile: activeProfile.name="Coding", activeProfile.description missing, current title="README tutorial for macOS apps - YouTube" → {"assessment":"focused","suggested_action":"none","reason_tags":["broad_profile_archetype","adjacent_learning"]}
     - Strict coding profile: activeProfile.name="Coding", activeProfile.description="focused code writing only; no tutorials or videos", current title="README tutorial for macOS apps - YouTube" → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["strict_profile_scope","tutorial_disallowed"],"nudge":"Tutorials are outside this code-writing block."}
+    - Off-scope but productive: activeProfile.isDefault=false, activeProfile.name="Presentation prep", activeProfile.description="Building slides for Monday's review", current app="Xcode" title="ContentView.swift", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["productive_but_off_scope"],"nudge":"Coding's great, but this block is for the slides."} (Productive work that doesn't fit the declared session scope is still a distraction.)
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
     - Everyday short break: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=80, current title="Instagram Reels", recentActivityTimeline shows mostly work before this → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":180,"reason_tags":["short_break","within_everyday_tolerance"]}
     - Everyday drift: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=620, current title="Instagram Reels", recentActivityTimeline shows social/video dominating, no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["leisure_over_tolerance","timeline_drift"],"nudge":"This has turned into a scroll; time to come back."}
+    - Everyday clear-entertainment past tolerance (title-only): activeProfile.isDefault=true, current title="Funny Cat Compilation 2026 - YouTube", currentContextSeconds=900, recentActivityTimeline dominated by entertainment videos, no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["clear_entertainment","past_tolerance"],"nudge":"The cat videos have had a good run — back to it?"} (An unambiguously-entertainment title sustained well past tolerance is "clearly distracting text", so distracted even without a screenshot. A generic/dual-use title like a bare "YouTube", "ChatGPT", or a how-to/tutorial title stays unclear or focused.)
     - Explicit longer allowance: activeProfile.isDefault=true, newest user message="15 minutes of scrolling after lunch is fine", currentContextSeconds=520, current title="Instagram Reels" → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":600,"reason_tags":["user_allowance","break_allowed"]}
     - Focus-session quick message: activeProfile.name="Coding", current title="WhatsApp", currentContextSeconds=90, visible activity is composing one personal reply → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":120,"reason_tags":["brief_detour","message_composing"]}
     - Everyday with a real rule: activeProfile.isDefault=true, matchingRuleSummary says "disallow Instagram today", current app=Instagram → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["active_restrictive_rule"]}
@@ -366,7 +368,7 @@ enum ACPromptSets {
                 Write the nudge for this situation.
                 Mention the actual activity when that helps.
                 Do not nudge against something the user just explicitly allowed in `recentUserMessages` or `freeFormMemory`, or clearly implied by `calendarContext`.
-                If profile/rules/chat/memory conflict, use the same priority as the decision stage: active profile and matching rules first, then newest current-session user statement, then memory. Calendar is a tiebreaker only.
+                If profile/rules/chat/memory conflict, use the same priority as the decision stage: newest current-session user statement first for this exact activity, then active profile and matching rules, then memory. Calendar is a tiebreaker only.
                 If the decision stage made a mistake, still produce something neutral-to-supportive rather than scolding the user for an allowed activity.
                 {{PAYLOAD_JSON}}
                 Return exactly one JSON object.
@@ -700,8 +702,14 @@ enum ACPromptSets {
       behavior that should apply across all profiles. Rules cannot be global — if they want something
       global, memory is the right place.
     - `focus_policy`: concrete local allow/block/limit/discourage behavior AC can apply structurally.
-      Always profile-scoped. Use it when the user wants a specific rule *within the current profile*:
-      "block Reddit while coding", "this window is okay right now", "limit YouTube during this session".
+      Always profile-scoped (the active profile, including Everyday). Use it when the user wants a specific
+      rule *within the current profile*: "block Reddit while coding", "this window is okay right now",
+      "limit YouTube during this session". When the user grants themselves a time-boxed permission for a
+      specific app/site or the current activity — "let me watch YouTube for 20 minutes", "Reddit is fine for
+      the next half hour", "I'll just check Instagram quickly" — ALWAYS emit a `focus_policy` allow with a
+      `duration` (even in Everyday). If your reply grants or acknowledges such an allowance ("you got it",
+      "enjoy", "sure, 20 min"), the `focus_policy` action MUST be present — acknowledging without it is a bug,
+      because monitoring would otherwise still nudge the activity you just allowed.
       If a profile start/switch request explicitly names an allowed app/site/current context, emit both
       the `profile` action and a profile-scoped `focus_policy` allow action. Do not infer allow rules
       from broad profile names like Coding, Writing, Research, or Studying.

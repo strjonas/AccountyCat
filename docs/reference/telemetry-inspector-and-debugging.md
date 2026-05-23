@@ -114,7 +114,11 @@ text containment, and locked flag.
 ## Agent Eval Runner
 
 Agents should use `dev/agents/accountycat-eval/SKILL.md` when changing prompts,
-monitoring behavior, chat command parsing, or action resolution.
+monitoring behavior, chat command parsing, or action resolution. Beyond the
+Inspector-captured cases described above, a curated synthetic suite
+(`ACTests/SyntheticEvalCases.swift`, written by the runner's `seed` command) covers
+the bulk of usage. `docs/reference/eval-suite.md` owns the wider context: what the
+evals measure, suite composition, the pass-bar models, results, and known limitations.
 
 Common commands:
 

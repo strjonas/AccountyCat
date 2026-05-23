@@ -23,8 +23,9 @@ Load on demand:
 - `docs/reference/runtime-providers-and-setup.md` — runtime / model / provider / onboarding setup work
 - `docs/reference/state-persistence-and-testing.md` — state / persistence / tests / migrations
 - `docs/reference/telemetry-inspector-and-debugging.md` — telemetry / Inspector / debug bundles
+- `docs/reference/eval-suite.md` — offline judgment eval suite: synthetic cases, seeder, run workflow, what evals measure, results, known limitations
 - `dev/agents/accountycat-debugger/SKILL.md` — live/runtime debugging from telemetry, logs, Inspector output, or an exported debug bundle
-- `dev/agents/accountycat-eval/SKILL.md` — listing/running local eval cases captured from Inspector
+- `dev/agents/accountycat-eval/SKILL.md` — seeding/listing/running local eval cases (synthetic suite + Inspector-captured)
 
 Do not load the whole `docs/` tree into every session. `core/` is the default context; `reference/` and `experiments/` are on-demand.
 
