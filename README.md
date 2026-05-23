@@ -8,11 +8,6 @@
 
 Tell AC what you're working on. It watches the apps you switch to, checks the screen only when it has to, and nudges you when you drift — quietly, and only when it matters.
 
-**Watch AC in action** — a 33-second walkthrough:
-
-https://github.com/user-attachments/assets/b76c14f7-dfa0-49a4-823b-0f8454981b49
-
-
 ---
 
 ## The problem with focus apps
@@ -34,6 +29,10 @@ Every few minutes — or when you switch apps — AccountyCat checks the active 
 Most checks still result in nothing happening. When AC does say something, it's short. Escalation only happens after repeated ignored nudges.
 
 The model behind that decision is configurable. You choose how much intelligence you want and where it runs.
+
+**See it in action** — a 33-second walkthrough:
+
+https://github.com/user-attachments/assets/b76c14f7-dfa0-49a4-823b-0f8454981b49
 
 ---
 
