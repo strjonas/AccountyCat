@@ -3,7 +3,8 @@
 **A macOS focus companion that catches you drifting — and pulls you back.**
 
 <p align="center">
-  <img src="docs/media/ac-release.png" alt="AccountyCat sitting in the macOS menu bar" width="820">
+  <img width="1254" height="1254" alt="aclimg" src="https://github.com/user-attachments/assets/9c0dc9c6-bd51-4689-9c6b-b097dab36923" />
+
 </p>
 
 Tell AC what you're working on. It watches what's on your screen and pulls you back the moment you slip into a rabbit hole — without blocking the tutorial, doc, or Slack thread that's part of the job.
