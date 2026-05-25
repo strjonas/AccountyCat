@@ -560,6 +560,7 @@ extension AppController {
         UserDefaults.standard.set(true, forKey: "acOnboardingWizardEverCompleted")
         // Clear resumable in-progress state — the wizard is done.
         UserDefaults.standard.removeObject(forKey: "acOnboardingResumeStep")
+        UserDefaults.standard.removeObject(forKey: "acOnboardingResumeStep2")
         UserDefaults.standard.removeObject(forKey: "acOnboardingResumeMode")
         refreshSystemState()
     }
@@ -569,6 +570,7 @@ extension AppController {
         UserDefaults.standard.set(false, forKey: "acOnboardingWizardCompleted")
         UserDefaults.standard.set(false, forKey: "acOnboardingWizardEverCompleted")
         UserDefaults.standard.removeObject(forKey: "acOnboardingResumeStep")
+        UserDefaults.standard.removeObject(forKey: "acOnboardingResumeStep2")
         UserDefaults.standard.removeObject(forKey: "acOnboardingResumeMode")
         showingOnboardingCompletion = false
         refreshSystemState()

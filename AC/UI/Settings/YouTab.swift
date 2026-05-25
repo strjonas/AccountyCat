@@ -89,6 +89,20 @@ struct YouTab: View {
                 Divider().opacity(0.15).padding(.leading, 36)
 
                 settingsLinkRow(
+                    icon: "envelope",
+                    label: "tell us how it's going",
+                    action: {
+                        let subject = "AccountyCat feedback"
+                            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                        if let url = URL(string: "mailto:fb@accountycat.com?subject=\(subject)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                )
+
+                Divider().opacity(0.15).padding(.leading, 36)
+
+                settingsLinkRow(
                     icon: "square.and.arrow.up",
                     label: "export everything",
                     action: { exportState() }

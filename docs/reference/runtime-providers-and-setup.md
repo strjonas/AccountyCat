@@ -10,6 +10,7 @@ This doc covers first-run setup, local runtime management, and online-provider r
 - `AC/Services/LocalModelRuntime.swift`
 - `AC/Services/OnlineModelService.swift`
 - `AC/Services/OnlineProviderRouting.swift`
+- `AC/Services/PromoRedemptionService.swift`
 - `ACShared/AITier.swift`
 - `AC/UI/OnboardingDialogView.swift`
 - `AC/UI/OnboardingWizardView.swift`
@@ -121,6 +122,21 @@ Model selection is split by text vs image where supported:
 - `localModelIdentifierImage`
 
 `AITier` supplies the user-facing defaults.
+
+## Limited Trial Redemption
+
+The onboarding wizard includes an optional promo-code step before normal backend selection.
+
+- A user without a code skips the step and follows the existing Local or BYOK setup flow.
+- A valid code is redeemed through `PromoRedemptionService`, which contacts
+  `https://accountycat.com/api/redeem` with the code and a random per-install identifier.
+- The endpoint returns a capped OpenRouter key. AC saves that key using the same Keychain-backed
+  BYOK credential path, switches to OpenRouter with the Balanced tier, and sends the user
+  directly to permissions and completion.
+- After activation, monitoring and chat traffic goes directly from AC to OpenRouter; it is not
+  proxied through the AccountyCat site.
+- The trial path is preserved through the permission-related app relaunch, and users can replace
+  the trial key or switch to Local mode later in Settings -> AI.
 
 ## Online Routing
 

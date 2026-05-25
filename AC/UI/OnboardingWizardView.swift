@@ -15,11 +15,12 @@ import SwiftUI
 
 private enum WizardStep: Int, CaseIterable {
     case welcome = 0
-    case modeSelection = 1
-    case tierSelection = 2
-    case permissions = 3
-    case apiKey = 4  // BYOK path only
-    case completion = 5
+    case promo = 1  // optional free-trial code entry
+    case modeSelection = 2
+    case tierSelection = 3
+    case permissions = 4
+    case apiKey = 5  // BYOK path only
+    case completion = 6
 }
 
 // MARK: - Onboarding mode (wizard-local — maps to MonitoringInferenceBackend)
@@ -37,6 +38,14 @@ struct OnboardingWizardView: View {
     @State private var step: WizardStep = .welcome
     @State private var selectedMode: OnboardingMode = .byok
 
+    /// Set when the user successfully redeems a free-trial code — collapses the wizard to
+    /// the short path (welcome → promo → permissions → completion).
+    @State private var isPromoFlow = false
+    @State private var promoCode = ""
+    @State private var isRedeemingPromo = false
+    @State private var promoError: String?
+    @State private var promoLimitUSD: Double?
+
     /// Set once the user taps "Grant Screen Recording". macOS only applies a fresh
     /// Screen Recording grant after the process relaunches, so we surface a restart
     /// affordance instead of leaving the user stuck on a refresh button that can't help.
@@ -47,8 +56,9 @@ struct OnboardingWizardView: View {
     private let permissionPollTimer = Timer.publish(every: 1.5, on: .main, in: .common)
         .autoconnect()
 
-    private static let savedStepKey = "acOnboardingResumeStep"
+    private static let savedStepKey = "acOnboardingResumeStep2"
     private static let savedModeKey = "acOnboardingResumeMode"
+    private static let promoActivatedKey = "acPromoTrialActivated"
 
     /// Whether the wizard was ever completed before (e.g. after a dev reset).
     private var hasBeenCompletedBefore: Bool {
@@ -116,6 +126,7 @@ struct OnboardingWizardView: View {
             Group {
                 switch step {
                 case .welcome: welcomeScreen
+                case .promo: promoScreen
                 case .modeSelection: modeScreen
                 case .tierSelection: tierScreen
                 case .permissions: permissionsScreen
@@ -135,6 +146,9 @@ struct OnboardingWizardView: View {
         .onAppear {
             selectedMode = resumeMode
             step = resumeStep
+            isPromoFlow =
+                UserDefaults.standard.bool(forKey: Self.promoActivatedKey)
+                && controller.hasOnlineAPIKeyConfigured
         }
         .onChange(of: step) { persistProgress() }
         .onChange(of: selectedMode) { persistProgress() }
@@ -170,9 +184,11 @@ struct OnboardingWizardView: View {
     }
 
     private var relevantSteps: [WizardStep] {
-        selectedMode == .byok
-            ? [.welcome, .modeSelection, .tierSelection, .permissions, .apiKey, .completion]
-            : [.welcome, .modeSelection, .tierSelection, .permissions, .completion]
+        if isPromoFlow { return [.welcome, .promo, .permissions, .completion] }
+        var steps: [WizardStep] = [.welcome, .promo, .modeSelection, .tierSelection, .permissions]
+        if selectedMode == .byok { steps.append(.apiKey) }
+        steps.append(.completion)
+        return steps
     }
 
     // MARK: - Screen 1: Welcome
@@ -209,9 +225,116 @@ struct OnboardingWizardView: View {
             }
 
             Button("Get started →") {
-                withAnimation(.acSpring) { step = .modeSelection }
+                withAnimation(.acSpring) { step = .promo }
             }
             .buttonStyle(ACPrimaryButton())
+        }
+    }
+
+    // MARK: - Promo code (optional free trial)
+
+    private var promoScreen: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Got a free trial code?")
+                .font(.ac(17, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary)
+
+            Text(
+                "Paste it and AccountyCat sets itself up for free — no account, no card. No code? Skip this and choose how to power AC yourself."
+            )
+            .font(.ac(12))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.75))
+            .fixedSize(horizontal: false, vertical: true)
+
+            Text(
+                "A code creates a capped $0.50 OpenRouter key. This setup request contacts AccountyCat; after that your AI requests go directly to OpenRouter."
+            )
+            .font(.ac(10))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                TextField("e.g. ACFIRST", text: $promoCode)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .autocorrectionDisabled(true)
+                    .onSubmit { redeemPromo() }
+                Button {
+                    redeemPromo()
+                } label: {
+                    if isRedeemingPromo {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Activate")
+                    }
+                }
+                .buttonStyle(ACPrimaryButton())
+                .disabled(
+                    isRedeemingPromo || promoCode.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            if let promoError {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                        .padding(.top, 1)
+                    Text(promoError)
+                        .font(.ac(11))
+                        .foregroundStyle(.orange.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text("Codes are limited.")
+                    .font(.ac(10))
+                    .foregroundStyle(.secondary)
+                Button("Get one →") {
+                    NSWorkspace.shared.open(URL(string: "https://accountycat.com/trial")!)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(accent)
+                .font(.ac(10, weight: .medium))
+            }
+
+            HStack {
+                Button("← Back") { withAnimation(.acSpring) { step = .welcome } }
+                    .buttonStyle(ACSecondaryButton())
+                Spacer()
+                Button("I don't have a code →") {
+                    isPromoFlow = false
+                    withAnimation(.acSpring) { step = .modeSelection }
+                }
+                .buttonStyle(ACSecondaryButton())
+            }
+        }
+    }
+
+    private func redeemPromo() {
+        let code = promoCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty, !isRedeemingPromo else { return }
+        promoError = nil
+        isRedeemingPromo = true
+        Task { @MainActor in
+            let result = await PromoRedemptionService.redeem(code: code)
+            isRedeemingPromo = false
+            switch result {
+            case .success(let redemption):
+                controller.updateMonitoringInferenceBackend(.openRouter)
+                controller.updateOnlineAPIKey(redemption.apiKey)
+                controller.updateAITier(.balanced)
+                isPromoFlow = true
+                selectedMode = .byok
+                promoLimitUSD = redemption.limitUSD
+                UserDefaults.standard.set(true, forKey: Self.promoActivatedKey)
+                withAnimation(.acSpring) { step = .permissions }
+            case .failure(let error):
+                promoError = error.userMessage
+            }
         }
     }
 
@@ -279,7 +402,7 @@ struct OnboardingWizardView: View {
             }
 
             HStack {
-                Button("← Back") { withAnimation(.acSpring) { step = .welcome } }
+                Button("← Back") { withAnimation(.acSpring) { step = .promo } }
                     .buttonStyle(ACSecondaryButton())
                 Spacer()
                 if selectedMode == .managed {
@@ -450,8 +573,10 @@ struct OnboardingWizardView: View {
             }
 
             HStack {
-                Button("← Back") { withAnimation(.acSpring) { step = .tierSelection } }
-                    .buttonStyle(ACSecondaryButton())
+                Button("← Back") {
+                    withAnimation(.acSpring) { step = isPromoFlow ? .promo : .tierSelection }
+                }
+                .buttonStyle(ACSecondaryButton())
                 Spacer()
                 Button {
                     controller.refreshSystemState(persist: false)
@@ -462,7 +587,9 @@ struct OnboardingWizardView: View {
                 .help("Refresh permission status")
                 Button("Continue →") {
                     withAnimation(.acSpring) {
-                        step = selectedMode == .byok ? .apiKey : .completion
+                        step =
+                            (selectedMode == .byok && !controller.hasOnlineAPIKeyConfigured)
+                            ? .apiKey : .completion
                     }
                 }
                 .buttonStyle(ACPrimaryButton())
@@ -532,8 +659,10 @@ struct OnboardingWizardView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     completionSummaryRow(
                         icon: selectedMode == .offline ? "lock.fill" : "key.fill",
-                        label: selectedMode == .offline
-                            ? "Fully Private — local AI" : "Bring Your Own Key — OpenRouter"
+                        label: isPromoFlow
+                            ? "Free trial — OpenRouter"
+                            : (selectedMode == .offline
+                                ? "Fully Private — local AI" : "Bring Your Own Key — OpenRouter")
                     )
                     completionSummaryRow(
                         icon: "brain",
@@ -553,6 +682,29 @@ struct OnboardingWizardView: View {
                 Text("You can adjust any of this in Settings → AI.")
                     .font(.ac(11))
                     .foregroundStyle(.secondary)
+            }
+
+            if isPromoFlow {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "gift")
+                        .font(.system(size: 12))
+                        .foregroundStyle(accent)
+                        .padding(.top, 1)
+                    Text(
+                        "Your trial includes \(promoLimitLabel) of model use. When it runs out, add your own OpenRouter key or switch to Local in Settings → AI."
+                    )
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .fill(Color.acSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                                Color.acHairline, lineWidth: 1))
+                )
             }
 
             if selectedMode == .offline {
@@ -607,6 +759,10 @@ struct OnboardingWizardView: View {
         case .byok: return AppController.shortModelName(for: tier.byokModelIdentifier)
         case .managed: return ""
         }
+    }
+
+    private var promoLimitLabel: String {
+        String(format: "$%.2f", promoLimitUSD ?? 0.50)
     }
 }
 
