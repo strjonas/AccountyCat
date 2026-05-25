@@ -3,7 +3,7 @@
 **A macOS focus companion that catches you drifting — and pulls you back.**
 
 <p align="center">
-  <img width="654" height="654" alt="aclimg" src="https://github.com/user-attachments/assets/9c0dc9c6-bd51-4689-9c6b-b097dab36923" />
+  <img width="554" height="554" alt="aclimg" src="https://github.com/user-attachments/assets/9c0dc9c6-bd51-4689-9c6b-b097dab36923" />
 
 </p>
 
