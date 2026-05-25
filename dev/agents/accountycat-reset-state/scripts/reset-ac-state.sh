@@ -109,6 +109,18 @@ reset_tcc() {
   tccutil reset All "$bundle_id" >/dev/null 2>&1 || true
 }
 
+delete_defaults_domain() {
+  local bundle_id="$1"
+  if (( dry_run )); then
+    log "Would delete defaults domain $bundle_id"
+    return 0
+  fi
+
+  # Removing the plist alone is insufficient while cfprefsd has the domain cached:
+  # launching AC can recreate completion flags from memory after an apparent reset.
+  defaults delete "$bundle_id" >/dev/null 2>&1 || true
+}
+
 discover_bundle_ids
 
 log "Discovered AC bundle IDs:"
@@ -131,6 +143,7 @@ delete_keychain_item "dev.accountycat.credentials" "monitoring_openai_api_key"
 remove_path "$HOME/Library/Application Support/AC"
 
 for bundle_id in "${discovered_bundle_ids[@]}"; do
+  delete_defaults_domain "$bundle_id"
   remove_path "$HOME/Library/Preferences/$bundle_id.plist"
   remove_path "$HOME/Library/Caches/$bundle_id"
   remove_path "$HOME/Library/HTTPStorages/$bundle_id"
