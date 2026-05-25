@@ -1,22 +1,20 @@
 # AccountyCat
 
-**A focus companion for macOS that actually understands context.**
+**A macOS focus companion that catches you drifting — and pulls you back.**
 
 <p align="center">
   <img src="docs/media/ac-release.png" alt="AccountyCat sitting in the macOS menu bar" width="820">
 </p>
 
-Tell AC what you're working on. It watches the apps you switch to, checks the screen only when it has to, and nudges you when you drift — quietly, and only when it matters.
+Tell AC what you're working on. It watches what's on your screen and pulls you back the moment you slip into a rabbit hole — without blocking the tutorial, doc, or Slack thread that's part of the job.
 
 ---
 
 ## The problem with focus apps
 
-Most focus apps are blunt instruments. They block a list of websites and call it done. But that's not how real work operates.
+A block list can't tell work from procrastination. Reddit might be where you lose an hour — or where you find the exact answer. Same site, opposite intent. Block it and you lose the answer; allow it and you lose the hour. So most blockers end up switched off.
 
-Sometimes you need YouTube — for that one tutorial. Sometimes Slack is a distraction, sometimes it's where the answer is. Sometimes you're on Reddit because you're procrastinating; sometimes because you're looking up a bash flag. A blocking rule can't tell the difference. AccountyCat can.
-
-AccountyCat sits in your menu bar, reads the active app and window title, and uses screenshots only when that text context is not enough. It nudges you when you drift — not by locking anything, just a small message from a cat. If you're doing something that looks off-task, it'll ask. If you tell it you need to watch this one video, and that makes sense, it'll let it go. It learns your context instead of enforcing a policy.
+AccountyCat sits in your menu bar, reads the active app and window title, and pulls in a screenshot only when that text isn't enough to judge. When you drift, it doesn't lock anything — it just says one short thing to get you back on task. Tell it you genuinely need to watch this one video, and if that holds up, it lets it go. It reads your context instead of enforcing a policy.
 
 Getting interrupted during legitimate work is treated as a bug. The goal isn't maximum restriction — it's staying honest with yourself.
 
@@ -24,9 +22,9 @@ Getting interrupted during legitimate work is treated as a bug. The goal isn't m
 
 ## How it works
 
-Every few minutes — or when you switch apps — AccountyCat checks the active app, window title, recent context, and your current focus profile. When the title is descriptive enough, it can make the decision as a text-only call. When the app is inherently ambiguous, the title is missing, or the text-only result comes back unclear, AC attaches a screenshot and asks a vision-capable model once.
+Every few minutes — or when you switch apps — AccountyCat checks the active app, window title, recent context, and your current focus profile. When the title is descriptive enough, it can decide on a text-only call. When the app is inherently ambiguous, the title is missing, or the text-only result comes back unclear, AC attaches a screenshot and asks a vision-capable model once.
 
-Most checks still result in nothing happening. When AC does say something, it's short. Escalation only happens after repeated ignored nudges.
+When you've genuinely drifted, AC steps in with one short message to get you back. Keep ignoring it and it escalates — but it won't pile on while you're actually working.
 
 The model behind that decision is configurable. You choose how much intelligence you want and where it runs.
 
@@ -70,7 +68,7 @@ The app detects your available memory and suggests the right tier automatically.
 
 Connect your own [OpenRouter](https://openrouter.ai) account. You control the spend. All requests use OpenRouter's Zero Data Retention (ZDR) enforcement, meaning providers contractually cannot log or train on your data.
 
-AccountyCat intelligently selects the right model based on what you're doing:
+AccountyCat selects the right model based on what you're doing:
 - **Text-only decisions**: Uses optimized text-only models for speed and cost when the app/title/profile context is enough
 - **Screenshot checks**: Uses a vision-capable model for ambiguous apps, missing or weak titles, and one-shot retries when a text-only decision is unclear
 
@@ -80,7 +78,7 @@ AccountyCat intelligently selects the right model based on what you're doing:
 | Default | DeepSeek V4 Flash | Qwen 3.6 35B | $1.50–$3.00 |
 | Smartest | Kimi K2.6 | Kimi K2.6 | $3.00–$5.00 |
 
-\* Estimates reflect steady-state usage after the first week or two. The first few days tend to run slightly higher — AC hasn't yet learned which apps and contexts are clearly on-task for you, so more decisions reach the model. As AC builds up your safelist, common contexts get recognized and skipped before any model call happens, which is the main driver of cost over time. Varies with how much you actually use your Mac. Model selection and prices are kept current as OpenRouter's catalog evolves. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
+\* Rough steady-state estimates. The first few days run a little higher — AC hasn't yet learned which apps and contexts are on-task for you, so more decisions reach the model. As it builds up your safelist, common contexts get recognized and skipped before any model call, which is the main driver of cost over time. Actual spend varies with how much you use your Mac. Only OpenRouter is supported for BYOK — one integration, clean privacy controls, one cost dashboard.
 
 > **Managed mode (waitlist):** A fully hosted option is in planning — pay a flat monthly fee, no OpenRouter account needed, just works out of the box. [Join the waitlist](https://www.accountycat.com/#waitlist) to signal demand and get early access.
 
@@ -132,13 +130,7 @@ Everything stays under `~/Library/Application Support/AC`. With BYOK, screenshot
 ## Docs
 
 - [Docs index](docs/README.md)
-- [North star](docs/core/north-star.md)
 - [Codebase map](docs/core/codebase-map.md)
-- [Monitoring pipeline](docs/reference/monitoring-pipeline.md)
-- [Runtime, providers, and setup](docs/reference/runtime-providers-and-setup.md)
-- [State, persistence, and testing](docs/reference/state-persistence-and-testing.md)
-- [Telemetry, Inspector, and debugging](docs/reference/telemetry-inspector-and-debugging.md)
-- [Direct OpenAI routing experiment](docs/experiments/direct-openai-routing.md)
 - [Contributing](CONTRIBUTING.md)
 
 ---
