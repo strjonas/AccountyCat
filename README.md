@@ -3,8 +3,12 @@
 **A macOS focus companion that catches you drifting — and pulls you back.**
 
 <p align="center">
-  <img width="554" height="554" alt="aclimg" src="https://github.com/user-attachments/assets/9c0dc9c6-bd51-4689-9c6b-b097dab36923" />
-
+  <img alt="License: MIT" src="https://img.shields.io/github/license/strjonas/AccountyCat?color=black" />
+  <img alt="Platform: macOS 14+" src="https://img.shields.io/badge/platform-macOS%2014%2B-black" />
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/chip-Apple%20Silicon-black" />
+  <img alt="Built with Swift" src="https://img.shields.io/badge/built%20with-Swift-black" />
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/strjonas/AccountyCat?color=black&label=release" />
+  <img alt="Downloads" src="https://img.shields.io/github/downloads/strjonas/AccountyCat/total?color=black&label=downloads" />
 </p>
 
 Tell AC what you're working on. It watches what's on your screen and pulls you back the moment you slip into a rabbit hole — without blocking the tutorial, doc, or Slack thread that's part of the job.
