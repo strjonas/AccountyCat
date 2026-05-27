@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.producthunt.com/products/accountycat?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-accountycat" target="_blank" rel="noopener noreferrer"><img alt="AccountyCat - A focus companion that actually gets context | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&amp;theme=light&amp;t=1779778442873"></a>
+  <a href="https://www.producthunt.com/products/accountycat?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-accountycat" target="_blank" rel="noopener noreferrer"><img alt="AccountyCat - A focus companion that actually gets context | Product Hunt" width="185" height="40" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&amp;theme=light&amp;t=1779778442873"></a>
 </p>
 
 Tell AC what you're working on. It watches what's on your screen and pulls you back the moment you slip into a rabbit hole — without blocking the tutorial, doc, or Slack thread that's part of the job.
