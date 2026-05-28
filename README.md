@@ -51,9 +51,8 @@ Every few minutes, or when you switch apps, AccountyCat checks the active app, w
 
 AccountyCat behaves differently in a named focus session versus everyday mode. Focus sessions are stricter because you opted in. Everyday mode is more tolerant of errands, breaks, and life admin.
 
-<p align="center">
   https://github.com/user-attachments/assets/6f9d42d7-b0ae-464a-a737-13ce54ea634c
-</p>
+
 
 <p align="center">
   <sub>14-second demo.</sub>
