@@ -21,14 +21,13 @@
 <p align="center">
   <a href="https://github.com/strjonas/AccountyCat/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-black" /></a>
   <a href="https://accountycat.com/download"><img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-black" /></a>
-  <a href="https://accountycat.com/download"><img alt="Apple Silicon" src="https://img.shields.io/badge/chip-Apple%20Silicon-black" /></a>
-  <a href="https://www.swift.org"><img alt="Built with Swift" src="https://img.shields.io/badge/built%20with-Swift-black" /></a>
   <a href="https://accountycat.com/download"><img alt="Signed and notarized by Apple" src="https://img.shields.io/badge/signed%20%26%20notarized-Apple-black" /></a>
+  <a href="https://github.com/strjonas/AccountyCat/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/strjonas/AccountyCat?color=black&label=release" /></a>
+  <a href="https://github.com/strjonas/AccountyCat/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/strjonas/AccountyCat/total?color=black&label=downloads" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/strjonas/AccountyCat/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/strjonas/AccountyCat?color=black&label=release" /></a>
-  <a href="https://github.com/strjonas/AccountyCat/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/strjonas/AccountyCat/total?color=black&label=downloads" /></a>
+  <a href="https://www.producthunt.com/products/accountycat?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-accountycat"><img alt="AccountyCat on Product Hunt" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&theme=neutral&t=1779978760491" height="40" /></a>
 </p>
 
 <p align="center">
@@ -38,12 +37,10 @@
 </p>
 
 <p align="center">
-  <sub>Real 14-second demo.</sub>
+  <sub>14-second demo.</sub>
 </p>
 
-<p align="center">
-  <a href="https://www.producthunt.com/products/accountycat?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-accountycat"><img alt="AccountyCat on Product Hunt" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&theme=neutral&t=1779978760491" height="40" /></a>
-</p>
+
 
 Tell AC what matters, and it catches drift without blocking the tutorial, doc, or Slack thread that's actually part of the work.
 
