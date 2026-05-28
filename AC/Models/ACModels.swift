@@ -200,6 +200,58 @@ enum PermissionState: String, Codable, Sendable {
     case denied
 }
 
+enum AppMonitoringScopeMode: String, Codable, CaseIterable, Sendable {
+    case disabled
+    case allowlist
+    case blocklist
+
+    var displayName: String {
+        switch self {
+        case .disabled: return "All apps"
+        case .allowlist: return "Only these"
+        case .blocklist: return "All except these"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .disabled:
+            return "AC watches whichever app is frontmost."
+        case .allowlist:
+            return "AC only monitors the apps you picked."
+        case .blocklist:
+            return "AC skips the apps you picked."
+        }
+    }
+
+    /// Label for the app picker button, phrased for the active mode.
+    var addAppsButtonTitle: String {
+        switch self {
+        case .disabled: return "Choose apps…"
+        case .allowlist: return "Add apps to monitor…"
+        case .blocklist: return "Add apps to skip…"
+        }
+    }
+
+    /// Shown when a scoped mode is active but no apps are picked yet. For
+    /// allowlist this is a soft warning: an empty allowlist falls back to
+    /// watching everything (see `shouldSkipMonitoring`).
+    var emptySelectionNote: String {
+        switch self {
+        case .disabled: return ""
+        case .allowlist: return "No apps yet — AC keeps watching everything until you add some."
+        case .blocklist: return "No apps yet — AC isn't skipping anything."
+        }
+    }
+}
+
+struct AppMonitoringSelection: Codable, Hashable, Identifiable, Sendable {
+    var bundleIdentifier: String
+    var appName: String
+
+    var id: String { bundleIdentifier }
+}
+
 struct PermissionsSnapshot: Codable, Sendable {
     var screenRecording: PermissionState = .unknown
     var accessibility: PermissionState = .unknown
@@ -944,6 +996,14 @@ struct ACState: Codable, Sendable {
     var lastFocusedBundleIdentifier: String?
     var runtimePathOverride: String?
     var monitoringConfiguration = MonitoringConfiguration()
+    /// App-level privacy / scope gate, independent from focus rules and profiles.
+    /// `.allowlist` means AC only monitors the selected apps. `.blocklist` means
+    /// AC monitors everything except those apps.
+    var appMonitoringScopeMode: AppMonitoringScopeMode = .disabled
+    /// Apps AC monitors when in `.allowlist` mode.
+    var appMonitoringAllowlist: [AppMonitoringSelection] = []
+    /// Apps AC skips when in `.blocklist` mode.
+    var appMonitoringBlocklist: [AppMonitoringSelection] = []
     var algorithmState = AlgorithmStateEnvelope()
     var hasMigratedPolicyAlgorithmDefault = false
     var recentActions: [ActionRecord] = []
@@ -1050,6 +1110,10 @@ struct ACState: Codable, Sendable {
         case lastFocusedBundleIdentifier
         case runtimePathOverride
         case monitoringConfiguration
+        case appMonitoringScopeMode
+        case appMonitoringSelections
+        case appMonitoringAllowlist
+        case appMonitoringBlocklist
         case algorithmState
         case hasMigratedPolicyAlgorithmDefault
         case recentActions
@@ -1141,6 +1205,40 @@ struct ACState: Codable, Sendable {
             try container.decodeIfPresent(
                 MonitoringConfiguration.self, forKey: .monitoringConfiguration)
             ?? MonitoringConfiguration()
+        appMonitoringScopeMode =
+            try container.decodeIfPresent(
+                AppMonitoringScopeMode.self, forKey: .appMonitoringScopeMode)
+            ?? .disabled
+        func sanitizeSelections(_ raw: [AppMonitoringSelection]) -> [AppMonitoringSelection] {
+            raw.reduce(into: [String: AppMonitoringSelection]()) { partial, entry in
+                let bundleID = entry.bundleIdentifier.cleanedSingleLine
+                let appName = entry.appName.cleanedSingleLine
+                guard !bundleID.isEmpty, !appName.isEmpty else { return }
+                partial[bundleID] = AppMonitoringSelection(
+                    bundleIdentifier: bundleID,
+                    appName: appName
+                )
+            }
+            .values
+            .sorted { $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending }
+        }
+
+        let decodedAllowlist = try container.decodeIfPresent(
+            [AppMonitoringSelection].self, forKey: .appMonitoringAllowlist)
+        let decodedBlocklist = try container.decodeIfPresent(
+            [AppMonitoringSelection].self, forKey: .appMonitoringBlocklist)
+        if decodedAllowlist != nil || decodedBlocklist != nil {
+            appMonitoringAllowlist = sanitizeSelections(decodedAllowlist ?? [])
+            appMonitoringBlocklist = sanitizeSelections(decodedBlocklist ?? [])
+        } else {
+            // Legacy: a single shared list. Seed both lists from it so nothing is
+            // lost; the user can diverge them from here.
+            let legacy = sanitizeSelections(
+                try container.decodeIfPresent(
+                    [AppMonitoringSelection].self, forKey: .appMonitoringSelections) ?? [])
+            appMonitoringAllowlist = legacy
+            appMonitoringBlocklist = legacy
+        }
         algorithmState =
             try container.decodeIfPresent(AlgorithmStateEnvelope.self, forKey: .algorithmState)
             ?? AlgorithmStateEnvelope()
@@ -1283,6 +1381,9 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(lastFocusedBundleIdentifier, forKey: .lastFocusedBundleIdentifier)
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
         try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
+        try container.encode(appMonitoringScopeMode, forKey: .appMonitoringScopeMode)
+        try container.encode(appMonitoringAllowlist, forKey: .appMonitoringAllowlist)
+        try container.encode(appMonitoringBlocklist, forKey: .appMonitoringBlocklist)
         try container.encode(algorithmState, forKey: .algorithmState)
         try container.encode(
             hasMigratedPolicyAlgorithmDefault, forKey: .hasMigratedPolicyAlgorithmDefault)
@@ -1322,6 +1423,9 @@ struct ACState: Codable, Sendable {
         monitoringConfiguration.pipelineProfileID = MonitoringConfiguration.defaultPipelineProfileID
         monitoringConfiguration.runtimeProfileID = MonitoringConfiguration.defaultRuntimeProfileID
         monitoringConfiguration.cadenceMode = .balanced
+        appMonitoringScopeMode = .disabled
+        appMonitoringAllowlist = []
+        appMonitoringBlocklist = []
         algorithmState = AlgorithmStateEnvelope()
         hasMigratedPolicyAlgorithmDefault = true
         memoryEntries = []
@@ -1354,6 +1458,50 @@ struct ACState: Codable, Sendable {
             let positiveUsage = entry.value.filter { $0.value > 0 }
             guard !positiveUsage.isEmpty else { return }
             partial[entry.key] = positiveUsage
+        }
+    }
+
+    /// The app list backing a given scope mode. `.disabled` has no list.
+    func appMonitoringSelections(for mode: AppMonitoringScopeMode) -> [AppMonitoringSelection] {
+        switch mode {
+        case .disabled: return []
+        case .allowlist: return appMonitoringAllowlist
+        case .blocklist: return appMonitoringBlocklist
+        }
+    }
+
+    /// The app list backing the currently active scope mode.
+    var activeAppMonitoringSelections: [AppMonitoringSelection] {
+        appMonitoringSelections(for: appMonitoringScopeMode)
+    }
+
+    mutating func setAppMonitoringSelections(
+        _ selections: [AppMonitoringSelection],
+        for mode: AppMonitoringScopeMode
+    ) {
+        switch mode {
+        case .disabled: break
+        case .allowlist: appMonitoringAllowlist = selections
+        case .blocklist: appMonitoringBlocklist = selections
+        }
+    }
+
+    func shouldSkipMonitoring(for context: FrontmostContext) -> Bool {
+        let selections = activeAppMonitoringSelections
+        guard !selections.isEmpty else { return false }
+        switch appMonitoringScopeMode {
+        case .disabled:
+            return false
+        case .allowlist:
+            guard let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty else {
+                return true
+            }
+            return !selections.contains { $0.bundleIdentifier == bundleID }
+        case .blocklist:
+            guard let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty else {
+                return false
+            }
+            return selections.contains { $0.bundleIdentifier == bundleID }
         }
     }
 

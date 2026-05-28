@@ -29,6 +29,8 @@ final class AppController: ObservableObject {
     @Published var installingDependencies = false
     @Published var setupProgressValue: Double?
     @Published var setupProgressMessage: String?
+    @Published var setupDownloadedBytes: Int64?
+    @Published var setupTotalBytes: Int64?
     @Published var setupErrorMessage: String?
     @Published var pendingLocalModelChange: PendingLocalModelChange?
     @Published var modelDownloadNotice: ModelDownloadNotice?
@@ -88,6 +90,9 @@ final class AppController: ObservableObject {
     var openMainPopover: (() -> Void)?
     /// Closure set by AppDelegate to resize the main popover (e.g. when stats expand).
     var resizePopover: ((NSSize) -> Void)?
+    /// Closure set by AppDelegate to keep the popover open across a modal system
+    /// panel (e.g. the app picker), so resign-active doesn't tear it down.
+    var suppressPopoverAutoClose: ((Bool) -> Void)?
 
     /// How many recent messages (non-system) are sent to the LLM for context.
     static let chatContextWindow = 8
@@ -109,6 +114,7 @@ final class AppController: ObservableObject {
     var lastPromptedDependencySignature: String?
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
     var installRuntimeTask: Task<Void, Never>?
+    var downloadProgressTask: Task<Void, Never>?
     private var telemetryHeartbeatTask: Task<Void, Never>?
     var activeScheduledTimers: [UUID: DispatchWorkItem] = [:]
 
@@ -373,6 +379,97 @@ final class AppController: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         state.userName = trimmed
         persistState()
+    }
+
+    func updateAppMonitoringScopeMode(_ mode: AppMonitoringScopeMode) {
+        guard state.appMonitoringScopeMode != mode else { return }
+        state.appMonitoringScopeMode = mode
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "App monitoring scope mode: \(mode.rawValue)")
+    }
+
+    func importAppMonitoringSelectionsFromPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose apps for AccountyCat scope"
+        switch state.appMonitoringScopeMode {
+        case .allowlist:
+            panel.message = "Pick the apps AC should monitor. Everything else is left alone."
+        case .blocklist:
+            panel.message = "Pick the apps AC should skip. It keeps watching everything else."
+        case .disabled:
+            panel.message = "Pick apps from Applications to scope AC's monitoring."
+        }
+        panel.prompt = "Add Apps"
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.application]
+
+        // The system open panel takes key window, which would otherwise trip the
+        // resign-active handler and tear the popover down. Hold it open so the user
+        // lands back on this exact settings view after picking.
+        suppressPopoverAutoClose?(true)
+        defer { suppressPopoverAutoClose?(false) }
+
+        guard panel.runModal() == .OK else { return }
+        addAppMonitoringSelections(from: panel.urls)
+    }
+
+    func addAppMonitoringSelections(from urls: [URL]) {
+        let mode = state.appMonitoringScopeMode
+        guard mode != .disabled else { return }
+        let selections = urls.compactMap(Self.appMonitoringSelection(from:))
+        guard !selections.isEmpty else { return }
+
+        var merged = Dictionary(
+            uniqueKeysWithValues: state.appMonitoringSelections(for: mode).map { ($0.bundleIdentifier, $0) })
+        for entry in selections {
+            merged[entry.bundleIdentifier] = entry
+        }
+        let updated = merged.values.sorted {
+            $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
+        }
+        guard updated != state.appMonitoringSelections(for: mode) else { return }
+
+        state.setAppMonitoringSelections(updated, for: mode)
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "App monitoring \(mode.rawValue) updated: \(updated.count) app(s)")
+    }
+
+    func removeAppMonitoringSelection(bundleIdentifier: String) {
+        let mode = state.appMonitoringScopeMode
+        guard mode != .disabled else { return }
+        let current = state.appMonitoringSelections(for: mode)
+        let filtered = current.filter { $0.bundleIdentifier != bundleIdentifier }
+        guard filtered.count != current.count else { return }
+
+        state.setAppMonitoringSelections(filtered, for: mode)
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Removed app from \(mode.rawValue): \(bundleIdentifier)")
+    }
+
+    private static func appMonitoringSelection(from url: URL) -> AppMonitoringSelection? {
+        guard url.pathExtension.caseInsensitiveCompare("app") == .orderedSame else { return nil }
+        guard let bundle = Bundle(url: url) else { return nil }
+        guard let bundleIdentifier = bundle.bundleIdentifier?.cleanedSingleLine, !bundleIdentifier.isEmpty else {
+            return nil
+        }
+
+        let appName =
+            (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)?
+            .cleanedSingleLine
+            ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)?.cleanedSingleLine
+            ?? url.deletingPathExtension().lastPathComponent.cleanedSingleLine
+        guard !appName.isEmpty else { return nil }
+
+        return AppMonitoringSelection(
+            bundleIdentifier: bundleIdentifier,
+            appName: appName
+        )
     }
 
     func appendMonitoringMetric(

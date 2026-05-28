@@ -417,6 +417,13 @@ extension AppController {
         guard state.monitoringConfiguration.inferenceBackend != backend else { return }
         state.monitoringConfiguration.inferenceBackend = backend
         if backend == .openRouter {
+            // Switching away from Local must actually stop any in-flight runtime
+            // install / model download. Without this the llama.cpp download keeps
+            // running and installingRuntime stays true, which pins setupStatus at
+            // .installing ("setup needed") until the app is restarted.
+            cancelRuntimeInstall()
+            pendingLocalModelChange = nil
+            modelDownloadNotice = nil
             Task { [localModelRuntime] in
                 await localModelRuntime.scheduleShutdown(
                     after: 130,  // keep it long so that if user accidently swithces to byok, its not restarted for nothing AND importantly: so that pending local requests still work
@@ -604,13 +611,7 @@ extension AppController {
                 pendingLocalModelChange = nil
                 modelDownloadNotice = nil
                 modelDownloadSuccess = nil
-                installRuntimeTask?.cancel()
-                installRuntimeTask = nil
-                if installingRuntime {
-                    installingRuntime = false
-                    setupProgressValue = nil
-                    setupProgressMessage = nil
-                }
+                cancelRuntimeInstall()
                 applyLocalModelSelection(
                     textModel: state.aiTier.localModelIdentifierText,
                     imageModel: state.aiTier.localModelIdentifierImage
@@ -750,6 +751,81 @@ extension AppController {
         }
     }
 
+    /// Cancels an in-flight runtime install/download and clears all transient setup
+    /// progress state. Safe to call when nothing is installing. The install task's
+    /// cancellation path intentionally leaves these flags for its canceller to reset.
+    func cancelRuntimeInstall() {
+        installRuntimeTask?.cancel()
+        installRuntimeTask = nil
+        stopDownloadProgressPolling()
+        if installingRuntime {
+            installingRuntime = false
+        }
+        setupProgressValue = nil
+        setupProgressMessage = nil
+        setupDownloadedBytes = nil
+        setupTotalBytes = nil
+    }
+
+    /// Polls the on-disk model cache to drive a real byte-level progress bar while
+    /// llama.cpp downloads the model. Total size is fetched once (best-effort) from
+    /// Hugging Face; the downloaded figure comes from summing the cache blob sizes.
+    func startDownloadProgressPolling(modelIdentifier: String) {
+        downloadProgressTask?.cancel()
+        setupDownloadedBytes = nil
+        setupTotalBytes = nil
+
+        downloadProgressTask = Task { [weak self] in
+            let total = await RuntimeSetupService.expectedDownloadBytes(for: modelIdentifier)
+            await MainActor.run { self?.setupTotalBytes = total }
+
+            while !Task.isCancelled {
+                let downloaded = RuntimeSetupService.downloadedModelBytes(for: modelIdentifier)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.setupDownloadedBytes = downloaded
+                    if let total = self.setupTotalBytes, total > 0 {
+                        self.setupProgressValue = max(0, min(0.99, Double(downloaded) / Double(total)))
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
+        }
+    }
+
+    func stopDownloadProgressPolling() {
+        downloadProgressTask?.cancel()
+        downloadProgressTask = nil
+    }
+
+    /// Logs achieved download throughput so we can tell, in the wild, whether real users
+    /// are throttle-capped or pipe-limited — and whether the HF token actually helps.
+    /// Skips when nothing meaningful was fetched (model already cached → fast warm-up).
+    func logModelDownloadThroughput(
+        modelIdentifier: String,
+        bytesBeforeDownload: Int64,
+        startedAt: Date,
+        authenticated: Bool
+    ) {
+        let downloadedThisRun =
+            RuntimeSetupService.downloadedModelBytes(for: modelIdentifier) - bytesBeforeDownload
+        let elapsed = Date().timeIntervalSince(startedAt)
+        guard downloadedThisRun > 5_000_000, elapsed > 1 else { return }
+
+        let megabytes = Double(downloadedThisRun) / 1_000_000
+        let mbps = megabytes / elapsed
+        logActivity(
+            "setup-download-speed",
+            String(
+                format: "Model download: %.0f MB in %.0fs (%.2f MB/s) [%@]",
+                megabytes,
+                elapsed,
+                mbps,
+                authenticated ? "authenticated" : "unauthenticated"
+            )
+        )
+    }
+
     func installRuntime(modelIdentifier: String? = nil) {
         guard !installingRuntime else { return }
 
@@ -764,6 +840,8 @@ extension AppController {
         installingRuntime = true
         setupProgressValue = nil
         setupProgressMessage = nil
+        setupDownloadedBytes = nil
+        setupTotalBytes = nil
         setupLog = ""
         setupErrorMessage = nil
         logActivity("setup", "Runtime install started")
@@ -795,12 +873,27 @@ extension AppController {
                     runtimeOverride: state.runtimePathOverride,
                     modelIdentifier: setupModelIdentifier
                 )
+                startDownloadProgressPolling(modelIdentifier: setupModelIdentifier)
+                // Best-effort authenticated download (recovers the HF unauth throttle).
+                // nil token → unauthenticated, same as before.
+                let hfToken = await HuggingFaceTokenService.fetchToken()
+                let bytesBeforeDownload = RuntimeSetupService.downloadedModelBytes(
+                    for: setupModelIdentifier)
+                let downloadStartedAt = Date()
                 try await RuntimeSetupService.warmUpRuntime(
                     runtimePath: diagnostics.runtimePath,
-                    modelIdentifier: setupModelIdentifier
+                    modelIdentifier: setupModelIdentifier,
+                    hfToken: hfToken
                 ) { [weak self] chunk in
                     self?.appendSetupLog(chunk)
                 }
+                stopDownloadProgressPolling()
+                logModelDownloadThroughput(
+                    modelIdentifier: setupModelIdentifier,
+                    bytesBeforeDownload: bytesBeforeDownload,
+                    startedAt: downloadStartedAt,
+                    authenticated: hfToken != nil
+                )
 
                 guard !Task.isCancelled else { throw CancellationError() }
 
@@ -823,9 +916,12 @@ extension AppController {
             if cancelledDuringInstall {
                 return
             }
+            stopDownloadProgressPolling()
             installingRuntime = false
             setupProgressValue = nil
             setupProgressMessage = nil
+            setupDownloadedBytes = nil
+            setupTotalBytes = nil
             _ = applyPendingLocalModelIfReady()
             refreshSystemState()
         }
@@ -872,7 +968,11 @@ extension AppController {
         ]
         let looksLikeProgress = progressKeywords.contains(where: lowered.contains)
 
-        if looksLikeProgress,
+        // When byte-level polling has a real total, it owns the progress fraction —
+        // don't let scraped percentages (which also fire for unrelated load steps)
+        // fight it.
+        if setupTotalBytes == nil,
+            looksLikeProgress,
             let range = trimmedLine.range(of: #"\b(\d{1,3})%"#, options: .regularExpression)
         {
             let percentString = String(trimmedLine[range]).replacingOccurrences(of: "%", with: "")

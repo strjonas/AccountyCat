@@ -349,7 +349,7 @@ struct LLMMonitorAlgorithmTests {
         #expect(decisionAttempt.payloadJSON.contains(#""scope":"today_app_total""#))
         #expect(decisionAttempt.payloadJSON.contains(#""currentContextSeconds":300"#))
         #expect(decisionAttempt.payloadJSON.contains(#""cadenceMode":"balanced""#))
-        #expect(decisionAttempt.payloadJSON.contains(#""toleratedWindowSeconds":225"#))
+        #expect(decisionAttempt.payloadJSON.contains(#""toleratedWindowSeconds":270"#))
     }
 
     @Test
@@ -577,7 +577,7 @@ struct LLMMonitorAlgorithmTests {
             policyMemory: PolicyMemory(),
             configuration: MonitoringConfiguration(),
             activeProfileID: PolicyRule.defaultProfileID,
-            now: start.addingTimeInterval(46)
+            now: start.addingTimeInterval(53)
         )
 
         #expect(readyPlan.shouldEvaluate == true)
@@ -1120,7 +1120,7 @@ struct LLMMonitorAlgorithmTests {
             policyMemory: PolicyMemory(),
             configuration: configuration,
             activeProfileID: "coding",
-            now: now.addingTimeInterval(31)
+            now: now.addingTimeInterval(36)
         )
         #expect(readyPlan.shouldEvaluate == true)
         #expect(readyPlan.reason == "stable_context")
@@ -1373,7 +1373,7 @@ struct LLMMonitorAlgorithmTests {
             policyMemory: scoped,
             configuration: MonitoringConfiguration(),
             activeProfileID: "coding",
-            now: start.addingTimeInterval(30)
+            now: start.addingTimeInterval(35)
         )
 
         #expect(plan.shouldEvaluate == true)

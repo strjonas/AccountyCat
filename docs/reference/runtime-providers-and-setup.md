@@ -36,6 +36,50 @@ Key facts:
 - warm-up and readiness polling
 - cleanup helpers for managed models
 
+### Build-tool PATH for setup subprocesses
+
+A GUI app launched from Finder inherits launchd's minimal PATH
+(`/usr/bin:/bin:/usr/sbin:/sbin`), which omits the Homebrew prefixes
+(`/opt/homebrew/bin`, `/usr/local/bin`) where users install `cmake`/`ninja`. AC
+finds the tools itself via `resolvedToolPath` (which checks those prefixes
+explicitly), but the build subprocesses it spawns do not — so cmake could find
+`ninja` only at lookup time, then fail at configure time with "CMake unable to
+find a build program corresponding to Ninja". `runStreaming` therefore prepends
+the standard tool prefixes to the subprocess `PATH` (`augmentedSubprocessPATH`),
+and `installRuntime` additionally passes the resolved ninja path to cmake via
+`-DCMAKE_MAKE_PROGRAM`. This only reproduces in a packaged `.app` launched from
+Finder; running from Xcode masks it because Xcode passes the developer's shell
+PATH.
+
+### Model download authentication (HF token)
+
+Models download via `llama-cli -hf <id>`, which is a single-stream libcurl fetch from the
+Hugging Face CDN. Hugging Face's response headers explicitly ask for a token "to enable
+higher rate limits and faster downloads," and rate-limits unauthenticated traffic.
+
+`HuggingFaceTokenService.fetchToken()` fetches a token from
+`https://accountycat.com/api/hf-token` (override with `AC_HF_TOKEN_ENDPOINT`), caches it in
+memory for an hour, and **returns nil on any failure**. `installRuntime` fetches it and passes
+it to `warmUpRuntime`, which only sets `HF_TOKEN` in the llama.cpp env when non-empty. No
+token → unauthenticated download, identical to the prior behavior — a server outage or
+missing key never blocks setup.
+
+Server contract: a `200` JSON body `{ "token": "hf_..." }` enables auth; anything else
+(including `204`) → unauthenticated fallback. The app sends an `X-AC-Install` header (the
+per-install id) so the endpoint can rate-limit abuse via Upstash if desired.
+
+The token **must** be fine-grained, read-only, public-repos-only. It is effectively public
+(any user can extract it from the endpoint), so it guards only access to files that are
+already public — a leak exposes nothing private; worst case the server rotates it. Never use
+a write-scoped or account-wide token here.
+
+Measured download throughput is logged to the activity log as `setup-download-speed`
+(`X MB in Ys (Z MB/s) [authenticated|unauthenticated]`) on real downloads only, so we can
+tell in the wild whether users are throttle-capped or pipe-limited. Note: unauthenticated
+speed is highly variable (measured 1.4–6.8 MB/s on the same file/connection), so the token is
+a cheap insurance/rate-limit win, not a guaranteed speedup — let the telemetry decide whether
+it's worth deeper investment (e.g. a self-hosted mirror).
+
 ## Setup Guardrails
 
 When changing first run or setup, preserve all of these:
@@ -44,8 +88,49 @@ When changing first run or setup, preserve all of these:
 - cleanup of interrupted downloads / partial state
 - user-readable subprocess failures
 - an explicit "setup is done" signal
+- cancellable installs: switching away from Local (or to another tier whose model is
+  already present) must actually stop an in-flight install, not just orphan it
 
 Setup bugs are high-impact because they block the whole product.
+
+### Install cancellation
+
+`RuntimeSetupService.runStreaming` wraps the subprocess wait in
+`withTaskCancellationHandler` and calls `process.terminate()` on cancel, then throws
+`CancellationError`. Swift task cancellation is cooperative, so without the explicit
+terminate the `git` / `cmake` / `llama-cli` subprocess would keep running to completion
+after the user switched away — leaving `installingRuntime == true`, which pins
+`setupStatus` at `.installing` until an app restart.
+
+`AppController.cancelRuntimeInstall()` is the single entry point that cancels the install
+task, stops byte-progress polling, and resets `installingRuntime` + all `setupProgress*` /
+`setupDownloaded/TotalBytes` state. It is invoked from `updateMonitoringInferenceBackend`
+(switch to OpenRouter) and the local-tier-change path in `applyTierToActiveBackend`. The
+install task's own cancellation branch deliberately leaves these flags for the canceller
+to reset.
+
+Terminating mid-download leaves llama.cpp's `*.downloadInProgress` blobs in place; the
+next Local install resumes them via range requests rather than restarting from zero.
+
+### Download progress
+
+Progress is reported two ways, with byte-level data preferred:
+
+- `AppController.startDownloadProgressPolling(modelIdentifier:)` polls
+  `RuntimeSetupService.downloadedModelBytes(for:)` (sum of `blobs/` file sizes, including
+  `*.downloadInProgress` partials) every ~0.6s, and fetches the expected total once from
+  the Hugging Face tree API via `RuntimeSetupService.expectedDownloadBytes(for:)`
+  (best-effort; nil on failure). This drives a determinate bar and the "X of Y" display in
+  `AITab`.
+- `AppController.updateSetupProgress(from:)` scrapes percentages from subprocess log lines
+  as a fallback, but defers to byte polling whenever a real total is known
+  (`setupTotalBytes != nil`) so the two don't fight.
+
+### Surfacing failures
+
+`setupErrorMessage` is rendered in both `OnboardingDialogView` and the `AITab`
+local-model section (with a "Try again" button). A failure after onboarding must not be
+silent — the AI tab is where post-onboarding local-model management lives.
 
 ## Local Runtime Request Coordination
 

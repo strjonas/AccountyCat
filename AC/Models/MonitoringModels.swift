@@ -46,16 +46,16 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     nonisolated var stableContextDelay: TimeInterval {
         switch self {
         case .sharp: return 6
-        case .balanced: return 30
-        case .gentle: return 60
+        case .balanced: return 35
+        case .gentle: return 70
         }
     }
 
     nonisolated var focusedFollowUp: TimeInterval {
         switch self {
         case .sharp: return 2 * 60
-        case .balanced: return 5 * 60
-        case .gentle: return 10 * 60
+        case .balanced: return 6 * 60
+        case .gentle: return 12 * 60
         }
     }
 
@@ -63,8 +63,8 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     nonisolated var toleratedFollowUp: TimeInterval {
         switch self {
         case .sharp: return 60
-        case .balanced: return 150
-        case .gentle: return 5 * 60
+        case .balanced: return 3 * 60
+        case .gentle: return 6 * 60
         }
     }
 
@@ -86,8 +86,8 @@ enum MonitoringCadenceMode: String, Codable, CaseIterable, Hashable, Sendable {
     nonisolated var minimumEvalGap: TimeInterval {
         switch self {
         case .sharp: return 5
-        case .balanced: return 10
-        case .gentle: return 20
+        case .balanced: return 12
+        case .gentle: return 24
         }
     }
 

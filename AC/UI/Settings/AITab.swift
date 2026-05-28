@@ -449,32 +449,36 @@ struct AITab: View {
             sectionLabel("installed models")
 
             // Download progress
-            if controller.installingRuntime,
-               let progress = controller.setupProgressValue {
+            if controller.installingRuntime {
                 VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                    let percent = max(0, min(100, Int((progress * 100).rounded())))
+                    if let progress = controller.setupProgressValue {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                    } else {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                    }
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(controller.setupProgressMessage ?? "Downloading model…")
+                        Text(downloadStatusText)
                             .lineLimit(2)
                         Spacer(minLength: 6)
-                        Text("\(percent)%")
+                        if let progress = controller.setupProgressValue {
+                            Text("\(max(0, min(100, Int((progress * 100).rounded()))))%")
+                        }
                     }
                     .font(.ac(10))
                     .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+
+                    Text(
+                        "The model is a few GB, so the first download can take several minutes — longer on slower connections. Thanks for your patience; it only happens once."
+                    )
+                    .font(.ac(10))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
-            } else if controller.installingRuntime {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                    Text(controller.setupProgressMessage ?? "Downloading model…")
-                        .font(.ac(10))
-                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-                        .lineLimit(2)
-                }
-                .padding(.vertical, 4)
+            } else if let err = controller.setupErrorMessage {
+                localSetupErrorBanner(err)
             }
 
             let installed = controller.installedManagedModels
@@ -545,6 +549,58 @@ struct AITab: View {
                 }
             }
         }
+    }
+
+    /// "1.3 GB of 5.2 GB" when a total is known, otherwise downloaded-so-far or a
+    /// generic message. Mirrors the live byte tracking driven during install.
+    private var downloadStatusText: String {
+        if let downloaded = controller.setupDownloadedBytes,
+           let total = controller.setupTotalBytes, total > 0 {
+            return "\(formatBytes(downloaded)) of \(formatBytes(total))"
+        }
+        if let downloaded = controller.setupDownloadedBytes, downloaded > 0 {
+            return "Downloaded \(formatBytes(downloaded))…"
+        }
+        return controller.setupProgressMessage ?? "Downloading model…"
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    @ViewBuilder
+    private func localSetupErrorBanner(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.red.opacity(0.85))
+                Text(message)
+                    .font(.ac(11))
+                    .foregroundStyle(.red.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Try again") {
+                    controller.setupErrorMessage = nil
+                    controller.installRuntime(
+                        modelIdentifier: controller.pendingLocalModelChange?.modelIdentifier
+                    )
+                }
+                .buttonStyle(ACPrimaryButton())
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.red.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(Color.red.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 
     private func deleteModel(_ model: InstalledLocalModel) {

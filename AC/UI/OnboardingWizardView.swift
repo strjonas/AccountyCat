@@ -487,6 +487,27 @@ struct OnboardingWizardView: View {
                 )
             }
 
+            HStack(spacing: 8) {
+                Image(systemName: "shield")
+                    .foregroundStyle(accent)
+                    .font(.system(size: 12))
+                Text(
+                    "Want AC only in certain apps? Limit or exclude apps anytime in Settings → You."
+                )
+                .font(.ac(11))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .fill(accent.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous).stroke(
+                            accent.opacity(0.22), lineWidth: 1))
+            )
+            .transition(.opacity)
+
             if controller.state.permissions.accessibility == .denied {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")

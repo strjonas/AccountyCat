@@ -28,18 +28,24 @@ struct SettingsView: View {
             tabBar
             Divider().opacity(0.3)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    switch selectedTab {
-                    case .profiles: ProfilesTab()
-                    case .look:     LookTab()
-                    case .ai:       AITab()
-                    case .controls: ControlsTab()
-                    case .you:      YouTab()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        switch selectedTab {
+                        case .profiles: ProfilesTab()
+                        case .look:     LookTab()
+                        case .ai:       AITab()
+                        case .controls: ControlsTab()
+                        case .you:      YouTab()
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
+                .onReceive(NotificationCenter.default.publisher(for: .acScrollToSettingsAnchor)) { notification in
+                    guard let anchor = notification.object as? String else { return }
+                    withAnimation(.acSnap) { proxy.scrollTo(anchor, anchor: .top) }
+                }
             }
         }
         .frame(width: embeddedInPanel ? nil : ACD.popoverWidth)

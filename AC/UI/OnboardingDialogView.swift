@@ -119,6 +119,16 @@ struct OnboardingDialogView: View {
                 .padding(.top, 2)
             }
 
+            if controller.installingRuntime {
+                Text(
+                    "The model is a few GB, so the first download can take several minutes — longer on slower connections. Thanks for your patience; it only happens once."
+                )
+                .font(.ac(10))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.55))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+            }
+
             // Action buttons
             if controller.state.setupStatus != .ready {
                 actionButtons

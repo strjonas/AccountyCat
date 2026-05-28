@@ -203,6 +203,9 @@ enum RuntimeSetupService {
         guard let cmakePath = resolvedToolPath("cmake") else {
             throw RuntimeSetupError.commandFailed("cmake", 127, stderrTail: "`cmake` is missing. Install Xcode Command Line Tools or Homebrew cmake and retry.")
         }
+        guard let ninjaPath = resolvedToolPath("ninja") else {
+            throw RuntimeSetupError.commandFailed("ninja", 127, stderrTail: "`ninja` is missing. Install it with `brew install ninja` and retry.")
+        }
 
         let repoURL = runtimeRepositoryURL(in: baseDirectory)
         if !FileManager.default.fileExists(atPath: repoURL.path) {
@@ -237,6 +240,7 @@ enum RuntimeSetupService {
             arguments: [
                 "-B", "build",
                 "-G", "Ninja",
+                "-DCMAKE_MAKE_PROGRAM=\(ninjaPath)",
                 "-DGGML_METAL=ON",
                 "-DCMAKE_BUILD_TYPE=Release",
             ],
@@ -255,6 +259,7 @@ enum RuntimeSetupService {
     static func warmUpRuntime(
         runtimePath: String,
         modelIdentifier: String,
+        hfToken: String? = nil,
         log: @escaping @MainActor (String) -> Void
     ) async throws {
         let runtimeURL = URL(fileURLWithPath: runtimePath)
@@ -275,6 +280,13 @@ enum RuntimeSetupService {
             }
         }
 
+        // Authenticated HF downloads avoid the unauthenticated single-stream throttle.
+        // Missing/empty token → unauthenticated download (the prior behavior).
+        var environmentOverrides = ["HF_HOME": huggingFaceCacheURL.path]
+        if let hfToken, !hfToken.isEmpty {
+            environmentOverrides["HF_TOKEN"] = hfToken
+        }
+
         try await runStreaming(
             launchPath: runtimePath,
             arguments: [
@@ -289,7 +301,7 @@ enum RuntimeSetupService {
                 "--no-display-prompt",
             ],
             currentDirectory: repoURL,
-            environmentOverrides: ["HF_HOME": huggingFaceCacheURL.path],
+            environmentOverrides: environmentOverrides,
             log: log
         )
     }
@@ -490,6 +502,21 @@ enum RuntimeSetupService {
         resolvedToolPath(tool) != nil
     }
 
+    /// PATH for build/setup subprocesses. A GUI app launched from Finder inherits
+    /// launchd's minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), which omits the
+    /// Homebrew prefixes where users install cmake/ninja. Without this, cmake is
+    /// found via `resolvedToolPath` but can't locate `ninja` (or its compiler) at
+    /// build time. Prepend the standard tool prefixes so child lookups succeed.
+    nonisolated private static func augmentedSubprocessPATH() -> String {
+        let toolPrefixes = ["/opt/homebrew/bin", "/usr/local/bin"]
+        let existing = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        var directories = existing.split(separator: ":").map(String.init)
+        for prefix in toolPrefixes.reversed() where !directories.contains(prefix) {
+            directories.insert(prefix, at: 0)
+        }
+        return directories.joined(separator: ":")
+    }
+
     nonisolated private static func resolvedToolPath(_ tool: String) -> String? {
         let commonLocations = [
             "/usr/bin/\(tool)",
@@ -522,6 +549,7 @@ enum RuntimeSetupService {
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectory
         var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = augmentedSubprocessPATH()
         for (key, value) in environmentOverrides {
             environment[key] = value
         }
@@ -550,10 +578,23 @@ enum RuntimeSetupService {
             Task { @MainActor in log(chunk) }
         }
 
+        // Hold the process behind a Sendable box so the cancellation handler can
+        // terminate it. Task cancellation is cooperative — without this, a switch
+        // away from Local mode wouldn't actually stop an in-flight git/cmake/llama
+        // download; it would keep running until the subprocess finished on its own.
+        let handle = ProcessHandle(process)
         try process.run()
-        let status = await waitForProcess(process)
+        let status = await withTaskCancellationHandler {
+            await waitForProcess(process)
+        } onCancel: {
+            handle.terminate()
+        }
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        if Task.isCancelled {
+            throw CancellationError()
+        }
 
         if status != 0 {
             throw RuntimeSetupError.commandFailed(
@@ -562,6 +603,77 @@ enum RuntimeSetupService {
                 stderrTail: tail.snapshot()
             )
         }
+    }
+
+    /// Total bytes currently on disk in the managed cache's blob dir for this model,
+    /// including in-progress (`*.downloadInProgress`) partials. llama.cpp streams the
+    /// GGUF (and projector) into `blobs/<sha>.downloadInProgress`, so summing this gives
+    /// an accurate live "downloaded so far" figure without parsing subprocess output.
+    nonisolated static func downloadedModelBytes(for modelIdentifier: String) -> Int64 {
+        downloadedModelBytes(inCacheRoot: managedModelCacheURL(for: modelIdentifier))
+    }
+
+    /// Testable core of `downloadedModelBytes(for:)` — sums the regular files in the
+    /// cache root's `blobs/` directory (completed blobs + `*.downloadInProgress`).
+    nonisolated static func downloadedModelBytes(inCacheRoot cacheRoot: URL) -> Int64 {
+        let blobsURL = cacheRoot.appendingPathComponent("blobs", isDirectory: true)
+        guard
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: blobsURL,
+                includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else { return 0 }
+
+        var total: Int64 = 0
+        for url in entries {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values?.isRegularFile == true else { continue }
+            total += Int64(values?.fileSize ?? 0)
+        }
+        return total
+    }
+
+    /// Best-effort expected download size for a model identifier, queried from the
+    /// Hugging Face tree API. Returns nil on any failure so the caller can fall back
+    /// to an indeterminate / downloaded-only display rather than blocking the UI.
+    nonisolated static func expectedDownloadBytes(for modelIdentifier: String) async -> Int64? {
+        let repo = repositoryIdentifier(for: modelIdentifier)
+        guard !repo.isEmpty else { return nil }
+
+        let components = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        let quant = components.count > 1 ? String(components[1]).uppercased() : nil
+
+        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main?recursive=true") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: request),
+            (response as? HTTPURLResponse)?.statusCode == 200,
+            let entries = try? JSONDecoder().decode([HFTreeEntry].self, from: data)
+        else { return nil }
+
+        let ggufFiles = entries.filter { $0.path.lowercased().hasSuffix(".gguf") }
+        let projector = ggufFiles.first { $0.path.lowercased().contains("mmproj") }
+        let modelCandidates = ggufFiles.filter { !$0.path.lowercased().contains("mmproj") }
+        let modelEntry = selectModelTreeEntry(from: modelCandidates, quant: quant)
+
+        let chosen = [modelEntry, projector].compactMap { $0 }
+        guard !chosen.isEmpty else { return nil }
+        let total = chosen.reduce(Int64(0)) { $0 + ($1.lfs?.size ?? $1.size ?? 0) }
+        return total > 0 ? total : nil
+    }
+
+    nonisolated private static func selectModelTreeEntry(from candidates: [HFTreeEntry], quant: String?) -> HFTreeEntry? {
+        guard !candidates.isEmpty else { return nil }
+        guard let quant, !quant.isEmpty else { return candidates.first }
+        let matched = candidates.first { entry in
+            ((entry.path as NSString).lastPathComponent).uppercased().contains(quant)
+        }
+        return matched ?? candidates.first
     }
 
     private static func waitForProcess(_ process: Process) async -> Int32 {
@@ -618,6 +730,28 @@ enum RuntimeSetupService {
             }
         }
         return removed
+    }
+}
+
+/// Sendable wrapper so a cancellation handler can terminate a running `Process`
+/// without capturing the non-Sendable `Process` directly.
+private final class ProcessHandle: @unchecked Sendable {
+    private let process: Process
+    init(_ process: Process) { self.process = process }
+    func terminate() {
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+}
+
+private struct HFTreeEntry: Decodable {
+    let path: String
+    let size: Int64?
+    let lfs: HFLFS?
+
+    struct HFLFS: Decodable {
+        let size: Int64?
     }
 }
 

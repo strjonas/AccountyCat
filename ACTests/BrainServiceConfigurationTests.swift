@@ -201,7 +201,7 @@ struct BrainServiceConfigurationTests {
             now: now
         )
 
-        #expect(detail.contains("browser/tab settle 3s/45s"))
+        #expect(detail.contains("browser/tab settle 3s/52s"))
         #expect(detail.contains("YouTube - Cat videos"))
     }
 
@@ -238,6 +238,38 @@ struct BrainServiceConfigurationTests {
 
         #expect(detail.contains("next recheck in 42s"))
         #expect(detail.contains("last assessment focused"))
+    }
+
+    @Test
+    func skipDetailExplainsAppScopeExclusion() {
+        var state = ACState()
+        state.appMonitoringScopeMode = .allowlist
+
+        let detail = BrainService.evaluationSkipDetail(
+            plan: MonitoringEvaluationPlan(
+                shouldEvaluate: false,
+                reason: "app_scope_excluded",
+                visualCheckReason: nil,
+                requiresScreenshot: false,
+                promptMode: "",
+                promptVersion: ""
+            ),
+            state: state,
+            context: FrontmostContext(
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                windowTitle: "Docs"
+            ),
+            heuristics: TelemetryHeuristicSnapshot(
+                clearlyProductive: false,
+                browser: true,
+                helpfulWindowTitle: true,
+                periodicVisualReason: nil
+            ),
+            now: Date(timeIntervalSince1970: 1)
+        )
+
+        #expect(detail.contains("allowlist"))
     }
 
     @Test

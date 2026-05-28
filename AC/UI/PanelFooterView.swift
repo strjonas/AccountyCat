@@ -12,18 +12,52 @@ struct PanelFooterView: View {
     @EnvironmentObject private var controller: AppController
 
     var body: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(controller.state.isPaused ? Color.secondary.opacity(0.4) : Color.acOkGreen)
-                    .frame(width: 6, height: 6)
+        HStack(spacing: 8) {
+            Circle()
+                .fill(controller.state.isPaused ? Color.secondary.opacity(0.4) : Color.acOkGreen)
+                .frame(width: 6, height: 6)
 
-                Text(statusLine)
-                    .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+            Text(statusLine)
+                .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(0)
+
+            if let scope = scopeLabel {
+                Button {
+                    NotificationCenter.default.post(
+                        name: .acSelectSettingsTab,
+                        object: SettingsTab.you.rawValue
+                    )
+                    // After the tab swaps in, scroll straight to the app-scope section.
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(
+                            name: .acScrollToSettingsAnchor,
+                            object: YouTab.appScopeAnchor
+                        )
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "app.dashed")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(scope)
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    }
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule(style: .continuous)
+                            .stroke(Color.acHairline, lineWidth: 1)
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("AC monitoring is limited to certain apps — tap to manage")
             }
-
-            Spacer()
 
             Button {
                 controller.togglePause()
@@ -33,6 +67,7 @@ struct PanelFooterView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .fixedSize()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -49,7 +84,18 @@ struct PanelFooterView: View {
         let model = controller.activeModelShortName
         let assessment = controller.state.algorithmState.llmPolicy.distraction.lastAssessment?.rawValue ?? "observing"
         let lastCheck = controller.lastMonitoringCheckAt.map { timeAgo($0) } ?? "—"
-        return "\(assessment) · \(model) · last check: \(lastCheck)"
+        return "\(assessment) · \(model) · \(lastCheck)"
+    }
+
+    private var scopeLabel: String? {
+        let mode = controller.state.appMonitoringScopeMode
+        let count = controller.state.activeAppMonitoringSelections.count
+        guard mode != .disabled, count > 0 else { return nil }
+        switch mode {
+        case .allowlist: return count == 1 ? "1 app only" : "\(count) apps only"
+        case .blocklist: return "skipping \(count)"
+        case .disabled: return nil
+        }
     }
 
     private func timeAgo(_ date: Date) -> String {

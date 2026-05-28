@@ -393,6 +393,15 @@ final class BrainService: NSObject {
             return "\(context.appName) · cooldown \(Int(elapsedSeconds))s/\(Int(requiredSeconds))s"
         case "local_runtime_busy":
             return "\(context.appName) · deferred while local chat is in progress"
+        case "app_scope_excluded":
+            switch state.appMonitoringScopeMode {
+            case .allowlist:
+                return "\(context.appName) · outside selected app allowlist"
+            case .blocklist:
+                return "\(context.appName) · matched skipped-app blocklist"
+            case .disabled:
+                return context.appName
+            }
         default:
             return context.appName
         }
@@ -1126,6 +1135,39 @@ final class BrainService: NSObject {
                 executiveArm.showCompanionPanel()
             }
             wasInCallLastTick = false
+        }
+
+        if state.shouldSkipMonitoring(for: context) {
+            let skipDetail = Self.evaluationSkipDetail(
+                plan: MonitoringEvaluationPlan(
+                    shouldEvaluate: false,
+                    reason: "app_scope_excluded",
+                    visualCheckReason: nil,
+                    requiresScreenshot: false,
+                    promptMode: "",
+                    promptVersion: ""
+                ),
+                state: state,
+                context: context,
+                heuristics: MonitoringHeuristics.telemetrySnapshot(for: context),
+                now: now
+            )
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "app_scope_excluded",
+                state: state,
+                detail: skipDetail
+            )
+            await ActivityLogService.shared.append(
+                level: .verbose,
+                category: "monitoring",
+                message: "skip: app_scope_excluded · \(skipDetail)"
+            )
+            moodSink?(.watching)
+            statusSink?("AC is idle for \(context.appName) due to your app scope setting.")
+            stateSink?(baseState, state)
+            lastCheckSink?(now)
+            return
         }
 
         // Compute the focus-goal text for the title-relevance heuristic.

@@ -231,9 +231,9 @@ enum MonitoringHeuristics {
         case .sharp:
             return title.count >= 70 && (titleRelatesToDeclaredFocus == true || hasStructuralMarker)
         case .balanced:
-            return title.count >= 45 && (hasStructuralMarker || hasNonGenericBrowserContentWording(title))
+            return title.count >= 38 && (hasStructuralMarker || hasNonGenericBrowserContentWording(title))
         case .gentle:
-            return title.count >= 30
+            return title.count >= 26
         }
     }
 

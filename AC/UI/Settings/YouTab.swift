@@ -9,6 +9,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct YouTab: View {
+    /// ScrollView anchor so the footer scope chip can deep-link straight here.
+    static let appScopeAnchor = "youTab.appScope"
+
     @EnvironmentObject private var controller: AppController
     @Environment(\.acAccent) private var accent
     @Environment(\.dismiss) private var dismiss
@@ -18,6 +21,12 @@ struct YouTab: View {
     @State private var showingResetConfirm = false
     @State private var showingExportPanel = false
     @FocusState private var memoryFocused: Bool
+
+    private var sortedAppMonitoringSelections: [AppMonitoringSelection] {
+        controller.state.activeAppMonitoringSelections.sorted {
+            $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -68,6 +77,10 @@ struct YouTab: View {
             // Calendar integration
             CalendarIntelligenceSection()
                 .environmentObject(controller)
+
+            sectionLabel("app scope")
+                .id(YouTab.appScopeAnchor)
+            appMonitoringScopeSection
 
             // Version & actions
             sectionLabel("version")
@@ -259,6 +272,100 @@ struct YouTab: View {
         controller.addMemoryEntry(text: trimmed)
         newMemoryDraft = ""
         memoryFocused = false
+    }
+
+    // MARK: - App scope
+
+    private var appMonitoringScopeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Keep AC everywhere, only inside selected apps, or everywhere except selected apps. This is separate from rules and profiles.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+
+            Picker("", selection: Binding(
+                get: { controller.state.appMonitoringScopeMode },
+                set: { newMode in
+                    // Defer so we don't publish state changes mid view-update.
+                    DispatchQueue.main.async { controller.updateAppMonitoringScopeMode(newMode) }
+                }
+            )) {
+                ForEach(AppMonitoringScopeMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(controller.state.appMonitoringScopeMode.blurb)
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+
+            // The app picker and list are only meaningful for the scoped modes.
+            // "All apps" has nothing to pick, so we hide them entirely.
+            if controller.state.appMonitoringScopeMode != .disabled {
+                HStack(spacing: 8) {
+                    Button(controller.state.appMonitoringScopeMode.addAppsButtonTitle) {
+                        controller.importAppMonitoringSelectionsFromPanel()
+                    }
+                    .buttonStyle(ACSecondaryButton())
+
+                    if !sortedAppMonitoringSelections.isEmpty {
+                        Text("\(sortedAppMonitoringSelections.count) selected")
+                            .font(.acCaption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if sortedAppMonitoringSelections.isEmpty {
+                    Text(controller.state.appMonitoringScopeMode.emptySelectionNote)
+                        .font(.ac(11))
+                        .foregroundStyle(controller.state.appMonitoringScopeMode == .allowlist ? Color.acRedEnd.opacity(0.85) : .secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .fill(Color.acSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                        .stroke(Color.acHairline, lineWidth: 1)
+                                )
+                        )
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(sortedAppMonitoringSelections) { app in
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.appName)
+                                        .font(.ac(12, weight: .medium))
+                                        .foregroundStyle(Color.acTextPrimary)
+                                    Text(app.bundleIdentifier)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Button("Remove") {
+                                    controller.removeAppMonitoringSelection(bundleIdentifier: app.bundleIdentifier)
+                                }
+                                .buttonStyle(.plain)
+                                .font(.ac(10, weight: .medium))
+                                .foregroundStyle(accent)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                    .fill(Color.acSurface)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                            .stroke(Color.acHairline, lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Memory list

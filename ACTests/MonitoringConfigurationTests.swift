@@ -328,4 +328,43 @@ struct MonitoringConfigurationTests {
       #expect(otherDiagnostics.modelCachePresent == false)
       #expect(otherDiagnostics.modelArtifactsPresent == false)
     }
+
+    @Test
+    func downloadedModelBytesSumsCompletedAndInProgressBlobs() throws {
+      let fileManager = FileManager.default
+      let cacheRoot = fileManager.temporaryDirectory
+        .appendingPathComponent("ac-blob-bytes-\(UUID().uuidString)", isDirectory: true)
+      let blobsURL = cacheRoot.appendingPathComponent("blobs", isDirectory: true)
+      try fileManager.createDirectory(at: blobsURL, withIntermediateDirectories: true)
+      defer { try? fileManager.removeItem(at: cacheRoot) }
+
+      // Empty cache → zero, never a crash.
+      #expect(RuntimeSetupService.downloadedModelBytes(inCacheRoot: cacheRoot) == 0)
+
+      // A completed blob plus an in-progress partial: both count toward "downloaded".
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent("abc123").path,
+        contents: Data(count: 1000),
+        attributes: nil
+      )
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent("def456.downloadInProgress").path,
+        contents: Data(count: 500),
+        attributes: nil
+      )
+      // A nested directory should be ignored (only regular files count).
+      try fileManager.createDirectory(
+        at: blobsURL.appendingPathComponent("nested", isDirectory: true),
+        withIntermediateDirectories: true
+      )
+
+      #expect(RuntimeSetupService.downloadedModelBytes(inCacheRoot: cacheRoot) == 1500)
+    }
+
+    @Test
+    func downloadedModelBytesIsZeroWhenCacheMissing() {
+      let missing = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ac-blob-missing-\(UUID().uuidString)", isDirectory: true)
+      #expect(RuntimeSetupService.downloadedModelBytes(inCacheRoot: missing) == 0)
+    }
 }

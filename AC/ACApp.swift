@@ -42,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var chipRefreshTimer: Timer?
     private var keyMonitor: Any?
+    /// True while a modal system panel (e.g. the app picker) is up, so the
+    /// resign-active handler keeps the popover open instead of dismissing it.
+    private var popoverAutoCloseSuppressed = false
 
     override init() {
         if ACTestEnvironment.isRunning {
@@ -522,6 +525,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let p else { return }
             p.contentSize = size
         }
+        controller.suppressPopoverAutoClose = { [weak self, weak p] suppress in
+            guard let self else { return }
+            self.popoverAutoCloseSuppressed = suppress
+            // While suppressed, prevent the transient popover from self-dismissing
+            // when the system panel takes key window; restore afterwards.
+            if let p {
+                p.behavior = suppress
+                    ? .applicationDefined
+                    : (self.controller.hasCompletedOnboardingWizard ? .transient : .applicationDefined)
+            }
+        }
         return p
     }
 
@@ -614,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Keep the popover open during onboarding so it stays visible
         // when the user returns from System Settings.
         guard controller.hasCompletedOnboardingWizard else { return }
+        guard !popoverAutoCloseSuppressed else { return }
         if let p = popover, p.isShown {
             p.performClose(nil)
         }

@@ -70,6 +70,8 @@ extension Notification.Name {
     static let acUnfocusChatInput = Notification.Name("acUnfocusChatInput")
     /// Posted with a `SettingsTab.rawValue` as `object` to switch the settings tab.
     static let acSelectSettingsTab = Notification.Name("acSelectSettingsTab")
+    /// Posted with a scroll-anchor id as `object` to scroll the settings tab to a section.
+    static let acScrollToSettingsAnchor = Notification.Name("acScrollToSettingsAnchor")
 }
 
 // MARK: - Color Palette (legacy / shared)

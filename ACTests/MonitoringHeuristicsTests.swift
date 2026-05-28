@@ -181,7 +181,7 @@ struct MonitoringHeuristicsTests {
         #expect(MonitoringHeuristics.canUseBrowserTextFirst(
             bundleIdentifier: "com.google.Chrome",
             appName: "Google Chrome",
-            windowTitle: gentleTitle,
+            windowTitle: "Research plan for AC",
             cadenceMode: .gentle,
             titleRelatesToDeclaredFocus: nil
         ) == false)
