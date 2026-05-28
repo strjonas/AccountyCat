@@ -14,6 +14,8 @@
   <a href="https://accountycat.com/privacy">Privacy</a>
   ·
   <a href="https://github.com/strjonas/AccountyCat">Source</a>
+  ·
+  <a href="https://www.linkedin.com/in/jonas-strabel/">Developer</a>
 </p>
 
 <p align="center">
@@ -27,17 +29,20 @@
 <p align="center">
   <a href="https://github.com/strjonas/AccountyCat/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/strjonas/AccountyCat?color=black&label=release" /></a>
   <a href="https://github.com/strjonas/AccountyCat/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/strjonas/AccountyCat/total?color=black&label=downloads" /></a>
+</p>
+
+<p align="center">
+  <video src="https://accountycat.com/videos/ACDemo.mp4" poster="https://accountycat.com/videos/ac-release-v1-poster.jpg" controls width="900">
+    Your browser does not support the video tag.
+  </video>
+</p>
+
+<p align="center">
+  <sub>Real 14-second demo.</sub>
+</p>
+
+<p align="center">
   <a href="https://www.producthunt.com/products/accountycat?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-accountycat"><img alt="AccountyCat on Product Hunt" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&theme=neutral&t=1779978760491" height="40" /></a>
-</p>
-
-<p align="center">
-  <a href="https://accountycat.com/videos/ac-release-v1.mp4">
-    <img src="docs/media/ac-release.png" alt="AccountyCat demo" width="900" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>14-second product demo. Click to watch.</sub>
 </p>
 
 Tell AC what matters, and it catches drift without blocking the tutorial, doc, or Slack thread that's actually part of the work.
@@ -46,7 +51,7 @@ Tell AC what matters, and it catches drift without blocking the tutorial, doc, o
 
 Most focus apps rely on blocklists. That breaks down fast: the same site can be either the answer you need or the rabbit hole that kills an hour.
 
-AccountyCat lives in your menu bar, reads the active app and window title, and only pulls in a screenshot when text is not enough to judge. When you drift, it does not lock anything. It gives you one short nudge, then gets out of the way.
+AccountyCat lives in your menu bar, reads the active app and window title, and only pulls in a screenshot when text is not enough to judge. When you drift, it does not lock anything. It gives you a short nudge, then gets out of the way.
 
 Interrupting legitimate work is a bug. Letting obvious drift continue for too long is a bug too.
 
