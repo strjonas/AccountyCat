@@ -738,7 +738,7 @@ enum RuntimeSetupService {
 private final class ProcessHandle: @unchecked Sendable {
     private let process: Process
     init(_ process: Process) { self.process = process }
-    func terminate() {
+    nonisolated func terminate() {
         if process.isRunning {
             process.terminate()
         }
