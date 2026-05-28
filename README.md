@@ -30,9 +30,6 @@
   <a href="https://www.producthunt.com/products/accountycat?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-accountycat"><img alt="AccountyCat on Product Hunt" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&theme=neutral&t=1779978760491" height="40" /></a>
 </p>
 
-<p align="center">
-  <sub>14-second demo.</sub>
-</p>
 
 ## Why it exists
 
@@ -56,6 +53,10 @@ AccountyCat behaves differently in a named focus session versus everyday mode. F
 
 <p align="center">
   https://github.com/user-attachments/assets/6f9d42d7-b0ae-464a-a737-13ce54ea634c
+</p>
+
+<p align="center">
+  <sub>14-second demo.</sub>
 </p>
 
 ## Run it your way
