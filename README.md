@@ -30,16 +30,6 @@
   <a href="https://www.producthunt.com/products/accountycat?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-accountycat"><img alt="AccountyCat on Product Hunt" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&theme=neutral&t=1779978760491" height="40" /></a>
 </p>
 
-
-<p align="center">
-
-  https://github.com/user-attachments/assets/6f9d42d7-b0ae-464a-a737-13ce54ea634c
-</p>
-
-
-
-
-
 <p align="center">
   <sub>14-second demo.</sub>
 </p>
@@ -63,6 +53,10 @@ Every few minutes, or when you switch apps, AccountyCat checks the active app, w
 - If you correct it, it learns.
 
 AccountyCat behaves differently in a named focus session versus everyday mode. Focus sessions are stricter because you opted in. Everyday mode is more tolerant of errands, breaks, and life admin.
+
+<p align="center">
+  https://github.com/user-attachments/assets/6f9d42d7-b0ae-464a-a737-13ce54ea634c
+</p>
 
 ## Run it your way
 
