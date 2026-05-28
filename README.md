@@ -30,11 +30,17 @@
   <a href="https://www.producthunt.com/products/accountycat?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-accountycat"><img alt="AccountyCat on Product Hunt" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1153540&theme=neutral&t=1779978760491" height="40" /></a>
 </p>
 
+
 <p align="center">
-  <video src="https://accountycat.com/videos/ACDemo.mp4" poster="https://accountycat.com/videos/ACDemo-poster.jpg" controls width="900">
+  <video src="[https://accountycat.com/videos/ACDemo.mp4](https://github.com/user-attachments/assets/6f9d42d7-b0ae-464a-a737-13ce54ea634c)" poster="[https://accountycat.com/videos/ACDemo-poster.jpg](https://github.com/user-attachments/assets/2c6f5537-a3c1-4b21-ab86-a1a178d9dc7b)" controls width="900">
     Your browser does not support the video tag.
   </video>
 </p>
+
+
+
+
+
 
 <p align="center">
   <sub>14-second demo.</sub>
