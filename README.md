@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <video src="https://accountycat.com/videos/ACDemo.mp4" poster="https://accountycat.com/videos/ac-release-v1-poster.jpg" controls width="900">
+  <video src="https://accountycat.com/videos/ACDemo.mp4" poster="https://accountycat.com/videos/ACDemo-poster.jpg" controls width="900">
     Your browser does not support the video tag.
   </video>
 </p>
@@ -39,10 +39,6 @@
 <p align="center">
   <sub>14-second demo.</sub>
 </p>
-
-
-
-Tell AC what matters, and it catches drift without blocking the tutorial, doc, or Slack thread that's actually part of the work.
 
 ## Why it exists
 
