@@ -17,6 +17,12 @@
 
 Tell AC what you're working on. It watches what's on your screen and pulls you back the moment you slip into a rabbit hole — without blocking the tutorial, doc, or Slack thread that's part of the job.
 
+
+
+https://github.com/user-attachments/assets/53e66f6e-4245-4ad3-b0f1-920a0b3d1386
+
+
+
 ---
 
 ## The problem with focus apps
@@ -36,10 +42,6 @@ Every few minutes — or when you switch apps — AccountyCat checks the active 
 When you've genuinely drifted, AC steps in with one short message to get you back. Keep ignoring it and it escalates — but it won't pile on while you're actually working.
 
 The model behind that decision is configurable. You choose how much intelligence you want and where it runs.
-
-**See it in action** — a 33-second walkthrough:
-
-https://github.com/user-attachments/assets/b76c14f7-dfa0-49a4-823b-0f8454981b49
 
 ---
 
