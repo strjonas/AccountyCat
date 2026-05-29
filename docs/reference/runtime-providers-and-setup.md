@@ -263,6 +263,15 @@ Each OpenRouter request sets:
 
 The chain is capped to `maxOpenRouterModelsArrayCount` (currently 3) and passed to OpenRouter via the `models` array.
 
+OpenRouter billing failures are not model reliability failures. A `402` (or a
+provider response that clearly says the account/key has no credits, budget, or
+balance) is surfaced as an OpenRouter budget problem, is not retried as a rate
+limit, and does not count toward model bans. If every fallback candidate is
+locally banned, AC keeps the original fallback chain so an external recovery
+such as topping up credits can be observed without waiting for local ban expiry.
+When key info later shows usable budget after a connection problem, AC clears
+local OpenRouter bans and drops the cooldown.
+
 ### Tier → model identifiers
 
 Defaults live in `ACShared/AITier.swift`. As of v1.0:

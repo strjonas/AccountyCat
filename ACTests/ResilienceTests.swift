@@ -107,6 +107,39 @@ struct ResilienceTests {
     }
 
     @Test
+    func healthStatsKeepsRecoveryChainWhenEveryFallbackIsBanned() async {
+        let service = makeTemporaryHealthStatsService()
+        let firstModel = "test/first"
+        let secondModel = "test/second"
+        let source = OnlineModelRequestSource.monitoringText
+
+        for model in [firstModel, secondModel] {
+            await service.recordFailure(requestedModel: model, source: source, statusCode: 503, providerName: "test")
+            await service.recordFailure(requestedModel: model, source: source, statusCode: 503, providerName: "test")
+            await service.recordFailure(requestedModel: model, source: source, statusCode: 503, providerName: "test")
+        }
+
+        let sorted = await service.sortedHealthyModels([firstModel, secondModel])
+        #expect(sorted == [firstModel, secondModel])
+    }
+
+    @Test
+    func healthStatsCanClearBansAfterExternalProviderRecovery() async {
+        let service = makeTemporaryHealthStatsService()
+        let model = "test/model"
+        let source = OnlineModelRequestSource.monitoringText
+
+        await service.recordFailure(requestedModel: model, source: source, statusCode: 503, providerName: "test")
+        await service.recordFailure(requestedModel: model, source: source, statusCode: 503, providerName: "test")
+        await service.recordFailure(requestedModel: model, source: source, statusCode: 503, providerName: "test")
+        #expect(await service.isModelBanned(model) == true)
+
+        await service.clearBans()
+
+        #expect(await service.isModelBanned(model) == false)
+    }
+
+    @Test
     func nonPenalizedFailuresDoNotBanModels() async {
         let service = makeTemporaryHealthStatsService()
         let model = "test/model"

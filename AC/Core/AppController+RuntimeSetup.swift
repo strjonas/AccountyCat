@@ -491,6 +491,9 @@ extension AppController {
     func updateOnlineAPIKey(_ value: String) {
         onlineAPIKeyDraft = value
         _ = OnlineProviderCredentialStore.saveOpenRouterAPIKey(value)
+        Task {
+            await OpenRouterHealthStatsService.shared.clearBans()
+        }
         refreshSystemState()
         refreshOpenRouterKeyInfo()
     }
@@ -543,12 +546,22 @@ extension AppController {
             return
         }
         let key = onlineAPIKeyDraft
+        let hadConnectionProblem = connectionProblemNotice != nil
+        let previouslyEmptyBudget = openRouterKeyInfo.map { !Self.openRouterKeyHasUsableBudget($0) } ?? false
         Task { [weak self, onlineModelService] in
             do {
                 let info = try await onlineModelService.fetchKeyInfo(apiKey: key)
+                let hasUsableBudget = Self.openRouterKeyHasUsableBudget(info)
+                if hasUsableBudget && (hadConnectionProblem || previouslyEmptyBudget) {
+                    await OpenRouterHealthStatsService.shared.clearBans()
+                }
                 await MainActor.run {
                     self?.openRouterKeyInfo = info
                     self?.openRouterKeyInfoError = nil
+                    if hasUsableBudget && (hadConnectionProblem || previouslyEmptyBudget) {
+                        self?.connectionProblemNotice = nil
+                        self?.brainService?.invalidateContextAndCooldown(reason: "openrouter_credits_restored")
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -557,6 +570,13 @@ extension AppController {
                 }
             }
         }
+    }
+
+    private static func openRouterKeyHasUsableBudget(_ info: OpenRouterKeyInfo) -> Bool {
+        guard let remaining = info.data.limitRemaining else {
+            return true
+        }
+        return remaining > 0
     }
 
     // MARK: - Onboarding wizard

@@ -303,6 +303,16 @@ struct BrainServiceConfigurationTests {
         )
         #expect(repeatedProviderFailure.banner != nil)
         #expect(repeatedProviderFailure.status.contains("trouble reaching the model provider"))
+
+        let billingFailure = BrainService.monitoringFailureNotice(
+            consecutiveFailures: 1,
+            timedOut: false,
+            failureMessage: OnlineModelService.openRouterBillingFailureMessage
+        )
+        #expect(billingFailure.banner != nil)
+        #expect(billingFailure.status.contains("OpenRouter key"))
+        #expect(billingFailure.status.contains("credits"))
+        #expect(!billingFailure.status.contains("backup models"))
     }
 
     @Test

@@ -53,3 +53,7 @@ xcodebuild build -project AC.xcodeproj -scheme ACInspector CODE_SIGNING_ALLOWED=
 ```
 
 No formatter/linter/CI is configured. Before finishing meaningful code changes, run `ACTests` and build `ACInspector`. Do not start overlapping `xcodebuild test` runs that share the same build/test paths; if you need parallel runs, use isolated paths (see `scripts/test-isolated.sh` and `docs/reference/state-persistence-and-testing.md`). If a run is interrupted or appears stuck during finalization, check for stale `xcodebuild`, `debugserver`, or `AC.app` test-host processes before rerunning. For architecture, use `docs/core/codebase-map.md`. For testing/storage details, use `docs/reference/state-persistence-and-testing.md`.
+
+## Live Release Workflow
+
+Do not commit product changes directly to `main`. While live, create or use the branch for the next release version with the `release/vX.YY` scheme, e.g. `release/v1.04`, and commit feature/fix work there with concise, meaningful messages. Keep commits as the release changelog source; when the release branch is stable and no more features are planned for that version, summarize the commits into release notes, merge to `main`, tag/build the release, and start the next release branch.

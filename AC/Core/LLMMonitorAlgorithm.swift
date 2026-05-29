@@ -1789,6 +1789,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
             attempts[attemptIndex].isAPIFailure = true
+            attempts[attemptIndex].apiFailureMessage = OnlineModelService.apiFailureMessage(for: error)
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
                 message: "✗ \((configuration.usesOnlineInference ? OnlineModelService.provider(for: .monitoringText).rawValue : "llama.cpp")) · \(elapsedMs)ms · error: \(error.localizedDescription)"
             )
@@ -1890,6 +1891,7 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
             attempts[attemptIndex].isAPIFailure = true
+            attempts[attemptIndex].apiFailureMessage = OnlineModelService.apiFailureMessage(for: error)
             await ActivityLogService.shared.append(level: .verbose, category: "llm:\(stage.rawValue)",
                 message: "✗ \((configuration.usesOnlineInference ? OnlineModelService.provider(for: .monitoringVision).rawValue : "llama.cpp")) · \(elapsedMs)ms · error: \(error.localizedDescription)"
             )
@@ -1906,6 +1908,9 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
 
     private static func failureMessage(from attempts: [LLMEvaluationAttempt], decision: LLMDecision) -> String? {
         if !attempts.isEmpty, attempts.allSatisfy({ $0.isAPIFailure }) {
+            if attempts.contains(where: { $0.apiFailureMessage == OnlineModelService.openRouterBillingFailureMessage }) {
+                return OnlineModelService.openRouterBillingFailureMessage
+            }
             return "all_attempts_failed"
         }
         if decision == .unclear {

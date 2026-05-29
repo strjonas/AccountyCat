@@ -73,6 +73,10 @@ actor CompanionChatService {
     nonisolated static func fallbackReply(for error: Error) -> String {
         let provider = OnlineProviderRouting.provider(for: .chat)
         if let onlineError = error as? OnlineModelError,
+           onlineError.isBillingOrCreditFailure {
+            return "OpenRouter key has no remaining credits or budget. Top up OpenRouter, then send that again."
+        }
+        if let onlineError = error as? OnlineModelError,
            case let .httpFailure(_, statusCode, _, rawBody) = onlineError,
            statusCode == 429 || rawBody.localizedCaseInsensitiveContains("rate-limit") || rawBody.localizedCaseInsensitiveContains("rate limited") {
             return provider == .openAI

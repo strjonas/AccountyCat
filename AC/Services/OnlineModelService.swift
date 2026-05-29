@@ -106,6 +106,9 @@ enum OnlineModelError: LocalizedError, Equatable, Sendable {
         case let .invalidImageData(path):
             return "Couldn't encode screenshot for upload: \(path)"
         case let .httpFailure(provider, statusCode, message, rawBody):
+            if Self.isBillingOrCreditFailure(provider: provider, statusCode: statusCode, message: message, rawBody: rawBody) {
+                return "\(provider.displayName) key has no remaining credits or budget. Top up OpenRouter, then retry."
+            }
             return "\(provider.displayName) request failed (\(statusCode)): \(message) | raw body: \(rawBody)"
         case let .emptyResponse(provider):
             return "\(provider.displayName) returned no message content."
@@ -117,6 +120,41 @@ enum OnlineModelError: LocalizedError, Equatable, Sendable {
                 ? "All online backup requests failed."
                 : "All online backup requests failed: \(detail)"
         }
+    }
+
+    var isBillingOrCreditFailure: Bool {
+        guard case let .httpFailure(provider, statusCode, message, rawBody) = self else {
+            return false
+        }
+        return Self.isBillingOrCreditFailure(
+            provider: provider,
+            statusCode: statusCode,
+            message: message,
+            rawBody: rawBody
+        )
+    }
+
+    private static func isBillingOrCreditFailure(
+        provider: OnlineModelProvider,
+        statusCode: Int,
+        message: String,
+        rawBody: String
+    ) -> Bool {
+        guard provider == .openRouter else { return false }
+        if statusCode == 402 {
+            return true
+        }
+        let combined = "\(message)\n\(rawBody)"
+        let needles = [
+            "insufficient credits",
+            "payment required",
+            "credit balance",
+            "balance too low",
+            "account balance",
+            "quota exceeded",
+            "key limit exceeded",
+        ]
+        return needles.contains { combined.localizedCaseInsensitiveContains($0) }
     }
 }
 
@@ -172,6 +210,7 @@ actor OnlineModelService: OnlineModelServing {
     /// reasoning before the JSON body — see Together-served Kimi for the canonical case.
     nonisolated static let openRouterMinMaxTokens = 1500
     nonisolated private static let retryableStatusCodes: Set<Int> = [408, 409, 429, 500, 502, 503, 504]
+    nonisolated static let openRouterBillingFailureMessage = "openrouter_insufficient_credits"
     nonisolated private static let premiumMaxSuccessCount = 5
 
     private let session: URLSession
@@ -911,6 +950,9 @@ actor OnlineModelService: OnlineModelServing {
             return false
         }
         if let onlineError = error as? OnlineModelError {
+            if onlineError.isBillingOrCreditFailure {
+                return false
+            }
             switch onlineError {
             case let .httpFailure(provider, statusCode, _, _):
                 guard provider == .openRouter else { return false }
@@ -929,6 +971,9 @@ actor OnlineModelService: OnlineModelServing {
             return false
         }
         if let onlineError = error as? OnlineModelError {
+            if onlineError.isBillingOrCreditFailure {
+                return false
+            }
             switch onlineError {
             case let .httpFailure(provider, statusCode, _, _):
                 guard provider == .openRouter else { return false }
@@ -947,6 +992,9 @@ actor OnlineModelService: OnlineModelServing {
             return false
         }
         if let onlineError = error as? OnlineModelError {
+            if onlineError.isBillingOrCreditFailure {
+                return false
+            }
             switch onlineError {
             case let .httpFailure(_, statusCode, _, _):
                 return retryableStatusCodes.contains(statusCode)
@@ -967,6 +1015,14 @@ actor OnlineModelService: OnlineModelServing {
             NSURLErrorDNSLookupFailed,
             NSURLErrorNotConnectedToInternet,
         ].contains(nsError.code)
+    }
+
+    nonisolated static func apiFailureMessage(for error: Error) -> String? {
+        if let onlineError = error as? OnlineModelError,
+           onlineError.isBillingOrCreditFailure {
+            return openRouterBillingFailureMessage
+        }
+        return nil
     }
 
     /// Extracts a server-suggested retry delay from the raw error body if present.

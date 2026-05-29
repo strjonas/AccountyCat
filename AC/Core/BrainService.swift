@@ -292,8 +292,13 @@ final class BrainService: NSObject {
 
     nonisolated static func monitoringFailureNotice(
         consecutiveFailures: Int,
-        timedOut: Bool
+        timedOut: Bool,
+        failureMessage: String? = nil
     ) -> (status: String, banner: String?) {
+        if failureMessage == OnlineModelService.openRouterBillingFailureMessage {
+            let banner = "OpenRouter key has no remaining credits or budget. Top up OpenRouter, then AC will resume automatically."
+            return (banner, banner)
+        }
         if consecutiveFailures >= 3 {
             let banner = timedOut
                 ? "Connection looks unstable, so AC may miss a check-in. Retrying with backup models…"
@@ -307,12 +312,25 @@ final class BrainService: NSObject {
         return (status, nil)
     }
 
+    nonisolated static func isOnlineAPIFailureMessage(_ failureMessage: String?) -> Bool {
+        failureMessage == "all_attempts_failed"
+            || failureMessage == OnlineModelService.openRouterBillingFailureMessage
+    }
+
+    nonisolated static func shouldEscalateOnlineAPIFailureToVision(_ failureMessage: String?) -> Bool {
+        failureMessage == "all_attempts_failed"
+    }
+
     nonisolated static func offlineMonitoringRetryDelay() -> TimeInterval {
         15
     }
 
     nonisolated static func degradedTextOnlyRetryDelay() -> TimeInterval {
         15
+    }
+
+    nonisolated static func openRouterBillingFailureRetryDelay() -> TimeInterval {
+        30
     }
 
     nonisolated static func degradedTextOnlyDuration() -> TimeInterval {
@@ -1512,7 +1530,7 @@ final class BrainService: NSObject {
         // Online text-path outages are often model/provider-specific. If this
         // tick can support vision, try the configured image model once before
         // backing off globally.
-        if decisionResult.evaluation.failureMessage == "all_attempts_failed",
+        if Self.shouldEscalateOnlineAPIFailureToVision(decisionResult.evaluation.failureMessage),
             effectiveConfiguration.usesOnlineInference,
             snapshot.screenshotPath == nil,
             pipelineSupportsScreenshot
@@ -1601,18 +1619,21 @@ final class BrainService: NSObject {
             }
         }
 
-        // If every attempt failed at the infrastructure level, apply exponential backoff and
-        // surface a gentle banner once the streak becomes persistent.
-        if decisionResult.evaluation.failureMessage == "all_attempts_failed" {
+        // If every attempt failed at the infrastructure level, back off and surface
+        // a gentle banner once the streak becomes persistent.
+        if Self.isOnlineAPIFailureMessage(decisionResult.evaluation.failureMessage) {
             consecutiveAPIFailures += 1
             consecutiveOnlineVisionTimeouts = 0
-            let backoff = Self.apiFailureBackoffSeconds(consecutiveFailures: consecutiveAPIFailures)
+            let backoff = decisionResult.evaluation.failureMessage == OnlineModelService.openRouterBillingFailureMessage
+                ? Self.openRouterBillingFailureRetryDelay()
+                : Self.apiFailureBackoffSeconds(consecutiveFailures: consecutiveAPIFailures)
             state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
                 backoff)
             moodSink?(.watching)
             let notice = Self.monitoringFailureNotice(
                 consecutiveFailures: consecutiveAPIFailures,
-                timedOut: false
+                timedOut: false,
+                failureMessage: decisionResult.evaluation.failureMessage
             )
             statusSink?(notice.status)
             connectionProblemSink?(notice.banner)
