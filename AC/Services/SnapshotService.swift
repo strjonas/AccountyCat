@@ -33,8 +33,13 @@ enum SnapshotService {
     /// Keep the cache short: browsers are ambiguous enough that a stale tab title can
     /// suppress a needed evaluation, especially when the user jumps from a productive tab
     /// to a distracting one in the same browser window.
-    private struct CachedBrowserTitle: @unchecked Sendable {
+    private struct BrowserTabSnapshot: @unchecked Sendable {
         let title: String
+        let isPrivateBrowsing: Bool
+    }
+
+    private struct CachedBrowserTitle: @unchecked Sendable {
+        let snapshot: BrowserTabSnapshot
         let recordedAt: Date
     }
 
@@ -48,23 +53,28 @@ enum SnapshotService {
         }
 
         let appName = app.localizedName ?? app.bundleIdentifier ?? "Unknown App"
+        let browserSnapshot = browserTabSnapshot(for: app)
         let windowTitle = normalizedWindowTitle(
-            focusedWindowTitle(for: app),
+            browserSnapshot?.title ?? focusedWindowTitleWithoutBrowserTab(for: app),
             appName: appName
         )
 
         return FrontmostContext(
             bundleIdentifier: app.bundleIdentifier,
             appName: appName,
-            windowTitle: windowTitle
+            windowTitle: windowTitle,
+            isPrivateBrowsing: browserSnapshot?.isPrivateBrowsing
         )
     }
 
     static func focusedWindowTitle(for app: NSRunningApplication) -> String? {
-        if let browserTitle = browserTabTitle(for: app) {
-            return browserTitle
+        if let browserSnapshot = browserTabSnapshot(for: app) {
+            return browserSnapshot.title
         }
+        return focusedWindowTitleWithoutBrowserTab(for: app)
+    }
 
+    private static func focusedWindowTitleWithoutBrowserTab(for app: NSRunningApplication) -> String? {
         let application = AXUIElementCreateApplication(app.processIdentifier)
         var focusedWindowValue: CFTypeRef?
 
@@ -391,7 +401,7 @@ enum SnapshotService {
         return (match?[kCGWindowName] as? String)?.cleanedSingleLine
     }
 
-    private static func browserTabTitle(for app: NSRunningApplication) -> String? {
+    private static func browserTabSnapshot(for app: NSRunningApplication) -> BrowserTabSnapshot? {
         guard let bundleIdentifier = app.bundleIdentifier,
               MonitoringHeuristics.isBrowser(bundleIdentifier: bundleIdentifier) else {
             return nil
@@ -403,7 +413,7 @@ enum SnapshotService {
         browserCacheLock.lock()
         if let cached = browserTitleCache[pid], now.timeIntervalSince(cached.recordedAt) < browserCacheTTL {
             browserCacheLock.unlock()
-            return cached.title
+            return cached.snapshot
         }
         browserCacheLock.unlock()
 
@@ -413,27 +423,52 @@ enum SnapshotService {
             scriptSource = """
             tell application id \"\(bundleIdentifier)\"
                 if (count of windows) is 0 then return \"\"
-                return name of current tab of front window
+                set tabTitle to name of current tab of front window
+                set privateState to \"\"
+                try
+                    set privateState to private browsing of front window as string
+                end try
+                return tabTitle & \"|||\" & privateState
             end tell
             """
         default:
             scriptSource = """
             tell application id \"\(bundleIdentifier)\"
                 if (count of windows) is 0 then return \"\"
-                return title of active tab of front window
+                set tabTitle to title of active tab of front window
+                set windowMode to \"\"
+                try
+                    set windowMode to mode of front window as string
+                end try
+                return tabTitle & \"|||\" & windowMode
             end tell
             """
         }
 
-        let result = runAppleScript(scriptSource)
+        guard let result = runAppleScript(scriptSource) else {
+            return nil
+        }
+        let parsed = parseBrowserTabSnapshot(result)
 
         browserCacheLock.lock()
-        if let result {
-            browserTitleCache[pid] = CachedBrowserTitle(title: result, recordedAt: now)
-        }
+        browserTitleCache[pid] = CachedBrowserTitle(snapshot: parsed, recordedAt: now)
         browserCacheLock.unlock()
 
-        return result
+        return parsed
+    }
+
+    private static func parseBrowserTabSnapshot(_ raw: String) -> BrowserTabSnapshot {
+        let lines = raw
+            .components(separatedBy: "|||")
+            .map { String($0).cleanedSingleLine }
+        let title = lines.first?.cleanedSingleLine ?? raw.cleanedSingleLine
+        let mode = lines.dropFirst().joined(separator: " ").lowercased()
+        return BrowserTabSnapshot(
+            title: title,
+            isPrivateBrowsing: mode.contains("incognito")
+                || mode.contains("private")
+                || mode == "true"
+        )
     }
 
     private static func runAppleScript(_ source: String) -> String? {

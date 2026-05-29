@@ -412,16 +412,34 @@ final class BrainService: NSObject {
         case "local_runtime_busy":
             return "\(context.appName) · deferred while local chat is in progress"
         case "app_scope_excluded":
-            switch state.appMonitoringScopeMode {
-            case .allowlist:
+            switch state.monitoringScopeSkipReason(for: context) {
+            case .outsideAppAllowlist:
                 return "\(context.appName) · outside selected app allowlist"
-            case .blocklist:
+            case .skippedAppBlocklist:
                 return "\(context.appName) · matched skipped-app blocklist"
-            case .disabled:
+            case .privateBrowserWindow:
+                return "\(context.appName) · private/incognito browser window"
+            case .browserTab(let exclusion):
+                return "\(context.appName) · skipped browser tab · \(exclusion.displayTitle)"
+            case nil:
                 return context.appName
             }
         default:
             return context.appName
+        }
+    }
+
+    nonisolated static func monitoringScopeSkipStatus(
+        for reason: MonitoringScopeSkipReason,
+        context: FrontmostContext
+    ) -> String {
+        switch reason {
+        case .outsideAppAllowlist, .skippedAppBlocklist:
+            return "AC is idle for \(context.appName) due to your app scope setting."
+        case .privateBrowserWindow:
+            return "AC is idle for this private browser window."
+        case .browserTab(let exclusion):
+            return "AC is idle for \(exclusion.displayTitle)."
         }
     }
 
@@ -1155,7 +1173,7 @@ final class BrainService: NSObject {
             wasInCallLastTick = false
         }
 
-        if state.shouldSkipMonitoring(for: context) {
+        if let scopeSkipReason = state.monitoringScopeSkipReason(for: context) {
             let skipDetail = Self.evaluationSkipDetail(
                 plan: MonitoringEvaluationPlan(
                     shouldEvaluate: false,
@@ -1182,7 +1200,7 @@ final class BrainService: NSObject {
                 message: "skip: app_scope_excluded · \(skipDetail)"
             )
             moodSink?(.watching)
-            statusSink?("AC is idle for \(context.appName) due to your app scope setting.")
+            statusSink?(Self.monitoringScopeSkipStatus(for: scopeSkipReason, context: context))
             stateSink?(baseState, state)
             lastCheckSink?(now)
             return

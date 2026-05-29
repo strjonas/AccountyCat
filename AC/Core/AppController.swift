@@ -462,6 +462,76 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Removed app from \(mode.rawValue): \(bundleIdentifier)")
     }
 
+    func setSkipPrivateBrowserWindows(_ enabled: Bool) {
+        guard state.skipPrivateBrowserWindows != enabled else { return }
+        state.skipPrivateBrowserWindows = enabled
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Skip private browser windows: \(enabled)")
+    }
+
+    func addCurrentBrowserTabMonitoringExclusion() {
+        guard let context = SnapshotService.frontmostContext() else { return }
+        addBrowserTabMonitoringExclusion(from: context)
+    }
+
+    func addBrowserTabMonitoringExclusion(from context: FrontmostContext) {
+        guard MonitoringHeuristics.isBrowser(bundleIdentifier: context.bundleIdentifier),
+              let title = context.windowTitle?.cleanedSingleLine,
+              !title.isEmpty else {
+            return
+        }
+        addBrowserTabMonitoringExclusion(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            titleContains: BrowserTitleSignature.derive(from: title) ?? title
+        )
+    }
+
+    func addBrowserTabMonitoringExclusion(
+        bundleIdentifier: String?,
+        appName: String,
+        titleContains: String
+    ) {
+        let title = titleContains.cleanedSingleLine
+        let appName = appName.cleanedSingleLine
+        guard !title.isEmpty, !appName.isEmpty else { return }
+        let entry = BrowserTabMonitoringExclusion(
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            titleContains: String(title.prefix(120))
+        )
+        let entryKey = browserTabMonitoringExclusionKey(entry)
+        var updated = state.browserTabMonitoringExclusions
+            .filter { browserTabMonitoringExclusionKey($0) != entryKey }
+        updated.append(entry)
+        updated.sort {
+            $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending
+        }
+        state.browserTabMonitoringExclusions = updated
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Browser tab monitoring exclusion added: \(entry.appName) / \(entry.titleContains)")
+    }
+
+    func removeBrowserTabMonitoringExclusion(id: String) {
+        let current = state.browserTabMonitoringExclusions
+        let updated = current.filter { $0.id != id }
+        guard updated.count != current.count else { return }
+        state.browserTabMonitoringExclusions = updated
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Browser tab monitoring exclusion removed: \(id)")
+    }
+
+    private func browserTabMonitoringExclusionKey(_ entry: BrowserTabMonitoringExclusion) -> String {
+        [
+            entry.bundleIdentifier?.cleanedSingleLine.lowercased()
+                ?? entry.appName.cleanedSingleLine.lowercased(),
+            entry.titleContains.cleanedSingleLine.lowercased()
+        ].joined(separator: "|")
+    }
+
     private static func appMonitoringSelection(from url: URL) -> AppMonitoringSelection? {
         guard url.pathExtension.caseInsensitiveCompare("app") == .orderedSame else { return nil }
         guard let bundle = Bundle(url: url) else { return nil }

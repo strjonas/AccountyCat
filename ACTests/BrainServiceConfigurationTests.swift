@@ -244,6 +244,9 @@ struct BrainServiceConfigurationTests {
     func skipDetailExplainsAppScopeExclusion() {
         var state = ACState()
         state.appMonitoringScopeMode = .allowlist
+        state.appMonitoringAllowlist = [
+            AppMonitoringSelection(bundleIdentifier: "com.apple.dt.Xcode", appName: "Xcode")
+        ]
 
         let detail = BrainService.evaluationSkipDetail(
             plan: MonitoringEvaluationPlan(

@@ -112,8 +112,8 @@ struct ProfilesTab: View {
             let key = (app + "|" + title).lowercased()
             guard seen.insert(key).inserted else { continue }
             targets.append(RuleTarget(
-                display: "\(app) · \(title)",
-                summary: "\(app) — \(title)",
+                display: title,
+                summary: "\(title) — \(app)",
                 scope: PolicyRuleScope(appName: app, titleContains: [title])
             ))
             if targets.count >= 6 { break }
@@ -834,8 +834,8 @@ struct ProfilesTab: View {
     // MARK: - Rule helpers
 
     private func ruleDisplayTarget(_ rule: PolicyRule) -> String {
-        if let name = rule.scope.appName, !name.isEmpty { return name }
         if let title = rule.scope.titleContains.first, !title.isEmpty { return title }
+        if let name = rule.scope.appName, !name.isEmpty { return name }
         return rule.summary
     }
 

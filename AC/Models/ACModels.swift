@@ -180,6 +180,68 @@ struct AppMonitoringSelection: Codable, Hashable, Identifiable, Sendable {
     var id: String { bundleIdentifier }
 }
 
+struct BrowserTabMonitoringExclusion: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var bundleIdentifier: String?
+    var appName: String
+    var titleContains: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, bundleIdentifier, appName, titleContains
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        bundleIdentifier: String? = nil,
+        appName: String,
+        titleContains: String
+    ) {
+        self.id = id
+        self.bundleIdentifier = bundleIdentifier?.cleanedSingleLine
+        self.appName = appName.cleanedSingleLine
+        self.titleContains = titleContains.cleanedSingleLine
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        bundleIdentifier = try container.decodeIfPresent(String.self, forKey: .bundleIdentifier)?
+            .cleanedSingleLine
+        appName = try container.decodeIfPresent(String.self, forKey: .appName)?
+            .cleanedSingleLine ?? ""
+        titleContains = try container.decodeIfPresent(String.self, forKey: .titleContains)?
+            .cleanedSingleLine ?? ""
+    }
+
+    var displayTitle: String {
+        titleContains
+    }
+
+    func matches(context: FrontmostContext) -> Bool {
+        guard MonitoringHeuristics.isBrowser(bundleIdentifier: context.bundleIdentifier) else {
+            return false
+        }
+        if let bundleIdentifier, !bundleIdentifier.isEmpty {
+            guard context.bundleIdentifier == bundleIdentifier else { return false }
+        } else {
+            guard context.appName.cleanedSingleLine.caseInsensitiveCompare(appName) == .orderedSame else {
+                return false
+            }
+        }
+        guard let title = context.windowTitle?.cleanedSingleLine, !title.isEmpty else {
+            return false
+        }
+        return title.lowercased().contains(titleContains.lowercased())
+    }
+}
+
+enum MonitoringScopeSkipReason: Equatable, Sendable {
+    case outsideAppAllowlist
+    case skippedAppBlocklist
+    case privateBrowserWindow
+    case browserTab(BrowserTabMonitoringExclusion)
+}
+
 struct PermissionsSnapshot: Codable, Sendable {
     var screenRecording: PermissionState = .unknown
     var accessibility: PermissionState = .unknown
@@ -759,6 +821,7 @@ struct FrontmostContext: Hashable, Sendable, Codable {
     var bundleIdentifier: String?
     var appName: String
     var windowTitle: String?
+    var isPrivateBrowsing: Bool? = nil
 
     nonisolated var contextKey: String {
         [bundleIdentifier ?? "unknown", windowTitle?.normalizedForContextKey ?? ""]
@@ -960,6 +1023,11 @@ struct ACState: Codable, Sendable {
     var appMonitoringAllowlist: [AppMonitoringSelection] = []
     /// Apps AC skips when in `.blocklist` mode.
     var appMonitoringBlocklist: [AppMonitoringSelection] = []
+    /// Browser tabs AC skips by title. Browser exclusions are title-scoped so Chrome/Arc/etc.
+    /// can still be monitored in other tabs.
+    var browserTabMonitoringExclusions: [BrowserTabMonitoringExclusion] = []
+    /// When enabled, browser private/incognito windows are never sent to the monitor.
+    var skipPrivateBrowserWindows: Bool = false
     var algorithmState = AlgorithmStateEnvelope()
     var hasMigratedPolicyAlgorithmDefault = false
     var recentActions: [ActionRecord] = []
@@ -1072,6 +1140,8 @@ struct ACState: Codable, Sendable {
         case appMonitoringSelections
         case appMonitoringAllowlist
         case appMonitoringBlocklist
+        case browserTabMonitoringExclusions
+        case skipPrivateBrowserWindows
         case algorithmState
         case hasMigratedPolicyAlgorithmDefault
         case recentActions
@@ -1208,6 +1278,34 @@ struct ACState: Codable, Sendable {
             appMonitoringAllowlist = legacy
             appMonitoringBlocklist = legacy
         }
+        browserTabMonitoringExclusions =
+            (try container.decodeIfPresent(
+                [BrowserTabMonitoringExclusion].self,
+                forKey: .browserTabMonitoringExclusions
+            ) ?? [])
+            .reduce(into: [String: BrowserTabMonitoringExclusion]()) { partial, entry in
+                let title = entry.titleContains.cleanedSingleLine
+                let appName = entry.appName.cleanedSingleLine
+                guard !title.isEmpty, !appName.isEmpty else { return }
+                let bundle = entry.bundleIdentifier?.cleanedSingleLine
+                let sanitized = BrowserTabMonitoringExclusion(
+                    id: entry.id,
+                    bundleIdentifier: bundle?.isEmpty == false ? bundle : nil,
+                    appName: appName,
+                    titleContains: String(title.prefix(120))
+                )
+                let key = [
+                    sanitized.bundleIdentifier ?? sanitized.appName.lowercased(),
+                    sanitized.titleContains.lowercased()
+                ].joined(separator: "|")
+                partial[key] = sanitized
+            }
+            .values
+            .sorted {
+                $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending
+            }
+        skipPrivateBrowserWindows =
+            try container.decodeIfPresent(Bool.self, forKey: .skipPrivateBrowserWindows) ?? false
         algorithmState =
             try container.decodeIfPresent(AlgorithmStateEnvelope.self, forKey: .algorithmState)
             ?? AlgorithmStateEnvelope()
@@ -1354,6 +1452,8 @@ struct ACState: Codable, Sendable {
         try container.encode(appMonitoringScopeMode, forKey: .appMonitoringScopeMode)
         try container.encode(appMonitoringAllowlist, forKey: .appMonitoringAllowlist)
         try container.encode(appMonitoringBlocklist, forKey: .appMonitoringBlocklist)
+        try container.encode(browserTabMonitoringExclusions, forKey: .browserTabMonitoringExclusions)
+        try container.encode(skipPrivateBrowserWindows, forKey: .skipPrivateBrowserWindows)
         try container.encode(algorithmState, forKey: .algorithmState)
         try container.encode(
             hasMigratedPolicyAlgorithmDefault, forKey: .hasMigratedPolicyAlgorithmDefault)
@@ -1396,6 +1496,8 @@ struct ACState: Codable, Sendable {
         appMonitoringScopeMode = .disabled
         appMonitoringAllowlist = []
         appMonitoringBlocklist = []
+        browserTabMonitoringExclusions = []
+        skipPrivateBrowserWindows = false
         algorithmState = AlgorithmStateEnvelope()
         hasMigratedPolicyAlgorithmDefault = true
         memoryEntries = []
@@ -1457,22 +1559,42 @@ struct ACState: Codable, Sendable {
     }
 
     func shouldSkipMonitoring(for context: FrontmostContext) -> Bool {
+        monitoringScopeSkipReason(for: context) != nil
+    }
+
+    func monitoringScopeSkipReason(for context: FrontmostContext) -> MonitoringScopeSkipReason? {
         let selections = activeAppMonitoringSelections
-        guard !selections.isEmpty else { return false }
-        switch appMonitoringScopeMode {
-        case .disabled:
-            return false
-        case .allowlist:
-            guard let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty else {
-                return true
+        if !selections.isEmpty {
+            switch appMonitoringScopeMode {
+            case .disabled:
+                break
+            case .allowlist:
+                guard let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty else {
+                    return .outsideAppAllowlist
+                }
+                if !selections.contains(where: { $0.bundleIdentifier == bundleID }) {
+                    return .outsideAppAllowlist
+                }
+            case .blocklist:
+                guard let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty else {
+                    break
+                }
+                if selections.contains(where: { $0.bundleIdentifier == bundleID }) {
+                    return .skippedAppBlocklist
+                }
             }
-            return !selections.contains { $0.bundleIdentifier == bundleID }
-        case .blocklist:
-            guard let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty else {
-                return false
-            }
-            return selections.contains { $0.bundleIdentifier == bundleID }
         }
+
+        if MonitoringHeuristics.isBrowser(bundleIdentifier: context.bundleIdentifier) {
+            if skipPrivateBrowserWindows, context.isPrivateBrowsing == true {
+                return .privateBrowserWindow
+            }
+            if let exclusion = browserTabMonitoringExclusions.first(where: { $0.matches(context: context) }) {
+                return .browserTab(exclusion)
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Memory helpers
