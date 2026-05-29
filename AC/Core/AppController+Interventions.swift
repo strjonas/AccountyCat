@@ -663,12 +663,12 @@ extension AppController {
         let message: String
         let focused = formatCompactDuration(stats.focusedSeconds)
         let best = formatCompactDuration(stats.longestFocusedBlockSeconds)
-        switch state.character {
-        case .mochi:
+        switch state.character.tone {
+        case .warm:
             message = "You've already protected \(focused) of focus today. Best block: \(best). I'm proud of that."
-        case .misty:
+        case .thoughtful:
             message = "\(focused) of focused work today. Your best block is \(best). Notice the steadiness."
-        case .onyx:
+        case .sharp:
             message = "\(focused) focused today. Best block: \(best). Strong signal; keep the line."
         }
 

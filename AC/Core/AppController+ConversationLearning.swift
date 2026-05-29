@@ -156,6 +156,9 @@ extension AppController {
 
         Task {
             let result: CompanionChatResult
+            // Only the real model path feeds the parse-trouble heuristic; canned
+            // "not reachable / not set up" replies aren't a character problem.
+            var modelProducedOutput = false
             if !chatReady {
                 result = CompanionChatResult(
                     reply: usingOnline
@@ -184,6 +187,7 @@ extension AppController {
                 workflow: chatWorkflow
             ) {
                 result = response
+                modelProducedOutput = true
             } else {
                 result = CompanionChatResult(
                     reply: usingOnline
@@ -199,6 +203,9 @@ extension AppController {
             await MainActor.run {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
                 self.noteUsedModel(result.usedModelIdentifier)
+                if modelProducedOutput {
+                    self.noteChatParseOutcome(structured: result.structuredParse)
+                }
                 if let schedule = result.schedule {
                     let fireAt = Date().addingTimeInterval(Double(schedule.delayMinutes) * 60)
                     let action = ScheduledAction(

@@ -8,82 +8,10 @@
 import Foundation
 
 // MARK: - AC Character
-
-/// Selectable companion personality. Stored in ACState and persisted across launches.
-/// The character injects a 1–2 sentence style prefix into every system prompt;
-/// the companion always identifies itself as "AccountyCat" / "AC" regardless of character.
-///
-/// The cat's visual identity (portrait + palette) is paired one-to-one with personality —
-/// the character picker is the only place look + tone are chosen, no mix-and-match.
-enum ACCharacter: String, CaseIterable, Sendable {
-    case mochi  // warm orange tabby — encouraging
-    case misty  // soft gray — thoughtful
-    case onyx  // sharp black — decisive
-
-    var displayName: String {
-        switch self {
-        case .mochi: return "Mochi"
-        case .misty: return "Misty"
-        case .onyx: return "Onyx"
-        }
-    }
-
-    var tagline: String {
-        switch self {
-        case .mochi: return "Your cozy focus buddy"
-        case .misty: return "Your attentive focus companion"
-        case .onyx: return "Your no-nonsense co-pilot"
-        }
-    }
-
-    /// Style prefix prepended to every system prompt — voice description plus voice examples.
-    /// The companion still calls itself AccountyCat / AC in all conversations.
-    nonisolated var personalityPrefix: String {
-        switch self {
-        case .mochi:
-            return """
-                You are AC, the user's warm and encouraging focus companion. Cheer them on like a close friend who's always rooting for them — kind, playful, never lecturing.
-
-                Voice examples:
-                Nudge → "Hey, you drifted over to Reddit — happens to everyone. Snap back when you're ready, I'm right here cheering you on."
-                User: "I can't focus today" → you: "Ugh, rough one. Want to just start tiny? I'll keep watch while you find your groove."
-                User: "hi" → you: "hey! how's it going today?"
-                """
-        case .misty:
-            return """
-                You are AC, the user's thoughtful focus companion. Stay quietly attentive — speak with care, listen for what they actually need, and only step in when it genuinely helps.
-
-                Voice examples:
-                Nudge → "You've been away from your work for a bit. Whenever you're ready, it's still here."
-                User: "I can't focus today" → you: "What's pulling you away? Sometimes naming it helps."
-                User: "hi" → you: "Hey. Everything okay?"
-                """
-        case .onyx:
-            return """
-                You are AC, the user's sharp and decisive focus co-pilot. Cut through the noise — short, direct, dry-witted. Push them when they need it, drop the chit-chat when they don't.
-
-                Voice examples:
-                Nudge → "That's Twitter. Your deadline isn't."
-                User: "I can't focus today" → you: "What's in the way? Name it and we'll block it."
-                User: "hi" → you: "Hey. Working?"
-                """
-        }
-    }
-}
-
-// Codable with legacy-key migration:
-//   "nova" → .onyx, "sage" → .misty so existing state files don't reset users.
-extension ACCharacter: Codable {
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        switch raw {
-        case "nova": self = .onyx
-        case "sage": self = .misty
-        default:
-            self = ACCharacter(rawValue: raw) ?? .mochi
-        }
-    }
-}
+//
+// `ACCharacter` (the selectable companion identity) now lives in its own file,
+// `ACCharacter.swift`. It became a value type so the catalog can grow and users
+// can create their own accountability partners. See that file.
 
 /// Glass effect mode for panels, overlays, and nudges.
 /// `.auto` honors the macOS "Reduce Transparency" accessibility setting —
@@ -977,7 +905,35 @@ struct ACState: Codable, Sendable {
         """
     static let usageHistoryRetentionDays = 35
 
-    var character: ACCharacter = .mochi
+    /// id of the active character (built-in or custom). Use `character` to read
+    /// the resolved value.
+    var characterID: String = ACCharacter.mochi.id
+    /// User-created accountability partners, persisted in full. Built-ins are
+    /// not stored here — they live in `ACCharacter.builtIns`.
+    var customCharacters: [ACCharacter] = []
+
+    /// The resolved active character. Reading resolves `characterID` against the
+    /// built-in catalog and `customCharacters` (falling back to Mochi). Writing
+    /// updates `characterID` and upserts custom characters so their latest
+    /// definition is persisted.
+    var character: ACCharacter {
+        get {
+            if let builtIn = ACCharacter.builtIn(id: characterID) { return builtIn }
+            if let custom = customCharacters.first(where: { $0.id == characterID }) { return custom }
+            return .mochi
+        }
+        set {
+            characterID = newValue.id
+            if newValue.origin == .custom {
+                if let idx = customCharacters.firstIndex(where: { $0.id == newValue.id }) {
+                    customCharacters[idx] = newValue
+                } else {
+                    customCharacters.append(newValue)
+                }
+            }
+        }
+    }
+
     /// Glass effect mode for panels/overlays. `.auto` follows the system Reduce
     /// Transparency accessibility setting (glass off when system says reduce).
     var glassMode: ACGlassMode = .off
@@ -1088,9 +1044,11 @@ struct ACState: Codable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case character
+        case characterID
+        case customCharacters
         case glassMode
         // Legacy keys — decoded for migration, never re-encoded:
+        case character  // was an enum string; now superseded by characterID
         case useLiquidGlass
         case selectedSkin
         case accentFollowsCharacter
@@ -1159,7 +1117,18 @@ struct ACState: Codable, Sendable {
         }
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        character = try container.decodeIfPresent(ACCharacter.self, forKey: .character) ?? .mochi
+        // Character migration:
+        //  • New schema: `characterID` (+ `customCharacters` stored in full).
+        //  • Legacy schema: `character` was an enum encoded as a bare string
+        //    ("mochi"/"misty"/"onyx"/"nova"/"sage"). Map it onto an id, applying
+        //    the nova→onyx / sage→misty rename so returning users don't reset.
+        customCharacters =
+            try container.decodeIfPresent([ACCharacter].self, forKey: .customCharacters) ?? []
+        if let id = try container.decodeIfPresent(String.self, forKey: .characterID) {
+            characterID = ACCharacter.normalizeBuiltInID(id)
+        } else if let legacyRaw = try container.decodeIfPresent(String.self, forKey: .character) {
+            characterID = ACCharacter.normalizeBuiltInID(legacyRaw)
+        }
         // Glass mode migration: prefer the new 3-state key; otherwise inherit
         // from the legacy `useLiquidGlass` Bool (true → .on, false → .off so
         // returning users see no surprise change). Fresh installs default to
@@ -1364,7 +1333,8 @@ struct ACState: Codable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(character, forKey: .character)
+        try container.encode(characterID, forKey: .characterID)
+        try container.encode(customCharacters, forKey: .customCharacters)
         try container.encode(glassMode, forKey: .glassMode)
         try container.encode(aiTier, forKey: .aiTier)
         try container.encode(permissions, forKey: .permissions)

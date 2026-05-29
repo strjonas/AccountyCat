@@ -626,7 +626,7 @@ private struct ACEvalExecutor {
             },
             memory: input.memory,
             policyRules: input.policyRules,
-            character: ACCharacter(rawValue: input.character) ?? .mochi,
+            character: ACCharacter.builtIn(id: input.character) ?? .mochi,
             activeProfileContext: input.activeProfileContext,
             runtimeOverride: runtimePath ?? RuntimeSetupService.normalizedRuntimePath(from: nil),
             inferenceBackend: backend == .online ? .openRouter : .local,

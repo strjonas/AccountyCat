@@ -223,12 +223,12 @@ final class BrainService: NSObject {
         for profile: FocusProfile,
         character: ACCharacter
     ) -> String {
-        switch character {
-        case .mochi:
+        switch character.tone {
+        case .warm:
             return "Session complete — \(profile.name) is wrapped. Nicely done. You're back in everyday mode now; take a clean breather before the next thing."
-        case .misty:
+        case .thoughtful:
             return "\(profile.name) is complete. That was a solid block. You're back in everyday mode now, and a small reset would suit the landing."
-        case .onyx:
+        case .sharp:
             return "\(profile.name) complete. Good finish. You're back in everyday mode; step out cleanly, then decide the next move."
         }
     }

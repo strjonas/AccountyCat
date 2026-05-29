@@ -22,6 +22,11 @@ struct CompanionChatResult: Sendable {
     /// Telemetry id of the chat-turn LLM call. Pass back to `resolveAction` so
     /// the inspector can group action resolutions under their originating chat.
     var interactionID: String? = nil
+    /// False when the structured JSON envelope couldn't be parsed and we fell
+    /// back to a plain-text reply (actions/memory lost). Lets the controller
+    /// notice a custom character that keeps confusing the model. Network/runtime
+    /// failures don't set this — they return `nil` instead.
+    var structuredParse: Bool = true
 }
 
 struct ChatActionResolutionRequest: Sendable {
@@ -107,6 +112,7 @@ actor CompanionChatService {
     ) async -> CompanionChatResult? {
         let systemPrompt = ACPromptSets.chatSystemPrompt(
             withPersonality: character.personalityPrefix,
+            expressivenessDirective: character.expressiveness.chatDirective,
             workflow: workflow
         )
         let prompt = Self.makeChatPrompt(
@@ -339,7 +345,8 @@ actor CompanionChatService {
                     onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
                     localModelIdentifier: localTextModelIdentifier
                 ),
-            interactionID: output.interactionID
+            interactionID: output.interactionID,
+            structuredParse: false
         )
     }
 
@@ -657,7 +664,7 @@ actor CompanionChatService {
             goals: goals,
             memory: memory,
             policyRules: policyRules,
-            character: character.rawValue,
+            character: character.id,
             activeProfileContext: activeProfileContext,
             workflow: workflow.rawValue,
             history: history.map { HistoryMessage(role: $0.role.rawValue, text: $0.text, timestamp: $0.timestamp) },

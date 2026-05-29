@@ -2282,8 +2282,8 @@ private extension OverlayPresentation {
     }
 
     func withHardEscalation(character: ACCharacter, activity: String) -> OverlayPresentation {
-        switch character {
-        case .mochi:
+        switch character.tone {
+        case .warm:
             return OverlayPresentation(
                 headline: "Hey, can I ask you something?",
                 body: "I've noticed you keep coming back to \(activity). I just want to make sure — is this really helping you move forward right now?",
@@ -2294,7 +2294,7 @@ private extension OverlayPresentation {
                 secondaryButtonTitle: "You're right, back to work",
                 isHardEscalation: true
             )
-        case .misty:
+        case .thoughtful:
             return OverlayPresentation(
                 headline: "A moment of reflection.",
                 body: "You've returned to \(activity) several times. Rather than nudging again, I'd like to understand — does this serve your deeper goals?",
@@ -2305,7 +2305,7 @@ private extension OverlayPresentation {
                 secondaryButtonTitle: "Return to work",
                 isHardEscalation: true
             )
-        case .onyx:
+        case .sharp:
             return OverlayPresentation(
                 headline: "Accountability check.",
                 body: "You're back on \(activity). Nudges haven't helped, and no feedback from your side. Tell me why I should let this slide.",

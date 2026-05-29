@@ -680,12 +680,12 @@ extension AppController {
     }
 
     private func profileCompletionAnnouncement(sessionName: String) -> String {
-        switch state.character {
-        case .mochi:
+        switch state.character.tone {
+        case .warm:
             return "\(sessionName) is wrapped. Nicely done. Back to Everyday mode for a clean little exhale."
-        case .misty:
+        case .thoughtful:
             return "\(sessionName) is wrapped. Good work. You're back in Everyday mode now; let the pace soften for a minute."
-        case .onyx:
+        case .sharp:
             return "\(sessionName) wrapped. Good finish. Everyday mode is back on; reset cleanly and continue with intent."
         }
     }

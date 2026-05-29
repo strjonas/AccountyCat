@@ -19,9 +19,9 @@ struct CompactHeaderView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Left: mini cat + meta
+            // Left: mini cat (tap to swap partner) + meta
             HStack(spacing: 8) {
-                miniCatAvatar
+                partnerSwapMenu
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -90,6 +90,48 @@ struct CompactHeaderView: View {
         .padding(.vertical, 10)
     }
 
+    // MARK: - Partner quick-swap
+
+    /// Tapping the avatar swaps the accountability partner on the spot — no
+    /// settings dive — and offers create/edit shortcuts into the inline creator.
+    private var partnerSwapMenu: some View {
+        Menu {
+            ForEach(swapPartners, id: \.id) { partner in
+                Button {
+                    controller.updateCharacter(partner)
+                } label: {
+                    let active = controller.state.character.id == partner.id
+                    Text(active ? "✓ \(partner.displayName)" : partner.displayName)
+                }
+            }
+            Divider()
+            Button("Create new partner…") {
+                NotificationCenter.default.post(name: .acOpenPartnerCreator, object: nil)
+            }
+            if controller.state.character.origin == .custom {
+                Button("Edit \(controller.state.character.displayName)…") {
+                    NotificationCenter.default.post(name: .acOpenPartnerCreator, object: controller.state.character)
+                }
+            }
+        } label: {
+            miniCatAvatar
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help("Switch or edit partner")
+    }
+
+    /// Built-in picks + the user's custom partners, with a previously-selected
+    /// legacy built-in kept visible so it isn't orphaned. Mirrors `LookTab`.
+    private var swapPartners: [ACCharacter] {
+        var list = ACCharacter.pickerBuiltIns
+        let active = controller.state.character
+        if active.origin == .builtIn, !list.contains(where: { $0.id == active.id }) {
+            list.append(active)
+        }
+        return list + controller.state.customCharacters
+    }
+
     // MARK: - Mini cat avatar
 
     private var miniCatAvatar: some View {
@@ -111,6 +153,14 @@ struct CompactHeaderView: View {
                     .foregroundStyle(.white.opacity(0.9))
                     .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
             }
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(accent)
+                .frame(width: 13, height: 13)
+                .background(Circle().fill(Color.acSurface))
+                .overlay(Circle().stroke(Color.acHairline, lineWidth: 0.5))
+                .offset(x: 12, y: 9)
         }
         .frame(width: 30, height: 26)
     }
