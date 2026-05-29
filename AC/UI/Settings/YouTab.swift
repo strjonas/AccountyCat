@@ -536,11 +536,30 @@ struct YouTab: View {
         return AnyView(
             VStack(spacing: 4) {
                 ForEach(entries) { entry in
+                    let display = MemoryRendering.displayContent(for: entry)
                     HStack(alignment: .top, spacing: 8) {
-                        Text(entry.text)
-                            .font(.ac(11))
-                            .foregroundStyle(Color.acTextPrimary.opacity(0.85))
-                            .lineLimit(4)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(display.category.uppercased())
+                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                    .foregroundStyle(Color.acTextPrimary.opacity(0.42))
+                                Text(memoryDateLabel(for: entry.createdAt))
+                                    .font(.acCaption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text(display.headline)
+                                .font(.ac(11, weight: .medium))
+                                .foregroundStyle(Color.acTextPrimary.opacity(0.9))
+                                .lineLimit(3)
+
+                            if let detail = display.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .font(.acCaption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
                         Spacer(minLength: 4)
 
                         Button {
@@ -598,6 +617,17 @@ struct YouTab: View {
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
+
+    private func memoryDateLabel(for date: Date) -> String {
+        Self.memoryDateFormatter.string(from: date)
+    }
+
+    private nonisolated static let memoryDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        return formatter
+    }()
 
     private var systemVersion: String {
         ProcessInfo.processInfo.operatingSystemVersionString

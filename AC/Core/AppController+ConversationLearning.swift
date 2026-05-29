@@ -284,6 +284,10 @@ extension AppController {
     func appendMemoryLine(_ line: String, notify: Bool = true) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard Self.shouldPersistModelLearnedMemory(trimmed) else {
+            logActivity("memory", "Skipped low-signal memory entry")
+            return
+        }
         // Avoid exact-duplicate entries from noisy call sites (e.g. repeated feedback).
         if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(trimmed) == .orderedSame }) {
             return
@@ -936,6 +940,10 @@ extension AppController {
     @discardableResult
     func applyMemoryChatAction(_ action: CompanionChatAction) -> Bool {
         guard let text = action.text?.cleanedSingleLine, !text.isEmpty else { return false }
+        guard Self.shouldPersistModelLearnedMemory(text) else {
+            logActivity("memory", "Ignored low-signal memory action: \(text)")
+            return true
+        }
         if state.memoryEntries.contains(where: { $0.text.caseInsensitiveCompare(text) == .orderedSame }) {
             return true
         }
@@ -949,6 +957,10 @@ extension AppController {
         persistState()
         maybeConsolidateMemory()
         return true
+    }
+
+    nonisolated static func shouldPersistModelLearnedMemory(_ text: String) -> Bool {
+        MemoryHeuristics.isUsefulLearnedMemory(text)
     }
 
     @discardableResult

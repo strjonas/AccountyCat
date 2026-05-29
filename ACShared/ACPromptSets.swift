@@ -495,9 +495,12 @@ enum ACPromptSets {
                   fact in chat or appeal text → `add_memory` with concise text. This includes
                   cases where the assistant promised to remember ("I'll keep that in mind") and
                   the eventSummary captures the exchange. Memory is global soft context.
-                  Examples: "On Sundays I take my sabbath" → add_memory text "User keeps Sundays
-                  as a rest day; light work is fine if user signals it." "I'm a night owl" →
-                  add_memory text "User does best work after 10pm."
+                  Memory text must stay human-readable in Settings. Do not start entries with
+                  "User ...". Never store one-off greetings, transient vibe matching, or wording
+                  copied from a single casual message.
+                  Examples: "On Sundays I take my sabbath" → add_memory text "Keeps Sundays
+                  as a rest day; light work is fine if clearly intended." "I'm a night owl" →
+                  add_memory text "Does best work after 10pm."
                 - You see a behavioral pattern but no explicit user endorsement → `propose_rule`.
                 - You'd like to remember a generalization the user has not stated → `propose_memory`.
                 - Anything the user already explicitly said about app/site rules → `add_rule`.
@@ -732,8 +735,8 @@ enum ACPromptSets {
     Direct action examples:
     - profile: {"kind":"profile","intent":"activate","profileID":"...","durationMinutes":60,"reason":"coding focus"}
     - profile with recurring schedule: {"kind":"profile","intent":"update","profileName":"Feierabend","recurringSchedule":{"hour":21,"minute":0}}
-    - memory (global pref): {"kind":"memory","text":"User prefers Reddit judged by context, not treated as automatically bad."}
-    - memory (cross-profile rule): {"kind":"memory","text":"User wants Instagram blocked regardless of which profile is active."}
+    - memory (global pref): {"kind":"memory","text":"Reddit should be judged by context, not treated as automatically bad."}
+    - memory (cross-profile rule): {"kind":"memory","text":"Instagram should stay blocked regardless of which profile is active."}
     - focus_policy: {"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"current_context"},"duration":"profile_session","locked":false,"reason":"user corrected current window"}
     - profile + explicit allowance: [{"kind":"profile","instruction":"start coding for an hour"},{"kind":"focus_policy","intent":"allow","scope":"active_profile","target":{"type":"site","value":"youtube.com"},"duration":"profile_session","reason":"user explicitly allowed YouTube for this session"}]
     - recurring_nudge: {"kind":"recurring_nudge","hour":8,"minute":0,"text":"Good morning! Time to plan your day.","weekdays":[2,3,4,5,6]}
@@ -810,21 +813,28 @@ enum ACPromptSets {
     Memory is global soft context read by future LLM calls. It is good for broad preferences,
     ambiguous guidance, or user phrasing that should influence future judgment.
     Keep text concise, but preserve important wording when the user was emphatic.
+    Write the memory as a short human-readable note the user could review in Settings.
+    Do not start the note with "User ...".
+    Never store one-off greetings, transient tone-matching, or throwaway wording from a
+    single message.
     If the request is not worth remembering, return {"action":{"kind":"memory","text":""}}.
     Return JSON only.
 
     Examples:
     Hint: "remember that I prefer dark mode in all editors"
-    → {"action":{"kind":"memory","text":"User prefers dark mode in all editors."}}
+    → {"action":{"kind":"memory","text":"Prefers dark mode in all editors."}}
 
     Hint: "I always take a 10-minute break after 90 minutes of focused work"
-    → {"action":{"kind":"memory","text":"User takes a 10-minute break after every 90 minutes of focused work."}}
+    → {"action":{"kind":"memory","text":"Takes a 10-minute break after every 90 minutes of focused work."}}
 
     Hint: "forget it, not worth remembering"
     → {"action":{"kind":"memory","text":""}}
 
     Hint: "I'm a night owl, I do my best work after 10pm"
-    → {"action":{"kind":"memory","text":"User is a night owl and does their best work after 10pm."}}
+    → {"action":{"kind":"memory","text":"Night owl; does best work after 10pm."}}
+
+    Hint: "hey there"
+    → {"action":{"kind":"memory","text":""}}
     """
 
     nonisolated static let focusPolicyActionExecutorSystemPrompt = """
@@ -861,7 +871,7 @@ enum ACPromptSets {
     → {"action":{"kind":"focus_policy","intent":"remove_allow","target":{"type":"site","value":"youtube.com"},"scope":"active_profile"}}
 
     Hint: "always allow Spotify, no matter what profile I'm in"
-    → {"action":{"kind":"memory","text":"User wants Spotify allowed regardless of which profile is active."}}
+    → {"action":{"kind":"memory","text":"Spotify is allowed regardless of which profile is active."}}
 
     Hint: "I've been spending too much time on Reddit lately, remind me when I open it"
     → {"action":{"kind":"focus_policy","intent":"discourage","target":{"type":"site","value":"reddit.com"},"scope":"active_profile"}}
@@ -909,6 +919,8 @@ enum ACPromptSets {
     - Preserve load-bearing detail — app names, durations, explicit time scopes. Don't
       paraphrase things away.
     - Prefer explicit dates/times over vague relative phrases when a time-bounded rule survives.
+    - Keep each surviving line human-readable in Settings. Do not start entries with "User ..."
+      unless the quoted wording itself requires it.
     - Prefer recent entries over older ones when both can't fit. Aim for ≤10 final entries.
       It is fine to return fewer.
 
