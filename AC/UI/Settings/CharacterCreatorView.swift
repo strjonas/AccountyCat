@@ -37,6 +37,7 @@ struct CharacterCreatorView: View {
     @State private var cropOffsets: [ACCatExpression: CGSize] = [:]
     @State private var isSaving = false
     @State private var errorText: String?
+    @State private var didRestoreInitialState = false
 
     // Roughly the orb's real on-screen diameter (72pt), a touch larger so the
     // user sees how the portrait actually reads when small while still being
@@ -463,6 +464,8 @@ struct CharacterCreatorView: View {
         panel.allowedContentTypes = [.image, .png, .jpeg, .heic, .tiff]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
+        controller.suppressPopoverAutoClose?(true)
+        defer { controller.suppressPopoverAutoClose?(false) }
         guard panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) else {
             return
         }
@@ -486,6 +489,7 @@ struct CharacterCreatorView: View {
     }
 
     private func setImage(_ image: NSImage, for expression: ACCatExpression) {
+        errorText = nil
         if expression == .neutral {
             neutralImage = image
             if !draft.accentTouched, let avg = image.averageColor {
@@ -511,6 +515,8 @@ struct CharacterCreatorView: View {
     /// On open: an existing character loads its saved state; a brand-new one
     /// rehydrates any in-progress draft left behind by a previous session.
     private func restoreOnAppear() {
+        guard !didRestoreInitialState else { return }
+        didRestoreInitialState = true
         if editing != nil {
             loadEditingCharacter()
         } else {
@@ -520,6 +526,10 @@ struct CharacterCreatorView: View {
 
     private func loadEditingCharacter() {
         guard let editing else { return }
+        neutralImage = nil
+        poseImages = [:]
+        cropZooms = [:]
+        cropOffsets = [:]
         draft.id = editing.id
         draft.name = editing.displayName
         draft.description = editing.userDescription ?? ""

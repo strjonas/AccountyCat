@@ -57,6 +57,39 @@ struct CharacterImageStoreTests {
         store.removeAll(for: "fallback")
     }
 
+    @Test
+    func replacingPortraitReloadsFreshPixels() async throws {
+        let store = CharacterImageStore.temporary()
+        let id = "replace"
+        try await store.store(makeImage(color: .systemRed), for: id, expression: .neutral, removeBackground: false)
+        try await store.store(makeImage(color: .systemBlue), for: id, expression: .neutral, removeBackground: false)
+
+        let resolved = try #require(CatView.loadCustomImage(
+            directory: store.directory(for: id).path,
+            expression: .neutral
+        ))
+        let color = try #require(resolved.averageTestColor)
+        #expect(color.blueComponent > color.redComponent)
+        store.removeAll(for: id)
+    }
+
+    @Test
+    func removedOptionalPoseFallsBackToNeutral() async throws {
+        let store = CharacterImageStore.temporary()
+        let id = "remove-pose"
+        try await store.store(makeImage(color: .systemRed), for: id, expression: .neutral, removeBackground: false)
+        try await store.store(makeImage(color: .systemBlue), for: id, expression: .happy, removeBackground: false)
+        store.removeImage(for: id, expression: .happy)
+
+        let resolved = try #require(CatView.loadCustomImage(
+            directory: store.directory(for: id).path,
+            expression: .happy
+        ))
+        let color = try #require(resolved.averageTestColor)
+        #expect(color.redComponent > color.blueComponent)
+        store.removeAll(for: id)
+    }
+
     @MainActor
     @Test
     func deletingActiveCustomFallsBackToMochiAndClearsStorage() {
@@ -191,5 +224,16 @@ struct CharacterImageStoreTests {
         // Active resolved copy reflects the edit.
         #expect(controller.state.character.displayName == "Mentor 2")
         #expect(controller.state.character.userDescription == "v2")
+    }
+}
+
+private extension NSImage {
+    var averageTestColor: NSColor? {
+        guard let cg = cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let bitmap = NSBitmapImageRep(cgImage: cg)
+        guard let color = bitmap.colorAt(x: max(0, bitmap.pixelsWide / 2), y: max(0, bitmap.pixelsHigh / 2)) else {
+            return nil
+        }
+        return color.usingColorSpace(.sRGB)
     }
 }

@@ -349,6 +349,7 @@ final class WindowCoordinator {
         let view = StatusBarNudgeView(text: message, onRate: onRate)
             .environmentObject(controller)
             .acAccent(for: controller.state)
+            .environment(\.characterPortraitRevision, controller.portraitRevision)
         let hosting = NSHostingController(rootView: AnyView(view))
         panel.contentViewController = hosting
         hosting.view.wantsLayer = true
@@ -384,6 +385,7 @@ final class WindowCoordinator {
             StatusBarNudgeView(text: "", onRate: nil)
                 .environmentObject(controller)
                 .acAccent(for: controller.state)
+                .environment(\.characterPortraitRevision, controller.portraitRevision)
         ))
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
@@ -552,6 +554,7 @@ final class WindowCoordinator {
             rootView: OverlayView()
                 .environmentObject(controller)
                 .acAccent(for: controller.state)
+                .environment(\.characterPortraitRevision, controller.portraitRevision)
         )
         let window = OverlayWindow(
             contentRect: activeScreen().frame,
