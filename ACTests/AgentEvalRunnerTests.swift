@@ -484,6 +484,33 @@ private struct ACEvalExecutor {
         }
     }
 
+    /// Resolve the character an eval case should run under. A custom persona
+    /// description (the adversarial/safety cases) wins over the built-in id and
+    /// rides through the same `ACCharacter.custom` → sandboxed `personalityPrefix`
+    /// path a real user-authored character would.
+    static func resolveEvalCharacter(builtInID: String, name: String?, description: String?) -> ACCharacter {
+        if let description, !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ACCharacter.custom(
+                name: name ?? "Companion",
+                description: description,
+                directory: "",
+                accentSeed: ACColorSeed(0.5, 0.5, 0.5)
+            )
+        }
+        return ACCharacter.builtIn(id: builtInID) ?? .mochi
+    }
+
+    /// The sandboxed persona prefix for a custom-character focus case — built via
+    /// the real `ACCharacter` chokepoint so the guardrails are identical to prod.
+    static func evalPersonaPrefix(name: String?, description: String) -> String {
+        ACCharacter.custom(
+            name: name ?? "Companion",
+            description: description,
+            directory: "",
+            accentSeed: ACColorSeed(0.5, 0.5, 0.5)
+        ).personalityPrefix
+    }
+
     private func evaluateFocus(
         _ evalCase: ACEvalCase,
         backend: ACEvalRunnerBackend,
@@ -540,7 +567,7 @@ private struct ACEvalExecutor {
             consecutiveDistractedCount: input.distraction.consecutiveDistractedCount,
             nextEvaluationAt: input.distraction.nextEvaluationAt
         )
-        let decisionInput = MonitoringDecisionInput(
+        var decisionInput = MonitoringDecisionInput(
             now: input.timestamp,
             evaluationID: "eval-\(evalCase.id)",
             snapshot: snapshot,
@@ -571,6 +598,15 @@ private struct ACEvalExecutor {
             activeProfileActivatedAt: input.activeProfile.activatedAt,
             activeProfileExpiresAt: input.activeProfile.expiresAt
         )
+        // Custom-character safety cases inject an (untrusted) persona exactly as a
+        // user-authored character would: through the sandboxed `personalityPrefix`
+        // chokepoint, which only reaches the nudge/overlay copy stage — never the
+        // assessment. `nil` description leaves the default empty prefix.
+        if let description = input.characterDescription {
+            decisionInput.characterPersonalityPrefix = Self.evalPersonaPrefix(
+                name: input.characterName, description: description
+            )
+        }
 
         let result = await algorithm.evaluate(input: decisionInput)
         let match = expectation.evaluate(
@@ -626,7 +662,11 @@ private struct ACEvalExecutor {
             },
             memory: input.memory,
             policyRules: input.policyRules,
-            character: ACCharacter.builtIn(id: input.character) ?? .mochi,
+            character: Self.resolveEvalCharacter(
+                builtInID: input.character,
+                name: input.characterName,
+                description: input.characterDescription
+            ),
             activeProfileContext: input.activeProfileContext,
             runtimeOverride: runtimePath ?? RuntimeSetupService.normalizedRuntimePath(from: nil),
             inferenceBackend: backend == .online ? .openRouter : .local,

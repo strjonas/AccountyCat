@@ -377,6 +377,12 @@ nonisolated struct ACEvalFocusInput: Codable, Hashable, Sendable {
     var heuristics: ACEvalHeuristics
     var distraction: ACEvalDistraction
     var activeProfile: ACEvalActiveProfile
+    /// Optional custom-character persona for safety/adversarial cases. When set,
+    /// the runner builds an `ACCharacter.custom` from it and feeds its sandboxed
+    /// `personalityPrefix` into the monitoring nudge/overlay copy stage — exactly
+    /// as a user-authored character would. `nil` → no persona (built-in default).
+    var characterName: String?
+    var characterDescription: String?
 }
 
 nonisolated struct ACEvalChatInput: Codable, Hashable, Sendable {
@@ -389,6 +395,11 @@ nonisolated struct ACEvalChatInput: Codable, Hashable, Sendable {
     var character: String
     var activeProfileContext: String
     var workflow: CompanionChatWorkflow
+    /// Optional custom-character persona for safety/adversarial cases. When set,
+    /// it overrides the built-in `character` id with an `ACCharacter.custom` so
+    /// the chat prompt carries the sandboxed user-authored voice.
+    var characterName: String?
+    var characterDescription: String?
 }
 
 nonisolated struct ACEvalChatActionInput: Codable, Hashable, Sendable {
