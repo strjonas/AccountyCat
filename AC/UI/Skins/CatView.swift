@@ -24,6 +24,20 @@ struct CatView: View {
     var size: CGFloat = 72
     var animating: Bool = true
 
+    // Mirrors `character.portraitRevision` as its own stored property so SwiftUI's
+    // view diffing notices when a custom portrait's pixels change. The character
+    // compares equal by id, so without this an in-place image swap (same id, same
+    // `.files` directory) would leave the cached portrait on screen.
+    private let portraitRevision: Int
+
+    init(character: ACCharacter, expression: ACCatExpression, size: CGFloat = 72, animating: Bool = true) {
+        self.character = character
+        self.expression = expression
+        self.size = size
+        self.animating = animating
+        self.portraitRevision = character.portraitRevision
+    }
+
     var body: some View {
         switch character.portrait {
         case .procedural(.orb):
@@ -84,7 +98,10 @@ struct CatView: View {
         let candidates = [expression.rawValue, ACCatExpression.neutral.rawValue]
         for name in candidates {
             let url = dir.appendingPathComponent("\(name).png")
-            if let image = NSImage(contentsOf: url) { return image }
+            // Read the bytes fresh rather than via NSImage(contentsOf:) so an
+            // in-place file swap (editing a partner's photo) is always picked up
+            // — no chance of an AppKit URL-keyed cache handing back stale pixels.
+            if let data = try? Data(contentsOf: url), let image = NSImage(data: data) { return image }
         }
         return nil
     }

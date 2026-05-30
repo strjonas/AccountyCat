@@ -126,6 +126,13 @@ struct CharacterCreatorView: View {
                         .buttonStyle(.plain)
                         .font(.ac(11, weight: .medium))
                         .foregroundStyle(accent)
+                    if selectedExpression != .neutral {
+                        Button("Remove") { removePose(selectedExpression) }
+                            .buttonStyle(.plain)
+                            .font(.ac(11, weight: .medium))
+                            .foregroundStyle(.red.opacity(0.85))
+                            .help("Remove this pose — AC will use the main portrait")
+                    }
                 }
 
                 // Background removal lives right under the image so it's the
@@ -462,6 +469,22 @@ struct CharacterCreatorView: View {
         setImage(image, for: expression)
     }
 
+    /// Drop an optional pose. The main portrait can never be removed (it's the
+    /// required image). For a new partner the raw draft file is cleared right
+    /// away; for an edit the on-disk PNG is deleted at save time so a cancel
+    /// leaves the saved pose intact.
+    private func removePose(_ expression: ACCatExpression) {
+        guard expression != .neutral else { return }
+        poseImages[expression] = nil
+        cropZooms[expression] = nil
+        cropOffsets[expression] = nil
+        if editing == nil {
+            controller.characterImageStore.removeDraftImage(expression: expression)
+            persistDraft()
+        }
+        withAnimation(.acSnap) { selectedExpression = .neutral }
+    }
+
     private func setImage(_ image: NSImage, for expression: ACCatExpression) {
         if expression == .neutral {
             neutralImage = image
@@ -524,6 +547,7 @@ struct CharacterCreatorView: View {
         let id = draft.id
         let removeBG = draft.removeBackground
         let poses = poseImages
+        let optional = optionalPoses
         // Normalised crops the user framed (skipped when removing the background,
         // since the subject-mask re-centres on its own).
         let neutralCrop = removeBG ? nil : normalizedCrop(for: .neutral, image: neutral)
@@ -544,6 +568,12 @@ struct CharacterCreatorView: View {
                 for (expr, image) in poses {
                     let poseCrop = removeBG ? nil : normalizedCrop(for: expr, image: image)
                     try await store.store(image, for: id, expression: expr, removeBackground: removeBG, crop: poseCrop)
+                }
+                // Delete any optional pose the user cleared (was saved before, now
+                // absent). Without this the stale PNG lingers on disk and the pose
+                // keeps showing instead of falling back to the main portrait.
+                for expr in optional where poses[expr] == nil {
+                    store.removeImage(for: id, expression: expr)
                 }
                 await MainActor.run {
                     controller.upsertCustomCharacter(character)
