@@ -130,14 +130,21 @@ extension CharacterPalette {
         // the character's identity.
         let alert = RGB(0.85, 0.34, 0.32)
 
+        // The accent is used as text/icon tint on neutral surfaces, so a seed
+        // that's too dark (unreadable in dark mode) or too light (washed out in
+        // light mode) must be pulled into a legible mid-band. Orb/header colours
+        // keep the raw seed so the character's identity stays vivid. The accent
+        // family derives from the legible accent so fills stay coherent.
+        let accent = base.legibleAccent()
+
         self.init(
             orbTop: base.mix(white, 0.90).color,
             orbBottom: base.mix(white, 0.66).color,
             nudgingOrbTop: base.mix(white, 0.74).color,
             nudgingOrbBottom: base.mix(white, 0.34).color,
-            accent: base.color,
-            accentLight: base.mix(white, 0.42).color,
-            accentSoft: base.mix(white, 0.70).color,
+            accent: accent.color,
+            accentLight: accent.mix(white, 0.42).color,
+            accentSoft: accent.mix(white, 0.70).color,
             ring: base.mix(white, 0.18).color,
             escalatedRing: base.mix(alert, 0.45).color,
             shadow: base.mix(black, 0.45).color,
@@ -175,6 +182,20 @@ private struct RGB {
             g + (other.g - g) * c,
             b + (other.b - b) * c
         )
+    }
+
+    /// Perceived luminance (Rec. 709 weights).
+    var luminance: Double { 0.2126 * r + 0.7152 * g + 0.0722 * b }
+
+    /// Nudge the colour into a luminance band that reads as text/icon tint on
+    /// both light and dark neutral surfaces, preserving hue by mixing toward
+    /// white (too dark) or black (too light). Mid-tone colours pass through
+    /// untouched, so well-chosen accents are never altered.
+    func legibleAccent(min lo: Double = 0.30, max hi: Double = 0.62) -> RGB {
+        let l = luminance
+        if l < lo, l < 1 { return mix(RGB(1, 1, 1), (lo - l) / (1 - l)) }
+        if l > hi, l > 0 { return mix(RGB(0, 0, 0), (l - hi) / l) }
+        return self
     }
 
     var color: Color { Color(red: r, green: g, blue: b) }

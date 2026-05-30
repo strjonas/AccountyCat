@@ -470,11 +470,6 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Skip private browser windows: \(enabled)")
     }
 
-    func addCurrentBrowserTabMonitoringExclusion() {
-        guard let context = SnapshotService.frontmostContext() else { return }
-        addBrowserTabMonitoringExclusion(from: context)
-    }
-
     func addBrowserTabMonitoringExclusion(from context: FrontmostContext) {
         guard MonitoringHeuristics.isBrowser(bundleIdentifier: context.bundleIdentifier),
               let title = context.windowTitle?.cleanedSingleLine,

@@ -437,17 +437,25 @@ struct YouTab: View {
             }
             .toggleStyle(.checkbox)
 
-            HStack(spacing: 8) {
-                Button("Skip current browser tab") {
-                    controller.addCurrentBrowserTabMonitoringExclusion()
-                }
-                .buttonStyle(ACSecondaryButton())
+            Text("Hide specific tabs from AC. Pick from sites you've recently visited — AC never reads a tab just to add it here.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
 
-                if !recentBrowserTabTargets.isEmpty {
-                    Text("or pick a recent tab")
-                        .font(.acCaption)
-                        .foregroundStyle(.secondary)
-                }
+            if recentBrowserTabTargets.isEmpty {
+                Text("No recent tabs yet. Browse a site, then come back here to hide it.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                    .stroke(Color.acHairline, lineWidth: 1)
+                            )
+                    )
             }
 
             if !recentBrowserTabTargets.isEmpty {
