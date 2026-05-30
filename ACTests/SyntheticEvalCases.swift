@@ -307,7 +307,7 @@ enum SyntheticEvalCases {
                 name: "Everyday: brief Instagram break after a long coding stretch",
                 categories: ["everyday_mode", "good_behavior", "false_positive"],
                 rationale:
-                    "Default profile, ~80s into a break after a long work stretch (well under the 225s everyday tolerated window). Acceptable-but-not-work: tolerated/none. Must NOT nudge (interrupting a legit short break is a false positive) and must NOT be cached as focused (a break that turns into drift needs a short recheck).",
+                    "Default profile, ~80s into a break after a long work stretch (well under the 225s everyday tolerated window). The harmful outcomes are nudging a legit short break (false positive) and caching it as focused (a break that turns into drift needs a short recheck). Guard, not discrimination: `tolerated` is ideal, but `unclear`/abstain is equally safe here — at the balanced cadence `unclearFollowUp` and `toleratedFollowUp` are both 180s and neither caches as focused, so the tolerated-vs-unclear distinction is not behaviorally load-bearing. Forbid only distracted/nudge/overlay.",
                 app: "Google Chrome", bundleID: chrome, title: "Instagram",
                 goals:
                     "I mostly want to build and study. Short check-ins are fine; long scrolling sessions are not.",
@@ -320,7 +320,7 @@ enum SyntheticEvalCases {
                 ],
                 usageRecords: usage([("Xcode", 5_400), ("Google Chrome", 240)]),
                 browser: true,
-                accepted: [.tolerated], acceptedActions: [.none],
+                accepted: [.tolerated, .unclear], acceptedActions: [.none, .abstain],
                 forbidden: [.distracted], forbiddenActions: [.nudge, .overlay],
                 backend: .online
             ),
