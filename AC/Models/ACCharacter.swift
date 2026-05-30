@@ -124,13 +124,6 @@ struct ACCharacter: Identifiable, Equatable, Hashable, Sendable {
     var accentSeed: ACColorSeed
     /// How strongly the personality colors chat replies.
     var expressiveness: ACExpressiveness
-    /// Bumped every time a custom character's portrait pixels are rewritten in
-    /// place. Two equal-by-id characters can point at the same `.files`
-    /// directory while the PNGs on disk have changed; this lets the portrait
-    /// view actually re-read them (it compares equal by id, so the file swap
-    /// alone wouldn't trip SwiftUI diffing). Transient — never persisted; it
-    /// only has to invalidate in-memory image caches within a running session.
-    var portraitRevision: Int
     /// Procedural mood FX on a single static portrait (z's when asleep, a
     /// little bounce when happy, …). Built-ins that ship full poses ignore it;
     /// custom single-image characters use it as their opt-in "Animations" tier.
@@ -156,7 +149,6 @@ struct ACCharacter: Identifiable, Equatable, Hashable, Sendable {
         portrait: ACPortraitSource,
         accentSeed: ACColorSeed,
         expressiveness: ACExpressiveness = .balanced,
-        portraitRevision: Int = 0,
         animationsEnabled: Bool = false,
         userDescription: String? = nil,
         builtInPrefix: String = ""
@@ -170,7 +162,6 @@ struct ACCharacter: Identifiable, Equatable, Hashable, Sendable {
         self.portrait = portrait
         self.accentSeed = accentSeed
         self.expressiveness = expressiveness
-        self.portraitRevision = portraitRevision
         self.animationsEnabled = animationsEnabled
         self.userDescription = userDescription
         self.builtInPrefix = builtInPrefix
@@ -399,7 +390,6 @@ extension ACCharacter: Codable {
         accentSeed = try container.decodeIfPresent(ACColorSeed.self, forKey: .accentSeed)
             ?? ACColorSeed(0.55, 0.60, 0.82)
         expressiveness = try container.decodeIfPresent(ACExpressiveness.self, forKey: .expressiveness) ?? .balanced
-        portraitRevision = 0   // transient — see property doc
         animationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .animationsEnabled) ?? false
         userDescription = try container.decodeIfPresent(String.self, forKey: .userDescription)
         builtInPrefix = try container.decodeIfPresent(String.self, forKey: .builtInPrefix) ?? ""

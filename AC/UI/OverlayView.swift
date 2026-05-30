@@ -88,6 +88,7 @@ struct OverlayView: View {
             }
         }
         .acAccent(for: controller.state)
+        .environment(\.characterPortraitRevision, controller.portraitRevision)
     }
 
     // MARK: - Cat portrait (left side)

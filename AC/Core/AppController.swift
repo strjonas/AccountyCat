@@ -69,6 +69,11 @@ final class AppController: ObservableObject {
     /// than think AC is broken. Should never appear in normal use.
     @Published var characterParseProblemNotice: String?
     private var consecutiveCustomCharacterParseFailures = 0
+    /// Bumped whenever a custom partner's portrait files are rewritten in place.
+    /// Threaded into the view tree as `\.characterPortraitRevision` so portraits
+    /// re-read from disk on an edit — the character itself compares equal by id,
+    /// so a same-id image swap wouldn't otherwise invalidate the cached pixels.
+    @Published private(set) var portraitRevision = 0
     /// True once the user has completed the first-run onboarding wizard. Stored in
     /// UserDefaults (not ACState) so it survives state resets.
     @Published var hasCompletedOnboardingWizard: Bool
@@ -635,20 +640,19 @@ final class AppController: ObservableObject {
     /// change the active selection. Use `updateCharacter` to activate it.
     func upsertCustomCharacter(_ character: ACCharacter) {
         guard character.origin == .custom else { return }
-        var character = character
         objectWillChange.send()
         if let idx = state.customCharacters.firstIndex(where: { $0.id == character.id }) {
-            // Bump the portrait revision so views re-read the (possibly rewritten)
-            // image files even though the character still compares equal by id.
-            character.portraitRevision = state.customCharacters[idx].portraitRevision + 1
             state.customCharacters[idx] = character
+            // The portrait PNGs may have been rewritten in place — same id, same
+            // `.files` directory. Characters compare equal by id, so bump this
+            // signal to invalidate any cached portrait (see `characterPortraitRevision`).
+            portraitRevision &+= 1
             logActivity("app", "Updated custom partner: \(character.displayName)")
         } else {
             state.customCharacters.append(character)
             logActivity("app", "Created custom partner: \(character.displayName)")
         }
-        // If this is the active character, keep the resolved copy fresh (carrying
-        // the bumped revision so the live portrait refreshes immediately).
+        // If this is the active character, keep the resolved copy fresh.
         if state.characterID == character.id {
             state.character = character
         }
