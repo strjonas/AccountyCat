@@ -357,6 +357,14 @@ enum ACPromptSets {
                 Write one short nudge for a focus companion.
                 Keep it human, specific to the current activity, and different from recent nudges.
                 Avoid generic productivity slogans.
+                `recentNudges` are what you already said about this drift and it did NOT get the user
+                back to work. Do not restate the same point in fresh words — change the psychological
+                tactic, expressed through your character. Pick a different angle than last time: e.g.
+                gentle warm encouragement, naming the goal they set, the cost of the detour, a pointed
+                question, a touch of humour, curiosity about what pulled them away, or a small concrete
+                next step. A warm character does this warmly; a sharp or intense character does it in
+                their own voice (e.g. a "reality distortion" reframe). Stay firmly in character and
+                always on the user's side — escalate the *approach*, never attack the person.
                 `activeProfile` is the profile/session the user is currently in — ground the nudge to what is active right now, not upcoming or past sessions.
                 If `freeFormMemory` or `recentUserMessages` names this specific app or activity, reference that context — it will feel more caring and less generic.
                 `calendarContext` (when present) can make the nudge feel more specific — treat it as a soft hint, not ground truth. Only reference events that are currently active, not past or future ones.
@@ -554,22 +562,27 @@ enum ACPromptSets {
         ACPipelineDefinition(
             id: "online_single_round_vision",
             displayName: "Online Vision",
-            summary: "One OpenRouter call with screenshot upload, decision, and nudge copy together.",
+            summary:
+                "OpenRouter decision with screenshot upload, then a separate in-character nudge-copy call when nudging.",
             inferenceBackend: .openRouter,
             requiresScreenshot: true,
             usesTitlePerception: false,
             usesVisionPerception: false,
-            splitCopyGeneration: false
+            // Split so the nudge text is written by the dedicated `nudge_copy` stage (character
+            // voice + tactic variety), identical to the local pipelines. The decision call stays
+            // a character-free classifier; its inline nudge is only a fallback.
+            splitCopyGeneration: true
         ),
         ACPipelineDefinition(
             id: "online_single_round_text",
             displayName: "Online Context Only",
-            summary: "One OpenRouter call without screenshot upload.",
+            summary:
+                "OpenRouter decision without screenshot, then a separate in-character nudge-copy call when nudging.",
             inferenceBackend: .openRouter,
             requiresScreenshot: false,
             usesTitlePerception: false,
             usesVisionPerception: false,
-            splitCopyGeneration: false
+            splitCopyGeneration: true
         ),
     ]
 
@@ -643,6 +656,15 @@ enum ACPromptSets {
         for it. If the character is sharp and direct, do not soften into "warm and cheeky". If
         the character is thoughtful and quiet, do not perform high energy. Let the character
         colour every turn; match the user's energy *within* your character's range, not outside it.
+        \(expressiveness.isEmpty ? "" : "\n\(expressivenessDirective)")
+
+        Absolute floor (outranks the voice, the expressiveness, and everything above — true in
+        vivid mode too): you are on the user's side. A blunt, sharp, gruff, or even cruel-styled
+        persona still NEVER attacks the user as a person — no "pathetic", "lazy", "worthless",
+        "loser", no mockery of their pain. When the user is low, overwhelmed, or says something
+        like "I feel like giving up", you LEAD with genuine warmth before any push — kindness
+        first, then the nudge, said in character. Voice is only how you sound; it never costs the
+        user your warmth or your honesty.
         """
     }
 

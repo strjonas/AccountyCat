@@ -1231,6 +1231,9 @@ final class AppController: ObservableObject {
             brainService.stateProvider = { [weak self] in
                 self?.state ?? ACState()
             }
+            brainService.overlayActiveProvider = { [weak self] in
+                self?.overlayVisible ?? false
+            }
             brainService.stateSink = { [weak self] baseState, updatedState in
                 self?.mergeBrainState(base: baseState, updated: updatedState)
             }

@@ -236,6 +236,7 @@ struct BrowserTabMonitoringExclusion: Codable, Hashable, Identifiable, Sendable 
 }
 
 enum MonitoringScopeSkipReason: Equatable, Sendable {
+    case ownApplication
     case outsideAppAllowlist
     case skippedAppBlocklist
     case privateBrowserWindow
@@ -1562,7 +1563,37 @@ struct ACState: Codable, Sendable {
         monitoringScopeSkipReason(for: context) != nil
     }
 
+    /// AC's own bundle ids. Includes `Bundle.main` plus the known shipping ids so the
+    /// check holds in tests and across signing/renames.
+    static let ownBundleIdentifiers: Set<String> = Set(
+        [
+            Bundle.main.bundleIdentifier,
+            "dev.jon.AC",
+            "dev.jon.ACInspector",
+        ].compactMap { $0 }
+    )
+
+    /// True when the frontmost context is AC itself or its Inspector — the user looking at
+    /// the chat, an overlay, settings, etc. AC must never nudge the user for using AC.
+    static func isOwnApplication(context: FrontmostContext) -> Bool {
+        if let bundleID = context.bundleIdentifier?.cleanedSingleLine, !bundleID.isEmpty,
+            ownBundleIdentifiers.contains(bundleID)
+        {
+            return true
+        }
+        let appName = context.appName.cleanedSingleLine.lowercased()
+        return appName == "accountycat" || appName == "ac" || appName == "acinspector"
+    }
+
     func monitoringScopeSkipReason(for context: FrontmostContext) -> MonitoringScopeSkipReason? {
+        // AC (and its Inspector) are never a distraction — they are the tools keeping the
+        // user focused. Exclude them structurally, before any allowlist/blocklist or profile
+        // scoping, so this holds in every focus profile, not just where a self-allow rule
+        // happens to be seeded.
+        if Self.isOwnApplication(context: context) {
+            return .ownApplication
+        }
+
         let selections = activeAppMonitoringSelections
         if !selections.isEmpty {
             switch appMonitoringScopeMode {

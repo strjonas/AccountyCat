@@ -327,14 +327,18 @@ struct BrainServiceConfigurationTests {
     }
 
     @Test
-    func evaluationWatchdogTimeoutKeepsSingleRoundOnlineBudgetTighter() {
+    func evaluationWatchdogTimeoutBudgetsForOnlineSplitNudgeCopy() {
         var configuration = MonitoringConfiguration()
         configuration.inferenceBackend = .openRouter
         configuration.pipelineProfileID = "online_single_round_vision"
 
         let timeout = BrainService.evaluationWatchdogTimeout(configuration: configuration)
 
-        #expect(timeout == 35)
+        // Online pipelines now split nudge copy into its own in-character call (parity with the
+        // local pipelines), so the budget covers onlineDecision + nudgeCopy, still well under the
+        // local vision-split pipeline's 130.
+        #expect(timeout == 70)
+        #expect(timeout < 130)
     }
 
     @Test

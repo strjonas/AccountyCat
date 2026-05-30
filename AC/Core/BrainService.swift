@@ -33,6 +33,10 @@ final class BrainService: NSObject {
     var screenshotCapture: (() async throws -> URL?)?
     /// Override for testing: substitute a real `SnapshotService.idleSeconds()` call.
     var idleSecondsProvider: (() -> TimeInterval)?
+    /// True while an intervention overlay is on screen. AC stops evaluating until the user
+    /// resolves it (back to work / dismiss / appeal), so it never stacks a fresh nudge or
+    /// re-escalates on top of an open overlay the user is already responding to.
+    var overlayActiveProvider: (() -> Bool)?
 
     let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
     private let executiveArm: ExecutiveArm
@@ -413,6 +417,8 @@ final class BrainService: NSObject {
             return "\(context.appName) · deferred while local chat is in progress"
         case "app_scope_excluded":
             switch state.monitoringScopeSkipReason(for: context) {
+            case .ownApplication:
+                return "\(context.appName) · AC itself is never monitored"
             case .outsideAppAllowlist:
                 return "\(context.appName) · outside selected app allowlist"
             case .skippedAppBlocklist:
@@ -434,6 +440,8 @@ final class BrainService: NSObject {
         context: FrontmostContext
     ) -> String {
         switch reason {
+        case .ownApplication:
+            return "AC doesn't monitor itself."
         case .outsideAppAllowlist, .skippedAppBlocklist:
             return "AC is idle for \(context.appName) due to your app scope setting."
         case .privateBrowserWindow:
@@ -912,6 +920,21 @@ final class BrainService: NSObject {
             cancelActiveEvaluationIfNeeded(reason: "session_unavailable")
             moodSink?(.idle)
             statusSink?("Session inactive. AC is standing by.")
+            return
+        }
+
+        // An overlay is already on screen. Wait for the user to resolve it instead of
+        // re-evaluating — re-checking here would let AC stack a second nudge/overlay on top
+        // of the one the user is reading or typing an appeal into.
+        if overlayActiveProvider?() == true {
+            cancelActiveEvaluationIfNeeded(reason: "overlay_active")
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "overlay_active",
+                state: state,
+                detail: "overlay_open"
+            )
+            statusSink?("Overlay is open — waiting for you.")
             return
         }
 
@@ -2409,9 +2432,11 @@ final class BrainService: NSObject {
                 stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .perceptionVision).timeoutSeconds))
             }
             stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .decision).timeoutSeconds))
-            if pipeline.splitCopyGeneration {
-                stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .nudgeCopy).timeoutSeconds))
-            }
+        }
+        // When the pipeline splits nudge-copy into its own stage (now true for both local and
+        // online), an actual nudge costs one extra call on top of the decision — budget for it.
+        if pipeline.splitCopyGeneration {
+            stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .nudgeCopy).timeoutSeconds))
         }
 
         let stageTransitionBuffer = Double(max(stageTimeouts.count, 1)) * 5
