@@ -252,28 +252,28 @@ struct ACCharacterTests {
 
     /// Editing a custom partner's image rewrites the PNG in place — same id, same
     /// `.files` directory. Because characters compare equal by id, the portrait
-    /// view would otherwise keep its cached image. `upsertCustomCharacter` must
-    /// bump `portraitRevision` (and carry it onto the active character) so the
-    /// live portrait actually re-reads the file. Regression guard for the 1.0.4
-    /// "changing the image doesn't work" hotfix.
+    /// view would otherwise keep its cached image. Re-upserting an existing custom
+    /// partner must bump `portraitRevision`, the signal threaded into the view tree
+    /// (`\.characterPortraitRevision`) that forces portraits to re-read from disk.
+    /// Creating a brand-new partner must NOT bump it — a fresh id reloads anyway.
+    /// Regression guard for the 1.0.4 "changing the image doesn't work" hotfix.
     @Test
-    func editingCustomCharacterBumpsPortraitRevisionOnActiveCopy() {
+    func editingExistingCustomCharacterBumpsPortraitRevision() {
         let controller = AppController.makeForTesting(storageService: .temporary())
         let custom = ACCharacter.custom(
             id: "edit-me", name: "Coach", description: "d", directory: "/tmp/edit-me",
             accentSeed: ACColorSeed(0.4, 0.5, 0.6)
         )
+        // First insert is a creation — no in-place image swap to invalidate.
+        let atCreate = controller.portraitRevision
         controller.upsertCustomCharacter(custom)
-        controller.updateCharacter(custom)
-        #expect(controller.state.character.id == "edit-me")
-        let before = controller.state.character.portraitRevision
+        #expect(controller.portraitRevision == atCreate)
 
-        // Simulate saving an edit (a freshly built character carries revision 0).
+        // Each subsequent save edits the existing partner: bump every time.
         controller.upsertCustomCharacter(custom)
-        #expect(controller.state.character.portraitRevision == before + 1)
-
+        #expect(controller.portraitRevision == atCreate + 1)
         controller.upsertCustomCharacter(custom)
-        #expect(controller.state.character.portraitRevision == before + 2)
+        #expect(controller.portraitRevision == atCreate + 2)
     }
 
     /// State files written before the tier collapse may still carry the retired

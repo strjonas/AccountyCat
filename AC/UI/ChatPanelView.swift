@@ -131,6 +131,7 @@ struct ChatPanelView: View {
         }
         .animation(.acFade, value: controller.learnedToast?.id)
         .acAccent(for: controller.state)
+        .environment(\.characterPortraitRevision, controller.portraitRevision)
         .animation(.acFade, value: controller.state.character)
         .onAppear {
             controller.refreshSystemState()

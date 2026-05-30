@@ -298,6 +298,18 @@ extension EnvironmentValues {
         get { self[ACAccentSoftKey.self] }
         set { self[ACAccentSoftKey.self] = newValue }
     }
+    /// Monotonic token that changes when a custom partner's portrait files are
+    /// rewritten. Portrait views key their on-disk image read on it so an edit
+    /// (same id, same directory, new pixels) actually refreshes. Default 0 so any
+    /// view rendered without the injection (previews) still works.
+    var characterPortraitRevision: Int {
+        get { self[CharacterPortraitRevisionKey.self] }
+        set { self[CharacterPortraitRevisionKey.self] = newValue }
+    }
+}
+
+private struct CharacterPortraitRevisionKey: EnvironmentKey {
+    static let defaultValue = 0
 }
 
 extension View {

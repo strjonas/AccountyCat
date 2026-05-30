@@ -24,19 +24,12 @@ struct CatView: View {
     var size: CGFloat = 72
     var animating: Bool = true
 
-    // Mirrors `character.portraitRevision` as its own stored property so SwiftUI's
-    // view diffing notices when a custom portrait's pixels change. The character
-    // compares equal by id, so without this an in-place image swap (same id, same
-    // `.files` directory) would leave the cached portrait on screen.
-    private let portraitRevision: Int
-
-    init(character: ACCharacter, expression: ACCatExpression, size: CGFloat = 72, animating: Bool = true) {
-        self.character = character
-        self.expression = expression
-        self.size = size
-        self.animating = animating
-        self.portraitRevision = character.portraitRevision
-    }
+    // Changes when the active custom partner's portrait files are rewritten. A
+    // character compares equal by id, so an in-place image swap (same id, same
+    // `.files` directory) wouldn't otherwise trip SwiftUI's diffing — keying the
+    // file-backed portrait on this forces a fresh read. Defaults to 0 for views
+    // rendered outside the app's environment (e.g. previews).
+    @Environment(\.characterPortraitRevision) private var portraitRevision
 
     var body: some View {
         switch character.portrait {
@@ -50,7 +43,11 @@ struct CatView: View {
         case .asset(let prefix):
             assetOrPlaceholder(prefix: prefix)
         case .files(let directory):
+            // `.id` on the revision rebuilds this subtree (and re-reads the PNG)
+            // whenever the user edits the portrait, even though `directory` is
+            // unchanged.
             fileOrPlaceholder(directory: directory)
+                .id(portraitRevision)
         }
     }
 
