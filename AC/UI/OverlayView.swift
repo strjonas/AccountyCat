@@ -336,32 +336,41 @@ struct OverlayView: View {
 private struct OverlayReasonChips: View {
     let onSelect: (String) -> Void
 
-    private let reasons: [(String, String)] = [
-        ("magnifyingglass", "This is part of the task"),
-        ("cup.and.saucer.fill", "I am researching something relevant"),
-        ("questionmark.bubble.fill", "This is an intentional short break"),
-        ("paperplane", "Let me wrap this up, then I will switch back"),
+    /// `title` is the short label shown on the chip; `reason` is the fuller
+    /// sentence handed to the model as the appeal, so the displayed grid stays
+    /// tidy without weakening what AC actually reads.
+    private let reasons: [(icon: String, title: String, reason: String)] = [
+        ("magnifyingglass", "Part of the task", "This is part of the task"),
+        ("book", "Researching", "I am researching something relevant"),
+        ("cup.and.saucer.fill", "Quick break", "This is an intentional short break"),
+        ("paperplane", "Wrapping up", "Let me wrap this up, then I will switch back"),
+    ]
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 6),
+        GridItem(.flexible(), spacing: 6),
     ]
 
     var body: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 110), spacing: 6)],
-            alignment: .leading,
-            spacing: 6
-        ) {
-            ForEach(reasons, id: \.1) { icon, label in
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+            ForEach(reasons, id: \.reason) { item in
                 Button {
-                    onSelect(label)
+                    onSelect(item.reason)
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: icon)
+                        Image(systemName: item.icon)
                             .font(.system(size: 10, weight: .semibold))
-                        Text(label)
-                            .font(.ac(10, weight: .medium))
+                            .frame(width: 12)
+                        Text(item.title)
+                            .font(.ac(10.5, weight: .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                        Spacer(minLength: 0)
                     }
                     .foregroundStyle(Color.acTextPrimary.opacity(0.78))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         Capsule(style: .continuous)
                             .fill(Color.acSurface)
@@ -371,7 +380,7 @@ private struct OverlayReasonChips: View {
                 .buttonStyle(.plain)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 }
 

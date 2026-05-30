@@ -64,6 +64,11 @@ final class AppController: ObservableObject {
     /// True when local inference is active and Low Power Mode is on.
     @Published var localModelLowPowerNotice = false
     @Published var localModelLowPowerNoticeDismissed = false
+    /// Worst-case safety net: surfaced when a *custom* partner's description keeps
+    /// producing unparseable model output, so the user knows to simplify it rather
+    /// than think AC is broken. Should never appear in normal use.
+    @Published var characterParseProblemNotice: String?
+    private var consecutiveCustomCharacterParseFailures = 0
     /// True once the user has completed the first-run onboarding wizard. Stored in
     /// UserDefaults (not ACState) so it survives state resets.
     @Published var hasCompletedOnboardingWizard: Bool
@@ -98,6 +103,8 @@ final class AppController: ObservableObject {
     static let chatContextWindow = 8
 
     let storageService: StorageService
+    /// Offline portrait storage for custom accountability partners.
+    let characterImageStore: CharacterImageStore
     let telemetryStore = TelemetryStore.shared
     let localModelRuntime: LocalModelRuntime
     let onlineModelService: OnlineModelService
@@ -120,6 +127,7 @@ final class AppController: ObservableObject {
 
     private init() {
         self.storageService = StorageService()
+        self.characterImageStore = CharacterImageStore()
         let runtime = LocalModelRuntime()
         let onlineModelService = OnlineModelService()
         let companionChatService = CompanionChatService(
@@ -183,6 +191,8 @@ final class AppController: ObservableObject {
     @MainActor
     private init(storageService: StorageService) {
         self.storageService = storageService
+        // Tests must never write portraits into the real Application Support dir.
+        self.characterImageStore = CharacterImageStore.temporary()
         let runtime = LocalModelRuntime()
         let onlineModelService = OnlineModelService()
         let companionChatService = CompanionChatService(
@@ -452,6 +462,71 @@ final class AppController: ObservableObject {
         logActivity("monitoring", "Removed app from \(mode.rawValue): \(bundleIdentifier)")
     }
 
+    func setSkipPrivateBrowserWindows(_ enabled: Bool) {
+        guard state.skipPrivateBrowserWindows != enabled else { return }
+        state.skipPrivateBrowserWindows = enabled
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Skip private browser windows: \(enabled)")
+    }
+
+    func addBrowserTabMonitoringExclusion(from context: FrontmostContext) {
+        guard MonitoringHeuristics.isBrowser(bundleIdentifier: context.bundleIdentifier),
+              let title = context.windowTitle?.cleanedSingleLine,
+              !title.isEmpty else {
+            return
+        }
+        addBrowserTabMonitoringExclusion(
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            titleContains: BrowserTitleSignature.derive(from: title) ?? title
+        )
+    }
+
+    func addBrowserTabMonitoringExclusion(
+        bundleIdentifier: String?,
+        appName: String,
+        titleContains: String
+    ) {
+        let title = titleContains.cleanedSingleLine
+        let appName = appName.cleanedSingleLine
+        guard !title.isEmpty, !appName.isEmpty else { return }
+        let entry = BrowserTabMonitoringExclusion(
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            titleContains: String(title.prefix(120))
+        )
+        let entryKey = browserTabMonitoringExclusionKey(entry)
+        var updated = state.browserTabMonitoringExclusions
+            .filter { browserTabMonitoringExclusionKey($0) != entryKey }
+        updated.append(entry)
+        updated.sort {
+            $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending
+        }
+        state.browserTabMonitoringExclusions = updated
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Browser tab monitoring exclusion added: \(entry.appName) / \(entry.titleContains)")
+    }
+
+    func removeBrowserTabMonitoringExclusion(id: String) {
+        let current = state.browserTabMonitoringExclusions
+        let updated = current.filter { $0.id != id }
+        guard updated.count != current.count else { return }
+        state.browserTabMonitoringExclusions = updated
+        brainService?.handleMonitoringConfigurationChange()
+        persistState()
+        logActivity("monitoring", "Browser tab monitoring exclusion removed: \(id)")
+    }
+
+    private func browserTabMonitoringExclusionKey(_ entry: BrowserTabMonitoringExclusion) -> String {
+        [
+            entry.bundleIdentifier?.cleanedSingleLine.lowercased()
+                ?? entry.appName.cleanedSingleLine.lowercased(),
+            entry.titleContains.cleanedSingleLine.lowercased()
+        ].joined(separator: "|")
+    }
+
     private static func appMonitoringSelection(from url: URL) -> AppMonitoringSelection? {
         guard url.pathExtension.caseInsensitiveCompare("app") == .orderedSame else { return nil }
         guard let bundle = Bundle(url: url) else { return nil }
@@ -520,7 +595,72 @@ final class AppController: ObservableObject {
     func updateCharacter(_ character: ACCharacter) {
         guard state.character != character else { return }
         state.character = character
+        // A fresh partner gets a clean slate for the parse-trouble heuristic.
+        consecutiveCustomCharacterParseFailures = 0
+        characterParseProblemNotice = nil
         logActivity("app", "Selected character: \(character.displayName)")
+        persistState()
+    }
+
+    /// Track whether a chat turn parsed into structured JSON. After several
+    /// consecutive failures *while a custom partner is active*, surface a gentle
+    /// banner — a confusing description is the likeliest culprit. Resets on any
+    /// success. Built-in characters never trip it.
+    func noteChatParseOutcome(structured: Bool) {
+        guard state.character.origin == .custom else {
+            consecutiveCustomCharacterParseFailures = 0
+            characterParseProblemNotice = nil
+            return
+        }
+        if structured {
+            consecutiveCustomCharacterParseFailures = 0
+            characterParseProblemNotice = nil
+        } else {
+            consecutiveCustomCharacterParseFailures += 1
+            if consecutiveCustomCharacterParseFailures >= 3 {
+                characterParseProblemNotice =
+                    "\(state.character.displayName) seems to be confusing the model. Try simplifying this partner's description in Settings → Look."
+            }
+        }
+    }
+
+    func dismissCharacterParseProblemNotice() {
+        characterParseProblemNotice = nil
+        consecutiveCustomCharacterParseFailures = 0
+    }
+
+    // MARK: - Custom accountability partners
+
+    /// Create or update a custom character. Persists its definition; does not
+    /// change the active selection. Use `updateCharacter` to activate it.
+    func upsertCustomCharacter(_ character: ACCharacter) {
+        guard character.origin == .custom else { return }
+        objectWillChange.send()
+        if let idx = state.customCharacters.firstIndex(where: { $0.id == character.id }) {
+            state.customCharacters[idx] = character
+            logActivity("app", "Updated custom partner: \(character.displayName)")
+        } else {
+            state.customCharacters.append(character)
+            logActivity("app", "Created custom partner: \(character.displayName)")
+        }
+        // If this is the active character, keep the resolved copy fresh.
+        if state.characterID == character.id {
+            state.character = character
+        }
+        persistState()
+    }
+
+    /// Delete a custom character and its stored portraits. If it was active,
+    /// fall back to the default cat so the UI never points at nothing.
+    func deleteCustomCharacter(id: String) {
+        guard state.customCharacters.contains(where: { $0.id == id }) else { return }
+        let wasActive = state.characterID == id
+        state.customCharacters.removeAll { $0.id == id }
+        if wasActive {
+            state.character = .mochi
+        }
+        characterImageStore.removeAll(for: id)
+        logActivity("app", "Deleted custom partner: \(id)")
         persistState()
     }
 
@@ -1090,6 +1230,9 @@ final class AppController: ObservableObject {
 
             brainService.stateProvider = { [weak self] in
                 self?.state ?? ACState()
+            }
+            brainService.overlayActiveProvider = { [weak self] in
+                self?.overlayVisible ?? false
             }
             brainService.stateSink = { [weak self] baseState, updatedState in
                 self?.mergeBrainState(base: baseState, updated: updatedState)

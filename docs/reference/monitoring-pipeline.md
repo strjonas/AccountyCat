@@ -53,6 +53,8 @@ The monitoring path tries to avoid unnecessary LLM calls.
 
 Important fast paths:
 
+- AC and its Inspector are never monitored: when the frontmost app is AC's own bundle, `ACState.monitoringScopeSkipReason` returns `.ownApplication` before any allowlist/blocklist or profile scoping, so the user is never nudged for using AC in any profile (chat, overlay, settings)
+- while an intervention overlay is on screen, `BrainService` waits instead of evaluating (`overlay_active` skip, gated by `overlayActiveProvider`); it does not stack a second nudge/escalation on top of an overlay the user is still resolving
 - explicit active `allow` rules can skip evaluation entirely
 - recently cached focused decisions can skip re-evaluation in the same context and keep the normal focused follow-up cadence rather than checking again on the next polling tick
 - `tolerated` verdicts are acceptable for now but not counted as focused work. They use a shorter recheck and are not cached, so breaks and detours cannot inherit long focused silence. The model may propose `recheck_seconds`; the algorithm clamps it between the tolerated baseline and the focused follow-up (see `docs/experiments/model-driven-tolerated-recheck.md`).
@@ -125,6 +127,8 @@ The active stage catalog includes:
 - `appeal_review`
 - `policy_memory`
 - `safelist_appeal`
+
+When a decision yields a nudge, the user-facing copy is written by the dedicated `nudge_copy` stage on both the local and online pipelines (`splitCopyGeneration` is on for all live pipelines). That stage receives the character voice prefix and recent nudges, so nudges are in-character and vary their tactic across repeats; the `decision`/`online_decision` stages stay character-free classifiers. The decision call's inline `nudge` field is only a fallback when the dedicated stage produces nothing.
 
 The prompt file is the single source of truth for:
 

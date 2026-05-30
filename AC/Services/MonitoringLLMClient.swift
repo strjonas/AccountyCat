@@ -20,6 +20,8 @@ struct LLMEvaluationAttempt: Sendable {
     /// True when the runtime (online or local) threw an error, distinguishing
     /// infrastructure failure from a parsed-but-unclear semantic decision.
     var isAPIFailure: Bool = false
+    /// Optional machine-readable reason for user-actionable provider failures.
+    var apiFailureMessage: String? = nil
 }
 
 struct LLMEvaluationResult: Sendable {

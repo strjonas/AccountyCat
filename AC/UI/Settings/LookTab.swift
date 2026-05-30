@@ -15,13 +15,23 @@ struct LookTab: View {
 
     @State private var previewExpression: ACCatExpression = .neutral
 
-    private let characters: [ACCharacter] = [.mochi, .misty, .onyx]
+    private var characters: [ACCharacter] {
+        // Mochi + Orb, then the user's custom partners. A previously-selected
+        // legacy cat (misty/onyx) stays visible so it isn't orphaned.
+        var list = ACCharacter.pickerBuiltIns
+        let active = controller.state.character
+        if active.origin == .builtIn, !list.contains(where: { $0.id == active.id }) {
+            list.append(active)
+        }
+        return list + controller.state.customCharacters
+    }
     private let expressions: [ACCatExpression] = [.neutral, .blink, .happy, .sleep, .concerned]
+    private let cardColumns = [GridItem(.adaptive(minimum: 96), spacing: 10)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionLabel("character")
-            Text("each cat ships a personality and palette — pick the one that fits how you want AC to feel.")
+            sectionLabel("accountability partner")
+            Text("pick who keeps you on track. each one ships its own voice and palette.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
@@ -29,11 +39,20 @@ struct LookTab: View {
             characterGrid
 
             sectionLabel("preview expression")
-            Text("see how the active cat looks across moods.")
+            Text("see how your partner looks across moods.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
                 .padding(.top, -12)
             expressionRow
+
+            Divider().opacity(0.3)
+
+            sectionLabel("on-screen")
+            Text("don't want a character floating on screen? AC can stay menu-bar only and keep watching just the same.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+                .padding(.top, -12)
+            displayModePicker
 
             Divider().opacity(0.3)
 
@@ -50,11 +69,47 @@ struct LookTab: View {
     // MARK: - Character grid
 
     private var characterGrid: some View {
-        HStack(spacing: 10) {
-            ForEach(characters, id: \.self) { character in
-                characterCard(character)
+        VStack(spacing: 10) {
+            LazyVGrid(columns: cardColumns, spacing: 10) {
+                ForEach(characters, id: \.self) { character in
+                    characterCard(character)
+                }
             }
+            createBar
         }
+    }
+
+    /// The "+ create your own" entry. A full-width bar rather than a grid card so
+    /// it stays space-efficient no matter how many partners fill the rows above.
+    private var createBar: some View {
+        Button {
+            NotificationCenter.default.post(name: .acOpenPartnerCreator, object: nil)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(accent.opacity(0.85))
+                Text("create your own")
+                    .font(.ac(12, weight: .medium))
+                    .foregroundStyle(Color.acTextPrimary)
+                Text("bring your own partner")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                    .fill(Color.acSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .stroke(Color.acHairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func characterCard(_ character: ACCharacter) -> some View {
@@ -99,6 +154,16 @@ struct LookTab: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if character.origin == .custom {
+                Button("Edit…") {
+                    NotificationCenter.default.post(name: .acOpenPartnerCreator, object: character)
+                }
+                Button("Delete", role: .destructive) {
+                    controller.deleteCustomCharacter(id: character.id)
+                }
+            }
+        }
     }
 
     // MARK: - Expression row
@@ -126,6 +191,50 @@ struct LookTab: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    // MARK: - Display mode picker (orb / menu bar / both)
+
+    private var displayModePicker: some View {
+        HStack(spacing: 8) {
+            ForEach(ACDisplayMode.allCases, id: \.self) { mode in
+                let isSelected = controller.state.displayMode == mode
+                Button {
+                    controller.updateDisplayMode(mode)
+                } label: {
+                    VStack(spacing: 3) {
+                        Text(mode.displayName)
+                            .font(.ac(12, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? accent : Color.acTextPrimary.opacity(0.78))
+                        Text(displayModeBlurb(mode))
+                            .font(.ac(10))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                            .fill(isSelected ? accent.opacity(0.10) : Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.md, style: .continuous)
+                                    .stroke(isSelected ? accent.opacity(0.35) : Color.acHairline, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func displayModeBlurb(_ mode: ACDisplayMode) -> String {
+        switch mode {
+        case .both: return "orb + menu bar"
+        case .orb: return "floating orb only"
+        case .menuBar: return "menu bar only"
         }
     }
 

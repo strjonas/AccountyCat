@@ -15,8 +15,15 @@ struct ChatPanelView: View {
 
     @State private var showSettings = false
     @State private var showProfilePicker = false
+    @State private var showCreator = false
+    @State private var creatorEditing: ACCharacter?
     @State private var showCelebration = false
     @State private var celebrationSessionName = ""
+
+    // Persist which panel view was open so reopening AC lands the user exactly
+    // where they left off — including a half-finished partner in the creator.
+    @AppStorage("ac.panelRoute") private var persistedRoute: String = PanelRoute.chat.rawValue
+    @AppStorage("ac.panelEditCharacterID") private var persistedEditID: String = ""
 
     #if DEBUG
     @State private var showDebug = false
@@ -28,6 +35,7 @@ struct ChatPanelView: View {
                 withAnimation(.acSnap) {
                     showProfilePicker.toggle()
                     showSettings = false
+                    showCreator = false
                 }
             }
             .environmentObject(controller)
@@ -38,6 +46,7 @@ struct ChatPanelView: View {
                         withAnimation(.acSnap) {
                             showSettings = true
                             showProfilePicker = false
+                            showCreator = false
                         }
                     },
                     onBackToChat: {
@@ -62,7 +71,18 @@ struct ChatPanelView: View {
                 #endif
             }
 
-            if showSettings {
+            if showCreator {
+                CharacterCreatorView(
+                    editing: creatorEditing,
+                    embeddedInPanel: true,
+                    onClose: { withAnimation(.acSnap) { showCreator = false; creatorEditing = nil } }
+                )
+                .environmentObject(controller)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(x: 24)),
+                    removal: .opacity.combined(with: .offset(x: -24))
+                ))
+            } else if showSettings {
                 SettingsView(
                     embeddedInPanel: true,
                     onBackToChat: { withAnimation(.acSnap) { showSettings = false } }
@@ -114,30 +134,48 @@ struct ChatPanelView: View {
         .animation(.acFade, value: controller.state.character)
         .onAppear {
             controller.refreshSystemState()
+            restorePanelRoute()
             checkAndShowCelebration()
         }
         .onChange(of: showSettings) { _, isSettings in
             if !isSettings { checkAndShowCelebration() }
+            persistRoute()
         }
         .onChange(of: controller.state.sessionCelebrationPending) { _, isPending in
             if isPending { checkAndShowCelebration() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .acOpenSettings)) { _ in
-            withAnimation(.acSnap) { showSettings = true }
+            withAnimation(.acSnap) { showSettings = true; showCreator = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: .acSelectSettingsTab)) { _ in
             withAnimation(.acSnap) {
                 showSettings = true
                 showProfilePicker = false
+                showCreator = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .acOpenPartnerCreator)) { note in
+            withAnimation(.acSnap) {
+                creatorEditing = note.object as? ACCharacter
+                showCreator = true
+                showSettings = false
+                showProfilePicker = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .acDismissSheet)) { _ in
-            if showSettings {
+            if showCreator {
+                withAnimation(.acSnap) { showCreator = false; creatorEditing = nil }
+            } else if showSettings {
                 withAnimation(.acSnap) { showSettings = false }
             }
             #if DEBUG
             if showDebug { showDebug = false }
             #endif
+        }
+        .onChange(of: showCreator) { _, isCreator in
+            // Give the creator form room; restore the standard height on the way out.
+            controller.resizePopover?(NSSize(width: ACD.popoverWidth, height: isCreator ? 580 : 460))
+            persistRoute()
         }
         #if DEBUG
         .sheet(isPresented: $showDebug) {
@@ -146,6 +184,39 @@ struct ChatPanelView: View {
         }
         #endif
         .background(shortcutButtons)
+    }
+
+    // MARK: - Panel route persistence
+
+    /// Which inline view the panel is showing. Only the creator is restored on
+    /// reopen (the "dialogue persists" the user asked for); settings/chat reopen
+    /// to chat as usual.
+    private enum PanelRoute: String { case chat, settings, creator }
+
+    @State private var didRestoreRoute = false
+
+    private func restorePanelRoute() {
+        guard !didRestoreRoute else { return }
+        didRestoreRoute = true
+        guard PanelRoute(rawValue: persistedRoute) == .creator else { return }
+        creatorEditing = resolvePersistedEditCharacter()
+        showCreator = true
+        controller.resizePopover?(NSSize(width: ACD.popoverWidth, height: 580))
+    }
+
+    private func resolvePersistedEditCharacter() -> ACCharacter? {
+        guard !persistedEditID.isEmpty else { return nil }
+        return controller.state.customCharacters.first { $0.id == persistedEditID }
+    }
+
+    private func persistRoute() {
+        if showCreator {
+            persistedRoute = PanelRoute.creator.rawValue
+            persistedEditID = creatorEditing?.id ?? ""
+        } else {
+            persistedRoute = PanelRoute.chat.rawValue
+            persistedEditID = ""
+        }
     }
 
     private func checkAndShowCelebration() {
@@ -180,6 +251,29 @@ struct ChatPanelView: View {
                         .font(.ac(11, weight: .medium))
                         .foregroundStyle(Color.acTextPrimary.opacity(0.9))
                     Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.08))
+            }
+
+            if let partnerProblem = controller.characterParseProblemNotice {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle.badge.exclamationmark")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text(partnerProblem)
+                        .font(.ac(11, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.9))
+                    Spacer()
+                    Button {
+                        controller.dismissCharacterParseProblemNotice()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)

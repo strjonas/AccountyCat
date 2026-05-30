@@ -5,6 +5,7 @@
 //  Name, learned facts with lock/delete, version, privacy/export/reset/quit.
 //
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -26,6 +27,52 @@ struct YouTab: View {
         controller.state.activeAppMonitoringSelections.sorted {
             $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
         }
+    }
+
+    private var sortedBrowserTabExclusions: [BrowserTabMonitoringExclusion] {
+        controller.state.browserTabMonitoringExclusions.sorted {
+            $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending
+        }
+    }
+
+    private struct BrowserTabTarget: Identifiable, Hashable {
+        var id: String { "\(bundleIdentifier ?? appName)|\(title)" }
+        var bundleIdentifier: String?
+        var appName: String
+        var title: String
+    }
+
+    private var recentBrowserTabTargets: [BrowserTabTarget] {
+        let runningBrowserBundles = NSWorkspace.shared.runningApplications
+            .compactMap { app -> (String, String)? in
+                guard let name = app.localizedName?.cleanedSingleLine,
+                      let bundle = app.bundleIdentifier,
+                      MonitoringHeuristics.isBrowser(bundleIdentifier: bundle) else {
+                    return nil
+                }
+                return (name.lowercased(), bundle)
+            }
+            .reduce(into: [String: String]()) { partial, entry in
+                partial[entry.0] = entry.1
+            }
+        var seen = Set<String>()
+        var targets: [BrowserTabTarget] = []
+        for record in controller.state.recentSwitches {
+            let appName = record.toAppName.cleanedSingleLine
+            guard let bundle = runningBrowserBundles[appName.lowercased()] else { continue }
+            guard let title = record.toWindowTitle?.cleanedSingleLine,
+                  !title.isEmpty else { continue }
+            let truncatedTitle = String(title.prefix(120))
+            let key = "\(bundle)|\(truncatedTitle.lowercased())"
+            guard seen.insert(key).inserted else { continue }
+            targets.append(BrowserTabTarget(
+                bundleIdentifier: bundle,
+                appName: appName,
+                title: truncatedTitle
+            ))
+            if targets.count >= 6 { break }
+        }
+        return targets
     }
 
     var body: some View {
@@ -365,6 +412,121 @@ struct YouTab: View {
                     }
                 }
             }
+
+            Divider().opacity(0.25).padding(.vertical, 2)
+
+            browserPrivacyScopeSection
+        }
+    }
+
+    private var browserPrivacyScopeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Browser privacy")
+                .font(.ac(11, weight: .semibold))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.8))
+
+            Toggle(isOn: Binding(
+                get: { controller.state.skipPrivateBrowserWindows },
+                set: { enabled in
+                    DispatchQueue.main.async { controller.setSkipPrivateBrowserWindows(enabled) }
+                }
+            )) {
+                Text("Skip private/incognito browser windows")
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.82))
+            }
+            .toggleStyle(.checkbox)
+
+            Text("Hide specific tabs from AC. Pick from sites you've recently visited — AC never reads a tab just to add it here.")
+                .font(.acCaption)
+                .foregroundStyle(.secondary)
+
+            if recentBrowserTabTargets.isEmpty {
+                Text("No recent tabs yet. Browse a site, then come back here to hide it.")
+                    .font(.ac(11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                            .fill(Color.acSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                    .stroke(Color.acHairline, lineWidth: 1)
+                            )
+                    )
+            }
+
+            if !recentBrowserTabTargets.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(recentBrowserTabTargets) { target in
+                            Button {
+                                controller.addBrowserTabMonitoringExclusion(
+                                    bundleIdentifier: target.bundleIdentifier,
+                                    appName: target.appName,
+                                    titleContains: target.title
+                                )
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "macwindow")
+                                        .font(.system(size: 8, weight: .semibold))
+                                    Text(target.title)
+                                        .font(.ac(10, weight: .medium))
+                                        .lineLimit(1)
+                                }
+                                .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule().fill(Color.acSurface)
+                                        .overlay(Capsule().stroke(Color.acHairline, lineWidth: 1))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help("\(target.appName) — \(target.title)")
+                        }
+                    }
+                    .padding(.bottom, 1)
+                }
+            }
+
+            if !sortedBrowserTabExclusions.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(sortedBrowserTabExclusions) { tab in
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(tab.displayTitle)
+                                    .font(.ac(12, weight: .medium))
+                                    .foregroundStyle(Color.acTextPrimary)
+                                    .lineLimit(1)
+                                Text(tab.appName)
+                                    .font(.acCaption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button("Remove") {
+                                controller.removeBrowserTabMonitoringExclusion(id: tab.id)
+                            }
+                            .buttonStyle(.plain)
+                            .font(.ac(10, weight: .medium))
+                            .foregroundStyle(accent)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                .fill(Color.acSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                                        .stroke(Color.acHairline, lineWidth: 1)
+                                )
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -382,11 +544,30 @@ struct YouTab: View {
         return AnyView(
             VStack(spacing: 4) {
                 ForEach(entries) { entry in
+                    let display = MemoryRendering.displayContent(for: entry)
                     HStack(alignment: .top, spacing: 8) {
-                        Text(entry.text)
-                            .font(.ac(11))
-                            .foregroundStyle(Color.acTextPrimary.opacity(0.85))
-                            .lineLimit(4)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(display.category.uppercased())
+                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                    .foregroundStyle(Color.acTextPrimary.opacity(0.42))
+                                Text(memoryDateLabel(for: entry.createdAt))
+                                    .font(.acCaption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text(display.headline)
+                                .font(.ac(11, weight: .medium))
+                                .foregroundStyle(Color.acTextPrimary.opacity(0.9))
+                                .lineLimit(3)
+
+                            if let detail = display.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .font(.acCaption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
                         Spacer(minLength: 4)
 
                         Button {
@@ -444,6 +625,17 @@ struct YouTab: View {
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
+
+    private func memoryDateLabel(for date: Date) -> String {
+        Self.memoryDateFormatter.string(from: date)
+    }
+
+    private nonisolated static let memoryDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+        return formatter
+    }()
 
     private var systemVersion: String {
         ProcessInfo.processInfo.operatingSystemVersionString
@@ -573,9 +765,9 @@ struct YouTab: View {
         switch proposal.kind {
         case .rule:
             guard let rule = proposal.proposedRule else { return "Proposed rule" }
-            let target = rule.scope.appName
+            let target = rule.scope.titleContains.first
+                ?? rule.scope.appName
                 ?? rule.scope.bundleIdentifier
-                ?? rule.scope.titleContains.first
                 ?? rule.summary
             let kind: String
             switch rule.kind {

@@ -45,6 +45,14 @@ struct ACStateResetTests {
         state.appMonitoringBlocklist = [
             AppMonitoringSelection(bundleIdentifier: "com.google.Chrome", appName: "Google Chrome")
         ]
+        state.browserTabMonitoringExclusions = [
+            BrowserTabMonitoringExclusion(
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                titleContains: "Personal Mail"
+            )
+        ]
+        state.skipPrivateBrowserWindows = true
 
         state.resetAlgorithmProfile()
 
@@ -58,6 +66,8 @@ struct ACStateResetTests {
         #expect(state.appMonitoringScopeMode == .disabled)
         #expect(state.appMonitoringAllowlist.isEmpty)
         #expect(state.appMonitoringBlocklist.isEmpty)
+        #expect(state.browserTabMonitoringExclusions.isEmpty)
+        #expect(state.skipPrivateBrowserWindows == false)
         #expect(state.monitoringConfiguration.algorithmID == MonitoringConfiguration.defaultAlgorithmID)
         #expect(state.monitoringConfiguration.pipelineProfileID == MonitoringConfiguration.defaultPipelineProfileID)
         #expect(state.monitoringConfiguration.runtimeProfileID == MonitoringConfiguration.defaultRuntimeProfileID)
@@ -92,6 +102,48 @@ struct ACStateResetTests {
         state.appMonitoringScopeMode = .blocklist
         #expect(state.shouldSkipMonitoring(for: xcode))
         #expect(state.shouldSkipMonitoring(for: chrome) == false)
+    }
+
+    @Test
+    func browserMonitoringScopeSkipsPrivateWindowsAndSpecificTabs() {
+        var state = ACState()
+        state.skipPrivateBrowserWindows = true
+        state.browserTabMonitoringExclusions = [
+            BrowserTabMonitoringExclusion(
+                bundleIdentifier: "com.google.Chrome",
+                appName: "Google Chrome",
+                titleContains: "Personal Mail"
+            )
+        ]
+
+        let privateChrome = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Bank",
+            isPrivateBrowsing: true
+        )
+        let personalMail = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Personal Mail - Inbox",
+            isPrivateBrowsing: false
+        )
+        let workDocs = FrontmostContext(
+            bundleIdentifier: "com.google.Chrome",
+            appName: "Google Chrome",
+            windowTitle: "Work Docs",
+            isPrivateBrowsing: false
+        )
+        let nativeMail = FrontmostContext(
+            bundleIdentifier: "com.apple.mail",
+            appName: "Mail",
+            windowTitle: "Personal Mail"
+        )
+
+        #expect(state.monitoringScopeSkipReason(for: privateChrome) == .privateBrowserWindow)
+        #expect(state.shouldSkipMonitoring(for: personalMail))
+        #expect(state.shouldSkipMonitoring(for: workDocs) == false)
+        #expect(state.shouldSkipMonitoring(for: nativeMail) == false)
     }
 
     @Test

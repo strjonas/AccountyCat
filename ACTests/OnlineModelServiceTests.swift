@@ -69,6 +69,34 @@ struct OnlineModelServiceTests {
     }
 
     @Test
+    func classifiesOpenRouter402AsBillingFailureNotRetryable() {
+        let error = OnlineModelError.httpFailure(
+            provider: .openRouter,
+            statusCode: 402,
+            message: "Insufficient credits",
+            rawBody: #"{"error":{"message":"Your account or API key has insufficient credits.","code":402}}"#
+        )
+
+        #expect(!OnlineModelService.isRetryable(error: error))
+        #expect(OnlineModelService.apiFailureMessage(for: error) == OnlineModelService.openRouterBillingFailureMessage)
+        #expect(error.localizedDescription.contains("credits"))
+        #expect(error.localizedDescription.contains("budget"))
+    }
+
+    @Test
+    func quotaBalanceFailuresAreNotTreatedAsRateLimitRetries() {
+        let error = OnlineModelError.httpFailure(
+            provider: .openRouter,
+            statusCode: 429,
+            message: "Provider returned error",
+            rawBody: #"{"error":{"metadata":{"raw":"Quota exceeded and account balance is $0.0"}}}"#
+        )
+
+        #expect(!OnlineModelService.isRetryable(error: error))
+        #expect(OnlineModelService.apiFailureMessage(for: error) == OnlineModelService.openRouterBillingFailureMessage)
+    }
+
+    @Test
     func chatFallbackReplyExplainsTransientOverload() {
         let provider = OnlineProviderRouting.provider(for: .chat)
         let reply = CompanionChatService.fallbackReply(
@@ -86,6 +114,22 @@ struct OnlineModelServiceTests {
         } else {
             #expect(!reply.contains("backup path"))
         }
+    }
+
+    @Test
+    func chatFallbackReplyExplainsOpenRouterBudgetFailure() {
+        let reply = CompanionChatService.fallbackReply(
+            for: OnlineModelError.httpFailure(
+                provider: .openRouter,
+                statusCode: 402,
+                message: "Insufficient credits",
+                rawBody: ""
+            )
+        )
+
+        #expect(reply.contains("credits"))
+        #expect(reply.contains("budget"))
+        #expect(!reply.contains("backup path"))
     }
 
     @Test

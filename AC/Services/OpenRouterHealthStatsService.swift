@@ -76,13 +76,18 @@ actor OpenRouterHealthStatsService {
     /// (lowest failure rate first). Falls back to input order if no health data exists.
     func sortedHealthyModels(_ modelIdentifiers: [String], at date: Date = Date()) async -> [String] {
         let snapshot = await loadSnapshot()
-        return modelIdentifiers.filter { model in
+        let filtered = modelIdentifiers.filter { model in
             guard let record = snapshot.models[model] else { return true }
             if let bannedUntil = record.bannedUntil, bannedUntil > date {
                 return false
             }
             return true
-        }.sorted { lhs, rhs in
+        }
+        if filtered.isEmpty && !modelIdentifiers.isEmpty {
+            return modelIdentifiers
+        }
+        let candidates = filtered
+        return candidates.sorted { lhs, rhs in
             let lhsRate = snapshot.models[lhs].map { Double($0.failures) / max(1.0, Double($0.attempts)) } ?? 0
             let rhsRate = snapshot.models[rhs].map { Double($0.failures) / max(1.0, Double($0.attempts)) } ?? 0
             return lhsRate < rhsRate
@@ -153,6 +158,24 @@ actor OpenRouterHealthStatsService {
             sourceRecord.failures += 1
             record.sourceBreakdown[source.rawValue] = sourceRecord
         }
+    }
+
+    func clearBans(timestamp: Date = Date()) async {
+        var snapshot = await loadSnapshot()
+        var changed = false
+        for model in snapshot.models.keys {
+            guard var record = snapshot.models[model] else { continue }
+            if record.bannedUntil != nil || record.consecutiveFailures != 0 {
+                record.bannedUntil = nil
+                record.consecutiveFailures = 0
+                snapshot.models[model] = record
+                changed = true
+            }
+        }
+        guard changed else { return }
+        snapshot.updatedAt = timestamp
+        self.snapshot = snapshot
+        persist(snapshot)
     }
 
     // MARK: - Private

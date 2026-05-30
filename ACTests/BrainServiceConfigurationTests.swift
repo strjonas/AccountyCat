@@ -244,6 +244,9 @@ struct BrainServiceConfigurationTests {
     func skipDetailExplainsAppScopeExclusion() {
         var state = ACState()
         state.appMonitoringScopeMode = .allowlist
+        state.appMonitoringAllowlist = [
+            AppMonitoringSelection(bundleIdentifier: "com.apple.dt.Xcode", appName: "Xcode")
+        ]
 
         let detail = BrainService.evaluationSkipDetail(
             plan: MonitoringEvaluationPlan(
@@ -303,6 +306,16 @@ struct BrainServiceConfigurationTests {
         )
         #expect(repeatedProviderFailure.banner != nil)
         #expect(repeatedProviderFailure.status.contains("trouble reaching the model provider"))
+
+        let billingFailure = BrainService.monitoringFailureNotice(
+            consecutiveFailures: 1,
+            timedOut: false,
+            failureMessage: OnlineModelService.openRouterBillingFailureMessage
+        )
+        #expect(billingFailure.banner != nil)
+        #expect(billingFailure.status.contains("OpenRouter key"))
+        #expect(billingFailure.status.contains("credits"))
+        #expect(!billingFailure.status.contains("backup models"))
     }
 
     @Test
@@ -314,14 +327,18 @@ struct BrainServiceConfigurationTests {
     }
 
     @Test
-    func evaluationWatchdogTimeoutKeepsSingleRoundOnlineBudgetTighter() {
+    func evaluationWatchdogTimeoutBudgetsForOnlineSplitNudgeCopy() {
         var configuration = MonitoringConfiguration()
         configuration.inferenceBackend = .openRouter
         configuration.pipelineProfileID = "online_single_round_vision"
 
         let timeout = BrainService.evaluationWatchdogTimeout(configuration: configuration)
 
-        #expect(timeout == 35)
+        // Online pipelines now split nudge copy into its own in-character call (parity with the
+        // local pipelines), so the budget covers onlineDecision + nudgeCopy, still well under the
+        // local vision-split pipeline's 130.
+        #expect(timeout == 70)
+        #expect(timeout < 130)
     }
 
     @Test

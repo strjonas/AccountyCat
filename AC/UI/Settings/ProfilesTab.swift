@@ -34,6 +34,7 @@ struct ProfilesTab: View {
     @State private var scheduleEnabledDraft: Bool = false
     @State private var expandedRuleIDs: Set<String> = []
     @State private var showArchivedRules: Bool = false
+    @State private var showSessionDefaults: Bool = false
     @FocusState private var focusedField: ProfileField?
 
     private enum ProfileField: Hashable { case name, description }
@@ -112,8 +113,8 @@ struct ProfilesTab: View {
             let key = (app + "|" + title).lowercased()
             guard seen.insert(key).inserted else { continue }
             targets.append(RuleTarget(
-                display: "\(app) · \(title)",
-                summary: "\(app) — \(title)",
+                display: title,
+                summary: "\(title) — \(app)",
                 scope: PolicyRuleScope(appName: app, titleContains: [title])
             ))
             if targets.count >= 6 { break }
@@ -342,14 +343,9 @@ struct ProfilesTab: View {
                         }
                     }
 
-                // Color picker (simple hex presets)
-                colorPicker
-
-                // Default duration
-                durationPicker
-
-                // Recurring schedule
-                scheduleEditor
+                // Color, duration, and schedule are set-once-and-forget, so they
+                // live behind a compact disclosure to keep rules front-and-center.
+                sessionDefaultsSection
             }
 
             // Unified rules
@@ -364,6 +360,72 @@ struct ProfilesTab: View {
         .onChange(of: scheduleMinuteDraft) { _, _ in saveProfile() }
         .onChange(of: scheduleEveryDay) { _, _ in saveProfile() }
         .onChange(of: scheduleEnabledWeekdays) { _, _ in saveProfile() }
+    }
+
+    // MARK: - Session defaults (collapsible)
+
+    private var sessionDefaultsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.acSnap) { showSessionDefaults.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(colorFromHex(colorDraft))
+                        .frame(width: 11, height: 11)
+                    Text("session defaults")
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                    if !showSessionDefaults {
+                        Text(sessionDefaultsSummary)
+                            .font(.ac(10))
+                            .foregroundStyle(Color.acTextPrimary.opacity(0.4))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.secondary.opacity(0.45))
+                        .rotationEffect(.degrees(showSessionDefaults ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showSessionDefaults {
+                colorPicker
+                durationPicker
+                scheduleEditor
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(Color.acSurface.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(Color.acHairline.opacity(0.7), lineWidth: 1)
+                )
+        )
+    }
+
+    private var sessionDefaultsSummary: String {
+        var parts: [String] = []
+        if let duration = defaultDurationDraft {
+            parts.append(durationLabel(duration))
+        }
+        if scheduleEnabledDraft {
+            let time = String(format: "%02d:%02d", scheduleHourDraft, scheduleMinuteDraft)
+            if scheduleEveryDay {
+                parts.append("daily \(time)")
+            } else if scheduleEnabledWeekdays.isEmpty {
+                parts.append(time)
+            } else {
+                parts.append("\(scheduleEnabledWeekdays.count)d · \(time)")
+            }
+        }
+        return parts.isEmpty ? "tap to set" : parts.joined(separator: " · ")
     }
 
     private var colorPicker: some View {
@@ -834,8 +896,8 @@ struct ProfilesTab: View {
     // MARK: - Rule helpers
 
     private func ruleDisplayTarget(_ rule: PolicyRule) -> String {
-        if let name = rule.scope.appName, !name.isEmpty { return name }
         if let title = rule.scope.titleContains.first, !title.isEmpty { return title }
+        if let name = rule.scope.appName, !name.isEmpty { return name }
         return rule.summary
     }
 

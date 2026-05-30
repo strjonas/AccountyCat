@@ -22,6 +22,11 @@ struct CompanionChatResult: Sendable {
     /// Telemetry id of the chat-turn LLM call. Pass back to `resolveAction` so
     /// the inspector can group action resolutions under their originating chat.
     var interactionID: String? = nil
+    /// False when the structured JSON envelope couldn't be parsed and we fell
+    /// back to a plain-text reply (actions/memory lost). Lets the controller
+    /// notice a custom character that keeps confusing the model. Network/runtime
+    /// failures don't set this — they return `nil` instead.
+    var structuredParse: Bool = true
 }
 
 struct ChatActionResolutionRequest: Sendable {
@@ -73,8 +78,16 @@ actor CompanionChatService {
     nonisolated static func fallbackReply(for error: Error) -> String {
         let provider = OnlineProviderRouting.provider(for: .chat)
         if let onlineError = error as? OnlineModelError,
-           case let .httpFailure(_, statusCode, _, rawBody) = onlineError,
-           statusCode == 429 || rawBody.localizedCaseInsensitiveContains("rate-limit") || rawBody.localizedCaseInsensitiveContains("rate limited") {
+            onlineError.isBillingOrCreditFailure
+        {
+            return
+                "OpenRouter key has no remaining credits or budget. Top up OpenRouter, then send that again."
+        }
+        if let onlineError = error as? OnlineModelError,
+            case .httpFailure(_, let statusCode, _, let rawBody) = onlineError,
+            statusCode == 429 || rawBody.localizedCaseInsensitiveContains("rate-limit")
+                || rawBody.localizedCaseInsensitiveContains("rate limited")
+        {
             return provider == .openAI
                 ? "OpenAI is overloaded right now. Send that again in a moment."
                 : "OpenRouter is overloaded right now. I tried the backup path, but this turn still failed. Send that again in a moment."
@@ -103,6 +116,7 @@ actor CompanionChatService {
     ) async -> CompanionChatResult? {
         let systemPrompt = ACPromptSets.chatSystemPrompt(
             withPersonality: character.personalityPrefix,
+            expressivenessDirective: character.expressiveness.chatDirective,
             workflow: workflow
         )
         let prompt = Self.makeChatPrompt(
@@ -120,7 +134,8 @@ actor CompanionChatService {
         let output: RuntimeProcessOutput
         do {
             if inferenceBackend == .openRouter {
-                let resolvedOnlineModelIdentifier = onlineTextModelIdentifier ?? onlineModelIdentifier
+                let resolvedOnlineModelIdentifier =
+                    onlineTextModelIdentifier ?? onlineModelIdentifier
                 let provider = OnlineModelService.provider(for: .chat)
                 let effectiveModelIdentifier = OnlineModelService.effectiveModelIdentifier(
                     for: .chat,
@@ -130,10 +145,13 @@ actor CompanionChatService {
                 if provider == .openRouter && !hadSuccessfulChat {
                     // Parallel safety net for the very first chat message
                     var seen: Set<String> = []
-                    let parallelModels = [resolvedOnlineModelIdentifier, AITier.balanced.byokModelIdentifierText, AITier.smartest.byokModelIdentifierText]
-                        .filter { seen.insert($0).inserted }
-                        .prefix(3)
-                        .map { $0 }
+                    let parallelModels = [
+                        resolvedOnlineModelIdentifier, AITier.balanced.byokModelIdentifierText,
+                        AITier.smartest.byokModelIdentifierText,
+                    ]
+                    .filter { seen.insert($0).inserted }
+                    .prefix(3)
+                    .map { $0 }
                     let parallelRequests = parallelModels.map { model in
                         OnlineModelRequest(
                             source: .chat,
@@ -144,17 +162,22 @@ actor CompanionChatService {
                             options: Self.onlineChatOptions()
                         )
                     }
-                    await ActivityLogService.shared.append(level: .verbose,
+                    await ActivityLogService.shared.append(
+                        level: .verbose,
                         category: "llm:chat",
-                        message: "─── Parallel safety net → \(parallelModels.joined(separator: ", ")) ───\n"
+                        message:
+                            "─── Parallel safety net → \(parallelModels.joined(separator: ", ")) ───\n"
                             + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
                             + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
                     )
-                    output = try await onlineModelService.runFirstSuccessfulInference(from: parallelRequests)
+                    output = try await onlineModelService.runFirstSuccessfulInference(
+                        from: parallelRequests)
                 } else {
-                    await ActivityLogService.shared.append(level: .verbose,
+                    await ActivityLogService.shared.append(
+                        level: .verbose,
                         category: "llm:chat",
-                        message: "─── Request → \(provider.rawValue)/\(effectiveModelIdentifier) ───\n"
+                        message:
+                            "─── Request → \(provider.rawValue)/\(effectiveModelIdentifier) ───\n"
                             + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
                             + "user: \(prompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))"
                     )
@@ -185,7 +208,8 @@ actor CompanionChatService {
                     )
                     return nil
                 }
-                await ActivityLogService.shared.append(level: .verbose,
+                await ActivityLogService.shared.append(
+                    level: .verbose,
                     category: "llm:chat",
                     message: "─── Request → llama.cpp/\(localTextModelIdentifier) ───\n"
                         + "system: \(systemPrompt.cleanedSingleLine.truncatedForPrompt(maxLength: 1500))\n"
@@ -206,7 +230,8 @@ actor CompanionChatService {
                             kind: .localChat,
                             parentInteractionID: nil,
                             runtime: .llamaCpp,
-                            modelIdentifier: localOutput.usedModelIdentifier ?? localTextModelIdentifier,
+                            modelIdentifier: localOutput.usedModelIdentifier
+                                ?? localTextModelIdentifier,
                             promptMode: "chat",
                             systemPrompt: systemPrompt,
                             userPrompt: prompt,
@@ -259,9 +284,11 @@ actor CompanionChatService {
                     )
                     throw error
                 }
-                await ActivityLogService.shared.append(level: .verbose,
+                await ActivityLogService.shared.append(
+                    level: .verbose,
                     category: "llm:chat",
-                    message: "← llama.cpp · \(output.usedModelIdentifier ?? localTextModelIdentifier)"
+                    message:
+                        "← llama.cpp · \(output.usedModelIdentifier ?? localTextModelIdentifier)"
                 )
             }
         } catch {
@@ -309,7 +336,8 @@ actor CompanionChatService {
 
         await ActivityLogService.shared.append(
             category: "chat-parse-error",
-            message: "Could not parse chat JSON from \(output.usedModelIdentifier ?? "unknown model"). stdout: \(modelText.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
+            message:
+                "Could not parse chat JSON from \(output.usedModelIdentifier ?? "unknown model"). stdout: \(modelText.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
         )
 
         // Legacy/fallback: pull a plain reply, no memory update.
@@ -335,7 +363,8 @@ actor CompanionChatService {
                     onlineModelIdentifier: onlineTextModelIdentifier ?? onlineModelIdentifier,
                     localModelIdentifier: localTextModelIdentifier
                 ),
-            interactionID: output.interactionID
+            interactionID: output.interactionID,
+            structuredParse: false
         )
     }
 
@@ -430,56 +459,56 @@ actor CompanionChatService {
         switch workflow {
         case .direct:
             workflowInstruction = """
-            Action workflow: direct.
-            Return executable minimal action fields when you know them. If an action is needed
-            but you are missing exact fields, return kind + instruction and AC will resolve it.
-            """
+                Action workflow: direct.
+                Return executable minimal action fields when you know them. If an action is needed
+                but you are missing exact fields, return kind + instruction and AC will resolve it.
+                """
         case .staged:
             workflowInstruction = """
-            Action workflow: staged.
-            Do NOT output executable fields. For every needed action, return only kind + instruction.
-            Dedicated executor calls will resolve the details.
-            """
+                Action workflow: staged.
+                Do NOT output executable fields. For every needed action, return only kind + instruction.
+                Dedicated executor calls will resolve the details.
+                """
         }
 
         return """
-        [Context — use only if directly helpful, never be invasive]
-        Frontmost app: \(context.frontmostAppName)
-        Window: \(context.frontmostWindowTitle ?? "—")
-        Idle: \(Int(context.idleSeconds))s
-        Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
-        Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
-        Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
+            [Context — use only if directly helpful, never be invasive]
+            Frontmost app: \(context.frontmostAppName)
+            Window: \(context.frontmostWindowTitle ?? "—")
+            Idle: \(Int(context.idleSeconds))s
+            Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
+            Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
+            Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
 
-        \(profileContext)
-        [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
-        \(memorySection)
+            \(profileContext)
+            [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
+            \(memorySection)
 
-        [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
-        \(policyRulesSection)
+            [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
+            \(policyRulesSection)
 
-        [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
-        \(historySection)
+            [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
+            \(historySection)
 
-        [New user message]
-        \(userMessage.cleanedSingleLine)
+            [New user message]
+            \(userMessage.cleanedSingleLine)
 
-        Respond as AccountyCat. Match the energy and tone of the user's message.
-        Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
-        \(workflowInstruction)
+            Reply in your character's voice — that persona is who the user hears; you are their focus companion underneath, but the character is who shows up. The one thing the voice never overrides: you are on the user's side — never demean them, and if they're low or struggling, warmth comes first, then the nudge.
+            Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
+            \(workflowInstruction)
 
-        Scheduled actions:
-        When the user asks for a *timed* action ("nudge me in 2 min" / "remind me to focus in 10 min" / "start Coding profile in 15 min"), include a `schedule` field. The app will execute the action at the right time.
-        Schedule format: {"type":"nudge","delay_minutes":2,"message":"Focus reminder!"}
-        or for profiles: {"type":"profile","delay_minutes":10,"profile_name":"Coding"}
-        delay_minutes max 1440 (24h). Only schedule when the user explicitly asks with a time.
-        Do NOT schedule for things you can't actually do (calendar events, persistent alarms, app-restart-surviving reminders). If asked for something impossible, say so politely instead of pretending.
+            Scheduled actions:
+            When the user asks for a *timed* action ("nudge me in 2 min" / "remind me to focus in 10 min" / "start Coding profile in 15 min"), include a `schedule` field. The app will execute the action at the right time.
+            Schedule format: {"type":"nudge","delay_minutes":2,"message":"Focus reminder!"}
+            or for profiles: {"type":"profile","delay_minutes":10,"profile_name":"Coding"}
+            delay_minutes max 1440 (24h). Only schedule when the user explicitly asks with a time.
+            Do NOT schedule for things you can't actually do (calendar events, persistent alarms, app-restart-surviving reminders). If asked for something impossible, say so politely instead of pretending.
 
-        Return exactly one JSON object: {"reply":"your response","actions":[],"schedule":null}
-        or with actions: {"reply":"your response","actions":[{"kind":"profile","instruction":"start coding for one hour"}],"schedule":null}
-        or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","actions":[],"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
-        No markdown outside the JSON value. No other keys.
-        """
+            Return exactly one JSON object: {"reply":"your response","actions":[],"schedule":null}
+            or with actions: {"reply":"your response","actions":[{"kind":"profile","instruction":"start coding for one hour"}],"schedule":null}
+            or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","actions":[],"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
+            No markdown outside the JSON value. No other keys.
+            """
     }
 
     func resolveAction(
@@ -522,7 +551,8 @@ actor CompanionChatService {
                 output = try await onlineModelService.runInference(
                     OnlineModelRequest(
                         source: .chatAction,
-                        modelIdentifier: request.onlineTextModelIdentifier ?? request.onlineModelIdentifier,
+                        modelIdentifier: request.onlineTextModelIdentifier
+                            ?? request.onlineModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
                         imagePath: nil,
@@ -531,10 +561,12 @@ actor CompanionChatService {
                     parentInteractionID: request.parentInteractionID
                 )
             } else {
-                let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: request.runtimeOverride)
+                let runtimePath = RuntimeSetupService.normalizedRuntimePath(
+                    from: request.runtimeOverride)
                 guard FileManager.default.isExecutableFile(atPath: runtimePath),
-                      let localTextModelIdentifier = request.localTextModelIdentifier,
-                      !localTextModelIdentifier.isEmpty else {
+                    let localTextModelIdentifier = request.localTextModelIdentifier,
+                    !localTextModelIdentifier.isEmpty
+                else {
                     return nil
                 }
                 do {
@@ -550,7 +582,8 @@ actor CompanionChatService {
                             kind: .chatAction,
                             parentInteractionID: request.parentInteractionID,
                             runtime: .llamaCpp,
-                            modelIdentifier: localOutput.usedModelIdentifier ?? localTextModelIdentifier,
+                            modelIdentifier: localOutput.usedModelIdentifier
+                                ?? localTextModelIdentifier,
                             promptMode: "chat-action",
                             systemPrompt: systemPrompt,
                             userPrompt: userPrompt,
@@ -603,7 +636,9 @@ actor CompanionChatService {
         }
 
         let combined = [output.stdout, output.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
-        if let action = LLMOutputParsing.extractChatAction(from: combined, expectedKind: request.action.kind) {
+        if let action = LLMOutputParsing.extractChatAction(
+            from: combined, expectedKind: request.action.kind)
+        {
             await annotateChatActionInteraction(
                 interactionID: output.interactionID,
                 parentInteractionID: request.parentInteractionID,
@@ -614,7 +649,8 @@ actor CompanionChatService {
         }
         await ActivityLogService.shared.append(
             category: "chat-action-parse-error",
-            message: "Could not parse \(request.action.kind.rawValue) action JSON. Raw output: \(combined.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
+            message:
+                "Could not parse \(request.action.kind.rawValue) action JSON. Raw output: \(combined.cleanedSingleLine.truncatedForPrompt(maxLength: 700))"
         )
         return nil
     }
@@ -653,10 +689,12 @@ actor CompanionChatService {
             goals: goals,
             memory: memory,
             policyRules: policyRules,
-            character: character.rawValue,
+            character: character.id,
             activeProfileContext: activeProfileContext,
             workflow: workflow.rawValue,
-            history: history.map { HistoryMessage(role: $0.role.rawValue, text: $0.text, timestamp: $0.timestamp) },
+            history: history.map {
+                HistoryMessage(role: $0.role.rawValue, text: $0.text, timestamp: $0.timestamp)
+            },
             frontmostAppName: context.frontmostAppName,
             frontmostWindowTitle: context.frontmostWindowTitle,
             idleSeconds: context.idleSeconds
@@ -665,11 +703,14 @@ actor CompanionChatService {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(payload),
-              let json = String(data: data, encoding: .utf8) else { return "{}" }
+            let json = String(data: data, encoding: .utf8)
+        else { return "{}" }
         return json
     }
 
-    nonisolated private static func makeActionPayloadJSON(_ request: ChatActionResolutionRequest) -> String {
+    nonisolated private static func makeActionPayloadJSON(_ request: ChatActionResolutionRequest)
+        -> String
+    {
         struct Payload: Encodable {
             var actionHint: CompanionChatAction
             var latestUserMessage: String
@@ -695,7 +736,8 @@ actor CompanionChatService {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(payload),
-              let json = String(data: data, encoding: .utf8) else {
+            let json = String(data: data, encoding: .utf8)
+        else {
             return "{}"
         }
         return json
@@ -710,13 +752,16 @@ actor CompanionChatService {
         guard let interactionID else { return }
         var fields: [String: String] = [
             "actionKind": resolved.kind.rawValue,
-            "instruction": (request.action.instruction ?? "").cleanedSingleLine.truncatedForPrompt(maxLength: 300),
+            "instruction": (request.action.instruction ?? "").cleanedSingleLine.truncatedForPrompt(
+                maxLength: 300),
         ]
         if let intent = resolved.intent { fields["intent"] = intent }
         if let id = resolved.profileID { fields["profileID"] = id }
         if let name = resolved.profileName { fields["profileName"] = name }
         if let scope = resolved.scope { fields["scope"] = scope }
-        if let target = resolved.target?.value ?? resolved.target?.type { fields["target"] = target }
+        if let target = resolved.target?.value ?? resolved.target?.type {
+            fields["target"] = target
+        }
         if let text = resolved.text { fields["text"] = text.truncatedForPrompt(maxLength: 200) }
         if let duration = resolved.durationMinutes { fields["durationMinutes"] = String(duration) }
         if let parent = parentInteractionID { fields["parentInteractionID"] = parent }
@@ -732,7 +777,8 @@ actor CompanionChatService {
                 kind: .chatAction,
                 parentInteractionID: parentInteractionID,
                 parsedOutputJSON: parsed,
-                summary: "\(resolved.kind.rawValue): \(resolved.intent ?? resolved.profileName ?? "—")",
+                summary:
+                    "\(resolved.kind.rawValue): \(resolved.intent ?? resolved.profileName ?? "—")",
                 extractedFields: fields
             )
         )

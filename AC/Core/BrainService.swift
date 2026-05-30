@@ -33,6 +33,10 @@ final class BrainService: NSObject {
     var screenshotCapture: (() async throws -> URL?)?
     /// Override for testing: substitute a real `SnapshotService.idleSeconds()` call.
     var idleSecondsProvider: (() -> TimeInterval)?
+    /// True while an intervention overlay is on screen. AC stops evaluating until the user
+    /// resolves it (back to work / dismiss / appeal), so it never stacks a fresh nudge or
+    /// re-escalates on top of an open overlay the user is already responding to.
+    var overlayActiveProvider: (() -> Bool)?
 
     let monitoringAlgorithmRegistry: MonitoringAlgorithmRegistry
     private let executiveArm: ExecutiveArm
@@ -223,12 +227,12 @@ final class BrainService: NSObject {
         for profile: FocusProfile,
         character: ACCharacter
     ) -> String {
-        switch character {
-        case .mochi:
+        switch character.tone {
+        case .warm:
             return "Session complete — \(profile.name) is wrapped. Nicely done. You're back in everyday mode now; take a clean breather before the next thing."
-        case .misty:
+        case .thoughtful:
             return "\(profile.name) is complete. That was a solid block. You're back in everyday mode now, and a small reset would suit the landing."
-        case .onyx:
+        case .sharp:
             return "\(profile.name) complete. Good finish. You're back in everyday mode; step out cleanly, then decide the next move."
         }
     }
@@ -292,8 +296,13 @@ final class BrainService: NSObject {
 
     nonisolated static func monitoringFailureNotice(
         consecutiveFailures: Int,
-        timedOut: Bool
+        timedOut: Bool,
+        failureMessage: String? = nil
     ) -> (status: String, banner: String?) {
+        if failureMessage == OnlineModelService.openRouterBillingFailureMessage {
+            let banner = "OpenRouter key has no remaining credits or budget. Top up OpenRouter, then AC will resume automatically."
+            return (banner, banner)
+        }
         if consecutiveFailures >= 3 {
             let banner = timedOut
                 ? "Connection looks unstable, so AC may miss a check-in. Retrying with backup models…"
@@ -307,12 +316,25 @@ final class BrainService: NSObject {
         return (status, nil)
     }
 
+    nonisolated static func isOnlineAPIFailureMessage(_ failureMessage: String?) -> Bool {
+        failureMessage == "all_attempts_failed"
+            || failureMessage == OnlineModelService.openRouterBillingFailureMessage
+    }
+
+    nonisolated static func shouldEscalateOnlineAPIFailureToVision(_ failureMessage: String?) -> Bool {
+        failureMessage == "all_attempts_failed"
+    }
+
     nonisolated static func offlineMonitoringRetryDelay() -> TimeInterval {
         15
     }
 
     nonisolated static func degradedTextOnlyRetryDelay() -> TimeInterval {
         15
+    }
+
+    nonisolated static func openRouterBillingFailureRetryDelay() -> TimeInterval {
+        30
     }
 
     nonisolated static func degradedTextOnlyDuration() -> TimeInterval {
@@ -394,16 +416,38 @@ final class BrainService: NSObject {
         case "local_runtime_busy":
             return "\(context.appName) · deferred while local chat is in progress"
         case "app_scope_excluded":
-            switch state.appMonitoringScopeMode {
-            case .allowlist:
+            switch state.monitoringScopeSkipReason(for: context) {
+            case .ownApplication:
+                return "\(context.appName) · AC itself is never monitored"
+            case .outsideAppAllowlist:
                 return "\(context.appName) · outside selected app allowlist"
-            case .blocklist:
+            case .skippedAppBlocklist:
                 return "\(context.appName) · matched skipped-app blocklist"
-            case .disabled:
+            case .privateBrowserWindow:
+                return "\(context.appName) · private/incognito browser window"
+            case .browserTab(let exclusion):
+                return "\(context.appName) · skipped browser tab · \(exclusion.displayTitle)"
+            case nil:
                 return context.appName
             }
         default:
             return context.appName
+        }
+    }
+
+    nonisolated static func monitoringScopeSkipStatus(
+        for reason: MonitoringScopeSkipReason,
+        context: FrontmostContext
+    ) -> String {
+        switch reason {
+        case .ownApplication:
+            return "AC doesn't monitor itself."
+        case .outsideAppAllowlist, .skippedAppBlocklist:
+            return "AC is idle for \(context.appName) due to your app scope setting."
+        case .privateBrowserWindow:
+            return "AC is idle for this private browser window."
+        case .browserTab(let exclusion):
+            return "AC is idle for \(exclusion.displayTitle)."
         }
     }
 
@@ -879,6 +923,21 @@ final class BrainService: NSObject {
             return
         }
 
+        // An overlay is already on screen. Wait for the user to resolve it instead of
+        // re-evaluating — re-checking here would let AC stack a second nudge/overlay on top
+        // of the one the user is reading or typing an appeal into.
+        if overlayActiveProvider?() == true {
+            cancelActiveEvaluationIfNeeded(reason: "overlay_active")
+            await appendMonitoringMetric(
+                kind: .evaluationSkipped,
+                reason: "overlay_active",
+                state: state,
+                detail: "overlay_open"
+            )
+            statusSink?("Overlay is open — waiting for you.")
+            return
+        }
+
         let now = Date()
 
         if state.monitoringConfiguration.usesOnlineInference,
@@ -1137,7 +1196,7 @@ final class BrainService: NSObject {
             wasInCallLastTick = false
         }
 
-        if state.shouldSkipMonitoring(for: context) {
+        if let scopeSkipReason = state.monitoringScopeSkipReason(for: context) {
             let skipDetail = Self.evaluationSkipDetail(
                 plan: MonitoringEvaluationPlan(
                     shouldEvaluate: false,
@@ -1164,7 +1223,7 @@ final class BrainService: NSObject {
                 message: "skip: app_scope_excluded · \(skipDetail)"
             )
             moodSink?(.watching)
-            statusSink?("AC is idle for \(context.appName) due to your app scope setting.")
+            statusSink?(Self.monitoringScopeSkipStatus(for: scopeSkipReason, context: context))
             stateSink?(baseState, state)
             lastCheckSink?(now)
             return
@@ -1512,7 +1571,7 @@ final class BrainService: NSObject {
         // Online text-path outages are often model/provider-specific. If this
         // tick can support vision, try the configured image model once before
         // backing off globally.
-        if decisionResult.evaluation.failureMessage == "all_attempts_failed",
+        if Self.shouldEscalateOnlineAPIFailureToVision(decisionResult.evaluation.failureMessage),
             effectiveConfiguration.usesOnlineInference,
             snapshot.screenshotPath == nil,
             pipelineSupportsScreenshot
@@ -1601,18 +1660,21 @@ final class BrainService: NSObject {
             }
         }
 
-        // If every attempt failed at the infrastructure level, apply exponential backoff and
-        // surface a gentle banner once the streak becomes persistent.
-        if decisionResult.evaluation.failureMessage == "all_attempts_failed" {
+        // If every attempt failed at the infrastructure level, back off and surface
+        // a gentle banner once the streak becomes persistent.
+        if Self.isOnlineAPIFailureMessage(decisionResult.evaluation.failureMessage) {
             consecutiveAPIFailures += 1
             consecutiveOnlineVisionTimeouts = 0
-            let backoff = Self.apiFailureBackoffSeconds(consecutiveFailures: consecutiveAPIFailures)
+            let backoff = decisionResult.evaluation.failureMessage == OnlineModelService.openRouterBillingFailureMessage
+                ? Self.openRouterBillingFailureRetryDelay()
+                : Self.apiFailureBackoffSeconds(consecutiveFailures: consecutiveAPIFailures)
             state.algorithmState.llmPolicy.distraction.nextEvaluationAt = now.addingTimeInterval(
                 backoff)
             moodSink?(.watching)
             let notice = Self.monitoringFailureNotice(
                 consecutiveFailures: consecutiveAPIFailures,
-                timedOut: false
+                timedOut: false,
+                failureMessage: decisionResult.evaluation.failureMessage
             )
             statusSink?(notice.status)
             connectionProblemSink?(notice.banner)
@@ -2370,9 +2432,11 @@ final class BrainService: NSObject {
                 stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .perceptionVision).timeoutSeconds))
             }
             stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .decision).timeoutSeconds))
-            if pipeline.splitCopyGeneration {
-                stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .nudgeCopy).timeoutSeconds))
-            }
+        }
+        // When the pipeline splits nudge-copy into its own stage (now true for both local and
+        // online), an actual nudge costs one extra call on top of the decision — budget for it.
+        if pipeline.splitCopyGeneration {
+            stageTimeouts.append(TimeInterval(runtimeProfile.options(for: .nudgeCopy).timeoutSeconds))
         }
 
         let stageTransitionBuffer = Double(max(stageTimeouts.count, 1)) * 5
