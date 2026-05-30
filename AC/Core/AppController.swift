@@ -635,15 +635,20 @@ final class AppController: ObservableObject {
     /// change the active selection. Use `updateCharacter` to activate it.
     func upsertCustomCharacter(_ character: ACCharacter) {
         guard character.origin == .custom else { return }
+        var character = character
         objectWillChange.send()
         if let idx = state.customCharacters.firstIndex(where: { $0.id == character.id }) {
+            // Bump the portrait revision so views re-read the (possibly rewritten)
+            // image files even though the character still compares equal by id.
+            character.portraitRevision = state.customCharacters[idx].portraitRevision + 1
             state.customCharacters[idx] = character
             logActivity("app", "Updated custom partner: \(character.displayName)")
         } else {
             state.customCharacters.append(character)
             logActivity("app", "Created custom partner: \(character.displayName)")
         }
-        // If this is the active character, keep the resolved copy fresh.
+        // If this is the active character, keep the resolved copy fresh (carrying
+        // the bumped revision so the live portrait refreshes immediately).
         if state.characterID == character.id {
             state.character = character
         }

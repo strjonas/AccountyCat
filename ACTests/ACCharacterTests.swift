@@ -248,6 +248,34 @@ struct ACCharacterTests {
         #expect(decoded.character.expressiveness == .vivid)
     }
 
+    // MARK: - Portrait revision (edit refresh)
+
+    /// Editing a custom partner's image rewrites the PNG in place — same id, same
+    /// `.files` directory. Because characters compare equal by id, the portrait
+    /// view would otherwise keep its cached image. `upsertCustomCharacter` must
+    /// bump `portraitRevision` (and carry it onto the active character) so the
+    /// live portrait actually re-reads the file. Regression guard for the 1.0.4
+    /// "changing the image doesn't work" hotfix.
+    @Test
+    func editingCustomCharacterBumpsPortraitRevisionOnActiveCopy() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let custom = ACCharacter.custom(
+            id: "edit-me", name: "Coach", description: "d", directory: "/tmp/edit-me",
+            accentSeed: ACColorSeed(0.4, 0.5, 0.6)
+        )
+        controller.upsertCustomCharacter(custom)
+        controller.updateCharacter(custom)
+        #expect(controller.state.character.id == "edit-me")
+        let before = controller.state.character.portraitRevision
+
+        // Simulate saving an edit (a freshly built character carries revision 0).
+        controller.upsertCustomCharacter(custom)
+        #expect(controller.state.character.portraitRevision == before + 1)
+
+        controller.upsertCustomCharacter(custom)
+        #expect(controller.state.character.portraitRevision == before + 2)
+    }
+
     /// State files written before the tier collapse may still carry the retired
     /// `"subtle"` value (or any unknown string). It must decode to the default
     /// rather than throw — a throw would reset the user's whole character.
