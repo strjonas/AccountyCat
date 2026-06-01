@@ -424,6 +424,9 @@ extension AppController {
             cancelRuntimeInstall()
             pendingLocalModelChange = nil
             modelDownloadNotice = nil
+            prewarmTask?.cancel()
+            prewarmTask = nil
+            localModelWarmupState = .idle
             Task { [localModelRuntime] in
                 await localModelRuntime.scheduleShutdown(
                     after: 130,  // keep it long so that if user accidently swithces to byok, its not restarted for nothing AND importantly: so that pending local requests still work
@@ -449,6 +452,10 @@ extension AppController {
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState(persist: false)
         persistState()
+        // Switching to Local would otherwise make the first query pay a full cold
+        // model-load + prefill. Warm it now (no-ops for OpenRouter or a not-yet-
+        // downloaded model).
+        schedulePrewarmIfNeeded()
         logActivity("monitoring", "Inference backend: \(backend.rawValue)")
     }
 
@@ -1143,6 +1150,7 @@ extension AppController {
 
         if newStatus == .ready {
             configureBrainIfNeeded()
+            schedulePrewarmIfNeeded()
             onboardingCompletionTask?.cancel()
             onboardingDismissed = false
             showingOnboardingCompletion = true

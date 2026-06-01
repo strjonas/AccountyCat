@@ -151,12 +151,48 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 
 - `-ngl 999` to offload all supported layers to Metal
 - `--threads <perf-core-count>` where the count comes from `hw.perflevel0.physicalcpu` when available, else `ProcessInfo.processInfo.activeProcessorCount`
+- `--threads-batch <perf-core-count>` for prompt processing
+- `--parallel 2` so the chat prefix and the (larger) monitoring-decision prefix keep separate warm cache slots — a chat right after a monitor tick (or vice-versa) reuses its cached prefix instead of paying a cold prefill. `--ctx-size` is the total across slots, so it is scaled by the slot count (`sharedServerTotalCtxSize`) to preserve each slot's full per-request window
+- `--reasoning off` / `--reasoning-format none` because local AC stages need short structured answers, not chain-of-thought output
+- `--reasoning-budget 0` as a second guardrail for templates that otherwise emit thinking scaffolding
 - `--cache-type-k q8_0`
 - `--cache-type-v q8_0`
+- `--ctx-checkpoints 512`
+- `--checkpoint-every-n-tokens 512`
 
-Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC currently uses a single shared slot and relies on the fact that the monitoring/system prompts are prefix-stable, so no explicit slot management is needed.
+Prompt caching is enabled on every shared-server request via `cache_prompt: true`. The two cache slots let the prefix-stable chat and decision system prompts stay cached at the same time, so neither evicts the other.
+
+When the backend is local and the model is already installed, AC fires a best-effort, cancellable **prewarm** (`LocalModelRuntime.prewarm`) via `AppController.schedulePrewarmIfNeeded()`: it starts the shared server (paying the one-time model load) and primes the two stable prefixes (the decision system prompt and the chat system prompt, built with the active character so they match real requests) with a 1-token request each. This turns the next real interaction warm — for 9B a cold ~29 s decision becomes a warm ~7 s one. Prewarm yields immediately to any real request and schedules a normal idle shutdown afterwards, so it never fights the existing idle-shutdown path or pins an unused server.
+
+Prewarm runs at launch (`bootstrap()`) and when the backend is switched to Local (`updateMonitoringInferenceBackend`) — the switch case matters because the first query after switching from OpenRouter would otherwise pay the full cold model-load plus prefill. The one cold cost that remains is the very first server start when no warm slot exists yet (e.g. immediately after a fresh install, before any prewarm has completed); this is the inherent model-load-and-prefill latency, not a cache miss.
+
+The chat panel surfaces that case as a short, non-technical local-AI startup notice while AC is proactively warming the local model or while a user message is waiting on a cold local server start. The wording must avoid promising a fixed duration because startup depends on model tier, machine, RAM pressure, and whether macOS still has model pages cached.
 
 KV-cache quantization is a memory-saving tradeoff for local monitoring: q8 K/V materially lowers cache RAM pressure while keeping quality stable on the small Q4/Q5 local models AC targets for v1.0.
+
+Qwen3.5 is a hybrid/recurrent architecture. On the pinned llama.cpp build, prompt
+cache reuse can be limited by that architecture unless the server has context
+checkpoints close enough to the shared prefix. The explicit 512-token checkpoint
+settings preserve partial-prefix reuse for repeated chat/monitoring prompts while
+keeping model judgment intact. Keep local prompt payloads compact, but do not
+replace model judgment with deterministic keyword shortcuts.
+
+The shared server starts with a stable minimum capacity floor instead of the exact
+capacity of the first request. Text-only local models get at least `ctx=4096`,
+`batch=512`, `ubatch=512`; models with a multimodal projector get at least
+`ctx=6144`, `batch=512`, `ubatch=512`. This avoids a common slow path where the
+first lightweight decision starts a small server, then chat or vision forces a
+stop/restart/reload before the next user-visible response. Per-stage prompt
+budget guards still use the stage's requested context window, so this is a
+server reuse floor, not permission for prompts to grow silently. The 512-token
+batch floor is intentional: larger prompt batches make Qwen3.5 context
+checkpoints too sparse to reuse the stable prefix when the volatile tail changes.
+
+Local chat prompts keep stable instructions, profile context, memory, policy
+rules, and recent conversation before volatile app/time/context fields and the
+new user message. That ordering is semantically equivalent to the prior prompt,
+but it lets llama.cpp reuse the stable prefix instead of pre-filling the whole
+chat prompt each turn.
 
 ### Local prompt budgets
 
@@ -164,16 +200,23 @@ The default staged local runtime profile in `ACShared/ACPromptSets.swift` curren
 
 | Stage | ctxSize | batchSize | ubatchSize |
 | --- | --- | --- | --- |
-| `perception_vision` | 6144 | 2048 | 512 |
+| `perception_vision` | 6144 | 512 | 512 |
 | `perception_title` | 2048 | 512 | 256 |
 | `decision` | 3072 | 512 | 256 |
 | `online_decision` | 3072 | 512 | 256 |
 | `nudge_copy` | 2048 | 512 | 256 |
 | `appeal_review` | 2048 | 512 | 256 |
 | `policy_memory` | 3072 | 512 | 256 |
-| `safelist_appeal` | 2048 | 768 | 384 |
+| `safelist_appeal` | 2048 | 512 | 384 |
 
-The shared server therefore runs at the largest requested capacity (`ctxSize = 6144` for the vision stage) and smaller text stages reuse that server without forcing a restart.
+The shared server therefore runs at the largest requested capacity floor (`ctxSize = 6144` for the vision stage) and smaller text stages reuse that server without forcing a restart.
+
+The local title-only pipeline intentionally uses a single decision stage rather
+than a separate title-perception prepass. Qwen3.5 9B is too slow for multi-call
+text-only monitoring on Apple Silicon, and the decision prompt already carries
+the title, app, usage, memory, rules, and worked examples needed for the model to
+judge the case directly. Vision monitoring remains split because screenshot
+perception is a different modality.
 
 ### Prompt overflow guard
 
@@ -207,6 +250,17 @@ Model selection is split by text vs image where supported:
 - `localModelIdentifierImage`
 
 `AITier` supplies the user-facing defaults.
+
+For local onboarding recommendations (`AITier.recommendedLocalTier`): ≤16 GB → Economy
+(`Qwen3.5 4B`), ≤64 GB → Default (`Qwen3.5 9B`), >64 GB → Smartest (`Qwen3.6 27B`).
+Typical Apple-Silicon Macs — including the base M-series at 32 GB — recommend the 9B
+**Default**, not 4B. A head-to-head local eval (4B vs 9B, critical/high focus guards)
+showed 4B materially regresses judgment: it broke a false-positive guard (over-nudging a
+legitimate coding tutorial under a broad profile), under-reacted to sustained off-task
+drift, and mislabelled productive work as a break — while 9B held all of them. The 9B
+default was slow on the M4 only because of *cold* prefill; that is addressed by warming
+the runtime (prewarm + dual cache slots, above), not by shipping a faster-but-weaker
+model. 4B stays available as a manual choice and as the recommendation for ≤16 GB Macs.
 
 ## Limited Trial Redemption
 

@@ -130,6 +130,7 @@ struct ChatPanelView: View {
             }
         }
         .animation(.acFade, value: controller.learnedToast?.id)
+        .animation(.acFade, value: controller.localModelWarmupState)
         .acAccent(for: controller.state)
         .environment(\.characterPortraitRevision, controller.portraitRevision)
         .animation(.acFade, value: controller.state.character)
@@ -304,6 +305,23 @@ struct ChatPanelView: View {
                 .background(Color.yellow.opacity(0.07))
             }
 
+            if let warmupMessage = localModelWarmupMessage {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.72)
+                    Text(warmupMessage)
+                        .font(.ac(11, weight: .medium))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(accent.opacity(0.08))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             if controller.state.setupStatus == .ready
                 && !controller.showingOnboardingCompletion
             {
@@ -355,6 +373,19 @@ struct ChatPanelView: View {
 
     private var needsOnboarding: Bool {
         controller.state.setupStatus != .ready || controller.showingOnboardingCompletion
+    }
+
+    private var localModelWarmupMessage: String? {
+        guard controller.state.monitoringConfiguration.inferenceBackend == .local,
+              controller.state.setupStatus == .ready else { return nil }
+        switch controller.localModelWarmupState {
+        case .warming:
+            return "Getting local AI ready. The first local reply can take a little longer; later replies are usually faster."
+        case .startingForRequest:
+            return "Starting local AI. This can take a little longer while the model loads; later replies are usually faster."
+        case .idle, .ready:
+            return nil
+        }
     }
 
     private var panelBackground: some View {
@@ -518,4 +549,3 @@ private struct SessionCelebrationCard: View {
         )
     }
 }
-

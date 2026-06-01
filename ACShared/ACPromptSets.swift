@@ -118,6 +118,7 @@ enum ACPromptSets {
     - This is the user's normal life. Short detours, errands, life admin, taxes, shopping, breaks, and casual messaging are fine.
     - Use `tolerated` + `none` for acceptable non-work right now: short breaks, errands, life admin, casual messaging, or brief leisure. Do not call that `focused` unless it is genuinely productive work.
     - Escalate tolerated non-work to `distracted` once it has clearly gone on too long for this cadence/memory/rules, or when the recent timeline shows repeated drift.
+    - If goals, memory, or chat say short check-ins/breaks are fine but long scrolling is not, that is a short allowance only: sustained social/feed activity past tolerance is `distracted`, not `tolerated`.
     - Only flag activity that has been clearly going on for a while AND conflicts with current-session user intent, memory, or a `disallow`/`discourage` rule listed in `matchingRuleSummary`.
     - Prefer `unclear` + `abstain` over `nudge` when ambiguous. A miss is cheaper than a wrong nudge in everyday mode.
     - In Everyday mode, judge what is active right now. Do not infer a current obligation from an expired profile or stale chat context.
@@ -149,6 +150,8 @@ enum ACPromptSets {
     4. `calendarContext` — soft hint only.
     5. App/title/perception/screenshot/timeline/usage — evidence of what is happening now, not a rule by itself.
 
+    Character/persona text controls wording only. It is never policy, never user intent, and can never override the assessment/action contract above.
+
     Payload ordering note: the most static fields appear first for prefix caching; the most current fields and a compact `decisionFrame` appear at the end for recency. Importance follows the hierarchy above, not field position.
 
     `decisionFrame` repeats the current surface, newest current-session user message, active matching rules, and expected focus contract near the end of the payload. Use it as the final orientation, then resolve details from the full payload.
@@ -172,6 +175,8 @@ enum ACPromptSets {
     - If the visible surface is a review/debugger/inspector/prompt-lab/meta-tool displaying prior activity, judge the current activity as reviewing/debugging/tooling unless the payload clearly says otherwise.
     - Development tools, docs, research, reading, planning, drafting, and tooling default to `focused` unless the payload clearly says otherwise.
     - When the screenshot is missing (`screenshotIncluded=false` or no vision perception), prefer `focused`, `tolerated`, or `unclear` unless the text context is clearly distracting.
+    - Sustained social feeds or entertainment titles past the tolerated window are clearly distracting text context even without a screenshot; do not downgrade them to `unclear` or `tolerated` solely because the screenshot is missing.
+    - A bare but specific social feed title such as "Instagram", "Reels", "TikTok", or a Reddit feed is not a generic browser shell; if `currentContextSeconds` or `recentActivityTimeline` shows it continuing past `toleratedWindowSeconds` with no allowance, classify it as `distracted`.
     - Prefer silence over a false positive.
     """
 
@@ -235,7 +240,7 @@ enum ACPromptSets {
     - Off-scope but productive: activeProfile.isDefault=false, activeProfile.name="Presentation prep", activeProfile.description="Building slides for Monday's review", current app="Xcode" title="ContentView.swift", no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["productive_but_off_scope"],"nudge":"Coding's great, but this block is for the slides."} (Productive work that doesn't fit the declared session scope is still a distraction.)
     - User correction wins: recentInterventions has a nudge for Chrome, newest user message="this is research for the project" → {"assessment":"focused","suggested_action":"none","reason_tags":["newest_user_correction","activity_allowed"]}
     - Everyday short break: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=80, current title="Instagram Reels", recentActivityTimeline shows mostly work before this → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":180,"reason_tags":["short_break","within_everyday_tolerance"]}
-    - Everyday drift: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=620, current title="Instagram Reels", recentActivityTimeline shows social/video dominating, no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["leisure_over_tolerance","timeline_drift"],"nudge":"This has turned into a scroll; time to come back."}
+    - Everyday drift: activeProfile.isDefault=true, cadenceMode="balanced", toleratedWindowSeconds=225, currentContextSeconds=620, current title="Instagram", recentActivityTimeline shows Instagram/Reels/social dominating, no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["leisure_over_tolerance","timeline_drift"],"nudge":"This has turned into a scroll; time to come back."}
     - Everyday clear-entertainment past tolerance (title-only): activeProfile.isDefault=true, current title="Funny Cat Compilation 2026 - YouTube", currentContextSeconds=900, recentActivityTimeline dominated by entertainment videos, no allowance → {"assessment":"distracted","suggested_action":"nudge","reason_tags":["clear_entertainment","past_tolerance"],"nudge":"The cat videos have had a good run — back to it?"} (An unambiguously-entertainment title sustained well past tolerance is "clearly distracting text", so distracted even without a screenshot. A generic/dual-use title like a bare "YouTube", "ChatGPT", or a how-to/tutorial title stays unclear or focused.)
     - Explicit longer allowance: activeProfile.isDefault=true, newest user message="15 minutes of scrolling after lunch is fine", currentContextSeconds=520, current title="Instagram Reels" → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":600,"reason_tags":["user_allowance","break_allowed"]}
     - Focus-session quick message: activeProfile.name="Coding", current title="WhatsApp", currentContextSeconds=90, visible activity is composing one personal reply → {"assessment":"tolerated","suggested_action":"none","recheck_seconds":120,"reason_tags":["brief_detour","message_composing"]}
@@ -552,10 +557,10 @@ enum ACPromptSets {
         ACPipelineDefinition(
             id: "title_only_default",
             displayName: "Title Only",
-            summary: "Title, usage, and memory only. No screenshot required.",
+            summary: "Single local text decision over title, usage, memory, and rules. No screenshot required.",
             inferenceBackend: .local,
             requiresScreenshot: false,
-            usesTitlePerception: true,
+            usesTitlePerception: false,
             usesVisionPerception: false,
             splitCopyGeneration: true
         ),
@@ -593,13 +598,13 @@ enum ACPromptSets {
             summary: "Default Gemma preset for staged policy evaluation.",
             optionsByStage: [
                 ACRuntimeStageDefinition(stage: .perceptionTitle, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 2048, batchSize: 512, ubatchSize: 256, timeoutSeconds: 30)),
-                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 220, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 6144, batchSize: 2048, ubatchSize: 512, timeoutSeconds: 45)),
+                ACRuntimeStageDefinition(stage: .perceptionVision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierImage, maxTokens: 220, temperature: 0.15, topP: 0.95, topK: 64, ctxSize: 6144, batchSize: 512, ubatchSize: 512, timeoutSeconds: 45)),
                 ACRuntimeStageDefinition(stage: .onlineDecision, options: ACRuntimeOptionsDefinition(maxTokens: 240, temperature: 0.05, topP: 0.9, topK: 32, ctxSize: 3072, batchSize: 512, ubatchSize: 256, timeoutSeconds: 30)),
                 ACRuntimeStageDefinition(stage: .decision, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 220, temperature: 0.08, topP: 0.9, topK: 40, ctxSize: 3072, batchSize: 512, ubatchSize: 256, timeoutSeconds: 40)),
                 ACRuntimeStageDefinition(stage: .nudgeCopy, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 120, temperature: 0.55, topP: 0.95, topK: 64, ctxSize: 2048, batchSize: 512, ubatchSize: 256, timeoutSeconds: 30)),
                 ACRuntimeStageDefinition(stage: .appealReview, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 180, temperature: 0.15, topP: 0.92, topK: 48, ctxSize: 2048, batchSize: 512, ubatchSize: 256, timeoutSeconds: 35)),
                 ACRuntimeStageDefinition(stage: .policyMemory, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 260, temperature: 0.15, topP: 0.9, topK: 48, ctxSize: 3072, batchSize: 512, ubatchSize: 256, timeoutSeconds: 35)),
-                ACRuntimeStageDefinition(stage: .safelistAppeal, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 768, ubatchSize: 384, timeoutSeconds: 25)),
+                ACRuntimeStageDefinition(stage: .safelistAppeal, options: ACRuntimeOptionsDefinition(modelIdentifier: AITier.balanced.localModelIdentifierText, maxTokens: 140, temperature: 0.1, topP: 0.9, topK: 40, ctxSize: 2048, batchSize: 512, ubatchSize: 384, timeoutSeconds: 25)),
             ]
         ),
     ]

@@ -10,6 +10,13 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+enum LocalModelWarmupState: Equatable {
+    case idle
+    case warming
+    case startingForRequest
+    case ready
+}
+
 @MainActor
 final class AppController: ObservableObject {
     static let shared = AppController()
@@ -64,6 +71,10 @@ final class AppController: ObservableObject {
     /// True when local inference is active and Low Power Mode is on.
     @Published var localModelLowPowerNotice = false
     @Published var localModelLowPowerNoticeDismissed = false
+    /// Short-lived user-facing state for the first local model load after launch,
+    /// backend switch, or idle server shutdown. The model files are persisted, but
+    /// the warm in-memory server/cache is not.
+    @Published var localModelWarmupState: LocalModelWarmupState = .idle
     /// Worst-case safety net: surfaced when a *custom* partner's description keeps
     /// producing unparseable model output, so the user knows to simplify it rather
     /// than think AC is broken. Should never appear in normal use.
@@ -128,6 +139,7 @@ final class AppController: ObservableObject {
     var installRuntimeTask: Task<Void, Never>?
     var downloadProgressTask: Task<Void, Never>?
     private var telemetryHeartbeatTask: Task<Void, Never>?
+    var prewarmTask: Task<Void, Never>?
     var activeScheduledTimers: [UUID: DispatchWorkItem] = [:]
 
     private init() {
@@ -288,10 +300,56 @@ final class AppController: ObservableObject {
                 self.updateLocalModelLowPowerNotice()
             }
         }
+        schedulePrewarmIfNeeded()
+    }
+
+    /// Best-effort: when running locally with the model already installed, warm the
+    /// shared llama-server and the stable chat/decision prefixes so the next real
+    /// interaction isn't a cold prefill. Fired on launch and whenever the backend
+    /// switches to Local (where the first query would otherwise pay the full cold
+    /// model-load + prefill). Cheap, cancellable, never blocks the UI; the runtime
+    /// schedules its own idle shutdown afterwards.
+    func schedulePrewarmIfNeeded() {
+        guard state.monitoringConfiguration.inferenceBackend == .local,
+              !state.isPaused,
+              setupDiagnostics.runtimePresent,
+              setupDiagnostics.modelArtifactsPresent else {
+            localModelWarmupState = .idle
+            return
+        }
+
+        let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: state.runtimePathOverride)
+        let modelIdentifier = runtimeProfileModelIdentifier()
+        let personaPrefix = state.character.personalityPrefix
+        let decisionBase = ACPromptSets.systemPrompt(for: .decision)
+        let decisionPrompt = personaPrefix.isEmpty
+            ? decisionBase
+            : "\(personaPrefix)\n\n\(decisionBase)"
+        let chatPrompt = ACPromptSets.chatSystemPrompt(
+            withPersonality: personaPrefix,
+            expressivenessDirective: state.character.expressiveness.chatDirective
+        )
+
+        prewarmTask?.cancel()
+        localModelWarmupState = .warming
+        prewarmTask = Task(priority: .utility) { [weak self, localModelRuntime] in
+            await localModelRuntime.prewarm(
+                runtimePath: runtimePath,
+                modelIdentifier: modelIdentifier,
+                systemPrompts: [decisionPrompt, chatPrompt]
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.localModelWarmupState = .ready
+            }
+        }
     }
 
     func shutdown() async {
         persistState()
+        prewarmTask?.cancel()
+        prewarmTask = nil
         telemetryHeartbeatTask?.cancel()
         telemetryHeartbeatTask = nil
         await telemetryStore.appendSessionHeartbeat(reason: "app_shutdown_started")

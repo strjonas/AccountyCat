@@ -22,7 +22,6 @@ struct LLMMonitorAlgorithmTests {
         #expect(result.policy.action == .showNudge("Back to the build."))
         #expect(result.decision.nudge == "Back to the build.")
         #expect(result.evaluation.attempts.map(\.promptMode) == [
-            "perception_title",
             "decision",
             "nudge_copy",
         ])
@@ -74,7 +73,6 @@ struct LLMMonitorAlgorithmTests {
         }
 
         #expect(result.evaluation.attempts.map(\.promptMode) == [
-            "perception_title",
             "decision",
         ])
         #expect(result.updatedAlgorithmState.llmPolicy.activeAppeal?.evaluationID == "eval-overlay")

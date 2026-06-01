@@ -77,7 +77,7 @@ Run fully on-device through `llama.cpp` with the Qwen multimodal family. No acco
 | Tier | Model | RAM footprint | Notes |
 | --- | --- | --- | --- |
 | Economy | Qwen 3.5 4B | ~2-3 GB | Best for 8 GB Macs |
-| Default | Qwen 3.5 9B | ~5-7 GB | Recommended for most users |
+| Default | Qwen 3.5 9B | ~6-8 GB | Recommended for most users |
 | Smartest | Qwen 3.6 27B | ~15-18 GB | Best local quality |
 
 \* Real cost depends on how much you use your Mac. Early usage can be slightly higher before AC has learned your common on-task contexts.

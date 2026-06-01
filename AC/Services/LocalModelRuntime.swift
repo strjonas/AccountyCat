@@ -328,6 +328,38 @@ actor LocalModelRuntime {
         )
     }
 
+    /// Best-effort keep-warm: start the shared server (paying the model load once) and
+    /// prime the supplied stable system-prompt prefixes so the user's first real
+    /// chat/decision pays a warm prefill instead of a cold one (for 9B this turns a
+    /// ~29 s cold decision into a ~7 s warm one). Never throws, yields immediately to
+    /// any real request already in flight, and schedules a normal idle shutdown
+    /// afterwards so an unused warm server still releases its memory.
+    func prewarm(
+        runtimePath: String,
+        modelIdentifier: String,
+        systemPrompts: [String]
+    ) async {
+        for systemPrompt in systemPrompts where !systemPrompt.isEmpty {
+            if Task.isCancelled { break }
+            // A real user/monitor request always wins — never compete for the server.
+            guard !hasInteractiveRequestInFlight() else { break }
+            _ = try? await withInteractiveRequest { [self, systemPrompt] in
+                try await self.runTextInference(
+                    runtimePath: runtimePath,
+                    modelIdentifier: modelIdentifier,
+                    systemPrompt: systemPrompt,
+                    userPrompt: "ok",
+                    options: Self.prewarmOptions()
+                )
+            }
+        }
+        // Don't pin the server on forever; let it idle out if the user never engages.
+        // Any real request cancels this, and the monitor's cadence keeps it warm.
+        if !Task.isCancelled {
+            scheduleShutdown(after: Self.prewarmIdleShutdownSeconds, reason: "post_prewarm_idle")
+        }
+    }
+
     func shutdown() async {
         scheduledShutdownTask?.cancel()
         scheduledShutdownTask = nil
@@ -353,6 +385,10 @@ actor LocalModelRuntime {
 
     func hasInteractiveRequestInFlight() -> Bool {
         activeInteractiveRequests > 0
+    }
+
+    func isSharedServerRunning() -> Bool {
+        sharedServer?.process.isRunning == true
     }
 
     func withInteractiveRequest<T>(
@@ -468,9 +504,12 @@ actor LocalModelRuntime {
                 modelIdentifier: modelIdentifier,
                 modelPath: artifacts.modelPath,
                 multimodalProjectorPath: artifacts.multimodalProjectorPath,
-                ctxSize: effectiveOptions.ctxSize,
-                batchSize: effectiveOptions.batchSize,
-                ubatchSize: effectiveOptions.ubatchSize
+                ctxSize: Self.sharedServerTotalCtxSize(
+                    requested: effectiveOptions.ctxSize,
+                    hasVisionProjector: artifacts.multimodalProjectorPath != nil
+                ),
+                batchSize: max(effectiveOptions.batchSize, Self.sharedServerBatchSizeFloor),
+                ubatchSize: max(effectiveOptions.ubatchSize, Self.sharedServerUBatchSizeFloor)
             )
         )
 
@@ -658,6 +697,8 @@ actor LocalModelRuntime {
             promptTokens: prompt,
             completionTokens: completion,
             totalTokens: usage["total_tokens"] as? Int,
+            cacheReadTokens: (usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int,
+            imageTokens: (usage["prompt_tokens_details"] as? [String: Any])?["image_tokens"] as? Int,
             estimated: false
         )
     }
@@ -728,13 +769,19 @@ actor LocalModelRuntime {
             "--ctx-size", String(config.ctxSize),
             "--batch-size", String(config.batchSize),
             "--ubatch-size", String(config.ubatchSize),
+            "--parallel", String(Self.sharedServerSlotCount),
             "--reasoning", "off",
+            "--reasoning-format", "none",
             "--no-webui",
             "-a", config.modelIdentifier,
             "-ngl", "999",
             "--threads", String(Self.sharedServerThreadCount),
+            "--threads-batch", String(Self.sharedServerThreadCount),
             "--cache-type-k", "q8_0",
             "--cache-type-v", "q8_0",
+            "--ctx-checkpoints", "512",
+            "--checkpoint-every-n-tokens", "512",
+            "--reasoning-budget", "0",
         ]
         if let multimodalProjectorPath = config.multimodalProjectorPath {
             arguments.append(contentsOf: ["--mmproj", multimodalProjectorPath])
@@ -1151,6 +1198,37 @@ actor LocalModelRuntime {
     }
 
     private nonisolated static let sharedServerThreadCount = perfCoreCount()
+    private nonisolated static let sharedServerTextCtxSizeFloor = 4_096
+    private nonisolated static let sharedServerVisionCtxSizeFloor = 6_144
+    private nonisolated static let sharedServerBatchSizeFloor = 512
+    private nonisolated static let sharedServerUBatchSizeFloor = 512
+
+    /// llama-server cache slots. Two slots let the chat prefix and the (larger)
+    /// monitoring-decision prefix stay warm at the same time, so a chat right after a
+    /// monitor tick — and vice-versa — reuses its cached prefix instead of paying a
+    /// cold prefill. `--ctx-size` is the total across slots, so it is scaled by this
+    /// count (see `sharedServerTotalCtxSize`) to preserve each slot's full window.
+    private nonisolated static let sharedServerSlotCount = 2
+
+    private nonisolated static func sharedServerCtxSizeFloor(
+        requested: Int,
+        hasVisionProjector: Bool
+    ) -> Int {
+        let floor = hasVisionProjector ? sharedServerVisionCtxSizeFloor : sharedServerTextCtxSizeFloor
+        return max(requested, floor)
+    }
+
+    /// Total `--ctx-size` for the shared server: the per-slot floor times the slot
+    /// count, so each of the `--parallel` slots keeps the full per-request window
+    /// (a naive `--parallel 2` would otherwise halve every slot and truncate the
+    /// decision prompt).
+    private nonisolated static func sharedServerTotalCtxSize(
+        requested: Int,
+        hasVisionProjector: Bool
+    ) -> Int {
+        sharedServerCtxSizeFloor(requested: requested, hasVisionProjector: hasVisionProjector)
+            * sharedServerSlotCount
+    }
 
     private nonisolated static func processEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
@@ -1537,8 +1615,8 @@ actor LocalModelRuntime {
             topP: 0.95,
             topK: 64,
             ctxSize: 2048,
-            batchSize: 2048,
-            ubatchSize: 2048,
+            batchSize: 512,
+            ubatchSize: 512,
             timeoutSeconds: 45
         )
     }
@@ -1553,6 +1631,25 @@ actor LocalModelRuntime {
             batchSize: 1024,
             ubatchSize: 512,
             timeoutSeconds: 45
+        )
+    }
+
+    /// How long an idle server lingers after a prewarm with no real activity.
+    private nonisolated static let prewarmIdleShutdownSeconds: UInt64 = 240
+
+    /// Generate a single token (we only want the prefill cached). Context/batch match
+    /// the text-decision floors so the shared server is sized exactly as a real text
+    /// request would size it, and the first decision/chat reuses it without a restart.
+    private nonisolated static func prewarmOptions() -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            maxTokens: 1,
+            temperature: 0.0,
+            topP: 1.0,
+            topK: 1,
+            ctxSize: sharedServerTextCtxSizeFloor,
+            batchSize: sharedServerBatchSizeFloor,
+            ubatchSize: sharedServerUBatchSizeFloor,
+            timeoutSeconds: 60
         )
     }
 }

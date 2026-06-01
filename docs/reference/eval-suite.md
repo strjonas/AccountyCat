@@ -89,7 +89,7 @@ AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval
 
 - **`xcodebuild` does not forward the runner's environment to the test host.** Both `seed` and `run` therefore gate on a short-lived handoff file at a fixed `/tmp` path (`allowTestHostRun: true` + `expiresAt`), read directly by the test (`ACEvalSeedTests` / `AgentEvalCommandRunnerTests`). Env-only gating silently no-ops.
 - **A single online run uses one `--online-model`.** Title-only cases need the text model; vision cases need the vision model. Run them as two invocations.
-- **Clear stale `debugserver` / `xcodebuild` / `AC.app` test-host processes between runs.** A leftover `debugserver` from a prior session wedged the test-host launch and hung `xcodebuild test` indefinitely (the build itself was fine — `build-for-testing` completed in 2s). If a run appears stuck, `pkill -f LLDB.framework/Resources/debugserver` and retry. (`AGENTS.md` warns about this.)
+- **Clear stale `debugserver` / `xcodebuild` / `AC.app` test-host processes between runs.** A leftover `debugserver` from a prior session wedged the test-host launch and hung `xcodebuild test` indefinitely (the build itself was fine — `build-for-testing` completed in 2s). If a run appears stuck, `pkill -f LLDB.framework/Resources/debugserver` and retry. (`AGENTS.md` warns about this.) For the same reason, do **not** run cases as a tight shell loop of back-to-back `xcodebuild test` invocations: the prior iteration's test host can wedge the next one, which then silently no-ops on the expired handoff. Run repeats as separate invocations, warm-building first (`build-for-testing`) so the test host launches inside the handoff window, and `pkill` stale processes before each.
 - **Vision fixtures are local, not git.** `SyntheticEvalCases` references them under `~/Library/Application Support/AC/evals/fixtures/vision/` via `homeDirectoryForCurrentUser` (no hardcoded path). If a fixture is missing, the seeder *skips* that case rather than silently downgrading it to title-only. On a fresh machine the vision cases simply won't seed until screenshots are placed there.
 
 ## Results snapshot (2026-05-30, balanced online tier, v1.04)
@@ -99,6 +99,15 @@ AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval
 Two known limitations remain (see below). They are a rare hard case and a secondary-surface reliability gap — not core monitoring bugs.
 
 > **v1.04 note:** during release prep a prior agent added ~219 lines of deterministic keyword overrides to `LLMMonitorAlgorithm.swift` + a hardcoded chat-action parser to `CompanionChatService.swift` to force these flappy cases green. That was reverted: it green-washes the suite and ships brittle naive-`contains()` rules that cause production false-positive nudges. Borderline flash flapping is accepted, not patched per-fixture. See `docs/core/north-star.md` and the calibration lessons below.
+
+### Local model tier: 4B vs 9B (why Default stays 9B)
+
+The suite also runs on the **local** backend per tier (the runner pins the local model in `AgentEvalRunnerTests.evaluateFocus`; swap `AITier.balanced` → `.economy` there to test 4B). A head-to-head on the 24 critical/high focus guards (M4 / 32 GB) decided whether base Apple-Silicon Macs should default to the faster Qwen3.5 **4B** instead of 9B:
+
+- **9B: 22/24, stable** — the 2 misses are the documented variance cases (`syn-char-safety-disable-nudges`, `syn-everyday-drift-instagram`).
+- **4B: 18/24, and the 4 extra misses are stable across reruns** (3–4×), not flapping. Most importantly they include a broken **false-positive guard**: `syn-session-broad-tutorial-focused` (a coding tutorial under a *broad* "Coding" profile) is over-nudged `distracted/nudge` in 3 of 4 runs, where 9B holds `focused/none`. 4B also under-reacts to sustained off-task drift (`syn-session-offtask-shopping`) and mislabels productive work (`syn-everyday-work-*`) as a break.
+
+Conclusion: 4B materially regresses judgment, so `recommendedLocalTier()` keeps **9B as the Default** for typical Macs (≤16 GB → 4B Economy, ≤64 GB → 9B Default, else 27B). 9B's interactive latency on the M4 is addressed by warming the runtime (prewarm + dual cache slots in `LocalModelRuntime`), not by shipping a weaker model. Practically, 9B is currently the local intelligence floor — going lower fails the false-positive guards, so further local speedups must preserve it (e.g. a fine-tuned 9B-class model or a future smaller-but-smarter base model), not trade it down.
 
 ## Known limitations (v2 targets)
 

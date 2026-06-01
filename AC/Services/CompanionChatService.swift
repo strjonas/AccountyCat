@@ -222,7 +222,8 @@ actor CompanionChatService {
                             runtimePath: runtimePath,
                             modelIdentifier: localTextModelIdentifier,
                             systemPrompt: systemPrompt,
-                            userPrompt: prompt
+                            userPrompt: prompt,
+                            options: Self.localChatOptions()
                         )
                     }
                     let interactionID = await LLMTelemetryRecorder.shared.record(
@@ -431,6 +432,19 @@ actor CompanionChatService {
         )
     }
 
+    nonisolated private static func localChatOptions() -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            maxTokens: 220,
+            temperature: 0.45,
+            topP: 0.95,
+            topK: 64,
+            ctxSize: 4096,
+            batchSize: 512,
+            ubatchSize: 512,
+            timeoutSeconds: 30
+        )
+    }
+
     private static func makeChatPrompt(
         userMessage: String,
         goals: String,
@@ -471,28 +485,9 @@ actor CompanionChatService {
                 """
         }
 
+        // Keep volatile context and the new message near the tail so llama.cpp can reuse
+        // the stable prefix between local chat turns.
         return """
-            [Context — use only if directly helpful, never be invasive]
-            Frontmost app: \(context.frontmostAppName)
-            Window: \(context.frontmostWindowTitle ?? "—")
-            Idle: \(Int(context.idleSeconds))s
-            Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
-            Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
-            Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
-
-            \(profileContext)
-            [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
-            \(memorySection)
-
-            [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
-            \(policyRulesSection)
-
-            [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
-            \(historySection)
-
-            [New user message]
-            \(userMessage.cleanedSingleLine)
-
             Reply in your character's voice — that persona is who the user hears; you are their focus companion underneath, but the character is who shows up. The one thing the voice never overrides: you are on the user's side — never demean them, and if they're low or struggling, warmth comes first, then the nudge.
             Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
             \(workflowInstruction)
@@ -508,6 +503,27 @@ actor CompanionChatService {
             or with actions: {"reply":"your response","actions":[{"kind":"profile","instruction":"start coding for one hour"}],"schedule":null}
             or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","actions":[],"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
             No markdown outside the JSON value. No other keys.
+
+            \(profileContext)
+            [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
+            \(memorySection)
+
+            [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
+            \(policyRulesSection)
+
+            [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
+            \(historySection)
+
+            [Context — use only if directly helpful, never be invasive]
+            Frontmost app: \(context.frontmostAppName)
+            Window: \(context.frontmostWindowTitle ?? "—")
+            Idle: \(Int(context.idleSeconds))s
+            Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
+            Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
+            Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
+
+            [New user message]
+            \(userMessage.cleanedSingleLine)
             """
     }
 

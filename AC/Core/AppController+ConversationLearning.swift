@@ -169,40 +169,54 @@ extension AppController {
                     actions: [],
                     schedule: nil
                 )
-            } else if let response = await companionChatService.chat(
-                userMessage: cappedDraft,
-                goals: state.goalsText,
-                recentActions: state.recentActions,
-                context: makeChatContext(),
-                history: boundedHistory,
-                memory: renderedMemory,
-                policyRules: renderedPolicyRules,
-                character: state.character,
-                activeProfileContext: profileContext,
-                runtimeOverride: state.runtimePathOverride,
-                inferenceBackend: backend,
-                onlineModelIdentifier: onlineModelIdentifier,
-                onlineTextModelIdentifier: onlineTextModelIdentifier,
-                localTextModelIdentifier: localTextModelIdentifier,
-                workflow: chatWorkflow
-            ) {
-                result = response
-                modelProducedOutput = true
             } else {
-                result = CompanionChatResult(
-                    reply: usingOnline
-                        ? (directOpenAIEnabled
-                            ? "Couldn't reach OpenAI. Check the API key, your connection, and the model name."
-                            : "Couldn't reach OpenRouter. Check the API key, your connection, and the model name.")
-                        : "I couldn't answer just now. Check the logs and local runtime status.",
-                    actions: [],
-                    schedule: nil
-                )
+                if !usingOnline {
+                    let serverRunning = await localModelRuntime.isSharedServerRunning()
+                    if !serverRunning {
+                        await MainActor.run {
+                            self.localModelWarmupState = .startingForRequest
+                        }
+                    }
+                }
+
+                if let response = await companionChatService.chat(
+                    userMessage: cappedDraft,
+                    goals: state.goalsText,
+                    recentActions: state.recentActions,
+                    context: makeChatContext(),
+                    history: boundedHistory,
+                    memory: renderedMemory,
+                    policyRules: renderedPolicyRules,
+                    character: state.character,
+                    activeProfileContext: profileContext,
+                    runtimeOverride: state.runtimePathOverride,
+                    inferenceBackend: backend,
+                    onlineModelIdentifier: onlineModelIdentifier,
+                    onlineTextModelIdentifier: onlineTextModelIdentifier,
+                    localTextModelIdentifier: localTextModelIdentifier,
+                    workflow: chatWorkflow
+                ) {
+                    result = response
+                    modelProducedOutput = true
+                } else {
+                    result = CompanionChatResult(
+                        reply: usingOnline
+                            ? (directOpenAIEnabled
+                                ? "Couldn't reach OpenAI. Check the API key, your connection, and the model name."
+                                : "Couldn't reach OpenRouter. Check the API key, your connection, and the model name.")
+                            : "I couldn't answer just now. Check the logs and local runtime status.",
+                        actions: [],
+                        schedule: nil
+                    )
+                }
             }
 
             await MainActor.run {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
                 self.noteUsedModel(result.usedModelIdentifier)
+                if !usingOnline {
+                    self.localModelWarmupState = modelProducedOutput ? .ready : .idle
+                }
                 if modelProducedOutput {
                     self.noteChatParseOutcome(structured: result.structuredParse)
                 }

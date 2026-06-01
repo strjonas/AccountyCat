@@ -219,7 +219,7 @@ actor OnlineModelService: OnlineModelServing {
 
     private enum ParallelInferenceResult: Sendable {
         case success(RuntimeProcessOutput)
-        case failure(String)
+        case failure(message: String, onlineError: OnlineModelError?)
     }
 
     init(session: URLSession? = nil) {
@@ -556,19 +556,30 @@ actor OnlineModelService: OnlineModelServing {
                     do {
                         return .success(try await self.runInference(request))
                     } catch {
-                        return .failure(error.localizedDescription)
+                        return .failure(message: error.localizedDescription, onlineError: error as? OnlineModelError)
                     }
                 }
             }
             var failures: [String] = []
+            // Preserve a typed billing/credit failure so the parallel safety-net path
+            // surfaces the budget-specific message (CompanionChatService.fallbackReply
+            // and the monitoring fallbacks both key off `isBillingOrCreditFailure`)
+            // instead of collapsing every failure into a generic "all requests failed".
+            var billingFailure: OnlineModelError?
             for try await result in group {
                 switch result {
                 case let .success(output):
                     group.cancelAll()
                     return output
-                case let .failure(message):
+                case let .failure(message, onlineError):
                     failures.append(message)
+                    if billingFailure == nil, let onlineError, onlineError.isBillingOrCreditFailure {
+                        billingFailure = onlineError
+                    }
                 }
+            }
+            if let billingFailure {
+                throw billingFailure
             }
             throw OnlineModelError.allRequestsFailed(failures)
         }
