@@ -307,9 +307,10 @@ struct ChatPanelView: View {
 
             if let warmupMessage = localModelWarmupMessage {
                 HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.72)
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(accent.opacity(0.95))
+                        .frame(width: 16, height: 16)
                     Text(warmupMessage)
                         .font(.ac(11, weight: .medium))
                         .foregroundStyle(Color.acTextPrimary.opacity(0.88))

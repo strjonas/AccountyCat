@@ -442,7 +442,7 @@ actor CompanionChatService {
             ctxSize: 4096,
             batchSize: 512,
             ubatchSize: 512,
-            timeoutSeconds: 30
+            timeoutSeconds: 120
         )
     }
 
@@ -558,7 +558,7 @@ actor CompanionChatService {
             ctxSize: 4096,
             batchSize: 1024,
             ubatchSize: 512,
-            timeoutSeconds: 35
+            timeoutSeconds: 90
         )
 
         let output: RuntimeProcessOutput

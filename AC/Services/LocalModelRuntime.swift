@@ -779,7 +779,10 @@ actor LocalModelRuntime {
 
             if sharedServer.process.isRunning, sameBinary, sameModel, sameProjector, canReuseCapacity {
                 if !sharedServer.isReady {
-                    try await waitForServerReady(sharedServer, timeoutSeconds: 60)
+                    try await waitForServerReady(
+                        sharedServer,
+                        timeoutSeconds: Self.sharedServerStartupTimeoutSeconds
+                    )
                     sharedServer.isReady = true
                 }
                 return sharedServer
@@ -861,7 +864,10 @@ actor LocalModelRuntime {
         sharedServer = serverHandle
 
         do {
-            try await waitForServerReady(serverHandle, timeoutSeconds: 60)
+            try await waitForServerReady(
+                serverHandle,
+                timeoutSeconds: Self.sharedServerStartupTimeoutSeconds
+            )
             serverHandle.isReady = true
             return serverHandle
         } catch {
@@ -1678,6 +1684,10 @@ actor LocalModelRuntime {
 
     /// How long an idle server lingers after a prewarm with no real activity.
     private nonisolated static let prewarmIdleShutdownSeconds: UInt64 = 240
+
+    /// Cold local startup includes process launch, model load, and llama-server's own
+    /// readiness transition. Do not use the per-request generation timeout here.
+    private nonisolated static let sharedServerStartupTimeoutSeconds: UInt64 = 180
 
     /// Generate a single token (we only want the prefill cached). Context/batch match
     /// the text-decision floors so the shared server is sized exactly as a real text
