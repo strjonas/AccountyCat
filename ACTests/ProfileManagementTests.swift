@@ -678,6 +678,75 @@ struct ProfileManagementTests {
         #expect(ops[0].profileDurationMinutes == 120)
     }
 
+    @Test
+    func parserHandlesExplicitFocusRequest() throws {
+        let coding = FocusProfile(id: "coding-id", name: "Coding")
+        let result = ProfileActionParser.parse(
+            action: "help me focus on coding for an hour",
+            availableProfiles: [coding],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        let ops = try #require(result)
+        #expect(ops[0].type == .activateProfile)
+        #expect(ops[0].profileID == "coding-id")
+        #expect(ops[0].profileDurationMinutes == 60)
+    }
+
+    @Test
+    func profileLifecycleGuardRejectsTaskMentions() {
+        #expect(!AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
+            "We just can't ship junk. I need to fix local mode."
+        ))
+        #expect(AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
+            "Help me focus on coding for an hour."
+        ))
+        #expect(AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
+            "Start coding for one hour."
+        ))
+        #expect(AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
+            "Switch back to Everyday."
+        ))
+    }
+
+    @Test
+    func chatProfileActionsNeedExplicitUserRequest() async throws {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        let originalChatMessages = controller.chatMessages
+        defer {
+            controller.state = originalState
+            controller.chatMessages = originalChatMessages
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        state.profiles.append(FocusProfile(id: "coding-id", name: "Coding"))
+        controller.state = state
+        controller.chatMessages = []
+
+        await controller.processChatActions(
+            [CompanionChatAction(kind: .profile, instruction: "start coding for one hour")],
+            workflow: .staged,
+            latestUserMessage: "We just can't ship junk. I need to fix local mode.",
+            recentMessages: [],
+            context: nil,
+            parentInteractionID: nil
+        )
+
+        #expect(controller.state.activeProfileID == PolicyRule.defaultProfileID)
+
+        await controller.processChatActions(
+            [CompanionChatAction(kind: .profile, instruction: "start coding for one hour")],
+            workflow: .staged,
+            latestUserMessage: "Help me focus on coding for an hour.",
+            recentMessages: [],
+            context: nil,
+            parentInteractionID: nil
+        )
+
+        #expect(controller.state.activeProfileID == "coding-id")
+    }
+
     // MARK: - Soft profile expiry
 
     @Test

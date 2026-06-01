@@ -435,14 +435,14 @@ actor CompanionChatService {
 
     nonisolated private static func localChatOptions() -> RuntimeInferenceOptions {
         RuntimeInferenceOptions(
-            maxTokens: 220,
+            maxTokens: 180,
             temperature: 0.45,
             topP: 0.95,
             topK: 64,
             ctxSize: 4096,
             batchSize: 512,
             ubatchSize: 512,
-            timeoutSeconds: 120
+            timeoutSeconds: 60
         )
     }
 
@@ -550,15 +550,16 @@ actor CompanionChatService {
         let userPrompt = ACPromptSets.renderChatActionExecutorUserPrompt(
             payloadJSON: Self.makeActionPayloadJSON(request)
         )
+        let localActionExecution = request.inferenceBackend == .local
         let options = RuntimeInferenceOptions(
             maxTokens: maxTokens,
             temperature: 0.08,
             topP: 0.9,
             topK: 40,
             ctxSize: 4096,
-            batchSize: 1024,
+            batchSize: localActionExecution ? 512 : 1024,
             ubatchSize: 512,
-            timeoutSeconds: 90
+            timeoutSeconds: localActionExecution ? 45 : 90
         )
 
         let output: RuntimeProcessOutput

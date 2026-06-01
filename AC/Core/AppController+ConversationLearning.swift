@@ -90,9 +90,12 @@ extension AppController {
 
     func sendChatMessage(_ draft: String) {
         let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedDraft.isEmpty, !sendingChatMessage, !resolvingChatActions else { return }
+        guard !trimmedDraft.isEmpty, !sendingChatMessage else { return }
 
         cancelMemoryConsolidationForInteractiveWork()
+        if state.monitoringConfiguration.inferenceBackend == .local {
+            cancelPrewarmForInteractiveChat()
+        }
         chatMessages.append(ChatMessage(role: .user, text: trimmedDraft))
         persistState()
         sendingChatMessage = true
@@ -133,7 +136,12 @@ extension AppController {
                 limit: AppControllerChatSupport.maxChatMessageLength
             )
         }
-        let historyBudget = max(0, AppControllerChatSupport.maxChatContextCharacters - cappedDraft.count)
+        let backend = state.monitoringConfiguration.inferenceBackend
+        let usingOnline = state.monitoringConfiguration.usesOnlineInference
+        let chatContextBudget = usingOnline
+            ? AppControllerChatSupport.maxChatContextCharacters
+            : AppControllerChatSupport.maxLocalChatContextCharacters
+        let historyBudget = max(0, chatContextBudget - cappedDraft.count)
         let boundedHistory = AppControllerChatSupport.limitMessagesByCharacterBudget(
             cappedHistory,
             budget: historyBudget
@@ -146,12 +154,10 @@ extension AppController {
             availableProfiles: state.profiles.filter { $0.id != state.activeProfileID }
         )
 
-        let backend = state.monitoringConfiguration.inferenceBackend
         let chatWorkflow: CompanionChatWorkflow = backend == .openRouter ? .direct : .staged
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
         let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
         let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
-        let usingOnline = state.monitoringConfiguration.usesOnlineInference
         let chatReady = state.setupStatus == .ready &&
             (usingOnline || setupDiagnostics.runtimePresent)
 
@@ -172,8 +178,8 @@ extension AppController {
                 )
             } else {
                 if !usingOnline {
-                    let serverRunning = await localModelRuntime.isSharedServerRunning()
-                    if !serverRunning {
+                    let serverReady = await localModelRuntime.isSharedServerReady()
+                    if !serverReady {
                         await MainActor.run {
                             self.localModelWarmupState = .startingForRequest
                         }
@@ -218,6 +224,7 @@ extension AppController {
                 if !usingOnline {
                     self.localModelWarmupState = modelProducedOutput ? .ready : .idle
                 }
+                self.sendingChatMessage = false
                 if modelProducedOutput {
                     self.noteChatParseOutcome(structured: result.structuredParse)
                 }
@@ -254,7 +261,6 @@ extension AppController {
             )
             await MainActor.run {
                 self.resolvingChatActions = false
-                self.sendingChatMessage = false
             }
             if chatActionsMutateState {
                 self.brainService?.invalidateContextAndCooldown(reason: "chat_actions_applied")
@@ -852,6 +858,22 @@ extension AppController {
             .map { $0.text.cleanedSingleLine }
 
         for action in actions {
+            if action.kind == .profile {
+                guard AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(latestUserMessage) else {
+                    logActivity(
+                        "chat-action",
+                        "Ignored profile action without explicit user request: \(latestUserMessage.cleanedSingleLine)"
+                    )
+                    continue
+                }
+
+                if applyProfileActionFastPath(action, latestUserMessage: latestUserMessage) {
+                    logActivity("chat-action", "Applied fast profile action")
+                    recordExplicitChatStatementSignal(for: action, context: context)
+                    continue
+                }
+            }
+
             if workflow == .direct, applyChatAction(action, context: context) {
                 logActivity("chat-action", "Applied direct \(action.kind.rawValue) action")
                 recordExplicitChatStatementSignal(for: action, context: context)
@@ -866,6 +888,29 @@ extension AppController {
                 parentInteractionID: parentInteractionID
             )
         }
+    }
+
+    @discardableResult
+    func applyProfileActionFastPath(
+        _ action: CompanionChatAction,
+        latestUserMessage: String
+    ) -> Bool {
+        let candidates = [action.instruction, latestUserMessage]
+            .compactMap { $0?.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+
+        for candidate in candidates {
+            if let ops = ProfileActionParser.parse(
+                action: candidate,
+                availableProfiles: state.profiles,
+                activeProfileID: state.activeProfileID
+            ), !ops.isEmpty {
+                applyProfileOperations(ops)
+                return true
+            }
+        }
+
+        return false
     }
 
     func recordExplicitChatStatementSignal(

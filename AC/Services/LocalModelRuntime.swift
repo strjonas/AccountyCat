@@ -358,17 +358,15 @@ actor LocalModelRuntime {
         for prompt in prompts where !prompt.systemPrompt.isEmpty {
             if Task.isCancelled { break }
             // A real user/monitor request always wins — never compete for the server.
-            guard !hasInteractiveRequestInFlight() else { break }
-            _ = try? await withInteractiveRequest { [self, prompt] in
-                try await self.runTextInference(
-                    runtimePath: runtimePath,
-                    modelIdentifier: modelIdentifier,
-                    systemPrompt: prompt.systemPrompt,
-                    userPrompt: "ok",
-                    options: Self.prewarmOptions(),
-                    cacheSlot: prompt.slot
-                )
-            }
+            guard !hasAnyRequestInFlight(), !hasInteractiveRequestInFlight() else { break }
+            _ = try? await runTextInference(
+                runtimePath: runtimePath,
+                modelIdentifier: modelIdentifier,
+                systemPrompt: prompt.systemPrompt,
+                userPrompt: "ok",
+                options: Self.prewarmOptions(),
+                cacheSlot: prompt.slot
+            )
         }
         // Don't pin the server on forever; let it idle out if the user never engages.
         // Any real request cancels this, and the monitor's cadence keeps it warm.
@@ -418,6 +416,10 @@ actor LocalModelRuntime {
 
     func isSharedServerRunning() -> Bool {
         sharedServer?.process.isRunning == true
+    }
+
+    func isSharedServerReady() -> Bool {
+        sharedServer?.process.isRunning == true && sharedServer?.isReady == true
     }
 
     func withInteractiveRequest<T>(
@@ -542,6 +544,10 @@ actor LocalModelRuntime {
                 ),
                 batchSize: max(effectiveOptions.batchSize, Self.sharedServerBatchSizeFloor),
                 ubatchSize: max(effectiveOptions.ubatchSize, Self.sharedServerUBatchSizeFloor)
+            ),
+            startupTimeoutSeconds: Self.sharedServerStartupTimeoutSeconds(
+                for: cacheSlot,
+                options: effectiveOptions
             )
         )
 
@@ -765,7 +771,8 @@ actor LocalModelRuntime {
     }
 
     private func ensureSharedServer(
-        config: RuntimeServerConfig
+        config: RuntimeServerConfig,
+        startupTimeoutSeconds: UInt64
     ) async throws -> LocalModelServerHandle {
         cancelScheduledShutdown()
         if let sharedServer {
@@ -781,7 +788,7 @@ actor LocalModelRuntime {
                 if !sharedServer.isReady {
                     try await waitForServerReady(
                         sharedServer,
-                        timeoutSeconds: Self.sharedServerStartupTimeoutSeconds
+                        timeoutSeconds: startupTimeoutSeconds
                     )
                     sharedServer.isReady = true
                 }
@@ -866,10 +873,12 @@ actor LocalModelRuntime {
         do {
             try await waitForServerReady(
                 serverHandle,
-                timeoutSeconds: Self.sharedServerStartupTimeoutSeconds
+                timeoutSeconds: startupTimeoutSeconds
             )
             serverHandle.isReady = true
             return serverHandle
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             await stopSharedServer(reason: "server_start_failed")
             throw error
@@ -1676,7 +1685,7 @@ actor LocalModelRuntime {
             topP: 0.95,
             topK: 64,
             ctxSize: 4096,
-            batchSize: 1024,
+            batchSize: 512,
             ubatchSize: 512,
             timeoutSeconds: 45
         )
@@ -1688,6 +1697,16 @@ actor LocalModelRuntime {
     /// Cold local startup includes process launch, model load, and llama-server's own
     /// readiness transition. Do not use the per-request generation timeout here.
     private nonisolated static let sharedServerStartupTimeoutSeconds: UInt64 = 180
+
+    private nonisolated static func sharedServerStartupTimeoutSeconds(
+        for cacheSlot: LocalModelCacheSlot?,
+        options: RuntimeInferenceOptions
+    ) -> UInt64 {
+        guard cacheSlot == .chat else {
+            return sharedServerStartupTimeoutSeconds
+        }
+        return min(sharedServerStartupTimeoutSeconds, max(45, options.timeoutSeconds))
+    }
 
     /// Generate a single token (we only want the prefill cached). Context/batch match
     /// the text-decision floors so the shared server is sized exactly as a real text

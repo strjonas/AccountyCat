@@ -57,7 +57,6 @@ struct ComposerView: View {
     private var canSend: Bool {
         controller.shouldPresentChatAsAvailable
             && !controller.sendingChatMessage
-            && !controller.resolvingChatActions
             && !controller.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

@@ -462,7 +462,7 @@ struct ProfileActionParserRecurringTests {
             activeProfileID: PolicyRule.defaultProfileID
         ))
         #expect(ops[0].type == .createAndActivateProfile)
-        #expect(ops[0].profileName == "Deep")
+        #expect(ops[0].profileName == "Deep Work")
         let schedule = try #require(ops[0].recurringSchedule)
         #expect(schedule.hour == 9)
         #expect(schedule.minute == 0)
@@ -486,20 +486,15 @@ struct ProfileActionParserRecurringTests {
 struct ProfileActionParserNameExtractionTests {
 
     @Test
-    func verbFirstPatternExtractsOnlyFirstWord() {
-        // "start Deep Work for 90 minutes" — the verb-first fallback captures
-        // only "Deep" as the name. This is a known limitation.
+    func verbFirstPatternExtractsMultiWordName() {
         let result = ProfileActionParser.parse(
             action: "start Deep Work for 90 minutes",
             availableProfiles: [],
             activeProfileID: PolicyRule.defaultProfileID
         )
-        // The parser currently extracts "Deep" from the verb-first fallback.
-        // The "profile (Word)" pattern doesn't match because there's no word
-        // "profile" before "Deep Work".
         #expect(result != nil)
         if let ops = result {
-            #expect(ops[0].profileName == "Deep") // Known limitation: should ideally be "Deep Work"
+            #expect(ops[0].profileName == "Deep Work")
         }
     }
 

@@ -137,7 +137,7 @@ actor MemoryConsolidationService {
             topP: 0.9,
             topK: 48,
             ctxSize: 4096,
-            batchSize: 1024,
+            batchSize: 512,
             ubatchSize: 512,
             timeoutSeconds: 45
         )

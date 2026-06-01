@@ -85,7 +85,7 @@ struct MonitoringRuntimeProfile: Hashable, Sendable {
             topP: 0.95,
             topK: 64,
             ctxSize: 4096,
-            batchSize: 1024,
+            batchSize: 512,
             ubatchSize: 512,
             timeoutSeconds: 45
         )

@@ -324,7 +324,6 @@ final class AppController: ObservableObject {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: state.runtimePathOverride)
         let modelIdentifier = runtimeProfileModelIdentifier()
         let personaPrefix = state.character.personalityPrefix
-        let decisionPrompt = ACPromptSets.systemPrompt(for: .decision)
         let chatPrompt = ACPromptSets.chatSystemPrompt(
             withPersonality: personaPrefix,
             expressivenessDirective: state.character.expressiveness.chatDirective
@@ -337,7 +336,6 @@ final class AppController: ObservableObject {
                 runtimePath: runtimePath,
                 modelIdentifier: modelIdentifier,
                 prompts: [
-                    (.decision, decisionPrompt),
                     (.chat, chatPrompt),
                 ]
             )
@@ -346,6 +344,15 @@ final class AppController: ObservableObject {
                 guard let self else { return }
                 self.localModelWarmupState = .ready
             }
+        }
+    }
+
+    func cancelPrewarmForInteractiveChat() {
+        guard prewarmTask != nil else { return }
+        prewarmTask?.cancel()
+        prewarmTask = nil
+        if localModelWarmupState == .warming {
+            localModelWarmupState = .startingForRequest
         }
     }
 

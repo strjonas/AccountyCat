@@ -712,10 +712,13 @@ enum ACPromptSets {
 
     \(workflowText)
 
-    If the user asks to start, switch, extend, or end a focus profile/session, emit a
-    `profile` action. Do not say you started/switched/ended a session unless that action
-    is present in `actions`. When actions are present, keep `reply` short so the JSON
-    cannot waste output on prose before the side effect lands.
+    If the user explicitly asks to start, switch, extend, or end a focus profile/session,
+    emit a `profile` action. Never infer a profile switch from motivational language,
+    a stated task, or the character's opinion; "I need to ship this" is not a profile
+    request unless the user asks AC to start/switch/end a session. Do not say you
+    started/switched/ended a session unless that action is present in `actions`. When
+    actions are present, keep `reply` short so the JSON cannot waste output on prose
+    before the side effect lands.
 
     Action kinds:
     - `profile`: start, switch, end, create, or update focus profiles and timed focus sessions.
@@ -803,6 +806,8 @@ enum ACPromptSets {
     \(profileReuseMatchingBlock)
     Use availableProfiles IDs only when an existing profile's name and description both fit.
     Create when no existing profile fits the user's stated scope. If no duration is specified, omit durationMinutes.
+    Resolve only explicit lifecycle requests. Do not activate or create a profile from a task
+    mention, a motivational pep talk, or the character's initiative.
     Do not invent rules or memory here.
     \(profileDescriptionGuidance)
     For broad archetype profiles like Coding, Writing, Research, or Studying, use broad non-restrictive descriptions unless the user explicitly gives exclusions.
