@@ -42,6 +42,12 @@ struct RuntimeProcessOutput: Sendable {
     }
 }
 
+enum LocalModelCacheSlot: Int, Sendable {
+    case decision = 0
+    case chat = 1
+    case auxiliary = 2
+}
+
 struct TokenUsage: Sendable, Codable, Hashable {
     var promptTokens: Int
     var completionTokens: Int
@@ -229,6 +235,7 @@ nonisolated private final class LocalModelServerHandle: @unchecked Sendable {
     let logTail: RuntimeLogTail
     let stdoutPipe: Pipe
     let stderrPipe: Pipe
+    var isReady: Bool
 
     init(
         process: Process,
@@ -244,6 +251,7 @@ nonisolated private final class LocalModelServerHandle: @unchecked Sendable {
         self.logTail = logTail
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
+        self.isReady = false
     }
 }
 
@@ -268,7 +276,8 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         snapshotPath: String,
         systemPrompt: String,
-        userPrompt: String
+        userPrompt: String,
+        cacheSlot: LocalModelCacheSlot? = nil
     ) async throws -> RuntimeProcessOutput {
         try await runVisionInference(
             runtimePath: runtimePath,
@@ -276,7 +285,8 @@ actor LocalModelRuntime {
             snapshotPath: snapshotPath,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
-            options: Self.defaultVisionOptions()
+            options: Self.defaultVisionOptions(),
+            cacheSlot: cacheSlot
         )
     }
 
@@ -286,29 +296,16 @@ actor LocalModelRuntime {
         snapshotPath: String,
         systemPrompt: String,
         userPrompt: String,
-        options: RuntimeInferenceOptions
+        options: RuntimeInferenceOptions,
+        cacheSlot: LocalModelCacheSlot? = nil
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
             modelIdentifier: modelIdentifier,
             input: .vision(snapshotPath: snapshotPath, userPrompt: userPrompt),
             systemPrompt: systemPrompt,
-            options: options
-        )
-    }
-
-    func runTextInference(
-        runtimePath: String,
-        modelIdentifier: String,
-        systemPrompt: String,
-        userPrompt: String
-    ) async throws -> RuntimeProcessOutput {
-        try await runTextInference(
-            runtimePath: runtimePath,
-            modelIdentifier: modelIdentifier,
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            options: Self.defaultTextOptions()
+            options: options,
+            cacheSlot: cacheSlot
         )
     }
 
@@ -317,14 +314,33 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         systemPrompt: String,
         userPrompt: String,
-        options: RuntimeInferenceOptions
+        cacheSlot: LocalModelCacheSlot? = nil
+    ) async throws -> RuntimeProcessOutput {
+        try await runTextInference(
+            runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            options: Self.defaultTextOptions(),
+            cacheSlot: cacheSlot
+        )
+    }
+
+    func runTextInference(
+        runtimePath: String,
+        modelIdentifier: String,
+        systemPrompt: String,
+        userPrompt: String,
+        options: RuntimeInferenceOptions,
+        cacheSlot: LocalModelCacheSlot? = nil
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
             modelIdentifier: modelIdentifier,
             input: .text(userPrompt: userPrompt),
             systemPrompt: systemPrompt,
-            options: options
+            options: options,
+            cacheSlot: cacheSlot
         )
     }
 
@@ -337,19 +353,20 @@ actor LocalModelRuntime {
     func prewarm(
         runtimePath: String,
         modelIdentifier: String,
-        systemPrompts: [String]
+        prompts: [(slot: LocalModelCacheSlot, systemPrompt: String)]
     ) async {
-        for systemPrompt in systemPrompts where !systemPrompt.isEmpty {
+        for prompt in prompts where !prompt.systemPrompt.isEmpty {
             if Task.isCancelled { break }
             // A real user/monitor request always wins — never compete for the server.
             guard !hasInteractiveRequestInFlight() else { break }
-            _ = try? await withInteractiveRequest { [self, systemPrompt] in
+            _ = try? await withInteractiveRequest { [self, prompt] in
                 try await self.runTextInference(
                     runtimePath: runtimePath,
                     modelIdentifier: modelIdentifier,
-                    systemPrompt: systemPrompt,
+                    systemPrompt: prompt.systemPrompt,
                     userPrompt: "ok",
-                    options: Self.prewarmOptions()
+                    options: Self.prewarmOptions(),
+                    cacheSlot: prompt.slot
                 )
             }
         }
@@ -387,6 +404,18 @@ actor LocalModelRuntime {
         activeInteractiveRequests > 0
     }
 
+    func hasAnyRequestInFlight() -> Bool {
+        activeSharedServerRequests > 0
+    }
+
+    func beginInteractiveRequestForTesting() {
+        activeInteractiveRequests += 1
+    }
+
+    func endInteractiveRequestForTesting() {
+        activeInteractiveRequests = max(0, activeInteractiveRequests - 1)
+    }
+
     func isSharedServerRunning() -> Bool {
         sharedServer?.process.isRunning == true
     }
@@ -411,7 +440,8 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         input: RuntimeInferenceInput,
         systemPrompt: String,
-        options: RuntimeInferenceOptions
+        options: RuntimeInferenceOptions,
+        cacheSlot: LocalModelCacheSlot?
     ) async throws -> RuntimeProcessOutput {
         cancelScheduledShutdown()
         let cancellationBox = RuntimeCancellationBox()
@@ -437,7 +467,8 @@ actor LocalModelRuntime {
                         input: input,
                         systemPrompt: systemPrompt,
                         options: options,
-                        cancellationBox: cancellationBox
+                        cancellationBox: cancellationBox,
+                        cacheSlot: cacheSlot
                     )
                 } catch is CancellationError {
                     throw CancellationError()
@@ -476,7 +507,8 @@ actor LocalModelRuntime {
         input: RuntimeInferenceInput,
         systemPrompt: String,
         options: RuntimeInferenceOptions,
-        cancellationBox: RuntimeCancellationBox
+        cancellationBox: RuntimeCancellationBox,
+        cacheSlot: LocalModelCacheSlot?
     ) async throws -> RuntimeProcessOutput {
         let preflight = PromptBudgetGuard.preflightPlan(
             systemPrompt: systemPrompt,
@@ -519,7 +551,8 @@ actor LocalModelRuntime {
             systemPrompt: systemPrompt,
             options: effectiveOptions,
             serverPort: server.port,
-            imageMaxDimension: preflight.imageMaxDimension
+            imageMaxDimension: preflight.imageMaxDimension,
+            cacheSlot: cacheSlot
         )
         activeSharedServerRequests += 1
         defer { activeSharedServerRequests -= 1 }
@@ -745,6 +778,10 @@ actor LocalModelRuntime {
                 sharedServer.config.ubatchSize >= config.ubatchSize
 
             if sharedServer.process.isRunning, sameBinary, sameModel, sameProjector, canReuseCapacity {
+                if !sharedServer.isReady {
+                    try await waitForServerReady(sharedServer, timeoutSeconds: 60)
+                    sharedServer.isReady = true
+                }
                 return sharedServer
             }
 
@@ -825,6 +862,7 @@ actor LocalModelRuntime {
 
         do {
             try await waitForServerReady(serverHandle, timeoutSeconds: 60)
+            serverHandle.isReady = true
             return serverHandle
         } catch {
             await stopSharedServer(reason: "server_start_failed")
@@ -900,7 +938,8 @@ actor LocalModelRuntime {
         systemPrompt: String,
         options: RuntimeInferenceOptions,
         serverPort: Int,
-        imageMaxDimension: Int?
+        imageMaxDimension: Int?,
+        cacheSlot: LocalModelCacheSlot?
     ) async throws -> Data {
         let guardedPrompt: PromptBudgetGuardResult
         let messages: [[String: Any]]
@@ -973,6 +1012,9 @@ actor LocalModelRuntime {
             "cache_prompt": true,
             "stream": false,
         ]
+        if let cacheSlot {
+            body["id_slot"] = cacheSlot.rawValue
+        }
         if !options.thinkingEnabled {
             body["reasoning_format"] = "none"
         }
@@ -1203,12 +1245,12 @@ actor LocalModelRuntime {
     private nonisolated static let sharedServerBatchSizeFloor = 512
     private nonisolated static let sharedServerUBatchSizeFloor = 512
 
-    /// llama-server cache slots. Two slots let the chat prefix and the (larger)
-    /// monitoring-decision prefix stay warm at the same time, so a chat right after a
-    /// monitor tick — and vice-versa — reuses its cached prefix instead of paying a
-    /// cold prefill. `--ctx-size` is the total across slots, so it is scaled by this
-    /// count (see `sharedServerTotalCtxSize`) to preserve each slot's full window.
-    private nonisolated static let sharedServerSlotCount = 2
+    /// llama-server cache slots. Decision and chat get pinned hot slots; lower-priority
+    /// stages use an auxiliary scratch slot so they do not deliberately evict the two
+    /// latency-sensitive prefixes. `--ctx-size` is the total across slots, so it is
+    /// scaled by this count (see `sharedServerTotalCtxSize`) to preserve each slot's
+    /// full window.
+    private nonisolated static let sharedServerSlotCount = 3
 
     private nonisolated static func sharedServerCtxSizeFloor(
         requested: Int,

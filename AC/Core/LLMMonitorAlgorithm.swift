@@ -1761,7 +1761,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     modelIdentifier: modelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
-                    options: options
+                    options: options,
+                    cacheSlot: cacheSlot(for: stage)
                 )
             }
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
@@ -1863,7 +1864,8 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
                     snapshotPath: snapshotPath,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
-                    options: options
+                    options: options,
+                    cacheSlot: .auxiliary
                 )
             }
             let elapsedMs = Int(Date().timeIntervalSince(startTime) * 1000)
@@ -1942,6 +1944,10 @@ final class LLMMonitorAlgorithm: MonitoringAlgorithm {
         return configuration.localModelIdentifierImage
             ?? configuration.localModelIdentifierText
             ?? AITier.balanced.localModelIdentifierImage
+    }
+
+    private func cacheSlot(for stage: LLMPolicyStage) -> LocalModelCacheSlot {
+        stage == .decision ? .decision : .auxiliary
     }
 
     private func applyOverrides(

@@ -52,6 +52,7 @@ final class AppController: ObservableObject {
     @Published var activityStatusText = "Checking permissions and local runtime."
     @Published var chatMessages: [ChatMessage]
     @Published var sendingChatMessage = false
+    @Published var resolvingChatActions = false
     /// True when any assistant chat message is still flagged as unread (typically deferred
     /// suggestions like profile-switch announcements or calendar-suggested switches).
     /// Drives the menu bar dot badge.
@@ -140,6 +141,8 @@ final class AppController: ObservableObject {
     var downloadProgressTask: Task<Void, Never>?
     private var telemetryHeartbeatTask: Task<Void, Never>?
     var prewarmTask: Task<Void, Never>?
+    var memoryConsolidationTask: Task<Void, Never>?
+    var memoryConsolidationRetryTask: Task<Void, Never>?
     var activeScheduledTimers: [UUID: DispatchWorkItem] = [:]
 
     private init() {
@@ -321,10 +324,7 @@ final class AppController: ObservableObject {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: state.runtimePathOverride)
         let modelIdentifier = runtimeProfileModelIdentifier()
         let personaPrefix = state.character.personalityPrefix
-        let decisionBase = ACPromptSets.systemPrompt(for: .decision)
-        let decisionPrompt = personaPrefix.isEmpty
-            ? decisionBase
-            : "\(personaPrefix)\n\n\(decisionBase)"
+        let decisionPrompt = ACPromptSets.systemPrompt(for: .decision)
         let chatPrompt = ACPromptSets.chatSystemPrompt(
             withPersonality: personaPrefix,
             expressivenessDirective: state.character.expressiveness.chatDirective
@@ -336,7 +336,10 @@ final class AppController: ObservableObject {
             await localModelRuntime.prewarm(
                 runtimePath: runtimePath,
                 modelIdentifier: modelIdentifier,
-                systemPrompts: [decisionPrompt, chatPrompt]
+                prompts: [
+                    (.decision, decisionPrompt),
+                    (.chat, chatPrompt),
+                ]
             )
             guard !Task.isCancelled else { return }
             await MainActor.run {
@@ -350,6 +353,10 @@ final class AppController: ObservableObject {
         persistState()
         prewarmTask?.cancel()
         prewarmTask = nil
+        memoryConsolidationTask?.cancel()
+        memoryConsolidationTask = nil
+        memoryConsolidationRetryTask?.cancel()
+        memoryConsolidationRetryTask = nil
         telemetryHeartbeatTask?.cancel()
         telemetryHeartbeatTask = nil
         await telemetryStore.appendSessionHeartbeat(reason: "app_shutdown_started")

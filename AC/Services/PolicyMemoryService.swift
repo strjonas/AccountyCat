@@ -119,7 +119,8 @@ actor PolicyMemoryService: PolicyMemoryServicing {
                         modelIdentifier: localModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
-                        options: options
+                        options: options,
+                        cacheSlot: .auxiliary
                     )
                     let id = await LLMTelemetryRecorder.shared.record(
                         LLMTelemetryCall(

@@ -152,7 +152,7 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 - `-ngl 999` to offload all supported layers to Metal
 - `--threads <perf-core-count>` where the count comes from `hw.perflevel0.physicalcpu` when available, else `ProcessInfo.processInfo.activeProcessorCount`
 - `--threads-batch <perf-core-count>` for prompt processing
-- `--parallel 2` so the chat prefix and the (larger) monitoring-decision prefix keep separate warm cache slots — a chat right after a monitor tick (or vice-versa) reuses its cached prefix instead of paying a cold prefill. `--ctx-size` is the total across slots, so it is scaled by the slot count (`sharedServerTotalCtxSize`) to preserve each slot's full per-request window
+- `--parallel 3` so AC can pin latency-sensitive prefixes instead of relying on automatic slot choice: slot 0 = monitoring decision, slot 1 = chat, slot 2 = auxiliary scratch for vision perception, nudge copy, chat-action executors, policy memory, memory consolidation, and safelist appeals. `--ctx-size` is the total across slots, so it is scaled by the slot count (`sharedServerTotalCtxSize`) to preserve each slot's full per-request window
 - `--reasoning off` / `--reasoning-format none` because local AC stages need short structured answers, not chain-of-thought output
 - `--reasoning-budget 0` as a second guardrail for templates that otherwise emit thinking scaffolding
 - `--cache-type-k q8_0`
@@ -160,13 +160,17 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 - `--ctx-checkpoints 512`
 - `--checkpoint-every-n-tokens 512`
 
-Prompt caching is enabled on every shared-server request via `cache_prompt: true`. The two cache slots let the prefix-stable chat and decision system prompts stay cached at the same time, so neither evicts the other.
+Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC also sends `id_slot` on local server requests: decision and chat use their pinned slots, while lower-priority stages use the auxiliary scratch slot. This is the release tradeoff: one extra KV slot costs memory, but it prevents memory consolidation / action executors / nudge copy from deliberately evicting the two hot prefixes.
 
-When the backend is local and the model is already installed, AC fires a best-effort, cancellable **prewarm** (`LocalModelRuntime.prewarm`) via `AppController.schedulePrewarmIfNeeded()`: it starts the shared server (paying the one-time model load) and primes the two stable prefixes (the decision system prompt and the chat system prompt, built with the active character so they match real requests) with a 1-token request each. This turns the next real interaction warm — for 9B a cold ~29 s decision becomes a warm ~7 s one. Prewarm yields immediately to any real request and schedules a normal idle shutdown afterwards, so it never fights the existing idle-shutdown path or pins an unused server.
+When the backend is local and the model is already installed, AC fires a best-effort, cancellable **prewarm** (`LocalModelRuntime.prewarm`) via `AppController.schedulePrewarmIfNeeded()`: it starts the shared server (paying the one-time model load) and primes the two stable hot prefixes (the decision system prompt in slot 0 and the chat system prompt, built with the active character, in slot 1) with a 1-token request each. This turns the next real interaction warm — for 9B a cold ~29 s decision becomes a warm ~7 s one. Prewarm yields immediately to any real request and schedules a normal idle shutdown afterwards, so it never fights the existing idle-shutdown path or pins an unused server.
 
 Prewarm runs at launch (`bootstrap()`) and when the backend is switched to Local (`updateMonitoringInferenceBackend`) — the switch case matters because the first query after switching from OpenRouter would otherwise pay the full cold model-load plus prefill. The one cold cost that remains is the very first server start when no warm slot exists yet (e.g. immediately after a fresh install, before any prewarm has completed); this is the inherent model-load-and-prefill latency, not a cache miss.
 
+The shared server handle is not considered reusable until the `/health` readiness probe has succeeded. This matters because Swift actors can re-enter while prewarm is awaiting server startup: a user chat arriving during that window must wait for readiness rather than sending tokenization or chat requests to a port that has been reserved but is not yet accepting connections.
+
 The chat panel surfaces that case as a short, non-technical local-AI startup notice while AC is proactively warming the local model or while a user message is waiting on a cold local server start. The wording must avoid promising a fixed duration because startup depends on model tier, machine, RAM pressure, and whether macOS still has model pages cached.
+
+Local priority order is user chat first, chat action resolution second, monitoring third, and memory consolidation last. `BrainService` already defers local monitoring while an interactive request is in flight, and AC's own app/Inspector are structurally excluded from monitoring. Chat actions now resolve before the composer accepts the next chat message, so profile switches and policy mutations land before the next turn is evaluated. Memory consolidation cancels/defer-retries when chat starts and only runs when no local server request is already in flight.
 
 KV-cache quantization is a memory-saving tradeoff for local monitoring: q8 K/V materially lowers cache RAM pressure while keeping quality stable on the small Q4/Q5 local models AC targets for v1.0.
 
@@ -259,7 +263,7 @@ showed 4B materially regresses judgment: it broke a false-positive guard (over-n
 legitimate coding tutorial under a broad profile), under-reacted to sustained off-task
 drift, and mislabelled productive work as a break — while 9B held all of them. The 9B
 default was slow on the M4 only because of *cold* prefill; that is addressed by warming
-the runtime (prewarm + dual cache slots, above), not by shipping a faster-but-weaker
+the runtime (prewarm + pinned cache slots, above), not by shipping a faster-but-weaker
 model. 4B stays available as a manual choice and as the recommendation for ≤16 GB Macs.
 
 ## Limited Trial Redemption

@@ -85,7 +85,8 @@ actor MemoryConsolidationService {
                     modelIdentifier: localTextModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
-                    options: Self.inferenceOptions()
+                    options: Self.inferenceOptions(),
+                    cacheSlot: .auxiliary
                 )
             }
         } catch {

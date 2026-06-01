@@ -90,8 +90,9 @@ extension AppController {
 
     func sendChatMessage(_ draft: String) {
         let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedDraft.isEmpty, !sendingChatMessage else { return }
+        guard !trimmedDraft.isEmpty, !sendingChatMessage, !resolvingChatActions else { return }
 
+        cancelMemoryConsolidationForInteractiveWork()
         chatMessages.append(ChatMessage(role: .user, text: trimmedDraft))
         persistState()
         sendingChatMessage = true
@@ -234,11 +235,16 @@ extension AppController {
                 }
 
                 self.persistState()
-                self.sendingChatMessage = false
             }
             self.logActivity("chat", "Assistant: \(result.reply)")
 
-            self.processChatActions(
+            let chatActionsMutateState = Self.chatActionsMutateMonitoredState(result.actions)
+            if !result.actions.isEmpty {
+                await MainActor.run {
+                    self.resolvingChatActions = true
+                }
+            }
+            await self.processChatActions(
                 result.actions,
                 workflow: chatWorkflow,
                 latestUserMessage: trimmedDraft,
@@ -246,7 +252,11 @@ extension AppController {
                 context: SnapshotService.frontmostContext(),
                 parentInteractionID: result.interactionID
             )
-            if Self.chatActionsMutateMonitoredState(result.actions) {
+            await MainActor.run {
+                self.resolvingChatActions = false
+                self.sendingChatMessage = false
+            }
+            if chatActionsMutateState {
                 self.brainService?.invalidateContextAndCooldown(reason: "chat_actions_applied")
             }
 
@@ -833,7 +843,7 @@ extension AppController {
         recentMessages: [ChatMessage],
         context: FrontmostContext?,
         parentInteractionID: String?
-    ) {
+    ) async {
         guard !actions.isEmpty else { return }
 
         let recentUserMessages = recentMessages
@@ -848,7 +858,7 @@ extension AppController {
                 continue
             }
 
-            resolveChatAction(
+            await resolveChatAction(
                 action,
                 latestUserMessage: latestUserMessage,
                 recentUserMessages: recentUserMessages,
@@ -880,7 +890,7 @@ extension AppController {
         recentUserMessages: [String],
         context: FrontmostContext?,
         parentInteractionID: String?
-    ) {
+    ) async {
         let now = Date()
         let request = ChatActionResolutionRequest(
             action: action,
@@ -902,15 +912,11 @@ extension AppController {
             parentInteractionID: parentInteractionID
         )
 
-        Task { [weak self, companionChatService] in
-            let resolved = await companionChatService.resolveAction(request)
-            await MainActor.run {
-                guard let self, let resolved else { return }
-                if self.applyChatAction(resolved, context: context) {
-                    self.logActivity("chat-action", "Applied resolved \(resolved.kind.rawValue) action")
-                    self.recordExplicitChatStatementSignal(for: resolved, context: context)
-                }
-            }
+        let resolved = await companionChatService.resolveAction(request)
+        guard let resolved else { return }
+        if applyChatAction(resolved, context: context) {
+            logActivity("chat-action", "Applied resolved \(resolved.kind.rawValue) action")
+            recordExplicitChatStatementSignal(for: resolved, context: context)
         }
     }
 
@@ -1413,6 +1419,10 @@ extension AppController {
         }
         guard !consolidatingMemory else { return }
         guard !state.memoryEntries.isEmpty else { return }
+        guard !sendingChatMessage, !resolvingChatActions else {
+            scheduleMemoryConsolidationRetry(reason: reason)
+            return
+        }
 
         consolidatingMemory = true
         let entriesSnapshot = state.memoryEntries
@@ -1427,7 +1437,18 @@ extension AppController {
         let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
         let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
 
-        Task { [weak self, memoryConsolidationService] in
+        memoryConsolidationTask?.cancel()
+        memoryConsolidationTask = Task { [weak self, memoryConsolidationService, localModelRuntime] in
+            if backend == .local,
+               await localModelRuntime.hasAnyRequestInFlight() {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.consolidatingMemory = false
+                    self.scheduleMemoryConsolidationRetry(reason: reason)
+                }
+                return
+            }
+            if Task.isCancelled { return }
             let consolidated = await memoryConsolidationService.consolidate(
                 entries: entriesSnapshot,
                 goals: goalsSnapshot,
@@ -1439,8 +1460,10 @@ extension AppController {
                 onlineTextModelIdentifier: onlineTextModelIdentifier,
                 localTextModelIdentifier: localTextModelIdentifier
             )
+            if Task.isCancelled { return }
             await MainActor.run {
                 guard let self else { return }
+                self.memoryConsolidationTask = nil
                 self.consolidatingMemory = false
                 self.state.lastMemoryConsolidationAt = now
                 if let consolidated {
@@ -1459,5 +1482,31 @@ extension AppController {
                 }
             }
         }
+    }
+
+    func cancelMemoryConsolidationForInteractiveWork() {
+        guard consolidatingMemory || memoryConsolidationTask != nil else { return }
+        memoryConsolidationTask?.cancel()
+        memoryConsolidationTask = nil
+        consolidatingMemory = false
+        scheduleMemoryConsolidationRetry(reason: "interrupted")
+        logActivity("memory", "Deferred consolidation for chat")
+    }
+
+    func scheduleMemoryConsolidationRetry(reason: String) {
+        memoryConsolidationRetryTask?.cancel()
+        memoryConsolidationRetryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 90 * NSEC_PER_SEC)
+            } catch {
+                return
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.memoryConsolidationRetryTask = nil
+                self.maybeConsolidateMemory(now: Date())
+            }
+        }
+        logActivity("memory", "Consolidation deferred: \(reason)")
     }
 }

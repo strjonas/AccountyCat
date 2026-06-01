@@ -152,7 +152,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     /// Macs (incl. base M-series at 32 GB): a head-to-head local eval showed 4B
     /// materially regresses focus judgment vs 9B — including over-nudging legitimate
     /// work — so latency on these machines is solved by warming the runtime (see the
-    /// prewarm + dual cache-slot work in `LocalModelRuntime`), not by defaulting to 4B.
+    /// prewarm + pinned cache-slot work in `LocalModelRuntime`), not by defaulting to 4B.
     static func recommendedLocalTier() -> AITier {
         let gb = totalPhysicalMemoryGB
         if gb <= 16 { return .economy }

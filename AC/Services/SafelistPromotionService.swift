@@ -333,7 +333,8 @@ actor SafelistAppealService: SafelistAppealEvaluating {
                     snapshotPath: screenshotPath,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
-                    options: options
+                    options: options,
+                    cacheSlot: .auxiliary
                 )
             } else {
                 let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: runtimeOverride)
@@ -349,7 +350,8 @@ actor SafelistAppealService: SafelistAppealEvaluating {
                     modelIdentifier: localModelIdentifier,
                     systemPrompt: systemPrompt,
                     userPrompt: userPrompt,
-                    options: options
+                    options: options,
+                    cacheSlot: .auxiliary
                 )
             }
         } catch {

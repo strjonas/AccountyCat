@@ -223,7 +223,8 @@ actor CompanionChatService {
                             modelIdentifier: localTextModelIdentifier,
                             systemPrompt: systemPrompt,
                             userPrompt: prompt,
-                            options: Self.localChatOptions()
+                            options: Self.localChatOptions(),
+                            cacheSlot: .chat
                         )
                     }
                     let interactionID = await LLMTelemetryRecorder.shared.record(
@@ -591,7 +592,8 @@ actor CompanionChatService {
                         modelIdentifier: localTextModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
-                        options: options
+                        options: options,
+                        cacheSlot: .auxiliary
                     )
                     let interactionID = await LLMTelemetryRecorder.shared.record(
                         LLMTelemetryCall(
