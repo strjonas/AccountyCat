@@ -128,9 +128,19 @@ Progress is reported two ways, with byte-level data preferred:
 
 ### Pending local model downloads
 
-Settings → AI always shows the three built-in local model cards. Advanced local mode lets
-users add named custom model cards; the card title is user-controlled and the subtitle is
-the actual Hugging Face GGUF identifier.
+Settings → AI always shows the three built-in local model cards. The inline "Add a custom
+model" form lets users add named custom model cards from one of two sources; the card title
+is user-controlled and the subtitle is the model's technical identifier:
+
+- **Hugging Face** — a GGUF repo id (optionally `:QUANT`). AC downloads and caches it like a
+  built-in card.
+- **Local file** — an absolute path to a `.gguf` the user already has (e.g. an Ollama or
+  manual download), chosen via `NSOpenPanel`. The path *is* the model identifier. A
+  file-path identifier (`isLocalFileModelIdentifier` / `localFileModelArtifacts(for:)` in
+  `RuntimeSetupService`, mirrored in `LocalModelRuntime.cachedModelArtifacts`) resolves
+  straight to the file in place — no download, no second copy. A sibling `*mmproj*.gguf`
+  next to it is picked up as the vision projector. Removing such a card only drops the
+  link; the user's file is never deleted.
 
 Selection and download are separate actions. Selecting an installed card immediately updates
 the local text/image model identifiers. Pressing a card's download button persists a pending
@@ -254,7 +264,9 @@ perception is a different modality.
 - estimates prompt size heuristically from text length plus vision tile count
 - prefers preserving the rendered text payload intact: when the heuristic says a request is too large, AC first grows the per-request shared-server context budget (up to a bounded ceiling) instead of immediately trimming text
 - on vision requests, progressively reduces the image max dimension before falling back to text truncation
-- optionally calls `POST /tokenize` on the local `llama-server` when the heuristic is already close to the context limit
+- for shared-server chat requests, calls `POST /apply-template` and then `POST /tokenize` so the budget is based on the model-rendered chat prompt, including GGUF template wrappers for Gemma/Qwen/Llama-style models
+- falls back to raw `POST /tokenize` and then the heuristic path if template rendering is unavailable
+- applies the same grow-before-trim heuristic to the rare `llama-cli` fallback path before launching the subprocess
 - only as a last resort, trims the user-prompt tail proportionally and verifies the reduced prompt once via `/tokenize`
 - records `prompt_budget_truncated` telemetry/activity when truncation actually happens
 

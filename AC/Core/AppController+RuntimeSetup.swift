@@ -226,6 +226,40 @@ extension AppController {
         }
     }
 
+    /// Friendly label for the active model, used in the footer status line and its
+    /// quick-switch menu. Built-in local tiers read "Default · Qwen 3.5 9B"; custom
+    /// local models use the name the user gave them; online keeps the short name.
+    /// Never the raw Hugging Face id.
+    var activeModelFooterLabel: String {
+        let config = state.monitoringConfiguration
+        guard !config.usesOnlineInference else { return activeModelShortName }
+
+        let id = activeLocalModelIdentifier()
+        if let tier = AITier.allCases.first(where: { $0.localModelIdentifierText == id }) {
+            return "\(tier.displayName) · \(tier.localModelDisplayName)"
+        }
+        if let custom = state.localCustomModels.first(where: { $0.modelIdentifier == id }) {
+            return custom.displayName
+        }
+        return Self.shortModelName(for: id)
+    }
+
+    /// Renames a user-added custom local model card. No-op for built-in tiers or
+    /// unknown identifiers. An empty name falls back to the derived short name.
+    func renameCustomLocalModel(identifier: String, displayName: String) {
+        let id = identifier.cleanedSingleLine
+        guard let index = state.localCustomModels.firstIndex(where: { $0.modelIdentifier == id })
+        else { return }
+        let trimmed = displayName.cleanedSingleLine
+        state.localCustomModels[index].displayName =
+            trimmed.isEmpty ? Self.shortModelName(for: id) : trimmed
+        state.localCustomModels.sort {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        persistState()
+        refreshSystemState(persist: false)
+    }
+
     var activeModelShortName: String {
         let config = state.monitoringConfiguration
 
@@ -258,6 +292,12 @@ extension AppController {
     /// Converts a full OpenRouter/local model identifier to a compact display name.
     static func shortModelName(for identifier: String) -> String {
         let raw = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // A user-linked file: name it after the filename, sans extension.
+        if raw.hasPrefix("/"), raw.lowercased().hasSuffix(".gguf") {
+            return URL(fileURLWithPath: raw).deletingPathExtension().lastPathComponent
+        }
+
         let base = raw.hasSuffix(":free") ? String(raw.dropLast(5)) : raw
 
         // Known models → friendly names
@@ -291,10 +331,15 @@ extension AppController {
         default: break
         }
 
-        // Generic fallback: strip provider prefix, truncate version noise
-        let modelPart = base.components(separatedBy: "/").last ?? base
+        // Generic fallback: strip provider prefix and the `:quant` suffix, then drop
+        // GGUF/instruct noise so an auto-named custom model reads like a real name
+        // (e.g. "unsloth/gemma-4-12b-it-GGUF:Q4_K_M" → "gemma-4-12b").
+        let withoutQuant = base.split(separator: ":", maxSplits: 1).first.map(String.init) ?? base
+        let modelPart = withoutQuant.components(separatedBy: "/").last ?? withoutQuant
         let cleaned =
             modelPart
+            .replacingOccurrences(of: "-GGUF", with: "")
+            .replacingOccurrences(of: "-gguf", with: "")
             .replacingOccurrences(of: "-instruct", with: "")
             .replacingOccurrences(of: "-it", with: "")
         return cleaned
@@ -649,6 +694,47 @@ extension AppController {
             $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
         persistState()
+    }
+
+    /// Removes a user-added custom local model card entirely: cancels any in-flight
+    /// download, clears pending/error state, deletes any partial or full downloaded
+    /// cache, and drops the card from `localCustomModels`. Built-in tier models are
+    /// never custom, so this should only be called for custom cards. This is the
+    /// escape hatch for a custom model whose download never resolved on Hugging
+    /// Face — there is otherwise no way to make a failed, never-installed card go away.
+    func removeCustomLocalModel(identifier: String) {
+        let id = identifier.cleanedSingleLine
+        guard !id.isEmpty else { return }
+
+        if pendingLocalModelChange?.modelIdentifier == id {
+            cancelRuntimeInstall()
+            clearPendingLocalModelChange()
+        }
+        setupErrorMessage = nil
+        modelDownloadNotice = nil
+
+        // A linked file lives on the user's own disk — removing the card must never
+        // delete their file. Just drop the card and fall back if it was active.
+        let isLinkedFile = RuntimeSetupService.isLocalFileModelIdentifier(id)
+        let wasActive = activeLocalModelIdentifier() == id
+        let hadDownload = !isLinkedFile && (localModelInstalled(id) || localModelDownloadedBytes(id) > 0)
+
+        state.localCustomModels.removeAll { $0.modelIdentifier == id }
+        persistState()
+
+        if hadDownload {
+            // Reuse the tested deletion path for cache cleanup + active-model fallback.
+            deleteLocalModel(identifier: id)
+        } else {
+            if isLinkedFile, wasActive {
+                let fallback = installedManagedModels.first?.modelIdentifier
+                    ?? AITier.recommendedLocalTier().localModelIdentifierText
+                applyLocalModelSelection(textModel: fallback, imageModel: fallback)
+                brainService?.handleMonitoringConfigurationChange()
+            }
+            localModelStorageError = nil
+            refreshSystemState(persist: false)
+        }
     }
 
     func startLocalModelDownload(identifier: String, autoSelectWhenReady: Bool = false) {

@@ -49,6 +49,11 @@ final class AppController: ObservableObject {
     @Published var localModelStorageMessage: String?
     @Published var localModelStorageError: String?
     @Published var showingOnboardingCompletion = false
+    /// Settings tab a deep-link wants shown. Set just before opening Settings; the
+    /// SettingsView consumes and clears it on appear. Survives the open even though
+    /// SettingsView mounts a beat after the notification fires (a plain notification
+    /// would be missed by the not-yet-subscribed view).
+    @Published var pendingSettingsTab: SettingsTab?
     @Published var activityStatusText = "Checking permissions and local runtime."
     @Published var chatMessages: [ChatMessage]
     @Published var sendingChatMessage = false

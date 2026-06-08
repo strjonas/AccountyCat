@@ -87,6 +87,38 @@ struct PromptBudgetGuardTests {
     }
 
     @Test
+    func chatTemplateTokenizationAccountsForModelWrapperOverhead() async {
+        let systemPrompt = String(repeating: "S", count: 400)
+        let userPrompt = String(repeating: "U", count: 6_000)
+        let ctxSize = 2_048
+        let maxTokens = 220
+        let reserve = max(maxTokens, ctxSize / 10)
+        let allowedPromptTokens = ctxSize - reserve - maxTokens
+        let chatCounter = CounterBox()
+
+        let result = await PromptBudgetGuard.guardedUserPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imagePath: nil,
+            ctxSize: ctxSize,
+            maxTokens: maxTokens,
+            serverPort: 8080,
+            transport: { request in
+                max(0, request.content.count / 4)
+            },
+            chatTransport: { request in
+                await chatCounter.increment()
+                return 900 + max(0, (request.systemPrompt.count + request.userPrompt.count) / 4)
+            }
+        )
+
+        #expect(result.wasTruncated)
+        #expect(result.promptTokensEstimate <= allowedPromptTokens)
+        #expect(result.userPrompt.count < userPrompt.count)
+        #expect(await chatCounter.value >= 2)
+    }
+
+    @Test
     func preflightPlanPrefersCtxGrowthBeforeTextTruncation() {
         let plan = PromptBudgetGuard.preflightPlan(
             systemPrompt: String(repeating: "S", count: 1_600),

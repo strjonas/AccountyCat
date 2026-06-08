@@ -50,12 +50,18 @@ struct SettingsView: View {
         }
         .frame(width: embeddedInPanel ? nil : ACD.popoverWidth)
         .background(embeddedInPanel ? Color.clear : Color(nsColor: .windowBackgroundColor))
-        .onReceive(NotificationCenter.default.publisher(for: .acSelectSettingsTab)) { notification in
-            if let raw = notification.object as? String,
-               let tab = SettingsTab(rawValue: raw) {
-                withAnimation(.acSnap) { selectedTab = tab }
-            }
-        }
+        // A deep-link sets `pendingSettingsTab` before this view mounts, so a
+        // notification posted at the same instant would arrive before we subscribe.
+        // Reading the controller's value on appear (and on change, when already open)
+        // catches both cases.
+        .onAppear { consumePendingSettingsTab() }
+        .onChange(of: controller.pendingSettingsTab) { _, _ in consumePendingSettingsTab() }
+    }
+
+    private func consumePendingSettingsTab() {
+        guard let tab = controller.pendingSettingsTab else { return }
+        withAnimation(.acSnap) { selectedTab = tab }
+        controller.pendingSettingsTab = nil
     }
 
     // MARK: - Header

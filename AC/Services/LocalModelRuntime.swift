@@ -622,6 +622,47 @@ actor LocalModelRuntime {
         cancellationBox: RuntimeCancellationBox
     ) async throws -> RuntimeProcessOutput {
         let repoURL = repositoryURL(forRuntimePath: runtimePath)
+        let preflight = PromptBudgetGuard.preflightPlan(
+            systemPrompt: systemPrompt,
+            userPrompt: input.userPrompt,
+            imagePath: input.imagePath,
+            ctxSize: options.ctxSize,
+            maxTokens: options.maxTokens,
+            maxCtxGrowth: 2_048
+        )
+        let effectiveOptions = RuntimeInferenceOptions(
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK,
+            ctxSize: preflight.recommendedCtxSize,
+            batchSize: options.batchSize,
+            ubatchSize: options.ubatchSize,
+            timeoutSeconds: options.timeoutSeconds,
+            thinkingEnabled: options.thinkingEnabled
+        )
+        let guardedPrompt = await PromptBudgetGuard.guardedUserPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: input.userPrompt,
+            imagePath: input.imagePath,
+            ctxSize: effectiveOptions.ctxSize,
+            maxTokens: effectiveOptions.maxTokens,
+            serverPort: 0,
+            thinkingEnabled: effectiveOptions.thinkingEnabled,
+            transport: { request in
+                max(0, request.content.count / 4)
+            }
+        )
+        let effectiveInput: RuntimeInferenceInput
+        switch input {
+        case .text:
+            effectiveInput = .text(userPrompt: guardedPrompt.userPrompt)
+        case let .vision(snapshotPath, _):
+            effectiveInput = .vision(
+                snapshotPath: snapshotPath,
+                userPrompt: guardedPrompt.userPrompt
+            )
+        }
         let promptFilenamePrefix: String = input.requiresVision ? "ac-system" : "ac-chat-system"
         let systemPromptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(promptFilenamePrefix)-\(UUID().uuidString).txt")
@@ -640,8 +681,8 @@ actor LocalModelRuntime {
         process.arguments = arguments(
             systemPromptURL: systemPromptURL,
             modelSource: modelSource,
-            input: input,
-            options: options
+            input: effectiveInput,
+            options: effectiveOptions
         )
         process.environment = Self.processEnvironment()
 
@@ -967,18 +1008,14 @@ actor LocalModelRuntime {
                 ctxSize: options.ctxSize,
                 maxTokens: options.maxTokens,
                 serverPort: serverPort,
-                transport: tokenizeWithServer(request:)
+                thinkingEnabled: options.thinkingEnabled,
+                transport: tokenizeWithServer(request:),
+                chatTransport: tokenizeChatPromptWithServer(request:)
             )
-            messages = [
-                [
-                    "role": "system",
-                    "content": systemPrompt,
-                ],
-                [
-                    "role": "user",
-                    "content": guardedPrompt.userPrompt,
-                ],
-            ]
+            messages = Self.textChatMessages(
+                systemPrompt: systemPrompt,
+                userPrompt: guardedPrompt.userPrompt
+            )
 
         case let .vision(snapshotPath, userPrompt):
             guardedPrompt = await PromptBudgetGuard.guardedUserPrompt(
@@ -988,7 +1025,9 @@ actor LocalModelRuntime {
                 ctxSize: options.ctxSize,
                 maxTokens: options.maxTokens,
                 serverPort: serverPort,
-                transport: tokenizeWithServer(request:)
+                thinkingEnabled: options.thinkingEnabled,
+                transport: tokenizeWithServer(request:),
+                chatTransport: tokenizeChatPromptWithServer(request:)
             )
             let imageDataURL = try Self.makeImageDataURL(
                 from: snapshotPath,
@@ -1026,6 +1065,9 @@ actor LocalModelRuntime {
             "top_k": options.topK,
             "cache_prompt": true,
             "stream": false,
+            "chat_template_kwargs": [
+                "enable_thinking": options.thinkingEnabled,
+            ],
         ]
         if let cacheSlot {
             body["id_slot"] = cacheSlot.rawValue
@@ -1050,6 +1092,77 @@ actor LocalModelRuntime {
         }
 
         return try JSONSerialization.data(withJSONObject: body, options: [])
+    }
+
+    private nonisolated static func textChatMessages(
+        systemPrompt: String,
+        userPrompt: String
+    ) -> [[String: Any]] {
+        [
+            [
+                "role": "system",
+                "content": systemPrompt,
+            ],
+            [
+                "role": "user",
+                "content": userPrompt,
+            ],
+        ]
+    }
+
+    private func tokenizeChatPromptWithServer(request: PromptBudgetGuardChatRequest) async throws -> Int {
+        let renderedPrompt = try await applyChatTemplateWithServer(request: request)
+        return try await tokenizeWithServer(
+            request: PromptBudgetGuardRequest(
+                serverPort: request.serverPort,
+                content: renderedPrompt,
+                timeoutSeconds: request.timeoutSeconds
+            )
+        )
+    }
+
+    private func applyChatTemplateWithServer(request: PromptBudgetGuardChatRequest) async throws -> String {
+        guard var components = URLComponents(string: "http://127.0.0.1") else {
+            throw LLMError.commandFailed(1, "Failed to construct llama-server template URL.")
+        }
+        components.port = request.serverPort
+        components.path = "/apply-template"
+        guard let templateURL = components.url else {
+            throw LLMError.commandFailed(
+                1,
+                "Failed to construct llama-server template URL for port \(request.serverPort)."
+            )
+        }
+        var urlRequest = URLRequest(url: templateURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = request.timeoutSeconds
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "messages": Self.textChatMessages(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt
+                ),
+            ]
+        )
+
+        let (data, response) = try await urlSession.data(for: urlRequest)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMError.commandFailed(1, "llama-server template endpoint returned a non-HTTP response.")
+        }
+        guard httpResponse.statusCode == 200 else {
+            throw LLMError.commandFailed(
+                Int32(httpResponse.statusCode),
+                String(decoding: data, as: UTF8.self)
+            )
+        }
+        guard
+            let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let prompt = payload["prompt"] as? String
+        else {
+            throw LLMError.commandFailed(1, "llama-server template endpoint returned an unexpected payload.")
+        }
+        return prompt
     }
 
     private func tokenizeWithServer(request: PromptBudgetGuardRequest) async throws -> Int {
@@ -1193,6 +1306,24 @@ actor LocalModelRuntime {
         runtimePath: String,
         modelIdentifier: String
     ) -> CachedModelArtifacts? {
+        // A user-linked `.gguf` path is its own model file. Pick up a sibling
+        // `*mmproj*.gguf` as the vision projector if one sits next to it.
+        let trimmedIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedIdentifier.hasPrefix("/"),
+           trimmedIdentifier.lowercased().hasSuffix(".gguf"),
+           FileManager.default.fileExists(atPath: trimmedIdentifier) {
+            let modelURL = URL(fileURLWithPath: trimmedIdentifier)
+            let projectorPath = (try? FileManager.default.contentsOfDirectory(
+                at: modelURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ))?.first {
+                $0.pathExtension.lowercased() == "gguf"
+                    && $0.lastPathComponent.lowercased().contains("mmproj")
+            }?.path
+            return CachedModelArtifacts(modelPath: trimmedIdentifier, multimodalProjectorPath: projectorPath)
+        }
+
         let components = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard let repositoryComponent = components.first else {
             return nil

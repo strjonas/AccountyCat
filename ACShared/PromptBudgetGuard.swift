@@ -12,6 +12,14 @@ struct PromptBudgetGuardRequest: Sendable {
     var timeoutSeconds: TimeInterval
 }
 
+struct PromptBudgetGuardChatRequest: Sendable {
+    var serverPort: Int
+    var systemPrompt: String
+    var userPrompt: String
+    var thinkingEnabled: Bool
+    var timeoutSeconds: TimeInterval
+}
+
 struct PromptBudgetGuardResult: Sendable, Equatable {
     var userPrompt: String
     var wasTruncated: Bool
@@ -22,6 +30,7 @@ struct PromptBudgetGuardResult: Sendable, Equatable {
 
 enum PromptBudgetGuard {
     typealias TokenizeTransport = @Sendable (PromptBudgetGuardRequest) async throws -> Int
+    typealias ChatTokenizeTransport = @Sendable (PromptBudgetGuardChatRequest) async throws -> Int
 
     private static let heuristicTokenThresholdRatio = 0.7
     nonisolated private static let imageMaxDimensionLadder = [1600, 1280, 1024, 768, 512]
@@ -71,27 +80,34 @@ enum PromptBudgetGuard {
         ctxSize: Int,
         maxTokens: Int,
         serverPort: Int,
-        transport: TokenizeTransport
+        thinkingEnabled: Bool = false,
+        transport: TokenizeTransport,
+        chatTransport: ChatTokenizeTransport? = nil
     ) async -> PromptBudgetGuardResult {
         let imageTokens = imagePath.map(estimatedImageTokens(for:)) ?? 0
         let heuristicPromptTokens = estimatedTextTokens(systemPrompt: systemPrompt, userPrompt: userPrompt)
         let heuristicTotal = heuristicPromptTokens + imageTokens
-        let requiresExactTokenization = Double(heuristicTotal) > Double(ctxSize) * heuristicTokenThresholdRatio
+        let requiresExactTokenization =
+            chatTransport != nil
+            || Double(heuristicTotal) > Double(ctxSize) * heuristicTokenThresholdRatio
 
         let reserve = max(maxTokens, ctxSize / 10)
         let allowedPromptTokens = max(0, ctxSize - reserve - maxTokens)
 
+        var exactChatPromptTokens: Int?
         let exactSystemTokens: Int?
         let exactUserTokens: Int?
         let warning: String?
 
         if requiresExactTokenization {
             do {
-                async let systemTokens = transport(
-                    PromptBudgetGuardRequest(
+                async let renderedChatTokens: Int? = chatTransport?(
+                    PromptBudgetGuardChatRequest(
                         serverPort: serverPort,
-                        content: systemPrompt,
-                        timeoutSeconds: 0.25
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        thinkingEnabled: thinkingEnabled,
+                        timeoutSeconds: 1.0
                     )
                 )
                 async let userTokens = transport(
@@ -101,17 +117,30 @@ enum PromptBudgetGuard {
                         timeoutSeconds: 0.25
                     )
                 )
-                let resolvedSystemTokens = try await systemTokens
+                let resolvedChatTokens = try await renderedChatTokens
                 let resolvedUserTokens = try await userTokens
-                exactSystemTokens = resolvedSystemTokens
+                exactChatPromptTokens = resolvedChatTokens
+                if let resolvedChatTokens {
+                    exactSystemTokens = max(0, resolvedChatTokens - resolvedUserTokens)
+                } else {
+                    exactSystemTokens = try await transport(
+                        PromptBudgetGuardRequest(
+                            serverPort: serverPort,
+                            content: systemPrompt,
+                            timeoutSeconds: 0.25
+                        )
+                    )
+                }
                 exactUserTokens = resolvedUserTokens
                 warning = nil
             } catch {
+                exactChatPromptTokens = nil
                 exactSystemTokens = nil
                 exactUserTokens = nil
                 warning = "PromptBudgetGuard tokenization fallback: \(error.localizedDescription)"
             }
         } else {
+            exactChatPromptTokens = nil
             exactSystemTokens = nil
             exactUserTokens = nil
             warning = nil
@@ -119,14 +148,15 @@ enum PromptBudgetGuard {
 
         let systemTokens = exactSystemTokens ?? estimatedTextTokens(systemPrompt: systemPrompt, userPrompt: "")
         let userTokens = exactUserTokens ?? estimatedTextTokens(systemPrompt: "", userPrompt: userPrompt)
-        let currentPromptTokens = systemTokens + userTokens + imageTokens
+        let textPromptTokens = exactChatPromptTokens ?? (systemTokens + userTokens)
+        let currentPromptTokens = textPromptTokens + imageTokens
 
         guard currentPromptTokens > allowedPromptTokens else {
             return PromptBudgetGuardResult(
                 userPrompt: userPrompt,
                 wasTruncated: false,
                 warning: warning,
-                promptTokensEstimate: systemTokens + userTokens,
+                promptTokensEstimate: textPromptTokens,
                 imageTokensEstimate: imageTokens
             )
         }
@@ -175,11 +205,30 @@ enum PromptBudgetGuard {
             finalUserTokens = estimatedTextTokens(systemPrompt: "", userPrompt: truncatedPrompt)
         }
 
+        let verifiedPromptTokens: Int
+        if let chatTransport, truncatedPrompt != userPrompt {
+            do {
+                verifiedPromptTokens = try await chatTransport(
+                    PromptBudgetGuardChatRequest(
+                        serverPort: serverPort,
+                        systemPrompt: systemPrompt,
+                        userPrompt: truncatedPrompt,
+                        thinkingEnabled: thinkingEnabled,
+                        timeoutSeconds: 1.0
+                    )
+                )
+            } catch {
+                verifiedPromptTokens = systemTokens + finalUserTokens
+            }
+        } else {
+            verifiedPromptTokens = systemTokens + finalUserTokens
+        }
+
         return PromptBudgetGuardResult(
             userPrompt: truncatedPrompt,
             wasTruncated: truncatedPrompt != userPrompt,
             warning: warning,
-            promptTokensEstimate: systemTokens + finalUserTokens,
+            promptTokensEstimate: verifiedPromptTokens,
             imageTokensEstimate: imageTokens
         )
     }

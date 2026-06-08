@@ -51,9 +51,57 @@ enum RuntimeSetupService {
         defaultHuggingFaceCacheURL().path
     }
 
+    /// True when a model identifier is actually an absolute path to a `.gguf` file
+    /// the user linked from disk (e.g. a model they already downloaded via Ollama or
+    /// elsewhere), rather than a Hugging Face repo id we download and cache ourselves.
+    nonisolated static func isLocalFileModelIdentifier(_ identifier: String) -> Bool {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("/") && trimmed.lowercased().hasSuffix(".gguf")
+    }
+
+    /// Resolves a linked-on-disk `.gguf` path to its model file and, if a sibling
+    /// `*mmproj*.gguf` lives next to it, its multimodal projector. Returns nil if the
+    /// identifier isn't a file path or the file no longer exists.
+    nonisolated static func localFileModelArtifacts(for identifier: String) -> (modelURL: URL, projectorURL: URL?)? {
+        let path = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isLocalFileModelIdentifier(path), FileManager.default.fileExists(atPath: path) else {
+            return nil
+        }
+        let modelURL = URL(fileURLWithPath: path)
+        let directory = modelURL.deletingLastPathComponent()
+        let projectorURL = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ))?.first {
+            $0.pathExtension.lowercased() == "gguf"
+                && $0.lastPathComponent.lowercased().contains("mmproj")
+        }
+        return (modelURL, projectorURL)
+    }
+
     nonisolated static func inspect(runtimeOverride: String?, modelIdentifier: String) -> RuntimeDiagnostics {
         let runtimePath = normalizedRuntimePath(from: runtimeOverride)
         let runtimeDirectory = runtimeDirectoryPath(for: runtimePath)
+        let tools = ["git", "cmake", "ninja"]
+
+        // A user-linked file lives wherever they put it — there is nothing for AC to
+        // download or cache, so report it present as soon as the file exists.
+        if let fileArtifacts = localFileModelArtifacts(for: modelIdentifier) {
+            return RuntimeDiagnostics(
+                runtimePath: runtimePath,
+                runtimeDirectory: runtimeDirectory,
+                runtimePresent: FileManager.default.isExecutableFile(atPath: runtimePath),
+                modelCachePath: fileArtifacts.modelURL.deletingLastPathComponent().path,
+                managedModelCachePath: "",
+                modelCachePresent: true,
+                modelArtifactsPresent: true,
+                resolvedModelPath: fileArtifacts.modelURL.path,
+                resolvedProjectorPath: fileArtifacts.projectorURL?.path,
+                missingTools: tools.filter { !toolExists($0) }
+            )
+        }
+
         let modelCacheRoots = modelCacheRoots(
             forRuntimePath: runtimePath,
             modelIdentifier: modelIdentifier
@@ -69,7 +117,6 @@ enum RuntimeSetupService {
         let modelCachePresent = existingModelCacheRoot != nil
         let managedModelCachePath = managedModelCacheURL(for: modelIdentifier).path
         let modelArtifactsPresent = resolvedArtifacts != nil
-        let tools = ["git", "cmake", "ninja"]
         let missingTools = tools.filter { tool in
             !toolExists(tool)
         }
