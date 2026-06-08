@@ -63,6 +63,53 @@ struct ResilienceTests {
         #expect(controller.modelMismatchNotice == nil)
     }
 
+    @Test
+    func pendingLocalModelNoticeNamesDownloadAndFallback() {
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        var state = controller.state
+        state.monitoringConfiguration = MonitoringConfiguration(
+            inferenceBackend: .local,
+            localModelIdentifierText: "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+            localModelIdentifierImage: "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        )
+        controller.state = state
+        controller.setPendingLocalModelChange(
+            AppController.PendingLocalModelChange(
+                modelIdentifier: "unsloth/gemma-4-12b-it-GGUF:Q4_K_M",
+                fallbackIdentifier: "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+                autoSelectWhenReady: true
+            )
+        )
+
+        let notice = controller.modelMismatchNotice
+        #expect(notice?.contains("Downloading") == true)
+        #expect(notice?.contains("gemma-4-12b") == true)
+        #expect(notice?.contains("Qwen 3.5 9B") == true)
+        #expect(notice?.contains("switch automatically") == true)
+    }
+
+    @Test
+    func pendingLocalModelChangeRestoresFromPersistedState() {
+        let storage = StorageService.temporary()
+        var state = ACState()
+        state.monitoringConfiguration = MonitoringConfiguration(
+            inferenceBackend: .local,
+            localModelIdentifierText: "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+            localModelIdentifierImage: "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        )
+        state.pendingLocalModelIdentifier = "unsloth/gemma-4-12b-it-GGUF:Q4_K_M"
+        state.pendingLocalModelFallbackIdentifier = "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
+        state.pendingLocalModelAutoSelect = false
+        storage.saveState(state)
+
+        let controller = AppController.makeForTesting(storageService: storage)
+
+        #expect(controller.pendingLocalModelChange?.modelIdentifier == state.pendingLocalModelIdentifier)
+        #expect(controller.pendingLocalModelChange?.fallbackIdentifier == state.pendingLocalModelFallbackIdentifier)
+        #expect(controller.pendingLocalModelChange?.autoSelectWhenReady == false)
+        #expect(controller.state.monitoringConfiguration.localModelIdentifierText == "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL")
+    }
+
     // MARK: - Health Stats Ban Escalation
 
     @Test

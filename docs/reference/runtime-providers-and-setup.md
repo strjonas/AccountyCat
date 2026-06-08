@@ -126,6 +126,31 @@ Progress is reported two ways, with byte-level data preferred:
   as a fallback, but defers to byte polling whenever a real total is known
   (`setupTotalBytes != nil`) so the two don't fight.
 
+### Pending local model downloads
+
+Settings → AI always shows the three built-in local model cards. Advanced local mode lets
+users add named custom model cards; the card title is user-controlled and the subtitle is
+the actual Hugging Face GGUF identifier.
+
+Selection and download are separate actions. Selecting an installed card immediately updates
+the local text/image model identifiers. Pressing a card's download button persists a pending
+target plus the current fallback model and downloads/warm-ups that target while monitoring
+continues on the fallback. The card itself owns the progress bar, pause/resume control, and
+stop/delete-partial control. Installed cards show a delete button with confirmation.
+
+`pendingLocalModelAutoSelect` distinguishes two flows:
+
+- Tier changes and legacy advanced local selection queue with `autoSelectWhenReady == true`;
+  once artifacts are ready, `applyPendingLocalModelIfReady()` switches text and image local
+  identifiers to the target automatically.
+- Card download buttons queue with `autoSelectWhenReady == false`; once artifacts are ready,
+  the pending state clears and the card becomes selectable, but the active local model stays
+  on the fallback until the user selects the new card.
+
+Relaunching during a pending download restores the same card-level pending state and resumes
+the download instead of reopening first-run setup. OpenRouter advanced model IDs remain
+separate from local custom IDs.
+
 ### Surfacing failures
 
 `setupErrorMessage` is rendered in both `OnboardingDialogView` and the `AITab`

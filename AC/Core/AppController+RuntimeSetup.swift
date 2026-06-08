@@ -9,8 +9,7 @@ import Foundation
 @MainActor
 extension AppController {
     var selectedLocalModelIdentifier: String {
-        pendingLocalModelChange?.modelIdentifier
-            ?? state.monitoringConfiguration.localModelIdentifierImage
+        state.monitoringConfiguration.localModelIdentifierImage
             ?? state.monitoringConfiguration.localModelIdentifierText
             ?? state.aiTier.localModelIdentifierText
     }
@@ -47,6 +46,89 @@ extension AppController {
 
     func selectInstalledModel(cachePath: String) {
         selectedInstalledModelCachePath = cachePath
+    }
+
+    static func pendingLocalModelChange(from state: ACState) -> PendingLocalModelChange? {
+        guard state.monitoringConfiguration.inferenceBackend == .local,
+              let target = state.pendingLocalModelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !target.isEmpty else {
+            return nil
+        }
+
+        let savedFallback = state.pendingLocalModelFallbackIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveFallback: String
+        if let savedFallback, !savedFallback.isEmpty {
+            effectiveFallback = savedFallback
+        } else {
+            effectiveFallback = state.monitoringConfiguration.localModelIdentifierImage
+                ?? state.monitoringConfiguration.localModelIdentifierText
+                ?? state.aiTier.localModelIdentifierText
+        }
+        return PendingLocalModelChange(
+            modelIdentifier: target,
+            fallbackIdentifier: effectiveFallback,
+            autoSelectWhenReady: state.pendingLocalModelAutoSelect
+        )
+    }
+
+    func setPendingLocalModelChange(_ change: PendingLocalModelChange?) {
+        pendingLocalModelChange = change
+        state.pendingLocalModelIdentifier = change?.modelIdentifier
+        state.pendingLocalModelFallbackIdentifier = change?.fallbackIdentifier
+        state.pendingLocalModelAutoSelect = change?.autoSelectWhenReady ?? true
+    }
+
+    func clearPendingLocalModelChange() {
+        setPendingLocalModelChange(nil)
+    }
+
+    func localModelInstalled(_ identifier: String) -> Bool {
+        RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: identifier
+        ).modelArtifactsPresent
+    }
+
+    func localModelDownloadedBytes(_ identifier: String) -> Int64 {
+        RuntimeSetupService.downloadedModelBytes(for: identifier)
+    }
+
+    func localCustomModelsForDisplay() -> [LocalCustomModel] {
+        let catalog = Set(AITier.allCases.map(\.localModelIdentifierText))
+        var modelsByID = state.localCustomModels.reduce(into: [String: LocalCustomModel]()) { partial, model in
+            partial[model.modelIdentifier] = model
+        }
+
+        for installed in installedManagedModels where !catalog.contains(installed.modelIdentifier) {
+            if modelsByID[installed.modelIdentifier] == nil {
+                modelsByID[installed.modelIdentifier] = LocalCustomModel(
+                    displayName: Self.shortModelName(for: installed.modelIdentifier),
+                    modelIdentifier: installed.modelIdentifier
+                )
+            }
+        }
+
+        if let pending = pendingLocalModelChange,
+           !catalog.contains(pending.modelIdentifier),
+           modelsByID[pending.modelIdentifier] == nil {
+            modelsByID[pending.modelIdentifier] = LocalCustomModel(
+                displayName: Self.shortModelName(for: pending.modelIdentifier),
+                modelIdentifier: pending.modelIdentifier
+            )
+        }
+
+        let active = activeLocalModelIdentifier()
+        if !catalog.contains(active), modelsByID[active] == nil {
+            modelsByID[active] = LocalCustomModel(
+                displayName: Self.shortModelName(for: active),
+                modelIdentifier: active
+            )
+        }
+
+        return modelsByID.values.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
     }
 
     func revealManagedModelLocation() {
@@ -93,7 +175,7 @@ extension AppController {
                     runtimePath: RuntimeSetupService.normalizedRuntimePath(
                         from: self.state.runtimePathOverride)
                 )
-                self.pendingLocalModelChange = nil
+                self.clearPendingLocalModelChange()
                 self.modelDownloadNotice = nil
                 self.modelDownloadSuccess = nil
                 self.refreshSystemState()
@@ -422,7 +504,7 @@ extension AppController {
             // running and installingRuntime stays true, which pins setupStatus at
             // .installing ("setup needed") until the app is restarted.
             cancelRuntimeInstall()
-            pendingLocalModelChange = nil
+            clearPendingLocalModelChange()
             modelDownloadNotice = nil
             prewarmTask?.cancel()
             prewarmTask = nil
@@ -478,21 +560,187 @@ extension AppController {
     }
 
     func updateLocalModelIdentifierText(_ identifier: String?) {
-        guard state.monitoringConfiguration.localModelIdentifierText != identifier else { return }
-        state.monitoringConfiguration.localModelIdentifierText = identifier
-        brainService?.handleMonitoringConfigurationChange()
-        refreshSystemState(persist: false)
-        persistState()
-        logActivity("monitoring", "Local text model: \(identifier ?? "cleared")")
+        updateLocalModelIdentifier(identifier)
     }
 
     func updateLocalModelIdentifierImage(_ identifier: String?) {
-        guard state.monitoringConfiguration.localModelIdentifierImage != identifier else { return }
-        state.monitoringConfiguration.localModelIdentifierImage = identifier
+        updateLocalModelIdentifier(identifier)
+    }
+
+    func updateLocalModelIdentifier(_ identifier: String?) {
+        let trimmed = identifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let target = trimmed, !target.isEmpty else { return }
+
+        let diagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: target
+        )
+
+        if diagnostics.modelArtifactsPresent {
+            cancelRuntimeInstall()
+            clearPendingLocalModelChange()
+            modelDownloadNotice = nil
+            modelDownloadSuccess = nil
+            applyLocalModelSelection(textModel: target, imageModel: target)
+            brainService?.handleMonitoringConfigurationChange()
+            refreshSystemState(persist: false)
+            persistState()
+            schedulePrewarmIfNeeded()
+            logActivity("monitoring", "Local model: \(target)")
+            return
+        }
+
+        let fallback = activeLocalModelIdentifier()
+        _ = queueLocalModelDownloadIfNeeded(
+            targetModelIdentifier: target,
+            fallbackIdentifier: fallback,
+            autoSelectWhenReady: true
+        )
+        refreshSystemState(persist: false)
+        persistState()
+        logActivity("monitoring", "Queued local model download: \(target)")
+    }
+
+    func useInstalledLocalModel(_ identifier: String) {
+        updateLocalModelIdentifier(identifier)
+    }
+
+    func selectInstalledLocalModel(identifier: String, tier: AITier? = nil) {
+        guard localModelInstalled(identifier) else { return }
+        if let tier {
+            state.aiTier = tier
+        }
+        applyLocalModelSelection(textModel: identifier, imageModel: identifier)
+        if let pending = pendingLocalModelChange {
+            if pending.modelIdentifier == identifier {
+                clearPendingLocalModelChange()
+            } else {
+                setPendingLocalModelChange(
+                    PendingLocalModelChange(
+                        modelIdentifier: pending.modelIdentifier,
+                        fallbackIdentifier: identifier,
+                        autoSelectWhenReady: pending.autoSelectWhenReady
+                    )
+                )
+            }
+        }
+        modelDownloadNotice = nil
+        modelDownloadSuccess = nil
         brainService?.handleMonitoringConfigurationChange()
         refreshSystemState(persist: false)
         persistState()
-        logActivity("monitoring", "Local image model: \(identifier ?? "cleared")")
+        schedulePrewarmIfNeeded()
+        logActivity("monitoring", "Local model selected: \(identifier)")
+    }
+
+    func addCustomLocalModel(displayName: String, modelIdentifier: String) {
+        let identifier = modelIdentifier.cleanedSingleLine
+        guard !identifier.isEmpty else { return }
+        let name = displayName.cleanedSingleLine.isEmpty
+            ? Self.shortModelName(for: identifier)
+            : displayName.cleanedSingleLine
+        let model = LocalCustomModel(displayName: name, modelIdentifier: identifier)
+        if let index = state.localCustomModels.firstIndex(where: { $0.modelIdentifier == identifier }) {
+            state.localCustomModels[index] = model
+        } else {
+            state.localCustomModels.append(model)
+        }
+        state.localCustomModels.sort {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        persistState()
+    }
+
+    func startLocalModelDownload(identifier: String, autoSelectWhenReady: Bool = false) {
+        let target = identifier.cleanedSingleLine
+        guard !target.isEmpty, !localModelInstalled(target) else { return }
+        _ = queueLocalModelDownloadIfNeeded(
+            targetModelIdentifier: target,
+            fallbackIdentifier: activeLocalModelIdentifier(),
+            autoSelectWhenReady: autoSelectWhenReady
+        )
+        refreshSystemState(persist: false)
+        persistState()
+    }
+
+    func pauseLocalModelDownload(identifier: String) {
+        guard pendingLocalModelChange?.modelIdentifier == identifier, installingRuntime else { return }
+        cancelRuntimeInstall()
+        refreshSystemState(persist: false)
+        persistState()
+    }
+
+    func resumeLocalModelDownload(identifier: String) {
+        let target = identifier.cleanedSingleLine
+        guard !target.isEmpty, !installingRuntime, !localModelInstalled(target) else { return }
+        if pendingLocalModelChange?.modelIdentifier != target {
+            setPendingLocalModelChange(
+                PendingLocalModelChange(
+                    modelIdentifier: target,
+                    fallbackIdentifier: activeLocalModelIdentifier(),
+                    autoSelectWhenReady: false
+                )
+            )
+        }
+        installRuntime(modelIdentifier: target)
+        refreshSystemState(persist: false)
+        persistState()
+    }
+
+    func stopLocalModelDownload(identifier: String, deleteCache: Bool = true) {
+        guard pendingLocalModelChange?.modelIdentifier == identifier else { return }
+        cancelRuntimeInstall()
+        clearPendingLocalModelChange()
+        modelDownloadNotice = nil
+        if deleteCache {
+            try? RuntimeSetupService.deleteManagedModelCache(for: identifier)
+        }
+        refreshSystemState(persist: false)
+        persistState()
+    }
+
+    func deleteLocalModel(identifier: String) {
+        guard !deletingManagedModels else { return }
+        deletingManagedModels = true
+        localModelStorageMessage = nil
+        localModelStorageError = nil
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if self.activeLocalModelIdentifier() == identifier {
+                await self.localModelRuntime.shutdown()
+            }
+            do {
+                let diagnostics = RuntimeSetupService.inspect(
+                    runtimeOverride: self.state.runtimePathOverride,
+                    modelIdentifier: identifier
+                )
+                let removed = try RuntimeSetupService.deleteCachesCreatedByAC(
+                    for: identifier,
+                    selectedCachePath: diagnostics.modelCachePath,
+                    runtimePath: RuntimeSetupService.normalizedRuntimePath(from: self.state.runtimePathOverride)
+                )
+                if self.pendingLocalModelChange?.modelIdentifier == identifier {
+                    self.clearPendingLocalModelChange()
+                }
+                if self.activeLocalModelIdentifier() == identifier,
+                   let fallback = self.installedManagedModels.first(where: { $0.modelIdentifier != identifier }) {
+                    self.applyLocalModelSelection(
+                        textModel: fallback.modelIdentifier,
+                        imageModel: fallback.modelIdentifier
+                    )
+                }
+                self.localModelStorageMessage = removed > 0
+                    ? "Deleted \(Self.shortModelName(for: identifier))."
+                    : "That local model was already gone."
+                self.brainService?.handleMonitoringConfigurationChange()
+                self.refreshSystemState(persist: false)
+                self.persistState()
+            } catch {
+                self.localModelStorageError = error.localizedDescription
+            }
+            self.deletingManagedModels = false
+        }
     }
 
     func updateOnlineAPIKey(_ value: String) {
@@ -523,6 +771,15 @@ extension AppController {
         if state.monitoringConfiguration.usesOnlineInference, directOpenAIEnabled {
             return
                 "Direct OpenAI mode active: all online LLM traffic uses \(OnlineProviderRouting.directOpenAIModelIdentifier)."
+        }
+        if !state.monitoringConfiguration.usesOnlineInference,
+           let pending = pendingLocalModelChange {
+            let pendingName = Self.shortModelName(for: pending.modelIdentifier)
+            let fallbackName = Self.shortModelName(for: pending.fallbackIdentifier)
+            if pending.autoSelectWhenReady {
+                return "Downloading \(pendingName). Using \(fallbackName) until it finishes, then AC will switch automatically."
+            }
+            return "Downloading \(pendingName). Current active model stays \(fallbackName)."
         }
         guard let lastUsed = lastUsedModelIdentifier else { return nil }
         let config = state.monitoringConfiguration
@@ -626,6 +883,7 @@ extension AppController {
     }
 
     func applyTierToActiveBackend() {
+        let previousLocalModelIdentifier = activeLocalModelIdentifier()
         Self.applyTierModels(state.aiTier, to: &state.monitoringConfiguration)
         switch state.monitoringConfiguration.inferenceBackend {
         case .openRouter:
@@ -633,9 +891,9 @@ extension AppController {
         case .local:
             if !queueLocalModelDownloadIfNeeded(
                 targetModelIdentifier: state.aiTier.localModelIdentifierText,
-                fallbackIdentifier: activeLocalModelIdentifier()
+                fallbackIdentifier: previousLocalModelIdentifier
             ) {
-                pendingLocalModelChange = nil
+                clearPendingLocalModelChange()
                 modelDownloadNotice = nil
                 modelDownloadSuccess = nil
                 cancelRuntimeInstall()
@@ -691,7 +949,8 @@ extension AppController {
     @discardableResult
     func queueLocalModelDownloadIfNeeded(
         targetModelIdentifier: String,
-        fallbackIdentifier: String
+        fallbackIdentifier: String,
+        autoSelectWhenReady: Bool = true
     ) -> Bool {
         let diagnostics = RuntimeSetupService.inspect(
             runtimeOverride: state.runtimePathOverride,
@@ -701,15 +960,26 @@ extension AppController {
 
         let targetName = Self.shortModelName(for: targetModelIdentifier)
         let fallbackName = Self.shortModelName(for: fallbackIdentifier)
-        pendingLocalModelChange = PendingLocalModelChange(
-            modelIdentifier: targetModelIdentifier
+        let shouldRestartInstall = installingRuntime
+            && pendingLocalModelChange?.modelIdentifier != targetModelIdentifier
+        if shouldRestartInstall {
+            cancelRuntimeInstall()
+        }
+        setPendingLocalModelChange(
+            PendingLocalModelChange(
+                modelIdentifier: targetModelIdentifier,
+                fallbackIdentifier: fallbackIdentifier,
+                autoSelectWhenReady: autoSelectWhenReady
+            )
         )
         modelDownloadNotice = ModelDownloadNotice(
             modelIdentifier: targetModelIdentifier,
             modelDisplayName: targetName,
             fallbackDisplayName: fallbackName
         )
-        applyLocalModelFallback(fallbackIdentifier)
+        if autoSelectWhenReady {
+            applyLocalModelFallback(fallbackIdentifier)
+        }
 
         if !installingRuntime {
             installRuntime(modelIdentifier: targetModelIdentifier)
@@ -721,7 +991,7 @@ extension AppController {
     func applyPendingLocalModelIfReady() -> Bool {
         guard let pending = pendingLocalModelChange else { return false }
         guard state.monitoringConfiguration.inferenceBackend == .local else {
-            pendingLocalModelChange = nil
+            clearPendingLocalModelChange()
             return true
         }
         let diagnostics = RuntimeSetupService.inspect(
@@ -730,18 +1000,43 @@ extension AppController {
         )
         guard diagnostics.modelArtifactsPresent else { return false }
 
-        applyLocalModelSelection(
-            textModel: pending.modelIdentifier,
-            imageModel: pending.modelIdentifier
-        )
-        pendingLocalModelChange = nil
+        if pending.autoSelectWhenReady {
+            applyLocalModelSelection(
+                textModel: pending.modelIdentifier,
+                imageModel: pending.modelIdentifier
+            )
+        }
+        clearPendingLocalModelChange()
         modelDownloadSuccess = ModelDownloadSuccess(
             modelIdentifier: pending.modelIdentifier,
             modelDisplayName: Self.shortModelName(for: pending.modelIdentifier)
         )
-        brainService?.handleMonitoringConfigurationChange()
+        modelDownloadNotice = nil
+        if pending.autoSelectWhenReady {
+            brainService?.handleMonitoringConfigurationChange()
+        }
         persistState()
         return true
+    }
+
+    func resumePendingLocalModelDownloadIfNeeded() {
+        guard state.monitoringConfiguration.inferenceBackend == .local,
+              let pending = pendingLocalModelChange,
+              !installingRuntime else {
+            return
+        }
+
+        let diagnostics = RuntimeSetupService.inspect(
+            runtimeOverride: state.runtimePathOverride,
+            modelIdentifier: pending.modelIdentifier
+        )
+        if diagnostics.modelArtifactsPresent {
+            _ = applyPendingLocalModelIfReady()
+            return
+        }
+
+        guard setupDiagnostics.canInstall else { return }
+        installRuntime(modelIdentifier: pending.modelIdentifier)
     }
 
     func installMissingDependencies() {
@@ -937,7 +1232,6 @@ extension AppController {
             } catch {
                 setupErrorMessage = error.localizedDescription
                 logActivity("setup", "Runtime setup failed: \(error.localizedDescription)")
-                pendingLocalModelChange = nil
             }
 
             if cancelledDuringInstall {
@@ -1033,6 +1327,8 @@ extension AppController {
 
     struct PendingLocalModelChange: Equatable, Sendable {
         let modelIdentifier: String
+        let fallbackIdentifier: String
+        let autoSelectWhenReady: Bool
     }
 
     enum LocalModelStorageActionError: LocalizedError {

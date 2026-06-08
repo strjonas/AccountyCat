@@ -47,6 +47,25 @@ struct StorageServiceTests {
     }
 
     @Test
+    func savesCustomLocalModelsRoundtrips() {
+        let storage = StorageService.temporary()
+        var state = ACState()
+        state.localCustomModels = [
+            LocalCustomModel(
+                displayName: "Gemma 12B",
+                modelIdentifier: "unsloth/gemma-4-12b-it-GGUF:Q4_K_M"
+            )
+        ]
+
+        storage.saveState(state)
+        let loaded = storage.loadState()
+
+        #expect(loaded.localCustomModels.count == 1)
+        #expect(loaded.localCustomModels.first?.displayName == "Gemma 12B")
+        #expect(loaded.localCustomModels.first?.modelIdentifier == "unsloth/gemma-4-12b-it-GGUF:Q4_K_M")
+    }
+
+    @Test
     func missingFileReturnsDefaultState() {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ac-test-nonexistent-\(UUID().uuidString)")

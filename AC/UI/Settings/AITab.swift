@@ -18,9 +18,11 @@ struct AITab: View {
     @State private var showZDRDisableConfirm = false
     @State private var zdrEnabled = OnlineProviderRouting.isZDREnforced()
     @State private var showDeleteModelConfirm = false
-    @State private var modelToDelete: InstalledLocalModel?
+    @State private var modelToDeleteIdentifier: String?
+    @State private var modelToDeleteName: String?
     @State private var advancedTextModelID = ""
     @State private var advancedImageModelID = ""
+    @State private var advancedLocalModelName = ""
 
     private var config: MonitoringConfiguration { controller.state.monitoringConfiguration }
 
@@ -152,22 +154,29 @@ struct AITab: View {
         }
         .alert("Delete model?", isPresented: $showDeleteModelConfirm) {
             Button("Delete", role: .destructive) {
-                if let model = modelToDelete {
-                    deleteModel(model)
+                if let modelToDeleteIdentifier {
+                    deleteModel(identifier: modelToDeleteIdentifier)
                 }
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            if let model = modelToDelete,
-               model.cachePath == controller.selectedInstalledModel?.cachePath {
+            if let modelToDeleteIdentifier,
+               modelToDeleteIdentifier == controller.activeLocalModelIdentifier() {
                 Text("This is your current active model. Deleting it will switch AC to the next available model.")
+            } else if let modelToDeleteName {
+                Text("This will delete \(modelToDeleteName) from local storage.")
             } else {
                 Text("This will free up storage space.")
             }
         }
         .onAppear {
-            advancedTextModelID = config.onlineModelIdentifierText ?? config.onlineModelIdentifier
-            advancedImageModelID = config.onlineModelIdentifierImage ?? config.onlineModelIdentifier
+            resetAdvancedModelDrafts()
+            if config.inferenceBackend == .local, !controller.localCustomModelsForDisplay().isEmpty {
+                showAdvanced = true
+            }
+        }
+        .onChange(of: config.inferenceBackend) { _, _ in
+            resetAdvancedModelDrafts()
         }
     }
 
@@ -338,17 +347,20 @@ struct AITab: View {
 
     // MARK: - Tier picker
 
+    @ViewBuilder
     private var tierPicker: some View {
+        if config.inferenceBackend == .local {
+            localModelCards
+        } else {
+            onlineTierPicker
+        }
+    }
+
+    private var onlineTierPicker: some View {
         VStack(spacing: 6) {
             ForEach(AITier.allCases, id: \.self) { tier in
                 let isSelected = controller.currentAITier == tier
-                let isRecommended: Bool = {
-                    if controller.state.monitoringConfiguration.inferenceBackend == .openRouter {
-                        return tier == .balanced
-                    } else {
-                        return tier == AITier.recommendedLocalTier()
-                    }
-                }()
+                let isRecommended = tier == .balanced
                 Button {
                     controller.updateAITier(tier)
                 } label: {
@@ -425,6 +437,226 @@ struct AITab: View {
         }
     }
 
+    private var localModelCards: some View {
+        VStack(spacing: 6) {
+            ForEach(localModelCardDescriptors) { card in
+                localModelCard(card)
+            }
+        }
+    }
+
+    private var localModelCardDescriptors: [LocalModelCardDescriptor] {
+        let defaults = AITier.allCases.map { tier in
+            LocalModelCardDescriptor(
+                title: tier.displayName,
+                subtitle: tier.localModelIdentifierText,
+                detail: "\(tier.localModelDisplayName) · \(tier.localRAMEstimate)",
+                modelIdentifier: tier.localModelIdentifierText,
+                tier: tier,
+                isRecommended: tier == AITier.recommendedLocalTier()
+            )
+        }
+        let defaultIDs = Set(defaults.map(\.modelIdentifier))
+        let custom = controller.localCustomModelsForDisplay()
+            .filter { !defaultIDs.contains($0.modelIdentifier) }
+            .map { model in
+                LocalModelCardDescriptor(
+                    title: model.displayName,
+                    subtitle: model.modelIdentifier,
+                    detail: "Custom local model",
+                    modelIdentifier: model.modelIdentifier,
+                    tier: nil,
+                    isRecommended: false
+                )
+            }
+        return defaults + custom
+    }
+
+    private func localModelCard(_ card: LocalModelCardDescriptor) -> some View {
+        let activeIdentifier = controller.activeLocalModelIdentifier()
+        let isSelected = activeIdentifier == card.modelIdentifier
+        let isInstalled = controller.localModelInstalled(card.modelIdentifier)
+        let isPending = controller.pendingLocalModelChange?.modelIdentifier == card.modelIdentifier
+        let isDownloading = isPending && controller.installingRuntime
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                ZStack {
+                    Circle()
+                        .stroke(isSelected ? accent : Color.acHairline, lineWidth: 1.5)
+                        .frame(width: 16, height: 16)
+                    if isSelected {
+                        Circle()
+                            .fill(accent)
+                            .frame(width: 8, height: 8)
+                    }
+                }
+                .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(card.title)
+                            .font(.ac(12, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(Color.acTextPrimary)
+                            .lineLimit(1)
+                        if card.isRecommended {
+                            localStatusBadge("recommended", tint: accent)
+                        }
+                        if isSelected {
+                            localStatusBadge("active", tint: accent)
+                        }
+                    }
+                    Text(card.detail)
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(card.subtitle)
+                        .font(.ac(10))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.58))
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                localModelCardControls(
+                    card,
+                    isInstalled: isInstalled,
+                    isPending: isPending,
+                    isDownloading: isDownloading
+                )
+            }
+
+            if isPending {
+                localModelDownloadProgress(card.modelIdentifier, isDownloading: isDownloading)
+            } else if !isInstalled {
+                let partialBytes = controller.localModelDownloadedBytes(card.modelIdentifier)
+                if partialBytes > 0 {
+                    Text("\(formatBytes(partialBytes)) already downloaded")
+                        .font(.ac(10))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.58))
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .contentShape(RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous))
+        .onTapGesture {
+            guard isInstalled else { return }
+            controller.selectInstalledLocalModel(identifier: card.modelIdentifier, tier: card.tier)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                .fill(isSelected ? accent.opacity(0.08) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                        .stroke(isSelected ? accent.opacity(0.3) : Color.acHairline.opacity(0.6), lineWidth: 1)
+                )
+        )
+    }
+
+    private func localStatusBadge(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.ac(8, weight: .semibold))
+            .foregroundStyle(tint.opacity(0.75))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.10))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(tint.opacity(0.2), lineWidth: 0.5)
+                    )
+            )
+    }
+
+    @ViewBuilder
+    private func localModelCardControls(
+        _ card: LocalModelCardDescriptor,
+        isInstalled: Bool,
+        isPending: Bool,
+        isDownloading: Bool
+    ) -> some View {
+        if isPending {
+            HStack(spacing: 6) {
+                iconButton(
+                    systemName: isDownloading ? "pause.fill" : "play.fill",
+                    tint: accent,
+                    help: isDownloading ? "Pause download" : "Resume download"
+                ) {
+                    if isDownloading {
+                        controller.pauseLocalModelDownload(identifier: card.modelIdentifier)
+                    } else {
+                        controller.resumeLocalModelDownload(identifier: card.modelIdentifier)
+                    }
+                }
+                iconButton(systemName: "xmark", tint: .red, help: "Stop and remove partial download") {
+                    controller.stopLocalModelDownload(identifier: card.modelIdentifier)
+                }
+            }
+        } else if isInstalled {
+            iconButton(systemName: "trash", tint: .red, help: "Delete downloaded model") {
+                modelToDeleteIdentifier = card.modelIdentifier
+                modelToDeleteName = card.title
+                showDeleteModelConfirm = true
+            }
+        } else {
+            iconButton(systemName: "arrow.down", tint: accent, help: "Download model") {
+                controller.startLocalModelDownload(identifier: card.modelIdentifier)
+            }
+        }
+    }
+
+    private func iconButton(
+        systemName: String,
+        tint: Color,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(tint.opacity(0.82))
+                .frame(width: 26, height: 26)
+                .background(
+                    Circle()
+                        .fill(tint.opacity(0.08))
+                        .overlay(Circle().stroke(tint.opacity(0.18), lineWidth: 1))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    @ViewBuilder
+    private func localModelDownloadProgress(_ identifier: String, isDownloading: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if isDownloading, let progress = controller.setupProgressValue {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            } else if isDownloading {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            } else {
+                ProgressView(value: 0)
+                    .progressViewStyle(.linear)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(isDownloading ? downloadStatusText : pausedDownloadStatusText(for: identifier))
+                    .lineLimit(2)
+                Spacer(minLength: 6)
+                if isDownloading, let progress = controller.setupProgressValue {
+                    Text("\(max(0, min(100, Int((progress * 100).rounded()))))%")
+                } else if !isDownloading {
+                    Text("paused")
+                }
+            }
+            .font(.ac(10))
+            .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+        }
+    }
+
     // MARK: - OpenRouter key
 
     private var orKeySection: some View {
@@ -443,109 +675,29 @@ struct AITab: View {
 
     // MARK: - Local model storage
 
+    @ViewBuilder
     private var localModelSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Divider().opacity(0.3)
-            sectionLabel("installed models")
+        if controller.setupErrorMessage != nil
+            || controller.localModelStorageMessage != nil
+            || controller.localModelStorageError != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Divider().opacity(0.3)
+                sectionLabel("local model status")
 
-            // Download progress
-            if controller.installingRuntime {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let progress = controller.setupProgressValue {
-                        ProgressView(value: progress)
-                            .progressViewStyle(.linear)
-                    } else {
-                        ProgressView()
-                            .progressViewStyle(.linear)
-                    }
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(downloadStatusText)
-                            .lineLimit(2)
-                        Spacer(minLength: 6)
-                        if let progress = controller.setupProgressValue {
-                            Text("\(max(0, min(100, Int((progress * 100).rounded()))))%")
-                        }
-                    }
-                    .font(.ac(10))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.72))
-
-                    Text(
-                        "The model is a few GB, so the first download can take several minutes — longer on slower connections. Thanks for your patience; it only happens once."
-                    )
-                    .font(.ac(10))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.55))
-                    .fixedSize(horizontal: false, vertical: true)
+                if let err = controller.setupErrorMessage {
+                    localSetupErrorBanner(err)
                 }
-                .padding(.vertical, 4)
-            } else if let err = controller.setupErrorMessage {
-                localSetupErrorBanner(err)
-            }
 
-            let installed = controller.installedManagedModels
-            let selected = controller.selectedInstalledModel
+                if let message = controller.localModelStorageMessage {
+                    Text(message)
+                        .font(.acCaption)
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.72))
+                }
 
-            if installed.isEmpty {
-                Text("No AC-downloaded local models found yet.")
-                    .font(.acCaption)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(installed) { model in
-                        let isActive = model.cachePath == selected?.cachePath
-                        HStack(spacing: 10) {
-                            Text("◈")
-                                .font(.system(size: 12))
-                                .foregroundStyle(isActive ? accent : Color.acTextPrimary.opacity(0.4))
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(AppController.shortModelName(for: model.modelIdentifier))
-                                        .font(.ac(12, weight: isActive ? .semibold : .medium))
-                                        .foregroundStyle(Color.acTextPrimary)
-                                    if isActive {
-                                        Text("active")
-                                            .font(.ac(9, weight: .semibold))
-                                            .foregroundStyle(.white)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Capsule(style: .continuous).fill(accent))
-                                    }
-                                }
-                                Text(model.modelIdentifier)
-                                    .font(.ac(10))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer()
-
-                            Button {
-                                modelToDelete = model
-                                showDeleteModelConfirm = true
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(Color.red.opacity(0.72))
-                                    .frame(width: 26, height: 26)
-                                    .background(
-                                        Circle()
-                                            .fill(Color.red.opacity(0.08))
-                                            .overlay(Circle().stroke(Color.red.opacity(0.18), lineWidth: 1))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                .fill(isActive ? accent.opacity(0.06) : Color.acSurface)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
-                                        .stroke(isActive ? accent.opacity(0.2) : Color.acHairline, lineWidth: 1)
-                                )
-                        )
-                    }
+                if let message = controller.localModelStorageError {
+                    Text(message)
+                        .font(.acCaption)
+                        .foregroundStyle(.red.opacity(0.9))
                 }
             }
         }
@@ -562,6 +714,14 @@ struct AITab: View {
             return "Downloaded \(formatBytes(downloaded))…"
         }
         return controller.setupProgressMessage ?? "Downloading model…"
+    }
+
+    private func pausedDownloadStatusText(for identifier: String) -> String {
+        let downloaded = controller.localModelDownloadedBytes(identifier)
+        if downloaded > 0 {
+            return "\(formatBytes(downloaded)) downloaded"
+        }
+        return "Download paused"
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
@@ -603,59 +763,73 @@ struct AITab: View {
         )
     }
 
-    private func deleteModel(_ model: InstalledLocalModel) {
-        controller.selectInstalledModel(cachePath: model.cachePath)
-        controller.deleteManagedModels()
-        modelToDelete = nil
+    private func deleteModel(identifier: String) {
+        controller.deleteLocalModel(identifier: identifier)
+        modelToDeleteIdentifier = nil
+        modelToDeleteName = nil
     }
 
     // MARK: - Advanced model selection
 
     private var advancedModelSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Choose the models AC uses for text and image analysis.")
+            Text(config.inferenceBackend == .openRouter
+                 ? "Choose the OpenRouter models AC uses for text and image analysis."
+                 : "Add a local GGUF model from Hugging Face. After adding the card, download and select it from the model list.")
                 .font(.acCaption)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("text model")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-                TextField(
-                    config.inferenceBackend == .openRouter
-                        ? "e.g. openai/gpt-4o-mini"
-                        : "e.g. gemma-4b-it-q4_K_M",
-                    text: $advancedTextModelID
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11, design: .monospaced))
-                .onSubmit { saveAdvancedModels() }
+                if config.inferenceBackend == .openRouter {
+                    Text("text model")
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                    TextField("e.g. openai/gpt-4o-mini", text: $advancedTextModelID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                        .onSubmit { saveAdvancedModels() }
 
-                Text("image / vision model")
-                    .font(.ac(11, weight: .semibold))
-                    .foregroundStyle(Color.acTextPrimary.opacity(0.7))
-                TextField(
-                    config.inferenceBackend == .openRouter
-                        ? "e.g. openai/gpt-4o"
-                        : "e.g. moondream-2b-llava-ft-mlx",
-                    text: $advancedImageModelID
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 11, design: .monospaced))
-                .onSubmit { saveAdvancedModels() }
+                    Text("image / vision model")
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                    TextField("e.g. openai/gpt-4o", text: $advancedImageModelID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                        .onSubmit { saveAdvancedModels() }
 
-                Text(config.inferenceBackend == .openRouter
-                     ? "Paste the OpenRouter model ID (provider/model-name)."
-                     : "Paste the Hugging Face or llama.cpp model identifier.")
-                    .font(.ac(10))
-                    .foregroundStyle(.secondary)
+                    Text("Paste OpenRouter model IDs in provider/model-name format.")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("card name")
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                    TextField("e.g. Gemma 12B", text: $advancedLocalModelName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.ac(11))
+                        .onSubmit { saveAdvancedModels() }
+
+                    Text("model id")
+                        .font(.ac(11, weight: .semibold))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.7))
+                    TextField("e.g. unsloth/gemma-4-12b-it-GGUF:Q4_K_M", text: $advancedTextModelID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                        .onSubmit { saveAdvancedModels() }
+
+                    Text("Use a Hugging Face GGUF repo, optionally followed by :QUANT. Adding a card does not start the download.")
+                        .font(.ac(10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            if advancedTextModelID != (config.onlineModelIdentifierText ?? config.onlineModelIdentifier)
-                || advancedImageModelID != (config.onlineModelIdentifierImage ?? config.onlineModelIdentifier) {
+            if advancedModelsAreDirty {
                 HStack {
                     Spacer()
-                    Button("Save models") { saveAdvancedModels() }
+                    Button(config.inferenceBackend == .openRouter ? "Save models" : "Add model card") {
+                        saveAdvancedModels()
+                    }
                         .buttonStyle(ACPrimaryButton())
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
@@ -741,17 +915,44 @@ struct AITab: View {
         return text == image ? "Models: \(text)" : "Models: \(text) · \(image)"
     }
 
+    private var advancedModelsAreDirty: Bool {
+        let trimmedText = advancedTextModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedImage = advancedImageModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if config.inferenceBackend == .openRouter {
+            return trimmedText != (config.onlineModelIdentifierText ?? config.onlineModelIdentifier)
+                || trimmedImage != (config.onlineModelIdentifierImage ?? config.onlineModelIdentifier)
+        }
+        return !trimmedText.isEmpty
+    }
+
+    private func resetAdvancedModelDrafts() {
+        if config.inferenceBackend == .openRouter {
+            advancedTextModelID = config.onlineModelIdentifierText ?? config.onlineModelIdentifier
+            advancedImageModelID = config.onlineModelIdentifierImage ?? config.onlineModelIdentifier
+        } else {
+            advancedLocalModelName = ""
+            advancedTextModelID = ""
+            advancedImageModelID = ""
+        }
+    }
+
     private func saveAdvancedModels() {
         let trimmedText = advancedTextModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedImage = advancedImageModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty, !trimmedImage.isEmpty else { return }
 
         if config.inferenceBackend == .openRouter {
+            guard !trimmedText.isEmpty, !trimmedImage.isEmpty else { return }
             controller.updateOnlineModelIdentifierText(trimmedText)
             controller.updateOnlineModelIdentifierImage(trimmedImage)
         } else {
-            controller.updateLocalModelIdentifierText(trimmedText)
-            controller.updateLocalModelIdentifierImage(trimmedImage)
+            guard !trimmedText.isEmpty else { return }
+            controller.addCustomLocalModel(
+                displayName: advancedLocalModelName,
+                modelIdentifier: trimmedText
+            )
+            advancedLocalModelName = ""
+            advancedTextModelID = ""
+            advancedImageModelID = ""
         }
     }
 
@@ -762,4 +963,15 @@ struct AITab: View {
             .foregroundStyle(Color.acTextPrimary.opacity(0.45))
             .textCase(.uppercase)
     }
+}
+
+private struct LocalModelCardDescriptor: Identifiable {
+    let title: String
+    let subtitle: String
+    let detail: String
+    let modelIdentifier: String
+    let tier: AITier?
+    let isRecommended: Bool
+
+    var id: String { modelIdentifier }
 }

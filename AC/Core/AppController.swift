@@ -192,6 +192,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
+        self.pendingLocalModelChange = Self.pendingLocalModelChange(from: state)
         self.lastUsedModelIdentifier = nil
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
@@ -257,6 +258,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
+        self.pendingLocalModelChange = Self.pendingLocalModelChange(from: state)
         self.lastUsedModelIdentifier = nil
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
@@ -290,6 +292,7 @@ final class AppController: ObservableObject {
             }
         }
         refreshSystemState(persist: false)
+        resumePendingLocalModelDownloadIfNeeded()
         configureBrainIfNeeded()
         restorePendingScheduledActions()
         recomputeTodayStats()
@@ -401,8 +404,7 @@ final class AppController: ObservableObject {
         let previousStatus = state.setupStatus
         state.permissions = PermissionService.currentSnapshot()
 
-        let modelIdentifier = pendingLocalModelChange?.modelIdentifier
-            ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        let modelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         setupDiagnostics = RuntimeSetupService.inspect(
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: modelIdentifier
