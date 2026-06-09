@@ -139,6 +139,7 @@ struct AITab: View {
             if config.inferenceBackend == .openRouter {
                 orKeySection
             } else {
+                runtimeUpdateBanner
                 localModelSection
             }
 
@@ -942,6 +943,63 @@ struct AITab: View {
             OpenRouterKeyField(compact: true)
                 .environmentObject(controller)
         }
+    }
+
+    // MARK: - Local runtime update
+
+    @ViewBuilder
+    private var runtimeUpdateBanner: some View {
+        if controller.updatingRuntime {
+            // Update in progress — inline, the app stays usable on the old runtime.
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(controller.runtimeUpdateMessage ?? "Updating local runtime…")
+                        .font(.ac(11))
+                        .foregroundStyle(Color.acTextPrimary.opacity(0.8))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text("AC keeps running on the current runtime until this finishes. No restart needed.")
+                    .font(.acCaption)
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(runtimeBannerBackground)
+        } else if controller.runtimeUpdateAvailable, !controller.installingRuntime {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(accent)
+                    Text(
+                        "A newer local runtime is available. Updating can improve model support and fix models that returned unusable output."
+                    )
+                    .font(.ac(11))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Spacer()
+                    Button("Update runtime") {
+                        controller.updateRuntime()
+                    }
+                    .buttonStyle(ACPrimaryButton())
+                }
+            }
+            .padding(10)
+            .background(runtimeBannerBackground)
+        }
+    }
+
+    private var runtimeBannerBackground: some View {
+        RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+            .fill(accent.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: ACRadius.sm, style: .continuous)
+                    .stroke(accent.opacity(0.25), lineWidth: 1)
+            )
     }
 
     // MARK: - Local model storage

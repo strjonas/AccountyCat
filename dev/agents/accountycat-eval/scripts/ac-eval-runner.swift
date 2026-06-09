@@ -12,6 +12,7 @@ struct Arguments {
     var ids: [String] = []
     var backend = "local"
     var onlineModel: String?
+    var localModel: String?
     var limit: Int?
     var root: String?
     var supportDir: String?
@@ -40,6 +41,8 @@ struct Arguments {
                 backend = Self.value(after: token, raw: raw, index: &index) ?? backend
             case "--online-model":
                 onlineModel = Self.value(after: token, raw: raw, index: &index)
+            case "--local-model":
+                localModel = Self.value(after: token, raw: raw, index: &index)
             case "--limit":
                 limit = Self.value(after: token, raw: raw, index: &index).flatMap(Int.init)
             case "--root":
@@ -120,6 +123,7 @@ struct RunRequest: Codable {
     var categories: [String]
     var limit: Int?
     var onlineModel: String?
+    var localModel: String?
     var runtimePath: String?
     var openRouterAPIKey: String?
     var openAIAPIKey: String?
@@ -214,6 +218,7 @@ func runEval(_ args: Arguments) {
         categories: Array(args.categories).sorted(),
         limit: args.limit,
         onlineModel: args.onlineModel,
+        localModel: args.localModel,
         runtimePath: args.runtimePath,
         openRouterAPIKey: environment["AC_EVAL_OPENROUTER_API_KEY"],
         openAIAPIKey: environment["AC_EVAL_OPENAI_API_KEY"],

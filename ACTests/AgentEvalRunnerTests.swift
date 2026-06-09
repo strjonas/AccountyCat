@@ -96,6 +96,9 @@ struct AgentEvalCommandRunnerTests {
         if let key = request?.openAIAPIKey, !key.isEmpty {
             merged["AC_EVAL_OPENAI_API_KEY"] = key
         }
+        if let localModel = request?.localModel, !localModel.isEmpty {
+            merged["AC_EVAL_LOCAL_MODEL"] = localModel
+        }
         return merged
     }
 }
@@ -334,6 +337,7 @@ private struct ACEvalRunnerOptions {
     var categories: Set<String>
     var limit: Int?
     var onlineModel: String?
+    var localModel: String?
     var runtimePath: String?
     var rootURL: URL?
 
@@ -345,6 +349,7 @@ private struct ACEvalRunnerOptions {
         categories = Self.csvSet(environment["AC_EVAL_CATEGORY"])
         limit = environment["AC_EVAL_LIMIT"].flatMap(Int.init)
         onlineModel = environment["AC_EVAL_ONLINE_MODEL"]
+        localModel = environment["AC_EVAL_LOCAL_MODEL"]
         runtimePath = environment["AC_EVAL_RUNTIME_PATH"]
         rootURL = environment["AC_EVAL_ROOT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
@@ -357,6 +362,7 @@ private struct ACEvalRunnerOptions {
         categories = Set(request.categories)
         limit = request.limit
         onlineModel = request.onlineModel
+        localModel = request.localModel
         runtimePath = request.runtimePath
         rootURL = URL(fileURLWithPath: request.root, isDirectory: true)
     }
@@ -389,6 +395,7 @@ private struct ACEvalRunnerFileRequest: Codable {
     var categories: [String]
     var limit: Int?
     var onlineModel: String?
+    var localModel: String?
     var runtimePath: String?
     var openRouterAPIKey: String?
     var openAIAPIKey: String?
@@ -549,8 +556,10 @@ private struct ACEvalExecutor {
             onlineModelIdentifier: onlineModel ?? AITier.balanced.byokModelIdentifierImage,
             onlineModelIdentifierText: onlineModel,
             onlineModelIdentifierImage: onlineModel,
-            localModelIdentifierText: AITier.balanced.localModelIdentifierText,
-            localModelIdentifierImage: AITier.balanced.localModelIdentifierImage
+            localModelIdentifierText: environment["AC_EVAL_LOCAL_MODEL"]
+                ?? AITier.balanced.localModelIdentifierText,
+            localModelIdentifierImage: environment["AC_EVAL_LOCAL_MODEL"]
+                ?? AITier.balanced.localModelIdentifierImage
         )
         if backend == .online, input.screenshotPath == nil {
             configuration.pipelineProfileID = MonitoringConfiguration.defaultOnlineTextPipelineProfileID

@@ -1184,16 +1184,26 @@ extension AppController {
         setupTotalBytes = nil
 
         downloadProgressTask = Task { [weak self] in
-            let total = await RuntimeSetupService.expectedDownloadBytes(for: modelIdentifier)
-            await MainActor.run { self?.setupTotalBytes = total }
+            // Resolve the specific files this model downloads (chosen quant + projector)
+            // so progress reflects exactly those blobs, not whatever else is in the cache.
+            let expectedFiles = await RuntimeSetupService.expectedModelFiles(for: modelIdentifier)
+            let oids = expectedFiles.compactMap(\.oid)
+            let total = expectedFiles.reduce(Int64(0)) { $0 + $1.size }
+            let cacheRoot = RuntimeSetupService.managedModelCacheURL(for: modelIdentifier)
+            await MainActor.run { self?.setupTotalBytes = total > 0 ? total : nil }
 
             while !Task.isCancelled {
-                let downloaded = RuntimeSetupService.downloadedModelBytes(for: modelIdentifier)
+                // Prefer the oid-scoped measurement; fall back to the whole-cache sum only
+                // when the manifest is unavailable (offline / private repo).
+                let downloaded =
+                    oids.isEmpty
+                    ? RuntimeSetupService.downloadedModelBytes(for: modelIdentifier)
+                    : RuntimeSetupService.downloadedModelBytes(forOids: oids, inCacheRoot: cacheRoot)
                 await MainActor.run {
                     guard let self else { return }
                     self.setupDownloadedBytes = downloaded
                     if let total = self.setupTotalBytes, total > 0 {
-                        self.setupProgressValue = max(0, min(0.99, Double(downloaded) / Double(total)))
+                        self.setupProgressValue = max(0, Double(downloaded) / Double(total))
                     }
                 }
                 try? await Task.sleep(nanoseconds: 600_000_000)
@@ -1232,6 +1242,74 @@ extension AppController {
                 authenticated ? "authenticated" : "unauthenticated"
             )
         )
+    }
+
+    /// Roll an existing, working install forward to the pinned llama.cpp commit by
+    /// re-fetching, checking out, and rebuilding in place — **without** dropping the
+    /// user back into onboarding. This is deliberately separate from `installRuntime`:
+    ///
+    /// - It does not touch `installingRuntime` / `setupStatus`, so the app stays
+    ///   `.ready` and the existing `llama-server` keeps serving its previous binary
+    ///   inode (monitoring + chat continue) throughout the rebuild.
+    /// - Progress is surfaced inline via `updatingRuntime` / `runtimeUpdateMessage`
+    ///   (the AITab banner), not the full-screen setup flow.
+    /// - On success it cycles the shared server onto the new binary and re-prewarms;
+    ///   no app restart required.
+    func updateRuntime() {
+        guard !updatingRuntime, !installingRuntime, !installingDependencies else { return }
+
+        refreshSystemState()
+        guard setupDiagnostics.canInstall else {
+            runtimeUpdateMessage = nil
+            setupErrorMessage =
+                "Missing tools: \(setupDiagnostics.missingTools.joined(separator: ", "))"
+            dependencyInstallPromptVisible = true
+            return
+        }
+
+        updatingRuntime = true
+        runtimeUpdateMessage = "Updating local runtime…"
+        setupErrorMessage = nil
+        logActivity(
+            "setup",
+            "Runtime update started (target \(RuntimeSetupService.pinnedRuntimeCommit.prefix(8)))"
+        )
+
+        updateRuntimeTask?.cancel()
+        updateRuntimeTask = Task {
+            do {
+                try await RuntimeSetupService.installRuntime { [weak self] chunk in
+                    let line = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !line.isEmpty {
+                        self?.runtimeUpdateMessage = "Updating runtime — \(line.prefix(80))"
+                    }
+                }
+                try Task.checkCancellation()
+
+                // The old llama-server is still serving the previous binary's inode;
+                // cycle it so the next request launches the freshly built one.
+                await localModelRuntime.shutdown()
+                didCheckRuntimeUpdate = false
+                runtimeUpdateAvailable = false
+                updatingRuntime = false
+                runtimeUpdateMessage = nil
+                logActivity(
+                    "setup",
+                    "Local runtime updated to \(RuntimeSetupService.pinnedRuntimeCommit.prefix(8))"
+                )
+                refreshSystemState()
+                schedulePrewarmIfNeeded()
+            } catch is CancellationError {
+                updatingRuntime = false
+                runtimeUpdateMessage = nil
+            } catch {
+                updatingRuntime = false
+                runtimeUpdateMessage = nil
+                setupErrorMessage = "Runtime update failed: \(error.localizedDescription)"
+                logActivity("setup", "Runtime update failed: \(error.localizedDescription)")
+                refreshSystemState()
+            }
+        }
     }
 
     func installRuntime(modelIdentifier: String? = nil) {

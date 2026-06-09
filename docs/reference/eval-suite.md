@@ -83,7 +83,16 @@ AC_EVAL_OPENROUTER_API_KEY=... swift dev/agents/accountycat-eval/scripts/ac-eval
   run --backend online --online-model qwen/qwen3.6-35b-a3b --ids syn-vision-everyday-dev-youtube syn-vision-session-x-feed syn-vision-everyday-arxiv-paper
 
 # Offline: same, with --backend local (uses the installed runtime or --runtime-path).
+#
+# Offline against a SPECIFIC local model (e.g. a custom GGUF) instead of the
+# AITier.balanced default:
+swift dev/agents/accountycat-eval/scripts/ac-eval-runner.swift \
+  run --backend local --kind focus --local-model unsloth/gemma-4-12b-it-GGUF --json
 ```
+
+`--local-model <id>` overrides the pinned local model for the run (threaded via
+`AC_EVAL_LOCAL_MODEL` in the handoff request → `localModelIdentifierText/Image`).
+Useful for checking a freshly-added custom model's judgment on the suite.
 
 ### Gotchas (these cost real time the first time)
 

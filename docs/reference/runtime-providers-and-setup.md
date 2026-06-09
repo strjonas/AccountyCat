@@ -167,6 +167,55 @@ separate from local custom IDs.
 local-model section (with a "Try again" button). A failure after onboarding must not be
 silent — the AI tab is where post-onboarding local-model management lives.
 
+### Runtime updates (existing installs)
+
+`installRuntime` always checks out `pinnedLlamaCommit` and rebuilds, but it is
+*skipped* when a runtime binary already exists — so bumping the pin only reaches
+fresh installs unless we force a rebuild. `inspect()` reports `runtimePresent` by
+binary existence only; it does **not** compare versions.
+
+- `RuntimeSetupService.runtimeInstalledCommit(forRuntimePath:)` reads the repo's
+  `git rev-parse HEAD`; `runtimeNeedsUpdate(...)` compares it to
+  `pinnedRuntimeCommit` (conservative — an undeterminable commit never nags).
+- `AppController.refreshSystemState` computes `runtimeUpdateAvailable` once per
+  session (gated to local + present + not-installing/updating; memoized via
+  `didCheckRuntimeUpdate`) so it never spawns git on a hot path.
+- `AppController.updateRuntime()` is **deliberately separate from `installRuntime`**:
+  it does *not* touch `installingRuntime`/`setupStatus`, so the app stays `.ready`
+  and never drops back into onboarding for an update. It sets `updatingRuntime` +
+  `runtimeUpdateMessage` (an inline `AITab` banner), rebuilds in place via
+  `RuntimeSetupService.installRuntime` while the old `llama-server` keeps serving
+  its previous binary inode (monitoring + chat continue), then on success cycles the
+  shared server (`localModelRuntime.shutdown()` + re-prewarm) so the next request
+  uses the new binary — no restart. Tracked by `updateRuntimeTask`.
+
+Because the checkpoint-spacing flag name diverges across llama.cpp versions, the
+version-aware flag selection (above) is the prerequisite that makes a pin bump
+non-breaking for users who have not yet rebuilt.
+
+### App updates (GitHub releases)
+
+`AppUpdateService.checkForUpdate(...)` does a throttled (6h), fail-silent GET of
+`api.github.com/repos/strjonas/AccountyCat/releases/latest`, compares the release
+tag to `CFBundleShortVersionString` with a numeric component-wise compare
+(`isVersion(_:newerThan:)`, so `1.10 > 1.9`), and on a newer release sets
+`AppController.appUpdateAvailable`. `SettingsView` renders a dismissible "AccountyCat
+X is available — View release" banner that opens the release page (no Sparkle / no
+auto-install; the user downloads the DMG). Checked once at `bootstrap()`.
+
+### Incompatible-model guardrail
+
+A model the runtime can load but not actually run (wrong/early arch support, a
+malformed quant) degenerates into reserved/special-token spam (e.g. Gemma's
+`<unused50>` repeated, or leaked `<|channel>` markers) rather than a clean error.
+`LocalModelRuntime.looksLikeIncompatibleModelOutput(_:)` detects this at **both**
+the server and CLI return points and throws `LLMError.modelIncompatible` instead of
+streaming garbage; the server path does not fall back to the CLI for this case
+(it would reproduce the same garbage). Chat surfaces a plain message pointing at
+Settings → AI (update the runtime if offered, else pick a different model). The
+detector is high-precision: Qwen's reasoning-off `<think></think>`, JSON decision
+payloads, and `Array<String>`-style code all pass (`LocalModelRuntimeCompatibilityTests`).
+
 ## Local Runtime Request Coordination
 
 `LocalModelRuntime` runs a single shared llama.cpp server process for all inference (monitoring and chat).
@@ -193,7 +242,13 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 - `--cache-type-k q8_0`
 - `--cache-type-v q8_0`
 - `--ctx-checkpoints 512`
-- `--checkpoint-every-n-tokens 512`
+- the checkpoint-spacing flag, **resolved per binary**: newer llama.cpp uses
+  `--checkpoint-min-step 512`, older builds use `--checkpoint-every-n-tokens 512`.
+  `LocalModelRuntime.checkpointSpacingArguments(executablePath:)` probes
+  `llama-server --help` once (cached) and passes the supported form, omitting the
+  flag entirely if neither is present. This is what lets `pinnedLlamaCommit` move
+  forward without breaking installs still on the prior commit (the flag was
+  renamed upstream between the two).
 
 Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC also sends `id_slot` on local server requests: decision and chat use their pinned slots, while lower-priority stages use the auxiliary scratch slot. This is the release tradeoff: one extra KV slot costs memory, but it prevents memory consolidation / action executors / nudge copy from deliberately evicting the two hot prefixes.
 

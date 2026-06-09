@@ -367,4 +367,78 @@ struct MonitoringConfigurationTests {
         .appendingPathComponent("ac-blob-missing-\(UUID().uuidString)", isDirectory: true)
       #expect(RuntimeSetupService.downloadedModelBytes(inCacheRoot: missing) == 0)
     }
+
+    @Test
+    func downloadedModelBytesForOidsCountsOnlyTheModelsOwnBlobs() throws {
+      let fileManager = FileManager.default
+      let cacheRoot = fileManager.temporaryDirectory
+        .appendingPathComponent("ac-oid-bytes-\(UUID().uuidString)", isDirectory: true)
+      let blobsURL = cacheRoot.appendingPathComponent("blobs", isDirectory: true)
+      try fileManager.createDirectory(at: blobsURL, withIntermediateDirectories: true)
+      defer { try? fileManager.removeItem(at: cacheRoot) }
+
+      let modelOid = "aaa111"
+      let projectorOid = "bbb222"
+      // Completed model blob, in-progress projector partial, and an orphan blob from a
+      // previous attempt / different quant that must NOT be counted.
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent(modelOid).path,
+        contents: Data(count: 1000))
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent(projectorOid + ".downloadInProgress").path,
+        contents: Data(count: 200))
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent("orphan999").path,
+        contents: Data(count: 9_999))
+
+      let downloaded = RuntimeSetupService.downloadedModelBytes(
+        forOids: [modelOid, projectorOid], inCacheRoot: cacheRoot)
+      #expect(downloaded == 1200)
+    }
+
+    @Test
+    func purgeCorruptModelBlobsRemovesOversizedAndKeepsHealthy() throws {
+      let fileManager = FileManager.default
+      let cacheRoot = fileManager.temporaryDirectory
+        .appendingPathComponent("ac-purge-\(UUID().uuidString)", isDirectory: true)
+      let blobsURL = cacheRoot.appendingPathComponent("blobs", isDirectory: true)
+      try fileManager.createDirectory(at: blobsURL, withIntermediateDirectories: true)
+      defer { try? fileManager.removeItem(at: cacheRoot) }
+
+      let corruptOid = "corrupt1"  // finalized blob, way larger than expected
+      let healthyOid = "healthy1"  // finalized blob at the exact expected size
+      let resumingOid = "resume1"  // legitimate partial, smaller than expected
+
+      // Expected size is well under the corrupt blob, and the gap exceeds the 1 MiB
+      // tolerance the purge uses to avoid fighting healthy files over rounding.
+      let expectedSize: Int64 = 1_000
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent(corruptOid).path,
+        contents: Data(count: 3_000_000))
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent(corruptOid + ".etag").path,
+        contents: Data("etag".utf8))
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent(healthyOid).path,
+        contents: Data(count: Int(expectedSize)))
+      _ = fileManager.createFile(
+        atPath: blobsURL.appendingPathComponent(resumingOid + ".downloadInProgress").path,
+        contents: Data(count: 400))
+
+      let expected = [
+        ExpectedModelFile(oid: corruptOid, size: expectedSize),
+        ExpectedModelFile(oid: healthyOid, size: expectedSize),
+        ExpectedModelFile(oid: resumingOid, size: expectedSize),
+      ]
+      let removed = RuntimeSetupService.purgeCorruptModelBlobs(
+        expectedFiles: expected, inCacheRoot: cacheRoot)
+
+      #expect(removed == 1)
+      #expect(!fileManager.fileExists(atPath: blobsURL.appendingPathComponent(corruptOid).path))
+      #expect(!fileManager.fileExists(atPath: blobsURL.appendingPathComponent(corruptOid + ".etag").path))
+      #expect(fileManager.fileExists(atPath: blobsURL.appendingPathComponent(healthyOid).path))
+      #expect(
+        fileManager.fileExists(
+          atPath: blobsURL.appendingPathComponent(resumingOid + ".downloadInProgress").path))
+    }
 }

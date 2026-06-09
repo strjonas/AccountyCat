@@ -76,6 +76,9 @@ actor CompanionChatService {
     }
 
     nonisolated static func fallbackReply(for error: Error) -> String {
+        if case LLMError.modelIncompatible = error {
+            return "This local model returned unusable output — AC's current runtime can't run it. In Settings → AI, try updating the local runtime (if an update is offered) or pick a different model."
+        }
         let provider = OnlineProviderRouting.provider(for: .chat)
         if let onlineError = error as? OnlineModelError,
             onlineError.isBillingOrCreditFailure
@@ -299,6 +302,15 @@ actor CompanionChatService {
                 message: error.localizedDescription
             )
             if inferenceBackend == .openRouter {
+                return CompanionChatResult(
+                    reply: Self.fallbackReply(for: error),
+                    actions: [],
+                    schedule: nil
+                )
+            }
+            // A model the local runtime can't run won't recover on retry — tell the
+            // user plainly instead of returning the generic "couldn't answer" notice.
+            if case LLMError.modelIncompatible = error {
                 return CompanionChatResult(
                     reply: Self.fallbackReply(for: error),
                     actions: [],

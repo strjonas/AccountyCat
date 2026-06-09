@@ -94,6 +94,15 @@ nonisolated private struct CachedModelArtifacts: Sendable, Equatable {
 nonisolated private enum RuntimeModelSource: Sendable {
     case local(CachedModelArtifacts)
     case huggingFace(String)
+
+    var modelIdentifier: String {
+        switch self {
+        case let .local(artifacts):
+            return artifacts.modelPath
+        case let .huggingFace(identifier):
+            return identifier
+        }
+    }
 }
 
 nonisolated private enum RuntimeInferenceInput: Sendable {
@@ -262,6 +271,13 @@ actor LocalModelRuntime {
     private var activeSharedServerRequests = 0
     private var activeInteractiveRequests = 0
     private var scheduledShutdownTask: Task<Void, Never>?
+    /// Caches the checkpoint-spacing args supported by a given `llama-server`
+    /// binary (keyed by executable path). The flag name diverges across llama.cpp
+    /// versions (`--checkpoint-every-n-tokens` → `--checkpoint-min-step`), so AC
+    /// probes `--help` once per binary and passes the supported form — this is
+    /// what keeps a pinned-commit bump from breaking users still on an older,
+    /// not-yet-rebuilt runtime.
+    private var checkpointSpacingArgsCache: [String: [String]] = [:]
 
     init() {
         Self.killStalePIDIfNeeded()
@@ -477,6 +493,11 @@ actor LocalModelRuntime {
                 } catch let error as LLMError where error == .timeout {
                     await stopSharedServer(reason: "request_timeout")
                     throw error
+                } catch LLMError.modelIncompatible(let id) {
+                    // An incompatible model won't get better on the CLI fallback —
+                    // surface it instead of streaming the same garbage another way.
+                    await stopSharedServer(reason: "model_incompatible")
+                    throw LLMError.modelIncompatible(id)
                 } catch {
                     await stopSharedServer(reason: "server_fallback")
                 }
@@ -590,6 +611,9 @@ actor LocalModelRuntime {
             }
 
             let assistantMessage = try extractAssistantMessage(from: data)
+            if Self.looksLikeIncompatibleModelOutput(assistantMessage) {
+                throw LLMError.modelIncompatible(modelIdentifier)
+            }
             let usage = Self.parseLocalServerUsage(from: data)
                 ?? TokenUsage.estimate(promptText: systemPrompt, completionText: assistantMessage)
             return RuntimeProcessOutput(
@@ -752,6 +776,10 @@ actor LocalModelRuntime {
             throw LLMError.commandFailed(status, combined)
         }
 
+        if Self.looksLikeIncompatibleModelOutput(output.stdout) {
+            throw LLMError.modelIncompatible(modelSource.modelIdentifier)
+        }
+
         let usage = Self.parseLlamaCLIUsage(from: output.stderr)
             ?? TokenUsage.estimate(promptText: systemPrompt, completionText: output.stdout)
         return RuntimeProcessOutput(
@@ -811,6 +839,56 @@ actor LocalModelRuntime {
         )
     }
 
+    /// The checkpoint-spacing args to pass to `llama-server`, resolved against the
+    /// flag the installed binary actually accepts. Cached per executable path.
+    private func checkpointSpacingArguments(executablePath: String) async -> [String] {
+        if let cached = checkpointSpacingArgsCache[executablePath] {
+            return cached
+        }
+        let help = await Task.detached {
+            Self.captureLlamaServerHelp(executablePath: executablePath)
+        }.value
+        let args = Self.checkpointSpacingArguments(fromHelpText: help)
+        checkpointSpacingArgsCache[executablePath] = args
+        return args
+    }
+
+    /// Pure mapping from `--help` text to the checkpoint-spacing args. Prefers the
+    /// newer `--checkpoint-min-step`, falls back to the legacy
+    /// `--checkpoint-every-n-tokens`, and omits the flag entirely when neither is
+    /// present (the spacing is an optimization, not required) so an unrecognized
+    /// runtime never fails to launch over it.
+    nonisolated static func checkpointSpacingArguments(fromHelpText help: String) -> [String] {
+        if help.contains("--checkpoint-min-step") {
+            return ["--checkpoint-min-step", "512"]
+        }
+        if help.contains("--checkpoint-every-n-tokens") {
+            return ["--checkpoint-every-n-tokens", "512"]
+        }
+        return []
+    }
+
+    /// Runs `<llama-server> --help` and returns its combined output. Best-effort:
+    /// returns "" on any failure (the caller then omits the version-specific flag).
+    nonisolated private static func captureLlamaServerHelp(executablePath: String) -> String {
+        guard FileManager.default.isExecutableFile(atPath: executablePath) else { return "" }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = ["--help"]
+        process.environment = processEnvironment()
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
     private func ensureSharedServer(
         config: RuntimeServerConfig,
         startupTimeoutSeconds: UInt64
@@ -868,9 +946,11 @@ actor LocalModelRuntime {
             "--cache-type-k", "q8_0",
             "--cache-type-v", "q8_0",
             "--ctx-checkpoints", "512",
-            "--checkpoint-every-n-tokens", "512",
             "--reasoning-budget", "0",
         ]
+        arguments.append(
+            contentsOf: await checkpointSpacingArguments(executablePath: config.executablePath)
+        )
         if let multimodalProjectorPath = config.multimodalProjectorPath {
             arguments.append(contentsOf: ["--mmproj", multimodalProjectorPath])
         }
@@ -1286,6 +1366,73 @@ actor LocalModelRuntime {
 
         let raw = String(decoding: data, as: UTF8.self)
         throw LLMError.commandFailed(1, "llama-server returned an empty message: \(raw)")
+    }
+
+    /// Detects output that signals the local model is not actually supported by
+    /// the current llama.cpp runtime. A model whose architecture/quant the runtime
+    /// can load but not run correctly degenerates into reserved/special-token spam
+    /// (e.g. Gemma's `<unused50>` repeated indefinitely, or leaked `<|channel>`
+    /// markers). That is never valid chat or decision output, so we treat it as an
+    /// incompatible model rather than streaming the garbage to the user.
+    ///
+    /// Kept high-precision to avoid flagging legitimate output: Qwen's
+    /// reasoning-off `<think></think>` block, JSON decision payloads, and code
+    /// snippets with `<T>`-style generics all pass.
+    nonisolated static func looksLikeIncompatibleModelOutput(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        // 1) Reserved "<unusedNN>" tokens never appear in valid output — they are a
+        //    direct symptom of a model the runtime cannot decode. A few is enough.
+        var reservedCount = 0
+        var searchRange = trimmed.startIndex..<trimmed.endIndex
+        while let match = trimmed.range(
+            of: #"<unused\d+>"#,
+            options: [.regularExpression, .caseInsensitive],
+            range: searchRange
+        ) {
+            reservedCount += 1
+            if reservedCount >= 3 { return true }
+            searchRange = match.upperBound..<trimmed.endIndex
+        }
+
+        // 2) Degenerate decode loop: the same short bracketed special-token marker
+        //    repeated many times back-to-back (with no real text between).
+        if hasRepeatedBracketTokenRun(trimmed, minRun: 6) { return true }
+
+        return false
+    }
+
+    /// True when a single `<...>`-style token (no inner whitespace, ≤ 24 chars)
+    /// repeats `minRun`+ times consecutively — a runaway sampler, not prose.
+    nonisolated private static func hasRepeatedBracketTokenRun(_ text: String, minRun: Int) -> Bool {
+        var lastToken: Substring?
+        var run = 0
+        var index = text.startIndex
+        while index < text.endIndex {
+            guard text[index] == "<",
+                  let close = text[index...].firstIndex(of: ">") else {
+                lastToken = nil
+                run = 0
+                index = text.index(after: index)
+                continue
+            }
+            let token = text[index...close]
+            let inner = text[text.index(after: index)..<close]
+            let isTokenLike = token.count <= 24 && !inner.contains(where: { $0.isWhitespace })
+            if isTokenLike && token == lastToken {
+                run += 1
+                if run >= minRun { return true }
+            } else if isTokenLike {
+                lastToken = token
+                run = 1
+            } else {
+                lastToken = nil
+                run = 0
+            }
+            index = text.index(after: close)
+        }
+        return false
     }
 
     private func resolveModelSource(
@@ -1860,6 +2007,7 @@ enum LLMError: LocalizedError, Equatable {
     case timeout
     case commandFailed(Int32, String)
     case visionUnavailable(String)
+    case modelIncompatible(String)
 
     var errorDescription: String? {
         switch self {
@@ -1869,6 +2017,8 @@ enum LLMError: LocalizedError, Equatable {
             return "llama.cpp exited with \(status): \(output)"
         case let .visionUnavailable(modelIdentifier):
             return "Local model \(modelIdentifier) is missing a multimodal projector and cannot process screenshots."
+        case let .modelIncompatible(modelIdentifier):
+            return "Local model \(modelIdentifier) isn't supported by AC's current local runtime — it produced unusable output. Pick a different model in Settings → AI."
         }
     }
 }

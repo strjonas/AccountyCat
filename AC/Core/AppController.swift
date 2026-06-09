@@ -39,6 +39,21 @@ final class AppController: ObservableObject {
     @Published var setupDownloadedBytes: Int64?
     @Published var setupTotalBytes: Int64?
     @Published var setupErrorMessage: String?
+    /// True when the installed local runtime is behind the pinned target and a
+    /// rebuild is offered. Computed lazily (one `git rev-parse` per session /
+    /// after a rebuild) to avoid spawning git on every state refresh.
+    @Published var runtimeUpdateAvailable = false
+    /// True while a runtime rebuild is in progress *as an update* (distinct from a
+    /// first-run install). The app stays `.ready` and keeps running on the old
+    /// runtime; this only drives the inline AITab banner, never onboarding.
+    @Published var updatingRuntime = false
+    @Published var runtimeUpdateMessage: String?
+    /// Set when a newer AC release exists on GitHub; drives a non-intrusive
+    /// "update available" banner. nil = up to date / unknown.
+    @Published var appUpdateAvailable: AppUpdateInfo?
+    /// Internal (not private) so the runtime-setup extension can reset it after a
+    /// rebuild to force re-evaluation of update availability.
+    var didCheckRuntimeUpdate = false
     @Published var pendingLocalModelChange: PendingLocalModelChange?
     @Published var modelDownloadNotice: ModelDownloadNotice?
     @Published var modelDownloadSuccess: ModelDownloadSuccess?
@@ -143,6 +158,7 @@ final class AppController: ObservableObject {
     var lastPromptedDependencySignature: String?
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
     var installRuntimeTask: Task<Void, Never>?
+    var updateRuntimeTask: Task<Void, Never>?
     var downloadProgressTask: Task<Void, Never>?
     private var telemetryHeartbeatTask: Task<Void, Never>?
     var prewarmTask: Task<Void, Never>?
@@ -312,6 +328,19 @@ final class AppController: ObservableObject {
             }
         }
         schedulePrewarmIfNeeded()
+        checkForAppUpdate()
+    }
+
+    /// Best-effort GitHub-releases check; surfaces `appUpdateAvailable` for a
+    /// non-intrusive banner. Throttled and fails silent inside the service.
+    func checkForAppUpdate(force: Bool = false) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let info = await AppUpdateService.checkForUpdate(force: force) {
+                self.appUpdateAvailable = info
+                self.logActivity("app", "Update available: \(info.latestVersion) (current \(info.currentVersion))")
+            }
+        }
     }
 
     /// Best-effort: when running locally with the model already installed, warm the
@@ -416,6 +445,19 @@ final class AppController: ObservableObject {
         )
         let permissionRequirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
         let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
+
+        // Detect a stale local runtime once per session (or after a rebuild). Gated
+        // hard so we never spawn git while installing/updating or on the online path.
+        if !usesOnlineInference, !installingRuntime, !updatingRuntime, setupDiagnostics.runtimePresent {
+            if !didCheckRuntimeUpdate {
+                runtimeUpdateAvailable = RuntimeSetupService.runtimeNeedsUpdate(
+                    forRuntimePath: setupDiagnostics.runtimePath
+                )
+                didCheckRuntimeUpdate = true
+            }
+        } else {
+            runtimeUpdateAvailable = false
+        }
 
         if installingRuntime || installingDependencies {
             if installingRuntime,
