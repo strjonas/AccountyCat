@@ -434,6 +434,12 @@ private struct ACEvalRunResult: Codable {
 @MainActor
 private struct ACEvalExecutor {
     let environment: [String: String]
+    /// One runtime for the whole run. A fresh `LocalModelRuntime()` per case
+    /// cold-reloads the model every time (the shared llama-server is torn down with
+    /// the runtime), which is why local eval runs took ~20 min. Sharing it keeps the
+    /// server — and its KV cache slots — warm across cases, so a local run drops to a
+    /// few minutes.
+    let runtime = LocalModelRuntime()
 
     func run(
         cases: [ACEvalCase],
@@ -468,6 +474,8 @@ private struct ACEvalExecutor {
                 ))
             }
         }
+        // Release the shared llama-server once the whole run is done.
+        await runtime.shutdown()
         return results
     }
 
@@ -529,7 +537,6 @@ private struct ACEvalExecutor {
             throw ACEvalRunnerError.missingEvalInput
         }
 
-        let runtime = LocalModelRuntime()
         let onlineService = makeOnlineService()
         let algorithm = LLMMonitorAlgorithm(
             runtime: runtime,
@@ -649,7 +656,6 @@ private struct ACEvalExecutor {
             throw ACEvalRunnerError.missingEvalInput
         }
 
-        let runtime = LocalModelRuntime()
         let service = CompanionChatService(runtime: runtime, onlineModelService: makeOnlineService())
         let result = await service.chat(
             userMessage: input.userMessage,
@@ -717,7 +723,6 @@ private struct ACEvalExecutor {
             throw ACEvalRunnerError.missingEvalInput
         }
 
-        let runtime = LocalModelRuntime()
         let service = CompanionChatService(runtime: runtime, onlineModelService: makeOnlineService())
         let resolved = await service.resolveAction(
             ChatActionResolutionRequest(

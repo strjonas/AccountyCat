@@ -158,6 +158,48 @@ enum OnlineModelError: LocalizedError, Equatable, Sendable {
     }
 }
 
+/// Failure modes for validating a user-entered OpenRouter model id against the
+/// live `/models` catalog before adding it as a custom-model card. Messages are
+/// user-facing (shown inline under the add form), so they name the offending model.
+enum OnlineModelValidationError: LocalizedError, Equatable, Sendable {
+    /// The id is not in OpenRouter's catalog at all.
+    case modelNotFound(id: String, slot: Slot)
+    /// The id exists but its input modalities don't include what the slot needs
+    /// (text for the decision slot, image for the vision slot).
+    case unsupportedModality(id: String, slot: Slot)
+    /// Couldn't reach / parse the catalog (network, decode, non-200).
+    case catalogUnavailable(String)
+
+    enum Slot: String, Sendable { case text, image }
+
+    var errorDescription: String? {
+        switch self {
+        case let .modelNotFound(id, slot):
+            return "\(slot.rawValue == "image" ? "Image" : "Text") model \u{201C}\(id)\u{201D} isn't on OpenRouter. Check the provider/model id."
+        case let .unsupportedModality(id, slot):
+            return slot == .image
+                ? "\u{201C}\(id)\u{201D} doesn't accept image input, so it can't be used as the vision model."
+                : "\u{201C}\(id)\u{201D} can't be used as a text model."
+        case let .catalogUnavailable(detail):
+            return "Couldn't verify the models with OpenRouter: \(detail)"
+        }
+    }
+}
+
+/// Minimal decode of OpenRouter's `GET /models` response — just what's needed to
+/// confirm a model exists and which input modalities it accepts.
+struct OpenRouterModelCatalog: Codable {
+    struct Entry: Codable {
+        let id: String
+        struct Architecture: Codable {
+            let inputModalities: [String]?
+            enum CodingKeys: String, CodingKey { case inputModalities = "input_modalities" }
+        }
+        let architecture: Architecture?
+    }
+    let data: [Entry]
+}
+
 struct OpenRouterKeyInfo: Codable {
     struct Data: Codable {
         let label: String
@@ -1162,5 +1204,87 @@ actor OnlineModelService: OnlineModelServing {
             )
         }
         return try JSONDecoder().decode(OpenRouterKeyInfo.self, from: data)
+    }
+
+    /// Verifies a custom-model text/image pair against OpenRouter's live catalog with
+    /// a single free `GET /models` call: each id must exist, the text id must accept
+    /// `"text"` input and the image id must accept `"image"` input. Throws an
+    /// `OnlineModelValidationError` describing the first failure. The API key is
+    /// optional (the catalog is public) but sent when available for parity.
+    func validateCustomOnlineModels(
+        textID: String,
+        imageID: String,
+        apiKey: String?
+    ) async throws {
+        guard let url = URL(string: "https://openrouter.ai/api/v1/models") else {
+            throw OnlineModelValidationError.catalogUnavailable("invalid endpoint")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        if let apiKey, !apiKey.isEmpty {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue("AccountyCat", forHTTPHeaderField: "X-OpenRouter-Title")
+        request.timeoutInterval = 15
+
+        let catalog: OpenRouterModelCatalog
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw OnlineModelValidationError.catalogUnavailable("no response")
+            }
+            guard httpResponse.statusCode == 200 else {
+                throw OnlineModelValidationError.catalogUnavailable("HTTP \(httpResponse.statusCode)")
+            }
+            catalog = try JSONDecoder().decode(OpenRouterModelCatalog.self, from: data)
+        } catch let error as OnlineModelValidationError {
+            throw error
+        } catch {
+            throw OnlineModelValidationError.catalogUnavailable(error.localizedDescription)
+        }
+
+        try Self.validateCatalog(catalog, textID: textID, imageID: imageID)
+    }
+
+    /// Pure existence + modality check against an already-fetched catalog. Split out
+    /// from the network call so it can be unit-tested without hitting OpenRouter.
+    nonisolated static func validateCatalog(
+        _ catalog: OpenRouterModelCatalog,
+        textID: String,
+        imageID: String
+    ) throws {
+        // OpenRouter ids may carry a `:variant` suffix (e.g. `:free`); match on the
+        // base id so a user pasting either form validates.
+        func baseID(_ raw: String) -> String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let colon = trimmed.firstIndex(of: ":") else { return trimmed }
+            return String(trimmed[..<colon])
+        }
+
+        func entry(for id: String) -> OpenRouterModelCatalog.Entry? {
+            let wanted = baseID(id)
+            return catalog.data.first { baseID($0.id) == wanted || $0.id == id }
+        }
+
+        func check(_ id: String, requires modality: String, slot: OnlineModelValidationError.Slot) throws {
+            guard let entry = entry(for: id) else {
+                throw OnlineModelValidationError.modelNotFound(id: id, slot: slot)
+            }
+            // Treat a missing/empty modality list as text-capable (older catalog
+            // entries omit it); only reject when the list is present and excludes
+            // the required modality.
+            if let modalities = entry.architecture?.inputModalities, !modalities.isEmpty {
+                guard modalities.contains(modality) else {
+                    throw OnlineModelValidationError.unsupportedModality(id: id, slot: slot)
+                }
+            } else if modality == "image" {
+                // No declared modalities → we can't confirm image support; be strict
+                // for the vision slot since silently sending images would fail at runtime.
+                throw OnlineModelValidationError.unsupportedModality(id: id, slot: slot)
+            }
+        }
+
+        try check(textID, requires: "text", slot: .text)
+        try check(imageID, requires: "image", slot: .image)
     }
 }

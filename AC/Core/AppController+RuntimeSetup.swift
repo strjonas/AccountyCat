@@ -604,6 +604,170 @@ extension AppController {
         logActivity("monitoring", "Online image model: \(identifier ?? "cleared")")
     }
 
+    // MARK: - Custom online models
+
+    /// The user-added OpenRouter models, sorted by name. The online analogue of
+    /// `localCustomModelsForDisplay()` — but with no "installed" concept, since an
+    /// online model needs no download.
+    func onlineCustomModelsForDisplay() -> [OnlineCustomModel] {
+        state.onlineCustomModels.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    /// The text/image pair currently driving online inference, falling back to the
+    /// active tier's defaults when the config hasn't overridden them. Used to decide
+    /// which card (tier or custom) renders as active.
+    func activeOnlineModelIdentifiers() -> (text: String, image: String) {
+        let config = state.monitoringConfiguration
+        let text = config.onlineModelIdentifierText ?? state.aiTier.byokModelIdentifierText
+        let image = config.onlineModelIdentifierImage ?? state.aiTier.byokModelIdentifierImage
+        return (text, image)
+    }
+
+    /// The custom online model (if any) whose pair matches the active identifiers.
+    func activeOnlineCustomModel() -> OnlineCustomModel? {
+        let active = activeOnlineModelIdentifiers()
+        return state.onlineCustomModels.first {
+            $0.textModelIdentifier == active.text && $0.imageModelIdentifier == active.image
+        }
+    }
+
+    /// Validates a text/image pair against OpenRouter's catalog and, on success,
+    /// adds (or updates) a named custom-model card. Mirrors `addCustomLocalModel`,
+    /// but online models are verified before they're persisted so a card never
+    /// silently fails at runtime. Sets `validatingOnlineModel` / `addOnlineModelError`.
+    func addCustomOnlineModel(displayName: String, textID: String, imageID: String) async {
+        let text = textID.cleanedSingleLine
+        let image = imageID.cleanedSingleLine
+        guard !text.isEmpty, !image.isEmpty else {
+            addOnlineModelError = "Enter both a text model and an image model."
+            return
+        }
+
+        validatingOnlineModel = true
+        addOnlineModelError = nil
+        let key = onlineAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await onlineModelService.validateCustomOnlineModels(
+                textID: text,
+                imageID: image,
+                apiKey: key.isEmpty ? nil : key
+            )
+        } catch {
+            validatingOnlineModel = false
+            addOnlineModelError = error.localizedDescription
+            return
+        }
+
+        let name = displayName.cleanedSingleLine.isEmpty
+            ? Self.shortModelName(for: text)
+            : displayName.cleanedSingleLine
+
+        if let index = state.onlineCustomModels.firstIndex(where: {
+            $0.textModelIdentifier == text && $0.imageModelIdentifier == image
+        }) {
+            state.onlineCustomModels[index].displayName = name
+        } else {
+            state.onlineCustomModels.append(
+                OnlineCustomModel(displayName: name, textModelIdentifier: text, imageModelIdentifier: image)
+            )
+        }
+        state.onlineCustomModels.sort {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        validatingOnlineModel = false
+        addOnlineModelError = nil
+        persistState()
+        refreshSystemState(persist: false)
+        logActivity("monitoring", "Custom online model added: \(text) / \(image)")
+    }
+
+    func renameCustomOnlineModel(id: String, displayName: String) {
+        guard let index = state.onlineCustomModels.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = displayName.cleanedSingleLine
+        state.onlineCustomModels[index].displayName =
+            trimmed.isEmpty ? Self.shortModelName(for: state.onlineCustomModels[index].textModelIdentifier) : trimmed
+        state.onlineCustomModels.sort {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        persistState()
+        refreshSystemState(persist: false)
+    }
+
+    /// Removes a custom online model card. If the removed card was the active one,
+    /// AC falls back to the current tier's default models.
+    func removeCustomOnlineModel(id: String) {
+        guard let model = state.onlineCustomModels.first(where: { $0.id == id }) else { return }
+        let wasActive = activeOnlineCustomModel()?.id == id
+        state.onlineCustomModels.removeAll { $0.id == id }
+        if wasActive {
+            // Reset to the current tier's defaults via the shared tier-apply path.
+            applyTierToActiveBackend()
+            updateDisplayedModelIdentifier()
+            brainService?.handleMonitoringConfigurationChange()
+        }
+        persistState()
+        refreshSystemState(persist: false)
+        logActivity("monitoring", "Custom online model removed: \(model.textModelIdentifier)")
+    }
+
+    /// Selects a custom online model: points both online identifiers at its pair.
+    /// Does not touch `state.aiTier`, so tier cards naturally deselect (their pair no
+    /// longer matches the active identifiers).
+    func selectOnlineCustomModel(_ model: OnlineCustomModel) {
+        updateOnlineModelIdentifierText(model.textModelIdentifier)
+        updateOnlineModelIdentifierImage(model.imageModelIdentifier)
+        updateDisplayedModelIdentifier()
+    }
+
+    // MARK: - Add-form drafts (shared by local + online custom-model forms)
+
+    /// The model identifier the in-progress local add form would produce: a Hugging
+    /// Face GGUF repo id, or the absolute path of a linked `.gguf`.
+    var localModelDraftIdentifier: String {
+        switch localModelDraftSource {
+        case .huggingFace: return localModelDraftRepo.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .file: return localModelDraftFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    func addCustomLocalModelFromDraft() {
+        let id = localModelDraftIdentifier
+        guard !id.isEmpty else { return }
+        addCustomLocalModel(displayName: localModelDraftName, modelIdentifier: id)
+        resetLocalModelDraft()
+    }
+
+    func resetLocalModelDraft() {
+        addLocalModelExpanded = false
+        localModelDraftSource = .huggingFace
+        localModelDraftName = ""
+        localModelDraftRepo = ""
+        localModelDraftFilePath = ""
+    }
+
+    /// Validates and adds the in-progress online model, clearing the draft on success
+    /// (a validation failure keeps the form open with its text so the user can fix it).
+    func addCustomOnlineModelFromDraft() async {
+        await addCustomOnlineModel(
+            displayName: onlineModelDraftName,
+            textID: onlineModelDraftText,
+            imageID: onlineModelDraftImage
+        )
+        if addOnlineModelError == nil {
+            resetOnlineModelDraft()
+        }
+    }
+
+    func resetOnlineModelDraft() {
+        addOnlineModelExpanded = false
+        onlineModelDraftName = ""
+        onlineModelDraftText = ""
+        onlineModelDraftImage = ""
+        addOnlineModelError = nil
+    }
+
     func updateLocalModelIdentifierText(_ identifier: String?) {
         updateLocalModelIdentifier(identifier)
     }

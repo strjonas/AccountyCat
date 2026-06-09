@@ -122,7 +122,7 @@ actor CompanionChatService {
             expressivenessDirective: character.expressiveness.chatDirective,
             workflow: workflow
         )
-        let prompt = Self.makeChatPrompt(
+        let (prompt, protectedTailCharacters) = Self.makeChatPrompt(
             userMessage: userMessage,
             goals: goals,
             recentActions: recentActions,
@@ -227,7 +227,8 @@ actor CompanionChatService {
                             systemPrompt: systemPrompt,
                             userPrompt: prompt,
                             options: Self.localChatOptions(),
-                            cacheSlot: .chat
+                            cacheSlot: .chat,
+                            protectedTailCharacters: protectedTailCharacters
                         )
                     }
                     let interactionID = await LLMTelemetryRecorder.shared.record(
@@ -458,6 +459,11 @@ actor CompanionChatService {
         )
     }
 
+    /// Returns the rendered chat prompt plus the length, in characters, of the
+    /// trailing `[New user message]` block. That length is handed to the runtime's
+    /// `PromptBudgetGuard` as the protected tail so an over-budget prompt is trimmed
+    /// in its compressible middle (older context) instead of silently dropping the
+    /// user's actual message off the end.
     private static func makeChatPrompt(
         userMessage: String,
         goals: String,
@@ -468,7 +474,7 @@ actor CompanionChatService {
         policyRules: String,
         profileContext: String,
         workflow: CompanionChatWorkflow
-    ) -> String {
+    ) -> (prompt: String, protectedTailCharacters: Int) {
         let historySection: String
         if history.isEmpty {
             historySection = "(no prior messages)"
@@ -498,9 +504,16 @@ actor CompanionChatService {
                 """
         }
 
+        // The trailing block carries the actual user turn; PromptBudgetGuard protects
+        // exactly this many characters so truncation never eats the user's message.
+        let newMessageBlock = """
+            [New user message]
+            \(userMessage.cleanedSingleLine)
+            """
+
         // Keep volatile context and the new message near the tail so llama.cpp can reuse
         // the stable prefix between local chat turns.
-        return """
+        let prompt = """
             Reply in your character's voice — that persona is who the user hears; you are their focus companion underneath, but the character is who shows up. The one thing the voice never overrides: you are on the user's side — never demean them, and if they're low or struggling, warmth comes first, then the nudge.
             Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
             \(workflowInstruction)
@@ -535,9 +548,9 @@ actor CompanionChatService {
             Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
             Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
 
-            [New user message]
-            \(userMessage.cleanedSingleLine)
+            \(newMessageBlock)
             """
+        return (prompt, newMessageBlock.count)
     }
 
     func resolveAction(

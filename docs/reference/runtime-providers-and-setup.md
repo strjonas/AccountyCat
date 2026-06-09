@@ -158,8 +158,8 @@ stop/delete-partial control. Installed cards show a delete button with confirmat
   on the fallback until the user selects the new card.
 
 Relaunching during a pending download restores the same card-level pending state and resumes
-the download instead of reopening first-run setup. OpenRouter advanced model IDs remain
-separate from local custom IDs.
+the download instead of reopening first-run setup. Custom online (OpenRouter) models are a
+separate, validated card mechanism — see "Custom online models" under Online Routing below.
 
 ### Surfacing failures
 
@@ -252,7 +252,7 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 
 Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC also sends `id_slot` on local server requests: decision and chat use their pinned slots, while lower-priority stages use the auxiliary scratch slot. This is the release tradeoff: one extra KV slot costs memory, but it prevents memory consolidation / action executors / nudge copy from deliberately evicting the two hot prefixes.
 
-When the backend is local and the model is already installed, AC fires a best-effort, cancellable **chat prewarm** (`LocalModelRuntime.prewarm`) via `AppController.schedulePrewarmIfNeeded()`: it starts the shared server (paying the one-time model load) and primes the chat system prompt, built with the active character, in slot 1 with a 1-token request. Prewarm is chat-only so launch work does not spend local compute on monitoring before the user has interacted. A real chat message cancels any in-flight prewarm and immediately owns the chat slot; if the user never chats, monitoring warms its decision slot naturally on its first real check. Prewarm schedules a normal idle shutdown afterwards, so it never pins an unused server indefinitely.
+When the backend is local and the model is already installed, AC fires a best-effort, cancellable **chat prewarm** (`LocalModelRuntime.prewarm`) via `AppController.schedulePrewarmIfNeeded()`: it starts the shared server (paying the one-time model load) and primes the chat system prompt, built with the active character, in slot 1 with a 1-token request. The prewarm system prompt is built with the **same `.staged` workflow** local chat uses — otherwise the cached slot-1 prefix would not match the real chat prefix and the first chat would still pay a full cold prefill. Prewarm is chat-only so launch work does not spend local compute on monitoring before the user has interacted. A real chat message cancels any in-flight prewarm and immediately owns the chat slot; if the user never chats, monitoring warms its decision slot naturally on its first real check. Prewarm schedules a normal idle shutdown afterwards, so it never pins an unused server indefinitely.
 
 Prewarm runs at launch (`bootstrap()`) and when the backend is switched to Local (`updateMonitoringInferenceBackend`) — the switch case matters because the first chat after switching from OpenRouter would otherwise pay the full cold model-load plus prefill. The one cold cost that remains is the very first server start when no warm slot exists yet (e.g. immediately after a fresh install, before any prewarm has completed); this is the inherent model-load-and-prefill latency, not a cache miss.
 
@@ -322,7 +322,7 @@ perception is a different modality.
 - for shared-server chat requests, calls `POST /apply-template` and then `POST /tokenize` so the budget is based on the model-rendered chat prompt, including GGUF template wrappers for Gemma/Qwen/Llama-style models
 - falls back to raw `POST /tokenize` and then the heuristic path if template rendering is unavailable
 - applies the same grow-before-trim heuristic to the rare `llama-cli` fallback path before launching the subprocess
-- only as a last resort, trims the user-prompt tail proportionally and verifies the reduced prompt once via `/tokenize`
+- only as a last resort, trims the user prompt and verifies the reduced prompt once via `/tokenize`. Callers may pass `protectedTailCharacters` to mark a trailing slice that must survive verbatim; the compressible head before it is trimmed instead. Local chat passes the `[New user message]` block here, so an over-budget chat prompt sheds older context rather than silently dropping the user's actual message (which previously left the model only the instructions and the persona's few-shot examples, so it parroted a canned greeting)
 - records `prompt_budget_truncated` telemetry/activity when truncation actually happens
 
 If tokenization fails or times out, AC falls back to the heuristic path and continues the request rather than blocking inference.
@@ -389,10 +389,45 @@ Current behavior:
 
 - default online path: OpenRouter
 - API keys live in macOS Keychain via `OnlineProviderCredentialStore`
-- ZDR toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`; on by default, opt-out via the AI tab's advanced section behind an explicit confirmation alert
+- ZDR toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`; on by default, opt-out via the AI tab's OpenRouter privacy section behind an explicit confirmation alert
 - direct-OpenAI routing code exists in `OnlineProviderRouting` but its UI was removed from `AITab`; the toggle can be re-exposed if needed (see `docs/experiments/direct-openai-routing.md`)
 - `ConnectivityService` provides a lightweight `NWPathMonitor`-backed reachability signal used by `BrainService` to pause online monitoring quickly when the machine is offline
 - online monitoring may transiently use the online text-only pipeline after repeated vision timeouts, but this degradation lives only in `BrainService`; it does not rewrite `MonitoringConfiguration`
+
+### Custom online models
+
+Settings → AI (OpenRouter backend) shows the three built-in tier cards plus an inline
+"Add a custom model" form — the online analogue of the local custom-model cards, and a
+replacement for the old raw "Advanced mode" two-field override (now removed). Because an
+online model is split text vs. vision, a custom online model is a **pair**: a text/decision
+model id and an image/vision model id (`OnlineCustomModel` in `ACModels.swift`, stored in
+`ACState.onlineCustomModels`, keyed by a stable UUID so renames don't break selection).
+
+Adding one is **validated before it's persisted**: `OnlineModelService.validateCustomOnlineModels`
+makes a single free `GET /api/v1/models` call and checks via the pure
+`validateCatalog(_:textID:imageID:)` helper that each id exists and that the text id accepts
+`text` input and the image id accepts `image` input (`architecture.input_modalities`). A
+`:variant` suffix matches the base id; an entry with no declared modalities is treated as
+text-capable but rejected for the vision slot. Failures surface inline as an
+`OnlineModelValidationError` (`addOnlineModelError`); the form shows a spinner while
+`validatingOnlineModel` is set.
+
+Cards are selectable, renamable, and deletable (`add/rename/remove/selectOnlineCustomModel`
+in `AppController+RuntimeSetup.swift`). Selecting a custom card points
+`onlineModelIdentifierText`/`Image` at its pair without touching `state.aiTier`, so the tier
+cards deselect (a tier renders active only when no custom model matches the active pair —
+`activeOnlineCustomModel()` / `activeOnlineModelIdentifiers()`). Removing the active card
+falls back to the current tier's defaults via `applyTierToActiveBackend()`.
+
+Both the local and online add forms render through one shared `CustomModelAddCard`
+(`AC/UI/Settings/CustomModelAddCard.swift`) — collapsed/expanded chrome, name field, error,
+and Clear/Add actions — with each caller supplying only its source-specific fields (HF/file
+pills vs. text/image ids). **Draft state lives on `AppController`**, not in the view's
+`@State` (`addLocalModelExpanded` / `localModelDraft*`, `addOnlineModelExpanded` /
+`onlineModelDraft*`, consumed by `addCustomLocalModelFromDraft` /
+`addCustomOnlineModelFromDraft`). That's deliberate: a half-typed entry must survive the user
+navigating away (e.g. to chat) to copy a model id and coming back. Collapsing only hides the
+form; the draft clears only on a successful Add or the explicit Clear button.
 
 ### OpenRouter request shape
 

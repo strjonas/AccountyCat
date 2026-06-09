@@ -348,7 +348,8 @@ actor LocalModelRuntime {
         systemPrompt: String,
         userPrompt: String,
         options: RuntimeInferenceOptions,
-        cacheSlot: LocalModelCacheSlot? = nil
+        cacheSlot: LocalModelCacheSlot? = nil,
+        protectedTailCharacters: Int = 0
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
@@ -356,7 +357,8 @@ actor LocalModelRuntime {
             input: .text(userPrompt: userPrompt),
             systemPrompt: systemPrompt,
             options: options,
-            cacheSlot: cacheSlot
+            cacheSlot: cacheSlot,
+            protectedTailCharacters: protectedTailCharacters
         )
     }
 
@@ -459,7 +461,8 @@ actor LocalModelRuntime {
         input: RuntimeInferenceInput,
         systemPrompt: String,
         options: RuntimeInferenceOptions,
-        cacheSlot: LocalModelCacheSlot?
+        cacheSlot: LocalModelCacheSlot?,
+        protectedTailCharacters: Int = 0
     ) async throws -> RuntimeProcessOutput {
         cancelScheduledShutdown()
         let cancellationBox = RuntimeCancellationBox()
@@ -486,7 +489,8 @@ actor LocalModelRuntime {
                         systemPrompt: systemPrompt,
                         options: options,
                         cancellationBox: cancellationBox,
-                        cacheSlot: cacheSlot
+                        cacheSlot: cacheSlot,
+                        protectedTailCharacters: protectedTailCharacters
                     )
                 } catch is CancellationError {
                     throw CancellationError()
@@ -515,7 +519,8 @@ actor LocalModelRuntime {
                 systemPrompt: systemPrompt,
                 modelSource: modelSource,
                 options: options,
-                cancellationBox: cancellationBox
+                cancellationBox: cancellationBox,
+                protectedTailCharacters: protectedTailCharacters
             )
         } onCancel: {
             cancellationBox.cancel()
@@ -531,7 +536,8 @@ actor LocalModelRuntime {
         systemPrompt: String,
         options: RuntimeInferenceOptions,
         cancellationBox: RuntimeCancellationBox,
-        cacheSlot: LocalModelCacheSlot?
+        cacheSlot: LocalModelCacheSlot?,
+        protectedTailCharacters: Int
     ) async throws -> RuntimeProcessOutput {
         let preflight = PromptBudgetGuard.preflightPlan(
             systemPrompt: systemPrompt,
@@ -539,8 +545,15 @@ actor LocalModelRuntime {
             imagePath: input.imagePath,
             ctxSize: options.ctxSize,
             maxTokens: options.maxTokens,
-            maxCtxGrowth: 2_048
+            maxCtxGrowth: 4_096
         )
+        if preflight.exceededGrowthCap {
+            await ActivityLogService.shared.append(
+                level: .more,
+                category: "prompt-budget-cap",
+                message: "Chat prompt exceeds context growth cap (~\(preflight.estimatedPromptTokens + preflight.estimatedImageTokens) tokens, ctx=\(options.ctxSize)+4096 cap); older context will be trimmed."
+            )
+        }
         let effectiveOptions = RuntimeInferenceOptions(
             maxTokens: options.maxTokens,
             temperature: options.temperature,
@@ -579,7 +592,8 @@ actor LocalModelRuntime {
             options: effectiveOptions,
             serverPort: server.port,
             imageMaxDimension: preflight.imageMaxDimension,
-            cacheSlot: cacheSlot
+            cacheSlot: cacheSlot,
+            protectedTailCharacters: protectedTailCharacters
         )
         activeSharedServerRequests += 1
         defer { activeSharedServerRequests -= 1 }
@@ -643,7 +657,8 @@ actor LocalModelRuntime {
         systemPrompt: String,
         modelSource: RuntimeModelSource,
         options: RuntimeInferenceOptions,
-        cancellationBox: RuntimeCancellationBox
+        cancellationBox: RuntimeCancellationBox,
+        protectedTailCharacters: Int = 0
     ) async throws -> RuntimeProcessOutput {
         let repoURL = repositoryURL(forRuntimePath: runtimePath)
         let preflight = PromptBudgetGuard.preflightPlan(
@@ -652,8 +667,15 @@ actor LocalModelRuntime {
             imagePath: input.imagePath,
             ctxSize: options.ctxSize,
             maxTokens: options.maxTokens,
-            maxCtxGrowth: 2_048
+            maxCtxGrowth: 4_096
         )
+        if preflight.exceededGrowthCap {
+            await ActivityLogService.shared.append(
+                level: .more,
+                category: "prompt-budget-cap",
+                message: "Chat prompt exceeds context growth cap (~\(preflight.estimatedPromptTokens + preflight.estimatedImageTokens) tokens, ctx=\(options.ctxSize)+4096 cap); older context will be trimmed."
+            )
+        }
         let effectiveOptions = RuntimeInferenceOptions(
             maxTokens: options.maxTokens,
             temperature: options.temperature,
@@ -673,10 +695,17 @@ actor LocalModelRuntime {
             maxTokens: effectiveOptions.maxTokens,
             serverPort: 0,
             thinkingEnabled: effectiveOptions.thinkingEnabled,
+            protectedTailCharacters: protectedTailCharacters,
             transport: { request in
                 max(0, request.content.count / 4)
             }
         )
+        if guardedPrompt.wasTruncated {
+            appendPromptBudgetTruncatedMetric(
+                detail:
+                    "ctx=\(effectiveOptions.ctxSize) max=\(effectiveOptions.maxTokens) prompt=\(guardedPrompt.promptTokensEstimate) image=\(guardedPrompt.imageTokensEstimate)"
+            )
+        }
         let effectiveInput: RuntimeInferenceInput
         switch input {
         case .text:
@@ -991,6 +1020,13 @@ actor LocalModelRuntime {
         )
         sharedServer = serverHandle
 
+        await ActivityLogService.shared.append(
+            level: .more,
+            category: "local-runtime",
+            message:
+                "Starting shared llama-server (cold model load) — model=\(config.modelIdentifier) ctx=\(config.ctxSize) batch=\(config.batchSize) slots=\(Self.sharedServerSlotCount)."
+        )
+
         do {
             try await waitForServerReady(
                 serverHandle,
@@ -1016,7 +1052,15 @@ actor LocalModelRuntime {
         Self.terminate(process: sharedServer.process)
         _ = await waitForTermination(of: sharedServer.process, timeoutMilliseconds: 1_000)
 
-        let _ = reason
+        // Every stop wipes all three KV cache slots, so the next request pays a full
+        // cold model-load + prefill. Surface the reason: repeated lines here are the
+        // signature of cache-lane churn (e.g. reconfigure/timeout ping-pong between
+        // chat and monitoring) that makes local chat feel like it "re-initializes".
+        await ActivityLogService.shared.append(
+            level: .more,
+            category: "local-runtime",
+            message: "Shared llama-server stopped (reason=\(reason)) — KV cache slots cleared."
+        )
     }
 
     private func shutdownWhenIdle(reason: String) async {
@@ -1075,7 +1119,8 @@ actor LocalModelRuntime {
         options: RuntimeInferenceOptions,
         serverPort: Int,
         imageMaxDimension: Int?,
-        cacheSlot: LocalModelCacheSlot?
+        cacheSlot: LocalModelCacheSlot?,
+        protectedTailCharacters: Int = 0
     ) async throws -> Data {
         let guardedPrompt: PromptBudgetGuardResult
         let messages: [[String: Any]]
@@ -1089,6 +1134,7 @@ actor LocalModelRuntime {
                 maxTokens: options.maxTokens,
                 serverPort: serverPort,
                 thinkingEnabled: options.thinkingEnabled,
+                protectedTailCharacters: protectedTailCharacters,
                 transport: tokenizeWithServer(request:),
                 chatTransport: tokenizeChatPromptWithServer(request:)
             )

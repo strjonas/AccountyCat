@@ -17,6 +17,10 @@ enum LocalModelWarmupState: Equatable {
     case ready
 }
 
+/// Where a new custom *local* model comes from: a Hugging Face GGUF repo AC
+/// downloads, or a `.gguf` file the user already has on disk and just links.
+enum CustomModelSource: Hashable, Sendable { case huggingFace, file }
+
 @MainActor
 final class AppController: ObservableObject {
     static let shared = AppController()
@@ -86,6 +90,31 @@ final class AppController: ObservableObject {
     @Published var directOpenAIEnabled: Bool
     @Published var openRouterKeyInfo: OpenRouterKeyInfo?
     @Published var openRouterKeyInfoError: String?
+    /// True while a custom online model is being validated against OpenRouter's
+    /// catalog (the AI tab disables Add and shows a spinner).
+    @Published var validatingOnlineModel = false
+    /// User-facing reason the last custom-online-model add failed validation.
+    @Published var addOnlineModelError: String?
+
+    // MARK: - Custom-model add-form drafts
+    //
+    // These back the inline "add a custom model" forms in the AI tab. They live on
+    // the controller (not in the view's @State) so an in-progress entry survives the
+    // user navigating away — e.g. opening chat to copy a model id — and coming back.
+    // Collapsing a form only flips the `*Expanded` flag; the text is kept until the
+    // model is added or the user explicitly clears it.
+    @Published var addLocalModelExpanded = false
+    @Published var localModelDraftSource: CustomModelSource = .huggingFace
+    @Published var localModelDraftName = ""
+    /// Hugging Face GGUF repo id (`localModelDraftSource == .huggingFace`).
+    @Published var localModelDraftRepo = ""
+    /// Absolute path of a linked `.gguf` (`localModelDraftSource == .file`).
+    @Published var localModelDraftFilePath = ""
+
+    @Published var addOnlineModelExpanded = false
+    @Published var onlineModelDraftName = ""
+    @Published var onlineModelDraftText = ""
+    @Published var onlineModelDraftImage = ""
     /// Set by BrainService when repeated API failures suggest a provider-side issue.
     /// Displayed as a gentle banner in the main UI.
     @Published var connectionProblemNotice: String?
@@ -361,9 +390,14 @@ final class AppController: ObservableObject {
         let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: state.runtimePathOverride)
         let modelIdentifier = runtimeProfileModelIdentifier()
         let personaPrefix = state.character.personalityPrefix
+        // Prewarm must cache the *exact* system prefix the real local chat sends, or
+        // slot 1's cached prefix never matches and the first chat still pays a full
+        // cold prefill. Local chat always runs the `.staged` workflow (see
+        // AppController+ConversationLearning.handleSendChatMessage), so warm that form.
         let chatPrompt = ACPromptSets.chatSystemPrompt(
             withPersonality: personaPrefix,
-            expressivenessDirective: state.character.expressiveness.chatDirective
+            expressivenessDirective: state.character.expressiveness.chatDirective,
+            workflow: .staged
         )
 
         prewarmTask?.cancel()
