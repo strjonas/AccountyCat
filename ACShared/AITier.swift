@@ -12,12 +12,12 @@ import Foundation
 /// in onboarding and Settings → AI; the underlying model IDs are an implementation detail.
 nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     case economy
-    case balanced   // displayed as "Default"
+    case balanced  // displayed as "Default"
     case smartest
 
     var displayName: String {
         switch self {
-        case .economy:  return "Economy"
+        case .economy: return "Economy"
         case .balanced: return "Default"
         case .smartest: return "Smartest"
         }
@@ -28,9 +28,11 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
         case .economy:
             return "Lightweight and kind to resources, but less accurate than higher tiers."
         case .balanced:
-            return "Balanced. Recommended for most users. Strong enough to understand context well, efficient enough to run all day."
+            return
+                "Balanced. Recommended for most users. Strong enough to understand context well, efficient enough to run all day."
         case .smartest:
-            return "Best reasoning. Understands nuance better, fewer false nudges, and more convincing when you explain yourself."
+            return
+                "Best reasoning. Understands nuance better, fewer false nudges, and more convincing when you explain yourself."
         }
     }
 
@@ -39,7 +41,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
         case .economy:
             return "Qwen 3.5 4B. ~2–3 GB RAM. Fits 8 GB Macs — reduced accuracy."
         case .balanced:
-            return "Qwen 3.5 9B. ~5–7 GB RAM. Better reasoning, recommended for most."
+            return "Qwen 3.5 9B. ~6–8 GB RAM. Better reasoning, recommended for most."
         case .smartest:
             return "Qwen 3.6 27B. ~15–18 GB RAM. Best local reasoning."
         }
@@ -60,7 +62,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
 
     var byokModelIdentifier: String {
         switch self {
-        case .economy:  return "qwen/qwen3.5-9b"
+        case .economy: return "qwen/qwen3.5-9b"
         case .balanced: return "qwen/qwen3.6-35b-a3b"
         case .smartest: return "moonshotai/kimi-k2.6"
         }
@@ -69,7 +71,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     /// Text-only optimized model for OpenRouter
     var byokModelIdentifierText: String {
         switch self {
-        case .economy:  return "deepseek/deepseek-v4-flash"
+        case .economy: return "deepseek/deepseek-v4-flash"
         case .balanced: return "deepseek/deepseek-v4-flash"
         case .smartest: return "moonshotai/kimi-k2.6"
         }
@@ -78,7 +80,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     /// Image/vision optimized model for OpenRouter
     var byokModelIdentifierImage: String {
         switch self {
-        case .economy:  return "qwen/qwen3.5-9b"
+        case .economy: return "qwen/qwen3.5-9b"
         case .balanced: return "qwen/qwen3.6-35b-a3b"
         case .smartest: return "moonshotai/kimi-k2.6"
         }
@@ -86,7 +88,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
 
     var byokCostEstimate: String {
         switch self {
-        case .economy:  return "~$0.80–1.50/mo"
+        case .economy: return "~$0.80–1.50/mo"
         case .balanced: return "~$1.50–3.00/mo"
         case .smartest: return "~$3.00–5.00/mo"
         }
@@ -96,7 +98,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
 
     var localModelOverride: String {
         switch self {
-        case .economy:  return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+        case .economy: return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
         case .balanced: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
         case .smartest: return "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL"
         }
@@ -105,7 +107,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     /// Text-only optimized model for local (same as default for now, but can be customized)
     var localModelIdentifierText: String {
         switch self {
-        case .economy:  return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+        case .economy: return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
         case .balanced: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
         case .smartest: return "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL"
         }
@@ -114,7 +116,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     /// Image/vision optimized model for local (same as default for now, but can be customized)
     var localModelIdentifierImage: String {
         switch self {
-        case .economy:  return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
+        case .economy: return "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL"
         case .balanced: return "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL"
         case .smartest: return "unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL"
         }
@@ -122,7 +124,7 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
 
     var localModelDisplayName: String {
         switch self {
-        case .economy:  return "Qwen 3.5 4B"
+        case .economy: return "Qwen 3.5 4B"
         case .balanced: return "Qwen 3.5 9B"
         case .smartest: return "Qwen 3.6 27B"
         }
@@ -130,8 +132,8 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
 
     var localRAMEstimate: String {
         switch self {
-        case .economy:  return "~2-3 GB RAM"
-        case .balanced: return "~5-7 GB RAM"
+        case .economy: return "~2-3 GB RAM"
+        case .balanced: return "~6-8 GB RAM"
         case .smartest: return "~15-18 GB RAM"
         }
     }
@@ -144,11 +146,17 @@ nonisolated enum AITier: String, Codable, CaseIterable, Sendable {
     }
 
     /// Recommends a local tier based on total physical memory.
-    /// ≤12 GB → Basic, ≤24 GB → Balanced, >24 GB → Smartest.
+    /// ≤16 GB → Economy (4B), ≤64 GB → Default (9B), >64 GB → Smartest (27B).
+    ///
+    /// The 9B "Default" is intentionally the recommendation for typical Apple-Silicon
+    /// Macs (incl. base M-series at 32 GB): a head-to-head local eval showed 4B
+    /// materially regresses focus judgment vs 9B — including over-nudging legitimate
+    /// work — so latency on these machines is solved by warming the runtime (see the
+    /// prewarm + pinned cache-slot work in `LocalModelRuntime`), not by defaulting to 4B.
     static func recommendedLocalTier() -> AITier {
         let gb = totalPhysicalMemoryGB
-        if gb <= 12 { return .economy }
-        if gb <= 24 { return .balanced }
+        if gb <= 16 { return .economy }
+        if gb <= 64 { return .balanced }
         return .smartest
     }
 

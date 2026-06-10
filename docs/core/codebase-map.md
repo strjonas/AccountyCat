@@ -140,7 +140,7 @@ This is the main path for runtime debugging, Inspector views, and exported debug
 ## Current Runtime Flow
 
 1. `AppDelegate` builds the UI shell and bootstraps `AppController`.
-2. `AppController.bootstrap()` refreshes state, configures `BrainService`, and starts telemetry if applicable.
+2. `AppController.bootstrap()` refreshes state, configures `BrainService`, starts telemetry if applicable, and (on the local backend with a model installed) warms the runtime.
 3. `BrainService` runs a periodic tick, event-driven app/window/title change detection, plus a slower fallback probe.
 4. Each tick gathers context, heuristics, optional screenshot data, and policy/profile state.
 5. `MonitoringAlgorithmRegistry` resolves `llm_monitor_v1`.

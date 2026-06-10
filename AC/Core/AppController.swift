@@ -10,6 +10,17 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+enum LocalModelWarmupState: Equatable {
+    case idle
+    case warming
+    case startingForRequest
+    case ready
+}
+
+/// Where a new custom *local* model comes from: a Hugging Face GGUF repo AC
+/// downloads, or a `.gguf` file the user already has on disk and just links.
+enum CustomModelSource: Hashable, Sendable { case huggingFace, file }
+
 @MainActor
 final class AppController: ObservableObject {
     static let shared = AppController()
@@ -32,6 +43,21 @@ final class AppController: ObservableObject {
     @Published var setupDownloadedBytes: Int64?
     @Published var setupTotalBytes: Int64?
     @Published var setupErrorMessage: String?
+    /// True when the installed local runtime is behind the pinned target and a
+    /// rebuild is offered. Computed lazily (one `git rev-parse` per session /
+    /// after a rebuild) to avoid spawning git on every state refresh.
+    @Published var runtimeUpdateAvailable = false
+    /// True while a runtime rebuild is in progress *as an update* (distinct from a
+    /// first-run install). The app stays `.ready` and keeps running on the old
+    /// runtime; this only drives the inline AITab banner, never onboarding.
+    @Published var updatingRuntime = false
+    @Published var runtimeUpdateMessage: String?
+    /// Set when a newer AC release exists on GitHub; drives a non-intrusive
+    /// "update available" banner. nil = up to date / unknown.
+    @Published var appUpdateAvailable: AppUpdateInfo?
+    /// Internal (not private) so the runtime-setup extension can reset it after a
+    /// rebuild to force re-evaluation of update availability.
+    var didCheckRuntimeUpdate = false
     @Published var pendingLocalModelChange: PendingLocalModelChange?
     @Published var modelDownloadNotice: ModelDownloadNotice?
     @Published var modelDownloadSuccess: ModelDownloadSuccess?
@@ -42,9 +68,15 @@ final class AppController: ObservableObject {
     @Published var localModelStorageMessage: String?
     @Published var localModelStorageError: String?
     @Published var showingOnboardingCompletion = false
+    /// Settings tab a deep-link wants shown. Set just before opening Settings; the
+    /// SettingsView consumes and clears it on appear. Survives the open even though
+    /// SettingsView mounts a beat after the notification fires (a plain notification
+    /// would be missed by the not-yet-subscribed view).
+    @Published var pendingSettingsTab: SettingsTab?
     @Published var activityStatusText = "Checking permissions and local runtime."
     @Published var chatMessages: [ChatMessage]
     @Published var sendingChatMessage = false
+    @Published var resolvingChatActions = false
     /// True when any assistant chat message is still flagged as unread (typically deferred
     /// suggestions like profile-switch announcements or calendar-suggested switches).
     /// Drives the menu bar dot badge.
@@ -58,12 +90,41 @@ final class AppController: ObservableObject {
     @Published var directOpenAIEnabled: Bool
     @Published var openRouterKeyInfo: OpenRouterKeyInfo?
     @Published var openRouterKeyInfoError: String?
+    /// True while a custom online model is being validated against OpenRouter's
+    /// catalog (the AI tab disables Add and shows a spinner).
+    @Published var validatingOnlineModel = false
+    /// User-facing reason the last custom-online-model add failed validation.
+    @Published var addOnlineModelError: String?
+
+    // MARK: - Custom-model add-form drafts
+    //
+    // These back the inline "add a custom model" forms in the AI tab. They live on
+    // the controller (not in the view's @State) so an in-progress entry survives the
+    // user navigating away — e.g. opening chat to copy a model id — and coming back.
+    // Collapsing a form only flips the `*Expanded` flag; the text is kept until the
+    // model is added or the user explicitly clears it.
+    @Published var addLocalModelExpanded = false
+    @Published var localModelDraftSource: CustomModelSource = .huggingFace
+    @Published var localModelDraftName = ""
+    /// Hugging Face GGUF repo id (`localModelDraftSource == .huggingFace`).
+    @Published var localModelDraftRepo = ""
+    /// Absolute path of a linked `.gguf` (`localModelDraftSource == .file`).
+    @Published var localModelDraftFilePath = ""
+
+    @Published var addOnlineModelExpanded = false
+    @Published var onlineModelDraftName = ""
+    @Published var onlineModelDraftText = ""
+    @Published var onlineModelDraftImage = ""
     /// Set by BrainService when repeated API failures suggest a provider-side issue.
     /// Displayed as a gentle banner in the main UI.
     @Published var connectionProblemNotice: String?
     /// True when local inference is active and Low Power Mode is on.
     @Published var localModelLowPowerNotice = false
     @Published var localModelLowPowerNoticeDismissed = false
+    /// Short-lived user-facing state for the first local model load after launch,
+    /// backend switch, or idle server shutdown. The model files are persisted, but
+    /// the warm in-memory server/cache is not.
+    @Published var localModelWarmupState: LocalModelWarmupState = .idle
     /// Worst-case safety net: surfaced when a *custom* partner's description keeps
     /// producing unparseable model output, so the user knows to simplify it rather
     /// than think AC is broken. Should never appear in normal use.
@@ -126,8 +187,12 @@ final class AppController: ObservableObject {
     var lastPromptedDependencySignature: String?
     private var statsSnapshotCache: [StatsWindow: MonitoringStatsSnapshot] = [:]
     var installRuntimeTask: Task<Void, Never>?
+    var updateRuntimeTask: Task<Void, Never>?
     var downloadProgressTask: Task<Void, Never>?
     private var telemetryHeartbeatTask: Task<Void, Never>?
+    var prewarmTask: Task<Void, Never>?
+    var memoryConsolidationTask: Task<Void, Never>?
+    var memoryConsolidationRetryTask: Task<Void, Never>?
     var activeScheduledTimers: [UUID: DispatchWorkItem] = [:]
 
     private init() {
@@ -177,6 +242,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
+        self.pendingLocalModelChange = Self.pendingLocalModelChange(from: state)
         self.lastUsedModelIdentifier = nil
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
@@ -242,6 +308,7 @@ final class AppController: ObservableObject {
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         )
+        self.pendingLocalModelChange = Self.pendingLocalModelChange(from: state)
         self.lastUsedModelIdentifier = nil
         self.chatMessages = Self.makeChatMessages(from: state.chatHistory)
         self.hasCompletedOnboardingWizard = UserDefaults.standard.bool(forKey: "acOnboardingWizardCompleted")
@@ -275,6 +342,7 @@ final class AppController: ObservableObject {
             }
         }
         refreshSystemState(persist: false)
+        resumePendingLocalModelDownloadIfNeeded()
         configureBrainIfNeeded()
         restorePendingScheduledActions()
         recomputeTodayStats()
@@ -288,10 +356,85 @@ final class AppController: ObservableObject {
                 self.updateLocalModelLowPowerNotice()
             }
         }
+        schedulePrewarmIfNeeded()
+        checkForAppUpdate()
+    }
+
+    /// Best-effort GitHub-releases check; surfaces `appUpdateAvailable` for a
+    /// non-intrusive banner. Throttled and fails silent inside the service.
+    func checkForAppUpdate(force: Bool = false) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let info = await AppUpdateService.checkForUpdate(force: force) {
+                self.appUpdateAvailable = info
+                self.logActivity("app", "Update available: \(info.latestVersion) (current \(info.currentVersion))")
+            }
+        }
+    }
+
+    /// Best-effort: when running locally with the model already installed, warm the
+    /// shared llama-server and the stable chat/decision prefixes so the next real
+    /// interaction isn't a cold prefill. Fired on launch and whenever the backend
+    /// switches to Local (where the first query would otherwise pay the full cold
+    /// model-load + prefill). Cheap, cancellable, never blocks the UI; the runtime
+    /// schedules its own idle shutdown afterwards.
+    func schedulePrewarmIfNeeded() {
+        guard state.monitoringConfiguration.inferenceBackend == .local,
+              !state.isPaused,
+              setupDiagnostics.runtimePresent,
+              setupDiagnostics.modelArtifactsPresent else {
+            localModelWarmupState = .idle
+            return
+        }
+
+        let runtimePath = RuntimeSetupService.normalizedRuntimePath(from: state.runtimePathOverride)
+        let modelIdentifier = runtimeProfileModelIdentifier()
+        let personaPrefix = state.character.personalityPrefix
+        // Prewarm must cache the *exact* system prefix the real local chat sends, or
+        // slot 1's cached prefix never matches and the first chat still pays a full
+        // cold prefill. Local chat always runs the `.staged` workflow (see
+        // AppController+ConversationLearning.handleSendChatMessage), so warm that form.
+        let chatPrompt = ACPromptSets.chatSystemPrompt(
+            withPersonality: personaPrefix,
+            expressivenessDirective: state.character.expressiveness.chatDirective,
+            workflow: .staged
+        )
+
+        prewarmTask?.cancel()
+        localModelWarmupState = .warming
+        prewarmTask = Task(priority: .utility) { [weak self, localModelRuntime] in
+            await localModelRuntime.prewarm(
+                runtimePath: runtimePath,
+                modelIdentifier: modelIdentifier,
+                prompts: [
+                    (.chat, chatPrompt),
+                ]
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.localModelWarmupState = .ready
+            }
+        }
+    }
+
+    func cancelPrewarmForInteractiveChat() {
+        guard prewarmTask != nil else { return }
+        prewarmTask?.cancel()
+        prewarmTask = nil
+        if localModelWarmupState == .warming {
+            localModelWarmupState = .startingForRequest
+        }
     }
 
     func shutdown() async {
         persistState()
+        prewarmTask?.cancel()
+        prewarmTask = nil
+        memoryConsolidationTask?.cancel()
+        memoryConsolidationTask = nil
+        memoryConsolidationRetryTask?.cancel()
+        memoryConsolidationRetryTask = nil
         telemetryHeartbeatTask?.cancel()
         telemetryHeartbeatTask = nil
         await telemetryStore.appendSessionHeartbeat(reason: "app_shutdown_started")
@@ -329,14 +472,26 @@ final class AppController: ObservableObject {
         let previousStatus = state.setupStatus
         state.permissions = PermissionService.currentSnapshot()
 
-        let modelIdentifier = pendingLocalModelChange?.modelIdentifier
-            ?? Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
+        let modelIdentifier = Self.effectiveSetupModelIdentifier(for: state.monitoringConfiguration)
         setupDiagnostics = RuntimeSetupService.inspect(
             runtimeOverride: state.runtimePathOverride,
             modelIdentifier: modelIdentifier
         )
         let permissionRequirements = LLMPolicyCatalog.permissionRequirements(for: state.monitoringConfiguration)
         let usesOnlineInference = state.monitoringConfiguration.usesOnlineInference
+
+        // Detect a stale local runtime once per session (or after a rebuild). Gated
+        // hard so we never spawn git while installing/updating or on the online path.
+        if !usesOnlineInference, !installingRuntime, !updatingRuntime, setupDiagnostics.runtimePresent {
+            if !didCheckRuntimeUpdate {
+                runtimeUpdateAvailable = RuntimeSetupService.runtimeNeedsUpdate(
+                    forRuntimePath: setupDiagnostics.runtimePath
+                )
+                didCheckRuntimeUpdate = true
+            }
+        } else {
+            runtimeUpdateAvailable = false
+        }
 
         if installingRuntime || installingDependencies {
             if installingRuntime,

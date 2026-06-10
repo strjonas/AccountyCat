@@ -61,6 +61,7 @@ enum AppControllerChatSupport {
     private static let systemMessage = "I'm AC, your calm focus companion. I watch what you're doing and gently nudge you when you drift. You can chat with me anytime — tell me your goals, start a focus session, or ask why I nudged."
     static let maxChatMessageLength = 1000
     static let maxChatContextCharacters = 4000
+    static let maxLocalChatContextCharacters = 1800
 
     static func cappedChatText(_ text: String, limit: Int) -> String {
         guard text.count > limit else { return text }

@@ -386,9 +386,9 @@ struct BrainServiceConfigurationTests {
         brainService.contextProvider = { context }
         brainService.idleSecondsProvider = { 0 }
 
-        await runtime.withInteractiveRequest {
-            await brainService.tick()
-        }
+        await runtime.beginInteractiveRequestForTesting()
+        await brainService.tick()
+        await runtime.endInteractiveRequestForTesting()
 
         #expect(latestStatus.contains("Local chat has priority"))
         #expect(state.algorithmState.llmPolicy.distraction.nextEvaluationAt != nil)

@@ -33,7 +33,15 @@ enum ProfileActionParser {
             || lower.contains("activate")
             || lower.contains("switch to")
             || lower.contains("start")
+            || lower.contains("begin")
+            || lower.contains("extend")
             || lower.contains("schedule")
+            || lower.contains("help me focus on")
+            || lower.contains("keep me focused on")
+            || lower.contains("keep me accountable on")
+            || lower.contains("let's focus on")
+            || lower.contains("lets focus on")
+            || lower.contains("start focusing on")
 
         guard isLifecycle else { return nil }
 
@@ -77,8 +85,12 @@ enum ProfileActionParser {
         if lower == "end" { return true }
         let patterns = [
             #"\bend\s+active\b"#,
-            #"\bend\s+(the\s+)?profile\b"#,
-            #"\bstop\s+(the\s+)?profile\b"#,
+            #"\bend\s+(the\s+)?(active\s+)?(profile|session|focus mode|mode)\b"#,
+            #"\bstop\s+(the\s+)?(active\s+)?(profile|session|focus mode|mode)\b"#,
+            #"\bfinish\s+(the\s+)?(active\s+)?(profile|session|focus mode|mode)\b"#,
+            #"\bcancel\s+(the\s+)?(active\s+)?(profile|session|focus mode|mode)\b"#,
+            #"\bdeactivate\s+(the\s+)?(active\s+)?(profile|session|focus mode|mode)\b"#,
+            #"\bback\s+to\s+(everyday|default|normal)(\s+mode)?\b"#,
         ]
         return patterns.contains { pattern in
             guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
@@ -87,6 +99,16 @@ enum ProfileActionParser {
             return regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil
         }
     }
+
+    /// Words that are never a profile name: leading verbs, articles/possessives, and
+    /// politeness/temporal filler. Without this, "activate the profile please" captures
+    /// "the" (or "please") and the parser invents a junk profile instead of bailing to the
+    /// context-aware LLM resolver, which can see that "the profile" refers to one named earlier.
+    private static let nonProfileNameWords: Set<String> = [
+        "activate", "create", "switch", "start", "set", "setup", "begin", "and", "extend", "schedule",
+        "a", "an", "the", "my", "this", "that", "your", "our",
+        "please", "now", "today", "tonight", "again", "thanks", "ok", "okay", "it",
+    ]
 
     private static func extractProfileName(from text: String, preferVerbFallback: Bool = false) -> String? {
         let lower = text.lowercased()
@@ -102,8 +124,7 @@ enum ProfileActionParser {
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let nameRange = Range(match.range(at: 1), in: text) {
             let name = String(text[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if name.count >= 2,
-               !["activate", "create", "switch", "start", "set", "and"].contains(name.lowercased()) {
+            if name.count >= 2, !nonProfileNameWords.contains(name.lowercased()) {
                 return name
             }
         }
@@ -116,7 +137,7 @@ enum ProfileActionParser {
             if let first = words.first {
                 let candidate = String(first)
                     .trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!"))
-                if candidate.count >= 2 {
+                if candidate.count >= 2, !nonProfileNameWords.contains(candidate.lowercased()) {
                     return candidate
                 }
             }
@@ -127,22 +148,57 @@ enum ProfileActionParser {
     }
 
     private static func extractProfileNameAfterVerb(from text: String, lower: String) -> String? {
-        let verbs = ["create and activate", "activate", "switch to", "start", "set up", "schedule"]
+        let verbs = [
+            "create and activate",
+            "help me focus on",
+            "keep me focused on",
+            "keep me accountable on",
+            "let's focus on",
+            "lets focus on",
+            "start focusing on",
+            "activate",
+            "switch to",
+            "start",
+            "begin",
+            "set up",
+            "setup",
+            "schedule",
+            "extend",
+        ]
         for verb in verbs {
             guard let range = lower.range(of: verb) else { continue }
             let remainder = String(text[range.upperBound...])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let words = remainder.split(separator: " ", omittingEmptySubsequences: true)
-            if let first = words.first {
-                let candidate = String(first)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!"))
-                if candidate.count >= 2, candidate.lowercased() != "profile" {
-                    return candidate
-                }
+            if let candidate = profileNameCandidate(from: remainder) {
+                return candidate
             }
         }
 
         return nil
+    }
+
+    private static func profileNameCandidate(from text: String) -> String? {
+        let stopWords: Set<String> = [
+            "profile", "session", "mode", "for", "until", "during", "with", "at",
+            "in", "from", "because", "please"
+        ]
+        let fillerWords: Set<String> = ["a", "an", "the", "my", "this"]
+        var words: [String] = []
+
+        for raw in text.split(separator: " ", omittingEmptySubsequences: true) {
+            let cleaned = String(raw)
+                .trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?'\"()[]{}"))
+            let lowered = cleaned.lowercased()
+            if cleaned.isEmpty { continue }
+            if stopWords.contains(lowered) { break }
+            if words.isEmpty, fillerWords.contains(lowered) { continue }
+            words.append(cleaned)
+            if words.count >= 4 { break }
+        }
+
+        let candidate = words.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return candidate.count >= 2 ? candidate : nil
     }
 
     private static func extractDuration(from text: String) -> Int? {
@@ -160,7 +216,35 @@ enum ProfileActionParser {
                   let number = Int(text[numberRange]) else { continue }
             return number * multiplier
         }
+        if let wordDuration = extractWordDuration(from: text) {
+            return wordDuration
+        }
         return nil
+    }
+
+    private static func extractWordDuration(from text: String) -> Int? {
+        let values = [
+            "a": 1,
+            "an": 1,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+        ]
+        let pattern = #"(?:for\s+)?(a|an|one|two|three|four|five|six|seven|eight)\s+(hour|hours|h|minute|minutes|min|mins|m)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let valueRange = Range(match.range(at: 1), in: text),
+              let unitRange = Range(match.range(at: 2), in: text) else {
+            return nil
+        }
+        let value = values[String(text[valueRange]).lowercased()] ?? 1
+        let unit = String(text[unitRange]).lowercased()
+        return value * (unit.hasPrefix("hour") || unit == "h" ? 60 : 1)
     }
 
     // MARK: - Recurring schedule extraction

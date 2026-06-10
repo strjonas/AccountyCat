@@ -92,6 +92,10 @@ extension AppController {
         let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedDraft.isEmpty, !sendingChatMessage else { return }
 
+        cancelMemoryConsolidationForInteractiveWork()
+        if state.monitoringConfiguration.inferenceBackend == .local {
+            cancelPrewarmForInteractiveChat()
+        }
         chatMessages.append(ChatMessage(role: .user, text: trimmedDraft))
         persistState()
         sendingChatMessage = true
@@ -132,7 +136,12 @@ extension AppController {
                 limit: AppControllerChatSupport.maxChatMessageLength
             )
         }
-        let historyBudget = max(0, AppControllerChatSupport.maxChatContextCharacters - cappedDraft.count)
+        let backend = state.monitoringConfiguration.inferenceBackend
+        let usingOnline = state.monitoringConfiguration.usesOnlineInference
+        let chatContextBudget = usingOnline
+            ? AppControllerChatSupport.maxChatContextCharacters
+            : AppControllerChatSupport.maxLocalChatContextCharacters
+        let historyBudget = max(0, chatContextBudget - cappedDraft.count)
         let boundedHistory = AppControllerChatSupport.limitMessagesByCharacterBudget(
             cappedHistory,
             budget: historyBudget
@@ -145,12 +154,10 @@ extension AppController {
             availableProfiles: state.profiles.filter { $0.id != state.activeProfileID }
         )
 
-        let backend = state.monitoringConfiguration.inferenceBackend
         let chatWorkflow: CompanionChatWorkflow = backend == .openRouter ? .direct : .staged
         let onlineModelIdentifier = state.monitoringConfiguration.onlineModelIdentifier
         let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
         let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
-        let usingOnline = state.monitoringConfiguration.usesOnlineInference
         let chatReady = state.setupStatus == .ready &&
             (usingOnline || setupDiagnostics.runtimePresent)
 
@@ -169,40 +176,55 @@ extension AppController {
                     actions: [],
                     schedule: nil
                 )
-            } else if let response = await companionChatService.chat(
-                userMessage: cappedDraft,
-                goals: state.goalsText,
-                recentActions: state.recentActions,
-                context: makeChatContext(),
-                history: boundedHistory,
-                memory: renderedMemory,
-                policyRules: renderedPolicyRules,
-                character: state.character,
-                activeProfileContext: profileContext,
-                runtimeOverride: state.runtimePathOverride,
-                inferenceBackend: backend,
-                onlineModelIdentifier: onlineModelIdentifier,
-                onlineTextModelIdentifier: onlineTextModelIdentifier,
-                localTextModelIdentifier: localTextModelIdentifier,
-                workflow: chatWorkflow
-            ) {
-                result = response
-                modelProducedOutput = true
             } else {
-                result = CompanionChatResult(
-                    reply: usingOnline
-                        ? (directOpenAIEnabled
-                            ? "Couldn't reach OpenAI. Check the API key, your connection, and the model name."
-                            : "Couldn't reach OpenRouter. Check the API key, your connection, and the model name.")
-                        : "I couldn't answer just now. Check the logs and local runtime status.",
-                    actions: [],
-                    schedule: nil
-                )
+                if !usingOnline {
+                    let serverReady = await localModelRuntime.isSharedServerReady()
+                    if !serverReady {
+                        await MainActor.run {
+                            self.localModelWarmupState = .startingForRequest
+                        }
+                    }
+                }
+
+                if let response = await companionChatService.chat(
+                    userMessage: cappedDraft,
+                    goals: state.goalsText,
+                    recentActions: state.recentActions,
+                    context: makeChatContext(),
+                    history: boundedHistory,
+                    memory: renderedMemory,
+                    policyRules: renderedPolicyRules,
+                    character: state.character,
+                    activeProfileContext: profileContext,
+                    runtimeOverride: state.runtimePathOverride,
+                    inferenceBackend: backend,
+                    onlineModelIdentifier: onlineModelIdentifier,
+                    onlineTextModelIdentifier: onlineTextModelIdentifier,
+                    localTextModelIdentifier: localTextModelIdentifier,
+                    workflow: chatWorkflow
+                ) {
+                    result = response
+                    modelProducedOutput = true
+                } else {
+                    result = CompanionChatResult(
+                        reply: usingOnline
+                            ? (directOpenAIEnabled
+                                ? "Couldn't reach OpenAI. Check the API key, your connection, and the model name."
+                                : "Couldn't reach OpenRouter. Check the API key, your connection, and the model name.")
+                            : "I couldn't answer just now. Check the logs and local runtime status.",
+                        actions: [],
+                        schedule: nil
+                    )
+                }
             }
 
             await MainActor.run {
                 self.chatMessages.append(ChatMessage(role: .assistant, text: result.reply))
                 self.noteUsedModel(result.usedModelIdentifier)
+                if !usingOnline {
+                    self.localModelWarmupState = modelProducedOutput ? .ready : .idle
+                }
+                self.sendingChatMessage = false
                 if modelProducedOutput {
                     self.noteChatParseOutcome(structured: result.structuredParse)
                 }
@@ -220,11 +242,16 @@ extension AppController {
                 }
 
                 self.persistState()
-                self.sendingChatMessage = false
             }
             self.logActivity("chat", "Assistant: \(result.reply)")
 
-            self.processChatActions(
+            let chatActionsMutateState = Self.chatActionsMutateMonitoredState(result.actions)
+            if !result.actions.isEmpty {
+                await MainActor.run {
+                    self.resolvingChatActions = true
+                }
+            }
+            await self.processChatActions(
                 result.actions,
                 workflow: chatWorkflow,
                 latestUserMessage: trimmedDraft,
@@ -232,7 +259,10 @@ extension AppController {
                 context: SnapshotService.frontmostContext(),
                 parentInteractionID: result.interactionID
             )
-            if Self.chatActionsMutateMonitoredState(result.actions) {
+            await MainActor.run {
+                self.resolvingChatActions = false
+            }
+            if chatActionsMutateState {
                 self.brainService?.invalidateContextAndCooldown(reason: "chat_actions_applied")
             }
 
@@ -819,7 +849,7 @@ extension AppController {
         recentMessages: [ChatMessage],
         context: FrontmostContext?,
         parentInteractionID: String?
-    ) {
+    ) async {
         guard !actions.isEmpty else { return }
 
         let recentUserMessages = recentMessages
@@ -827,14 +857,27 @@ extension AppController {
             .suffix(MonitoringPromptContextBudget.recentUserChatCount)
             .map { $0.text.cleanedSingleLine }
 
+        // AC owns the decision to act. When the chat model emits a profile action it has already
+        // judged the request explicit (the chat contract forbids acting on loose task mentions and
+        // forbids claiming an action it didn't emit). No deterministic keyword gate sits behind it
+        // second-guessing that judgment — that gate used to silently drop valid actions, turning an
+        // honest reply ("switching you to Deep Work") into a lie.
         for action in actions {
+            if action.kind == .profile {
+                if applyProfileActionFastPath(action, latestUserMessage: latestUserMessage) {
+                    logActivity("chat-action", "Applied fast profile action")
+                    recordExplicitChatStatementSignal(for: action, context: context)
+                    continue
+                }
+            }
+
             if workflow == .direct, applyChatAction(action, context: context) {
                 logActivity("chat-action", "Applied direct \(action.kind.rawValue) action")
                 recordExplicitChatStatementSignal(for: action, context: context)
                 continue
             }
 
-            resolveChatAction(
+            await resolveChatAction(
                 action,
                 latestUserMessage: latestUserMessage,
                 recentUserMessages: recentUserMessages,
@@ -842,6 +885,29 @@ extension AppController {
                 parentInteractionID: parentInteractionID
             )
         }
+    }
+
+    @discardableResult
+    func applyProfileActionFastPath(
+        _ action: CompanionChatAction,
+        latestUserMessage: String
+    ) -> Bool {
+        let candidates = [action.instruction, latestUserMessage]
+            .compactMap { $0?.cleanedSingleLine }
+            .filter { !$0.isEmpty }
+
+        for candidate in candidates {
+            if let ops = ProfileActionParser.parse(
+                action: candidate,
+                availableProfiles: state.profiles,
+                activeProfileID: state.activeProfileID
+            ), !ops.isEmpty {
+                applyProfileOperations(ops)
+                return true
+            }
+        }
+
+        return false
     }
 
     func recordExplicitChatStatementSignal(
@@ -866,7 +932,7 @@ extension AppController {
         recentUserMessages: [String],
         context: FrontmostContext?,
         parentInteractionID: String?
-    ) {
+    ) async {
         let now = Date()
         let request = ChatActionResolutionRequest(
             action: action,
@@ -888,15 +954,11 @@ extension AppController {
             parentInteractionID: parentInteractionID
         )
 
-        Task { [weak self, companionChatService] in
-            let resolved = await companionChatService.resolveAction(request)
-            await MainActor.run {
-                guard let self, let resolved else { return }
-                if self.applyChatAction(resolved, context: context) {
-                    self.logActivity("chat-action", "Applied resolved \(resolved.kind.rawValue) action")
-                    self.recordExplicitChatStatementSignal(for: resolved, context: context)
-                }
-            }
+        let resolved = await companionChatService.resolveAction(request)
+        guard let resolved else { return }
+        if applyChatAction(resolved, context: context) {
+            logActivity("chat-action", "Applied resolved \(resolved.kind.rawValue) action")
+            recordExplicitChatStatementSignal(for: resolved, context: context)
         }
     }
 
@@ -1399,6 +1461,10 @@ extension AppController {
         }
         guard !consolidatingMemory else { return }
         guard !state.memoryEntries.isEmpty else { return }
+        guard !sendingChatMessage, !resolvingChatActions else {
+            scheduleMemoryConsolidationRetry(reason: reason)
+            return
+        }
 
         consolidatingMemory = true
         let entriesSnapshot = state.memoryEntries
@@ -1413,7 +1479,18 @@ extension AppController {
         let onlineTextModelIdentifier = state.monitoringConfiguration.onlineModelIdentifierText
         let localTextModelIdentifier = state.monitoringConfiguration.localModelIdentifierText
 
-        Task { [weak self, memoryConsolidationService] in
+        memoryConsolidationTask?.cancel()
+        memoryConsolidationTask = Task { [weak self, memoryConsolidationService, localModelRuntime] in
+            if backend == .local,
+               await localModelRuntime.hasAnyRequestInFlight() {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.consolidatingMemory = false
+                    self.scheduleMemoryConsolidationRetry(reason: reason)
+                }
+                return
+            }
+            if Task.isCancelled { return }
             let consolidated = await memoryConsolidationService.consolidate(
                 entries: entriesSnapshot,
                 goals: goalsSnapshot,
@@ -1425,8 +1502,10 @@ extension AppController {
                 onlineTextModelIdentifier: onlineTextModelIdentifier,
                 localTextModelIdentifier: localTextModelIdentifier
             )
+            if Task.isCancelled { return }
             await MainActor.run {
                 guard let self else { return }
+                self.memoryConsolidationTask = nil
                 self.consolidatingMemory = false
                 self.state.lastMemoryConsolidationAt = now
                 if let consolidated {
@@ -1445,5 +1524,31 @@ extension AppController {
                 }
             }
         }
+    }
+
+    func cancelMemoryConsolidationForInteractiveWork() {
+        guard consolidatingMemory || memoryConsolidationTask != nil else { return }
+        memoryConsolidationTask?.cancel()
+        memoryConsolidationTask = nil
+        consolidatingMemory = false
+        scheduleMemoryConsolidationRetry(reason: "interrupted")
+        logActivity("memory", "Deferred consolidation for chat")
+    }
+
+    func scheduleMemoryConsolidationRetry(reason: String) {
+        memoryConsolidationRetryTask?.cancel()
+        memoryConsolidationRetryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 90 * NSEC_PER_SEC)
+            } catch {
+                return
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.memoryConsolidationRetryTask = nil
+                self.maybeConsolidateMemory(now: Date())
+            }
+        }
+        logActivity("memory", "Consolidation deferred: \(reason)")
     }
 }

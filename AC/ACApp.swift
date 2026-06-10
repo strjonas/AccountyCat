@@ -250,6 +250,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.applyChipTitle(to: item)
             }
             .store(in: &cancellables)
+        controller.$portraitRevision
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, let item = self.statusItem else { return }
+                self.applyChipTitle(to: item)
+            }
+            .store(in: &cancellables)
     }
 
     /// Refresh the chip title every 30 s so the remaining-time countdown stays current.
@@ -544,6 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentViewController = NSHostingController(
             rootView: PopoverRootView()
                 .environmentObject(controller)
+                .environment(\.characterPortraitRevision, controller.portraitRevision)
         )
     }
 

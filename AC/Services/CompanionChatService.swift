@@ -76,6 +76,9 @@ actor CompanionChatService {
     }
 
     nonisolated static func fallbackReply(for error: Error) -> String {
+        if case LLMError.modelIncompatible = error {
+            return "This local model returned unusable output — AC's current runtime can't run it. In Settings → AI, try updating the local runtime (if an update is offered) or pick a different model."
+        }
         let provider = OnlineProviderRouting.provider(for: .chat)
         if let onlineError = error as? OnlineModelError,
             onlineError.isBillingOrCreditFailure
@@ -119,7 +122,7 @@ actor CompanionChatService {
             expressivenessDirective: character.expressiveness.chatDirective,
             workflow: workflow
         )
-        let prompt = Self.makeChatPrompt(
+        let (prompt, protectedTailCharacters) = Self.makeChatPrompt(
             userMessage: userMessage,
             goals: goals,
             recentActions: recentActions,
@@ -222,7 +225,10 @@ actor CompanionChatService {
                             runtimePath: runtimePath,
                             modelIdentifier: localTextModelIdentifier,
                             systemPrompt: systemPrompt,
-                            userPrompt: prompt
+                            userPrompt: prompt,
+                            options: Self.localChatOptions(),
+                            cacheSlot: .chat,
+                            protectedTailCharacters: protectedTailCharacters
                         )
                     }
                     let interactionID = await LLMTelemetryRecorder.shared.record(
@@ -297,6 +303,15 @@ actor CompanionChatService {
                 message: error.localizedDescription
             )
             if inferenceBackend == .openRouter {
+                return CompanionChatResult(
+                    reply: Self.fallbackReply(for: error),
+                    actions: [],
+                    schedule: nil
+                )
+            }
+            // A model the local runtime can't run won't recover on retry — tell the
+            // user plainly instead of returning the generic "couldn't answer" notice.
+            if case LLMError.modelIncompatible = error {
                 return CompanionChatResult(
                     reply: Self.fallbackReply(for: error),
                     actions: [],
@@ -431,6 +446,24 @@ actor CompanionChatService {
         )
     }
 
+    nonisolated private static func localChatOptions() -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            maxTokens: 180,
+            temperature: 0.45,
+            topP: 0.95,
+            topK: 64,
+            ctxSize: 4096,
+            batchSize: 512,
+            ubatchSize: 512,
+            timeoutSeconds: 60
+        )
+    }
+
+    /// Returns the rendered chat prompt plus the length, in characters, of the
+    /// trailing `[New user message]` block. That length is handed to the runtime's
+    /// `PromptBudgetGuard` as the protected tail so an over-budget prompt is trimmed
+    /// in its compressible middle (older context) instead of silently dropping the
+    /// user's actual message off the end.
     private static func makeChatPrompt(
         userMessage: String,
         goals: String,
@@ -441,7 +474,7 @@ actor CompanionChatService {
         policyRules: String,
         profileContext: String,
         workflow: CompanionChatWorkflow
-    ) -> String {
+    ) -> (prompt: String, protectedTailCharacters: Int) {
         let historySection: String
         if history.isEmpty {
             historySection = "(no prior messages)"
@@ -471,28 +504,16 @@ actor CompanionChatService {
                 """
         }
 
-        return """
-            [Context — use only if directly helpful, never be invasive]
-            Frontmost app: \(context.frontmostAppName)
-            Window: \(context.frontmostWindowTitle ?? "—")
-            Idle: \(Int(context.idleSeconds))s
-            Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
-            Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
-            Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
-
-            \(profileContext)
-            [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
-            \(memorySection)
-
-            [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
-            \(policyRulesSection)
-
-            [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
-            \(historySection)
-
+        // The trailing block carries the actual user turn; PromptBudgetGuard protects
+        // exactly this many characters so truncation never eats the user's message.
+        let newMessageBlock = """
             [New user message]
             \(userMessage.cleanedSingleLine)
+            """
 
+        // Keep volatile context and the new message near the tail so llama.cpp can reuse
+        // the stable prefix between local chat turns.
+        let prompt = """
             Reply in your character's voice — that persona is who the user hears; you are their focus companion underneath, but the character is who shows up. The one thing the voice never overrides: you are on the user's side — never demean them, and if they're low or struggling, warmth comes first, then the nudge.
             Honour any rules in memory. Only reference context/app data if the user asks or it's directly useful.
             \(workflowInstruction)
@@ -508,7 +529,28 @@ actor CompanionChatService {
             or with actions: {"reply":"your response","actions":[{"kind":"profile","instruction":"start coding for one hour"}],"schedule":null}
             or with schedule: {"reply":"Sure, I'll nudge you in 5 min!","actions":[],"schedule":{"type":"nudge","delay_minutes":5,"message":"Focus reminder!"}}
             No markdown outside the JSON value. No other keys.
+
+            \(profileContext)
+            [Persistent memory — lines are stamped with local time; honour them and treat later lines as overriding earlier ones]
+            \(memorySection)
+
+            [Brain rules — fixed rules from the Brain tab and learned policy rules; follow them unless the newest user message clearly updates them]
+            \(policyRulesSection)
+
+            [Recent conversation — each line is stamped with local time; if the user contradicts older chat or memory, the newest user statement wins]
+            \(historySection)
+
+            [Context — use only if directly helpful, never be invasive]
+            Frontmost app: \(context.frontmostAppName)
+            Window: \(context.frontmostWindowTitle ?? "—")
+            Idle: \(Int(context.idleSeconds))s
+            Local time now: \(PromptTimestampFormatting.absoluteLabel(for: context.timestamp))
+            Apps today: \(context.perAppDurations.prefix(5).map { "\($0.appName) \(Int($0.seconds/60))m" }.joined(separator: ", "))
+            Recent AC actions: \(recentActions.prefix(3).map { "\($0.kind.rawValue): \($0.message ?? "-")" }.joined(separator: ", "))
+
+            \(newMessageBlock)
             """
+        return (prompt, newMessageBlock.count)
     }
 
     func resolveAction(
@@ -533,15 +575,16 @@ actor CompanionChatService {
         let userPrompt = ACPromptSets.renderChatActionExecutorUserPrompt(
             payloadJSON: Self.makeActionPayloadJSON(request)
         )
+        let localActionExecution = request.inferenceBackend == .local
         let options = RuntimeInferenceOptions(
             maxTokens: maxTokens,
             temperature: 0.08,
             topP: 0.9,
             topK: 40,
             ctxSize: 4096,
-            batchSize: 1024,
+            batchSize: localActionExecution ? 512 : 1024,
             ubatchSize: 512,
-            timeoutSeconds: 35
+            timeoutSeconds: localActionExecution ? 45 : 90
         )
 
         let output: RuntimeProcessOutput
@@ -575,7 +618,8 @@ actor CompanionChatService {
                         modelIdentifier: localTextModelIdentifier,
                         systemPrompt: systemPrompt,
                         userPrompt: userPrompt,
-                        options: options
+                        options: options,
+                        cacheSlot: .auxiliary
                     )
                     let interactionID = await LLMTelemetryRecorder.shared.record(
                         LLMTelemetryCall(

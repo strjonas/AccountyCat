@@ -42,6 +42,12 @@ struct RuntimeProcessOutput: Sendable {
     }
 }
 
+enum LocalModelCacheSlot: Int, Sendable {
+    case decision = 0
+    case chat = 1
+    case auxiliary = 2
+}
+
 struct TokenUsage: Sendable, Codable, Hashable {
     var promptTokens: Int
     var completionTokens: Int
@@ -88,6 +94,15 @@ nonisolated private struct CachedModelArtifacts: Sendable, Equatable {
 nonisolated private enum RuntimeModelSource: Sendable {
     case local(CachedModelArtifacts)
     case huggingFace(String)
+
+    var modelIdentifier: String {
+        switch self {
+        case let .local(artifacts):
+            return artifacts.modelPath
+        case let .huggingFace(identifier):
+            return identifier
+        }
+    }
 }
 
 nonisolated private enum RuntimeInferenceInput: Sendable {
@@ -229,6 +244,7 @@ nonisolated private final class LocalModelServerHandle: @unchecked Sendable {
     let logTail: RuntimeLogTail
     let stdoutPipe: Pipe
     let stderrPipe: Pipe
+    var isReady: Bool
 
     init(
         process: Process,
@@ -244,6 +260,7 @@ nonisolated private final class LocalModelServerHandle: @unchecked Sendable {
         self.logTail = logTail
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
+        self.isReady = false
     }
 }
 
@@ -254,6 +271,13 @@ actor LocalModelRuntime {
     private var activeSharedServerRequests = 0
     private var activeInteractiveRequests = 0
     private var scheduledShutdownTask: Task<Void, Never>?
+    /// Caches the checkpoint-spacing args supported by a given `llama-server`
+    /// binary (keyed by executable path). The flag name diverges across llama.cpp
+    /// versions (`--checkpoint-every-n-tokens` → `--checkpoint-min-step`), so AC
+    /// probes `--help` once per binary and passes the supported form — this is
+    /// what keeps a pinned-commit bump from breaking users still on an older,
+    /// not-yet-rebuilt runtime.
+    private var checkpointSpacingArgsCache: [String: [String]] = [:]
 
     init() {
         Self.killStalePIDIfNeeded()
@@ -268,7 +292,8 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         snapshotPath: String,
         systemPrompt: String,
-        userPrompt: String
+        userPrompt: String,
+        cacheSlot: LocalModelCacheSlot? = nil
     ) async throws -> RuntimeProcessOutput {
         try await runVisionInference(
             runtimePath: runtimePath,
@@ -276,7 +301,8 @@ actor LocalModelRuntime {
             snapshotPath: snapshotPath,
             systemPrompt: systemPrompt,
             userPrompt: userPrompt,
-            options: Self.defaultVisionOptions()
+            options: Self.defaultVisionOptions(),
+            cacheSlot: cacheSlot
         )
     }
 
@@ -286,29 +312,16 @@ actor LocalModelRuntime {
         snapshotPath: String,
         systemPrompt: String,
         userPrompt: String,
-        options: RuntimeInferenceOptions
+        options: RuntimeInferenceOptions,
+        cacheSlot: LocalModelCacheSlot? = nil
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
             modelIdentifier: modelIdentifier,
             input: .vision(snapshotPath: snapshotPath, userPrompt: userPrompt),
             systemPrompt: systemPrompt,
-            options: options
-        )
-    }
-
-    func runTextInference(
-        runtimePath: String,
-        modelIdentifier: String,
-        systemPrompt: String,
-        userPrompt: String
-    ) async throws -> RuntimeProcessOutput {
-        try await runTextInference(
-            runtimePath: runtimePath,
-            modelIdentifier: modelIdentifier,
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            options: Self.defaultTextOptions()
+            options: options,
+            cacheSlot: cacheSlot
         )
     }
 
@@ -317,15 +330,67 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         systemPrompt: String,
         userPrompt: String,
-        options: RuntimeInferenceOptions
+        cacheSlot: LocalModelCacheSlot? = nil
+    ) async throws -> RuntimeProcessOutput {
+        try await runTextInference(
+            runtimePath: runtimePath,
+            modelIdentifier: modelIdentifier,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            options: Self.defaultTextOptions(),
+            cacheSlot: cacheSlot
+        )
+    }
+
+    func runTextInference(
+        runtimePath: String,
+        modelIdentifier: String,
+        systemPrompt: String,
+        userPrompt: String,
+        options: RuntimeInferenceOptions,
+        cacheSlot: LocalModelCacheSlot? = nil,
+        protectedTailCharacters: Int = 0
     ) async throws -> RuntimeProcessOutput {
         try await runInference(
             runtimePath: runtimePath,
             modelIdentifier: modelIdentifier,
             input: .text(userPrompt: userPrompt),
             systemPrompt: systemPrompt,
-            options: options
+            options: options,
+            cacheSlot: cacheSlot,
+            protectedTailCharacters: protectedTailCharacters
         )
+    }
+
+    /// Best-effort keep-warm: start the shared server (paying the model load once) and
+    /// prime the supplied stable system-prompt prefixes so the user's first real
+    /// chat/decision pays a warm prefill instead of a cold one (for 9B this turns a
+    /// ~29 s cold decision into a ~7 s warm one). Never throws, yields immediately to
+    /// any real request already in flight, and schedules a normal idle shutdown
+    /// afterwards so an unused warm server still releases its memory.
+    func prewarm(
+        runtimePath: String,
+        modelIdentifier: String,
+        prompts: [(slot: LocalModelCacheSlot, systemPrompt: String)]
+    ) async {
+        for prompt in prompts where !prompt.systemPrompt.isEmpty {
+            if Task.isCancelled { break }
+            // A real user/monitor request always wins — never compete for the server.
+            guard !hasAnyRequestInFlight(), !hasInteractiveRequestInFlight() else { break }
+            _ = try? await runTextInference(
+                runtimePath: runtimePath,
+                modelIdentifier: modelIdentifier,
+                systemPrompt: prompt.systemPrompt,
+                userPrompt: "ok",
+                options: Self.prewarmOptions(),
+                cacheSlot: prompt.slot
+            )
+        }
+        // Don't pin the server on forever; let it idle out if the user never engages.
+        // Any real request cancels this, and the monitor's cadence keeps it warm.
+        if !Task.isCancelled {
+            scheduleShutdown(after: Self.prewarmIdleShutdownSeconds, reason: "post_prewarm_idle")
+        }
     }
 
     func shutdown() async {
@@ -355,6 +420,26 @@ actor LocalModelRuntime {
         activeInteractiveRequests > 0
     }
 
+    func hasAnyRequestInFlight() -> Bool {
+        activeSharedServerRequests > 0
+    }
+
+    func beginInteractiveRequestForTesting() {
+        activeInteractiveRequests += 1
+    }
+
+    func endInteractiveRequestForTesting() {
+        activeInteractiveRequests = max(0, activeInteractiveRequests - 1)
+    }
+
+    func isSharedServerRunning() -> Bool {
+        sharedServer?.process.isRunning == true
+    }
+
+    func isSharedServerReady() -> Bool {
+        sharedServer?.process.isRunning == true && sharedServer?.isReady == true
+    }
+
     func withInteractiveRequest<T>(
         _ operation: @escaping @Sendable () async throws -> T
     ) async rethrows -> T {
@@ -375,7 +460,9 @@ actor LocalModelRuntime {
         modelIdentifier: String,
         input: RuntimeInferenceInput,
         systemPrompt: String,
-        options: RuntimeInferenceOptions
+        options: RuntimeInferenceOptions,
+        cacheSlot: LocalModelCacheSlot?,
+        protectedTailCharacters: Int = 0
     ) async throws -> RuntimeProcessOutput {
         cancelScheduledShutdown()
         let cancellationBox = RuntimeCancellationBox()
@@ -401,13 +488,20 @@ actor LocalModelRuntime {
                         input: input,
                         systemPrompt: systemPrompt,
                         options: options,
-                        cancellationBox: cancellationBox
+                        cancellationBox: cancellationBox,
+                        cacheSlot: cacheSlot,
+                        protectedTailCharacters: protectedTailCharacters
                     )
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch let error as LLMError where error == .timeout {
                     await stopSharedServer(reason: "request_timeout")
                     throw error
+                } catch LLMError.modelIncompatible(let id) {
+                    // An incompatible model won't get better on the CLI fallback —
+                    // surface it instead of streaming the same garbage another way.
+                    await stopSharedServer(reason: "model_incompatible")
+                    throw LLMError.modelIncompatible(id)
                 } catch {
                     await stopSharedServer(reason: "server_fallback")
                 }
@@ -425,7 +519,8 @@ actor LocalModelRuntime {
                 systemPrompt: systemPrompt,
                 modelSource: modelSource,
                 options: options,
-                cancellationBox: cancellationBox
+                cancellationBox: cancellationBox,
+                protectedTailCharacters: protectedTailCharacters
             )
         } onCancel: {
             cancellationBox.cancel()
@@ -440,7 +535,9 @@ actor LocalModelRuntime {
         input: RuntimeInferenceInput,
         systemPrompt: String,
         options: RuntimeInferenceOptions,
-        cancellationBox: RuntimeCancellationBox
+        cancellationBox: RuntimeCancellationBox,
+        cacheSlot: LocalModelCacheSlot?,
+        protectedTailCharacters: Int
     ) async throws -> RuntimeProcessOutput {
         let preflight = PromptBudgetGuard.preflightPlan(
             systemPrompt: systemPrompt,
@@ -448,8 +545,15 @@ actor LocalModelRuntime {
             imagePath: input.imagePath,
             ctxSize: options.ctxSize,
             maxTokens: options.maxTokens,
-            maxCtxGrowth: 2_048
+            maxCtxGrowth: 4_096
         )
+        if preflight.exceededGrowthCap {
+            await ActivityLogService.shared.append(
+                level: .more,
+                category: "prompt-budget-cap",
+                message: "Chat prompt exceeds context growth cap (~\(preflight.estimatedPromptTokens + preflight.estimatedImageTokens) tokens, ctx=\(options.ctxSize)+4096 cap); older context will be trimmed."
+            )
+        }
         let effectiveOptions = RuntimeInferenceOptions(
             maxTokens: options.maxTokens,
             temperature: options.temperature,
@@ -468,9 +572,16 @@ actor LocalModelRuntime {
                 modelIdentifier: modelIdentifier,
                 modelPath: artifacts.modelPath,
                 multimodalProjectorPath: artifacts.multimodalProjectorPath,
-                ctxSize: effectiveOptions.ctxSize,
-                batchSize: effectiveOptions.batchSize,
-                ubatchSize: effectiveOptions.ubatchSize
+                ctxSize: Self.sharedServerTotalCtxSize(
+                    requested: effectiveOptions.ctxSize,
+                    hasVisionProjector: artifacts.multimodalProjectorPath != nil
+                ),
+                batchSize: max(effectiveOptions.batchSize, Self.sharedServerBatchSizeFloor),
+                ubatchSize: max(effectiveOptions.ubatchSize, Self.sharedServerUBatchSizeFloor)
+            ),
+            startupTimeoutSeconds: Self.sharedServerStartupTimeoutSeconds(
+                for: cacheSlot,
+                options: effectiveOptions
             )
         )
 
@@ -480,7 +591,9 @@ actor LocalModelRuntime {
             systemPrompt: systemPrompt,
             options: effectiveOptions,
             serverPort: server.port,
-            imageMaxDimension: preflight.imageMaxDimension
+            imageMaxDimension: preflight.imageMaxDimension,
+            cacheSlot: cacheSlot,
+            protectedTailCharacters: protectedTailCharacters
         )
         activeSharedServerRequests += 1
         defer { activeSharedServerRequests -= 1 }
@@ -512,6 +625,9 @@ actor LocalModelRuntime {
             }
 
             let assistantMessage = try extractAssistantMessage(from: data)
+            if Self.looksLikeIncompatibleModelOutput(assistantMessage) {
+                throw LLMError.modelIncompatible(modelIdentifier)
+            }
             let usage = Self.parseLocalServerUsage(from: data)
                 ?? TokenUsage.estimate(promptText: systemPrompt, completionText: assistantMessage)
             return RuntimeProcessOutput(
@@ -541,9 +657,65 @@ actor LocalModelRuntime {
         systemPrompt: String,
         modelSource: RuntimeModelSource,
         options: RuntimeInferenceOptions,
-        cancellationBox: RuntimeCancellationBox
+        cancellationBox: RuntimeCancellationBox,
+        protectedTailCharacters: Int = 0
     ) async throws -> RuntimeProcessOutput {
         let repoURL = repositoryURL(forRuntimePath: runtimePath)
+        let preflight = PromptBudgetGuard.preflightPlan(
+            systemPrompt: systemPrompt,
+            userPrompt: input.userPrompt,
+            imagePath: input.imagePath,
+            ctxSize: options.ctxSize,
+            maxTokens: options.maxTokens,
+            maxCtxGrowth: 4_096
+        )
+        if preflight.exceededGrowthCap {
+            await ActivityLogService.shared.append(
+                level: .more,
+                category: "prompt-budget-cap",
+                message: "Chat prompt exceeds context growth cap (~\(preflight.estimatedPromptTokens + preflight.estimatedImageTokens) tokens, ctx=\(options.ctxSize)+4096 cap); older context will be trimmed."
+            )
+        }
+        let effectiveOptions = RuntimeInferenceOptions(
+            maxTokens: options.maxTokens,
+            temperature: options.temperature,
+            topP: options.topP,
+            topK: options.topK,
+            ctxSize: preflight.recommendedCtxSize,
+            batchSize: options.batchSize,
+            ubatchSize: options.ubatchSize,
+            timeoutSeconds: options.timeoutSeconds,
+            thinkingEnabled: options.thinkingEnabled
+        )
+        let guardedPrompt = await PromptBudgetGuard.guardedUserPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: input.userPrompt,
+            imagePath: input.imagePath,
+            ctxSize: effectiveOptions.ctxSize,
+            maxTokens: effectiveOptions.maxTokens,
+            serverPort: 0,
+            thinkingEnabled: effectiveOptions.thinkingEnabled,
+            protectedTailCharacters: protectedTailCharacters,
+            transport: { request in
+                max(0, request.content.count / 4)
+            }
+        )
+        if guardedPrompt.wasTruncated {
+            appendPromptBudgetTruncatedMetric(
+                detail:
+                    "ctx=\(effectiveOptions.ctxSize) max=\(effectiveOptions.maxTokens) prompt=\(guardedPrompt.promptTokensEstimate) image=\(guardedPrompt.imageTokensEstimate)"
+            )
+        }
+        let effectiveInput: RuntimeInferenceInput
+        switch input {
+        case .text:
+            effectiveInput = .text(userPrompt: guardedPrompt.userPrompt)
+        case let .vision(snapshotPath, _):
+            effectiveInput = .vision(
+                snapshotPath: snapshotPath,
+                userPrompt: guardedPrompt.userPrompt
+            )
+        }
         let promptFilenamePrefix: String = input.requiresVision ? "ac-system" : "ac-chat-system"
         let systemPromptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(promptFilenamePrefix)-\(UUID().uuidString).txt")
@@ -562,8 +734,8 @@ actor LocalModelRuntime {
         process.arguments = arguments(
             systemPromptURL: systemPromptURL,
             modelSource: modelSource,
-            input: input,
-            options: options
+            input: effectiveInput,
+            options: effectiveOptions
         )
         process.environment = Self.processEnvironment()
 
@@ -633,6 +805,10 @@ actor LocalModelRuntime {
             throw LLMError.commandFailed(status, combined)
         }
 
+        if Self.looksLikeIncompatibleModelOutput(output.stdout) {
+            throw LLMError.modelIncompatible(modelSource.modelIdentifier)
+        }
+
         let usage = Self.parseLlamaCLIUsage(from: output.stderr)
             ?? TokenUsage.estimate(promptText: systemPrompt, completionText: output.stdout)
         return RuntimeProcessOutput(
@@ -658,6 +834,8 @@ actor LocalModelRuntime {
             promptTokens: prompt,
             completionTokens: completion,
             totalTokens: usage["total_tokens"] as? Int,
+            cacheReadTokens: (usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int,
+            imageTokens: (usage["prompt_tokens_details"] as? [String: Any])?["image_tokens"] as? Int,
             estimated: false
         )
     }
@@ -690,8 +868,59 @@ actor LocalModelRuntime {
         )
     }
 
+    /// The checkpoint-spacing args to pass to `llama-server`, resolved against the
+    /// flag the installed binary actually accepts. Cached per executable path.
+    private func checkpointSpacingArguments(executablePath: String) async -> [String] {
+        if let cached = checkpointSpacingArgsCache[executablePath] {
+            return cached
+        }
+        let help = await Task.detached {
+            Self.captureLlamaServerHelp(executablePath: executablePath)
+        }.value
+        let args = Self.checkpointSpacingArguments(fromHelpText: help)
+        checkpointSpacingArgsCache[executablePath] = args
+        return args
+    }
+
+    /// Pure mapping from `--help` text to the checkpoint-spacing args. Prefers the
+    /// newer `--checkpoint-min-step`, falls back to the legacy
+    /// `--checkpoint-every-n-tokens`, and omits the flag entirely when neither is
+    /// present (the spacing is an optimization, not required) so an unrecognized
+    /// runtime never fails to launch over it.
+    nonisolated static func checkpointSpacingArguments(fromHelpText help: String) -> [String] {
+        if help.contains("--checkpoint-min-step") {
+            return ["--checkpoint-min-step", "512"]
+        }
+        if help.contains("--checkpoint-every-n-tokens") {
+            return ["--checkpoint-every-n-tokens", "512"]
+        }
+        return []
+    }
+
+    /// Runs `<llama-server> --help` and returns its combined output. Best-effort:
+    /// returns "" on any failure (the caller then omits the version-specific flag).
+    nonisolated private static func captureLlamaServerHelp(executablePath: String) -> String {
+        guard FileManager.default.isExecutableFile(atPath: executablePath) else { return "" }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = ["--help"]
+        process.environment = processEnvironment()
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
     private func ensureSharedServer(
-        config: RuntimeServerConfig
+        config: RuntimeServerConfig,
+        startupTimeoutSeconds: UInt64
     ) async throws -> LocalModelServerHandle {
         cancelScheduledShutdown()
         if let sharedServer {
@@ -704,6 +933,13 @@ actor LocalModelRuntime {
                 sharedServer.config.ubatchSize >= config.ubatchSize
 
             if sharedServer.process.isRunning, sameBinary, sameModel, sameProjector, canReuseCapacity {
+                if !sharedServer.isReady {
+                    try await waitForServerReady(
+                        sharedServer,
+                        timeoutSeconds: startupTimeoutSeconds
+                    )
+                    sharedServer.isReady = true
+                }
                 return sharedServer
             }
 
@@ -728,14 +964,22 @@ actor LocalModelRuntime {
             "--ctx-size", String(config.ctxSize),
             "--batch-size", String(config.batchSize),
             "--ubatch-size", String(config.ubatchSize),
+            "--parallel", String(Self.sharedServerSlotCount),
             "--reasoning", "off",
+            "--reasoning-format", "none",
             "--no-webui",
             "-a", config.modelIdentifier,
             "-ngl", "999",
             "--threads", String(Self.sharedServerThreadCount),
+            "--threads-batch", String(Self.sharedServerThreadCount),
             "--cache-type-k", "q8_0",
             "--cache-type-v", "q8_0",
+            "--ctx-checkpoints", "512",
+            "--reasoning-budget", "0",
         ]
+        arguments.append(
+            contentsOf: await checkpointSpacingArguments(executablePath: config.executablePath)
+        )
         if let multimodalProjectorPath = config.multimodalProjectorPath {
             arguments.append(contentsOf: ["--mmproj", multimodalProjectorPath])
         }
@@ -776,9 +1020,22 @@ actor LocalModelRuntime {
         )
         sharedServer = serverHandle
 
+        await ActivityLogService.shared.append(
+            level: .more,
+            category: "local-runtime",
+            message:
+                "Starting shared llama-server (cold model load) — model=\(config.modelIdentifier) ctx=\(config.ctxSize) batch=\(config.batchSize) slots=\(Self.sharedServerSlotCount)."
+        )
+
         do {
-            try await waitForServerReady(serverHandle, timeoutSeconds: 60)
+            try await waitForServerReady(
+                serverHandle,
+                timeoutSeconds: startupTimeoutSeconds
+            )
+            serverHandle.isReady = true
             return serverHandle
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             await stopSharedServer(reason: "server_start_failed")
             throw error
@@ -795,7 +1052,15 @@ actor LocalModelRuntime {
         Self.terminate(process: sharedServer.process)
         _ = await waitForTermination(of: sharedServer.process, timeoutMilliseconds: 1_000)
 
-        let _ = reason
+        // Every stop wipes all three KV cache slots, so the next request pays a full
+        // cold model-load + prefill. Surface the reason: repeated lines here are the
+        // signature of cache-lane churn (e.g. reconfigure/timeout ping-pong between
+        // chat and monitoring) that makes local chat feel like it "re-initializes".
+        await ActivityLogService.shared.append(
+            level: .more,
+            category: "local-runtime",
+            message: "Shared llama-server stopped (reason=\(reason)) — KV cache slots cleared."
+        )
     }
 
     private func shutdownWhenIdle(reason: String) async {
@@ -853,7 +1118,9 @@ actor LocalModelRuntime {
         systemPrompt: String,
         options: RuntimeInferenceOptions,
         serverPort: Int,
-        imageMaxDimension: Int?
+        imageMaxDimension: Int?,
+        cacheSlot: LocalModelCacheSlot?,
+        protectedTailCharacters: Int = 0
     ) async throws -> Data {
         let guardedPrompt: PromptBudgetGuardResult
         let messages: [[String: Any]]
@@ -866,18 +1133,15 @@ actor LocalModelRuntime {
                 ctxSize: options.ctxSize,
                 maxTokens: options.maxTokens,
                 serverPort: serverPort,
-                transport: tokenizeWithServer(request:)
+                thinkingEnabled: options.thinkingEnabled,
+                protectedTailCharacters: protectedTailCharacters,
+                transport: tokenizeWithServer(request:),
+                chatTransport: tokenizeChatPromptWithServer(request:)
             )
-            messages = [
-                [
-                    "role": "system",
-                    "content": systemPrompt,
-                ],
-                [
-                    "role": "user",
-                    "content": guardedPrompt.userPrompt,
-                ],
-            ]
+            messages = Self.textChatMessages(
+                systemPrompt: systemPrompt,
+                userPrompt: guardedPrompt.userPrompt
+            )
 
         case let .vision(snapshotPath, userPrompt):
             guardedPrompt = await PromptBudgetGuard.guardedUserPrompt(
@@ -887,7 +1151,9 @@ actor LocalModelRuntime {
                 ctxSize: options.ctxSize,
                 maxTokens: options.maxTokens,
                 serverPort: serverPort,
-                transport: tokenizeWithServer(request:)
+                thinkingEnabled: options.thinkingEnabled,
+                transport: tokenizeWithServer(request:),
+                chatTransport: tokenizeChatPromptWithServer(request:)
             )
             let imageDataURL = try Self.makeImageDataURL(
                 from: snapshotPath,
@@ -925,7 +1191,13 @@ actor LocalModelRuntime {
             "top_k": options.topK,
             "cache_prompt": true,
             "stream": false,
+            "chat_template_kwargs": [
+                "enable_thinking": options.thinkingEnabled,
+            ],
         ]
+        if let cacheSlot {
+            body["id_slot"] = cacheSlot.rawValue
+        }
         if !options.thinkingEnabled {
             body["reasoning_format"] = "none"
         }
@@ -946,6 +1218,77 @@ actor LocalModelRuntime {
         }
 
         return try JSONSerialization.data(withJSONObject: body, options: [])
+    }
+
+    private nonisolated static func textChatMessages(
+        systemPrompt: String,
+        userPrompt: String
+    ) -> [[String: Any]] {
+        [
+            [
+                "role": "system",
+                "content": systemPrompt,
+            ],
+            [
+                "role": "user",
+                "content": userPrompt,
+            ],
+        ]
+    }
+
+    private func tokenizeChatPromptWithServer(request: PromptBudgetGuardChatRequest) async throws -> Int {
+        let renderedPrompt = try await applyChatTemplateWithServer(request: request)
+        return try await tokenizeWithServer(
+            request: PromptBudgetGuardRequest(
+                serverPort: request.serverPort,
+                content: renderedPrompt,
+                timeoutSeconds: request.timeoutSeconds
+            )
+        )
+    }
+
+    private func applyChatTemplateWithServer(request: PromptBudgetGuardChatRequest) async throws -> String {
+        guard var components = URLComponents(string: "http://127.0.0.1") else {
+            throw LLMError.commandFailed(1, "Failed to construct llama-server template URL.")
+        }
+        components.port = request.serverPort
+        components.path = "/apply-template"
+        guard let templateURL = components.url else {
+            throw LLMError.commandFailed(
+                1,
+                "Failed to construct llama-server template URL for port \(request.serverPort)."
+            )
+        }
+        var urlRequest = URLRequest(url: templateURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = request.timeoutSeconds
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "messages": Self.textChatMessages(
+                    systemPrompt: request.systemPrompt,
+                    userPrompt: request.userPrompt
+                ),
+            ]
+        )
+
+        let (data, response) = try await urlSession.data(for: urlRequest)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw LLMError.commandFailed(1, "llama-server template endpoint returned a non-HTTP response.")
+        }
+        guard httpResponse.statusCode == 200 else {
+            throw LLMError.commandFailed(
+                Int32(httpResponse.statusCode),
+                String(decoding: data, as: UTF8.self)
+            )
+        }
+        guard
+            let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let prompt = payload["prompt"] as? String
+        else {
+            throw LLMError.commandFailed(1, "llama-server template endpoint returned an unexpected payload.")
+        }
+        return prompt
     }
 
     private func tokenizeWithServer(request: PromptBudgetGuardRequest) async throws -> Int {
@@ -1071,6 +1414,73 @@ actor LocalModelRuntime {
         throw LLMError.commandFailed(1, "llama-server returned an empty message: \(raw)")
     }
 
+    /// Detects output that signals the local model is not actually supported by
+    /// the current llama.cpp runtime. A model whose architecture/quant the runtime
+    /// can load but not run correctly degenerates into reserved/special-token spam
+    /// (e.g. Gemma's `<unused50>` repeated indefinitely, or leaked `<|channel>`
+    /// markers). That is never valid chat or decision output, so we treat it as an
+    /// incompatible model rather than streaming the garbage to the user.
+    ///
+    /// Kept high-precision to avoid flagging legitimate output: Qwen's
+    /// reasoning-off `<think></think>` block, JSON decision payloads, and code
+    /// snippets with `<T>`-style generics all pass.
+    nonisolated static func looksLikeIncompatibleModelOutput(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        // 1) Reserved "<unusedNN>" tokens never appear in valid output — they are a
+        //    direct symptom of a model the runtime cannot decode. A few is enough.
+        var reservedCount = 0
+        var searchRange = trimmed.startIndex..<trimmed.endIndex
+        while let match = trimmed.range(
+            of: #"<unused\d+>"#,
+            options: [.regularExpression, .caseInsensitive],
+            range: searchRange
+        ) {
+            reservedCount += 1
+            if reservedCount >= 3 { return true }
+            searchRange = match.upperBound..<trimmed.endIndex
+        }
+
+        // 2) Degenerate decode loop: the same short bracketed special-token marker
+        //    repeated many times back-to-back (with no real text between).
+        if hasRepeatedBracketTokenRun(trimmed, minRun: 6) { return true }
+
+        return false
+    }
+
+    /// True when a single `<...>`-style token (no inner whitespace, ≤ 24 chars)
+    /// repeats `minRun`+ times consecutively — a runaway sampler, not prose.
+    nonisolated private static func hasRepeatedBracketTokenRun(_ text: String, minRun: Int) -> Bool {
+        var lastToken: Substring?
+        var run = 0
+        var index = text.startIndex
+        while index < text.endIndex {
+            guard text[index] == "<",
+                  let close = text[index...].firstIndex(of: ">") else {
+                lastToken = nil
+                run = 0
+                index = text.index(after: index)
+                continue
+            }
+            let token = text[index...close]
+            let inner = text[text.index(after: index)..<close]
+            let isTokenLike = token.count <= 24 && !inner.contains(where: { $0.isWhitespace })
+            if isTokenLike && token == lastToken {
+                run += 1
+                if run >= minRun { return true }
+            } else if isTokenLike {
+                lastToken = token
+                run = 1
+            } else {
+                lastToken = nil
+                run = 0
+            }
+            index = text.index(after: close)
+        }
+        return false
+    }
+
     private func resolveModelSource(
         runtimePath: String,
         modelIdentifier: String
@@ -1089,6 +1499,24 @@ actor LocalModelRuntime {
         runtimePath: String,
         modelIdentifier: String
     ) -> CachedModelArtifacts? {
+        // A user-linked `.gguf` path is its own model file. Pick up a sibling
+        // `*mmproj*.gguf` as the vision projector if one sits next to it.
+        let trimmedIdentifier = modelIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedIdentifier.hasPrefix("/"),
+           trimmedIdentifier.lowercased().hasSuffix(".gguf"),
+           FileManager.default.fileExists(atPath: trimmedIdentifier) {
+            let modelURL = URL(fileURLWithPath: trimmedIdentifier)
+            let projectorPath = (try? FileManager.default.contentsOfDirectory(
+                at: modelURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ))?.first {
+                $0.pathExtension.lowercased() == "gguf"
+                    && $0.lastPathComponent.lowercased().contains("mmproj")
+            }?.path
+            return CachedModelArtifacts(modelPath: trimmedIdentifier, multimodalProjectorPath: projectorPath)
+        }
+
         let components = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard let repositoryComponent = components.first else {
             return nil
@@ -1151,6 +1579,37 @@ actor LocalModelRuntime {
     }
 
     private nonisolated static let sharedServerThreadCount = perfCoreCount()
+    private nonisolated static let sharedServerTextCtxSizeFloor = 4_096
+    private nonisolated static let sharedServerVisionCtxSizeFloor = 6_144
+    private nonisolated static let sharedServerBatchSizeFloor = 512
+    private nonisolated static let sharedServerUBatchSizeFloor = 512
+
+    /// llama-server cache slots. Decision and chat get pinned hot slots; lower-priority
+    /// stages use an auxiliary scratch slot so they do not deliberately evict the two
+    /// latency-sensitive prefixes. `--ctx-size` is the total across slots, so it is
+    /// scaled by this count (see `sharedServerTotalCtxSize`) to preserve each slot's
+    /// full window.
+    private nonisolated static let sharedServerSlotCount = 3
+
+    private nonisolated static func sharedServerCtxSizeFloor(
+        requested: Int,
+        hasVisionProjector: Bool
+    ) -> Int {
+        let floor = hasVisionProjector ? sharedServerVisionCtxSizeFloor : sharedServerTextCtxSizeFloor
+        return max(requested, floor)
+    }
+
+    /// Total `--ctx-size` for the shared server: the per-slot floor times the slot
+    /// count, so each of the `--parallel` slots keeps the full per-request window
+    /// (a naive `--parallel 2` would otherwise halve every slot and truncate the
+    /// decision prompt).
+    private nonisolated static func sharedServerTotalCtxSize(
+        requested: Int,
+        hasVisionProjector: Bool
+    ) -> Int {
+        sharedServerCtxSizeFloor(requested: requested, hasVisionProjector: hasVisionProjector)
+            * sharedServerSlotCount
+    }
 
     private nonisolated static func processEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
@@ -1537,8 +1996,8 @@ actor LocalModelRuntime {
             topP: 0.95,
             topK: 64,
             ctxSize: 2048,
-            batchSize: 2048,
-            ubatchSize: 2048,
+            batchSize: 512,
+            ubatchSize: 512,
             timeoutSeconds: 45
         )
     }
@@ -1550,9 +2009,42 @@ actor LocalModelRuntime {
             topP: 0.95,
             topK: 64,
             ctxSize: 4096,
-            batchSize: 1024,
+            batchSize: 512,
             ubatchSize: 512,
             timeoutSeconds: 45
+        )
+    }
+
+    /// How long an idle server lingers after a prewarm with no real activity.
+    private nonisolated static let prewarmIdleShutdownSeconds: UInt64 = 240
+
+    /// Cold local startup includes process launch, model load, and llama-server's own
+    /// readiness transition. Do not use the per-request generation timeout here.
+    private nonisolated static let sharedServerStartupTimeoutSeconds: UInt64 = 180
+
+    private nonisolated static func sharedServerStartupTimeoutSeconds(
+        for cacheSlot: LocalModelCacheSlot?,
+        options: RuntimeInferenceOptions
+    ) -> UInt64 {
+        guard cacheSlot == .chat else {
+            return sharedServerStartupTimeoutSeconds
+        }
+        return min(sharedServerStartupTimeoutSeconds, max(45, options.timeoutSeconds))
+    }
+
+    /// Generate a single token (we only want the prefill cached). Context/batch match
+    /// the text-decision floors so the shared server is sized exactly as a real text
+    /// request would size it, and the first decision/chat reuses it without a restart.
+    private nonisolated static func prewarmOptions() -> RuntimeInferenceOptions {
+        RuntimeInferenceOptions(
+            maxTokens: 1,
+            temperature: 0.0,
+            topP: 1.0,
+            topK: 1,
+            ctxSize: sharedServerTextCtxSizeFloor,
+            batchSize: sharedServerBatchSizeFloor,
+            ubatchSize: sharedServerUBatchSizeFloor,
+            timeoutSeconds: 60
         )
     }
 }
@@ -1561,6 +2053,7 @@ enum LLMError: LocalizedError, Equatable {
     case timeout
     case commandFailed(Int32, String)
     case visionUnavailable(String)
+    case modelIncompatible(String)
 
     var errorDescription: String? {
         switch self {
@@ -1570,6 +2063,8 @@ enum LLMError: LocalizedError, Equatable {
             return "llama.cpp exited with \(status): \(output)"
         case let .visionUnavailable(modelIdentifier):
             return "Local model \(modelIdentifier) is missing a multimodal projector and cannot process screenshots."
+        case let .modelIncompatible(modelIdentifier):
+            return "Local model \(modelIdentifier) isn't supported by AC's current local runtime — it produced unusable output. Pick a different model in Settings → AI."
         }
     }
 }

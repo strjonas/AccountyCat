@@ -180,6 +180,42 @@ struct AppMonitoringSelection: Codable, Hashable, Identifiable, Sendable {
     var id: String { bundleIdentifier }
 }
 
+struct LocalCustomModel: Codable, Hashable, Identifiable, Sendable {
+    var displayName: String
+    var modelIdentifier: String
+
+    var id: String { modelIdentifier }
+
+    init(displayName: String, modelIdentifier: String) {
+        self.displayName = displayName.cleanedSingleLine
+        self.modelIdentifier = modelIdentifier.cleanedSingleLine
+    }
+}
+
+/// A user-added OpenRouter model the user named themselves. Unlike a local custom
+/// model (one GGUF id used for both stages), an online custom model is a *pair*:
+/// a text/decision model and an image/vision model, mirroring how the built-in
+/// tiers always set both `onlineModelIdentifierText` and `onlineModelIdentifierImage`.
+/// The `id` is a stable UUID so a rename never breaks the selected-card link.
+struct OnlineCustomModel: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var displayName: String
+    var textModelIdentifier: String
+    var imageModelIdentifier: String
+
+    init(
+        id: String = UUID().uuidString,
+        displayName: String,
+        textModelIdentifier: String,
+        imageModelIdentifier: String
+    ) {
+        self.id = id.cleanedSingleLine.isEmpty ? UUID().uuidString : id.cleanedSingleLine
+        self.displayName = displayName.cleanedSingleLine
+        self.textModelIdentifier = textModelIdentifier.cleanedSingleLine
+        self.imageModelIdentifier = imageModelIdentifier.cleanedSingleLine
+    }
+}
+
 struct BrowserTabMonitoringExclusion: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var bundleIdentifier: String?
@@ -1016,6 +1052,16 @@ struct ACState: Codable, Sendable {
     var lastFocusedBundleIdentifier: String?
     var runtimePathOverride: String?
     var monitoringConfiguration = MonitoringConfiguration()
+    /// Local model selected by the user but not ready yet. The active local
+    /// model remains `pendingLocalModelFallbackIdentifier` until this download
+    /// finishes, so relaunches do not reopen first-run setup unnecessarily.
+    var pendingLocalModelIdentifier: String?
+    var pendingLocalModelFallbackIdentifier: String?
+    var pendingLocalModelAutoSelect: Bool = true
+    var localCustomModels: [LocalCustomModel] = []
+    /// User-added OpenRouter models (text+image pairs), the online analogue of
+    /// `localCustomModels`. Surfaced as selectable/editable/deletable cards in the AI tab.
+    var onlineCustomModels: [OnlineCustomModel] = []
     /// App-level privacy / scope gate, independent from focus rules and profiles.
     /// `.allowlist` means AC only monitors the selected apps. `.blocklist` means
     /// AC monitors everything except those apps.
@@ -1137,6 +1183,11 @@ struct ACState: Codable, Sendable {
         case lastFocusedBundleIdentifier
         case runtimePathOverride
         case monitoringConfiguration
+        case pendingLocalModelIdentifier
+        case pendingLocalModelFallbackIdentifier
+        case pendingLocalModelAutoSelect
+        case localCustomModels
+        case onlineCustomModels
         case appMonitoringScopeMode
         case appMonitoringSelections
         case appMonitoringAllowlist
@@ -1245,6 +1296,38 @@ struct ACState: Codable, Sendable {
             try container.decodeIfPresent(
                 MonitoringConfiguration.self, forKey: .monitoringConfiguration)
             ?? MonitoringConfiguration()
+        func sanitizedOptionalIdentifier(_ key: CodingKeys) throws -> String? {
+            let trimmed = try container.decodeIfPresent(String.self, forKey: key)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed?.isEmpty == false ? trimmed : nil
+        }
+        pendingLocalModelIdentifier = try sanitizedOptionalIdentifier(.pendingLocalModelIdentifier)
+        pendingLocalModelFallbackIdentifier = try sanitizedOptionalIdentifier(
+            .pendingLocalModelFallbackIdentifier
+        )
+        pendingLocalModelAutoSelect =
+            try container.decodeIfPresent(Bool.self, forKey: .pendingLocalModelAutoSelect) ?? true
+        localCustomModels = (try container.decodeIfPresent(
+            [LocalCustomModel].self,
+            forKey: .localCustomModels
+        ) ?? [])
+        .reduce(into: [String: LocalCustomModel]()) { partial, model in
+            let identifier = model.modelIdentifier.cleanedSingleLine
+            guard !identifier.isEmpty else { return }
+            let name = model.displayName.cleanedSingleLine
+            partial[identifier] = LocalCustomModel(
+                displayName: name.isEmpty ? identifier : name,
+                modelIdentifier: identifier
+            )
+        }
+        .values
+        .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        onlineCustomModels = (try container.decodeIfPresent(
+            [OnlineCustomModel].self,
+            forKey: .onlineCustomModels
+        ) ?? [])
+        .filter { !$0.textModelIdentifier.isEmpty && !$0.imageModelIdentifier.isEmpty }
+        .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         appMonitoringScopeMode =
             try container.decodeIfPresent(
                 AppMonitoringScopeMode.self, forKey: .appMonitoringScopeMode)
@@ -1450,6 +1533,17 @@ struct ACState: Codable, Sendable {
         try container.encodeIfPresent(lastFocusedBundleIdentifier, forKey: .lastFocusedBundleIdentifier)
         try container.encodeIfPresent(runtimePathOverride, forKey: .runtimePathOverride)
         try container.encode(monitoringConfiguration, forKey: .monitoringConfiguration)
+        try container.encodeIfPresent(
+            pendingLocalModelIdentifier,
+            forKey: .pendingLocalModelIdentifier
+        )
+        try container.encodeIfPresent(
+            pendingLocalModelFallbackIdentifier,
+            forKey: .pendingLocalModelFallbackIdentifier
+        )
+        try container.encode(pendingLocalModelAutoSelect, forKey: .pendingLocalModelAutoSelect)
+        try container.encode(localCustomModels, forKey: .localCustomModels)
+        try container.encode(onlineCustomModels, forKey: .onlineCustomModels)
         try container.encode(appMonitoringScopeMode, forKey: .appMonitoringScopeMode)
         try container.encode(appMonitoringAllowlist, forKey: .appMonitoringAllowlist)
         try container.encode(appMonitoringBlocklist, forKey: .appMonitoringBlocklist)

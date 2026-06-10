@@ -655,6 +655,20 @@ struct ProfileManagementTests {
     }
 
     @Test
+    func parserBailsOnFillerOnlyProfileReference() throws {
+        // "activate the profile please" names no real profile — "the"/"please" are filler.
+        // The fast path must return nil (not invent a profile named "the") so the caller
+        // falls back to the context-aware LLM resolver, which can see what "the profile" means.
+        let deepWork = FocusProfile(id: "dw", name: "Deep Work")
+        let result = ProfileActionParser.parse(
+            action: "activate the profile please",
+            availableProfiles: [deepWork],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        #expect(result == nil)
+    }
+
+    @Test
     func parserEndsActiveProfile() throws {
         let result = ProfileActionParser.parse(
             action: "end active profile",
@@ -676,6 +690,53 @@ struct ProfileManagementTests {
         )
         let ops = try #require(result)
         #expect(ops[0].profileDurationMinutes == 120)
+    }
+
+    @Test
+    func parserHandlesExplicitFocusRequest() throws {
+        let coding = FocusProfile(id: "coding-id", name: "Coding")
+        let result = ProfileActionParser.parse(
+            action: "help me focus on coding for an hour",
+            availableProfiles: [coding],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        let ops = try #require(result)
+        #expect(ops[0].type == .activateProfile)
+        #expect(ops[0].profileID == "coding-id")
+        #expect(ops[0].profileDurationMinutes == 60)
+    }
+
+    @Test
+    func chatProfileActionAppliesWhenAcEmitsIt() async throws {
+        // AC owns the decision to act: when the chat model emits a profile action, AC applies it.
+        // No deterministic keyword gate sits behind it — the old gate dropped confirmations like
+        // "great, do it", turning an honest reply ("switching you over") into a lie.
+        let controller = AppController.makeForTesting(storageService: .temporary())
+        let originalState = controller.state
+        let originalChatMessages = controller.chatMessages
+        defer {
+            controller.state = originalState
+            controller.chatMessages = originalChatMessages
+            controller.storageService.saveState(originalState)
+        }
+
+        var state = ACState()
+        state.profiles.append(FocusProfile(id: "coding-id", name: "Coding"))
+        controller.state = state
+        controller.chatMessages = []
+
+        // A bare confirmation of a switch AC just proposed — the message itself names nothing,
+        // but AC emitted the action, so it lands.
+        await controller.processChatActions(
+            [CompanionChatAction(kind: .profile, instruction: "start coding for one hour")],
+            workflow: .staged,
+            latestUserMessage: "great, do it",
+            recentMessages: [],
+            context: nil,
+            parentInteractionID: nil
+        )
+
+        #expect(controller.state.activeProfileID == "coding-id")
     }
 
     // MARK: - Soft profile expiry

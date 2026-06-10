@@ -12,6 +12,14 @@ struct PromptBudgetGuardRequest: Sendable {
     var timeoutSeconds: TimeInterval
 }
 
+struct PromptBudgetGuardChatRequest: Sendable {
+    var serverPort: Int
+    var systemPrompt: String
+    var userPrompt: String
+    var thinkingEnabled: Bool
+    var timeoutSeconds: TimeInterval
+}
+
 struct PromptBudgetGuardResult: Sendable, Equatable {
     var userPrompt: String
     var wasTruncated: Bool
@@ -22,6 +30,7 @@ struct PromptBudgetGuardResult: Sendable, Equatable {
 
 enum PromptBudgetGuard {
     typealias TokenizeTransport = @Sendable (PromptBudgetGuardRequest) async throws -> Int
+    typealias ChatTokenizeTransport = @Sendable (PromptBudgetGuardChatRequest) async throws -> Int
 
     private static let heuristicTokenThresholdRatio = 0.7
     nonisolated private static let imageMaxDimensionLadder = [1600, 1280, 1024, 768, 512]
@@ -42,17 +51,23 @@ enum PromptBudgetGuard {
         maxTokens: Int,
         maxCtxGrowth: Int
     ) -> PreflightPlan {
-        let reserve = max(maxTokens, ctxSize / 10)
         let promptTokens = estimatedTextTokens(systemPrompt: systemPrompt, userPrompt: userPrompt)
         let imageSizing = recommendedImageSizing(
             imagePath: imagePath,
             promptTokens: promptTokens,
             ctxSize: ctxSize,
             maxTokens: maxTokens,
-            reserve: reserve,
             maxCtxGrowth: maxCtxGrowth
         )
-        let fullRequiredCtx = promptTokens + imageSizing.estimatedImageTokens + reserve + maxTokens
+        // Size the ctx so that the guard's *own* budget math (where the reserve
+        // grows with ctx) still leaves room for the whole prompt. Computing this
+        // from the base ctx instead would reserve less headroom than the guard
+        // later demands, so a grown prompt would always overflow by ~ctx/10 and
+        // get needlessly truncated even when well under the growth cap.
+        let fullRequiredCtx = minimumCtxToFit(
+            payloadTokens: promptTokens + imageSizing.estimatedImageTokens,
+            maxTokens: maxTokens
+        )
         let recommendedCtx = min(max(ctxSize, fullRequiredCtx), ctxSize + maxCtxGrowth)
 
         return PreflightPlan(
@@ -64,6 +79,12 @@ enum PromptBudgetGuard {
         )
     }
 
+    /// `protectedTailCharacters` marks a trailing slice of `userPrompt` that must
+    /// survive truncation verbatim. Chat passes the `[New user message]` block here:
+    /// without it, an over-budget chat prompt is trimmed prefix-first, which silently
+    /// drops the user's actual question and leaves the model only the instructions and
+    /// the persona's few-shot examples — so it parrots a canned greeting instead of
+    /// answering. With it, the compressible middle (older context) is trimmed instead.
     static func guardedUserPrompt(
         systemPrompt: String,
         userPrompt: String,
@@ -71,27 +92,34 @@ enum PromptBudgetGuard {
         ctxSize: Int,
         maxTokens: Int,
         serverPort: Int,
-        transport: TokenizeTransport
+        thinkingEnabled: Bool = false,
+        protectedTailCharacters: Int = 0,
+        transport: TokenizeTransport,
+        chatTransport: ChatTokenizeTransport? = nil
     ) async -> PromptBudgetGuardResult {
         let imageTokens = imagePath.map(estimatedImageTokens(for:)) ?? 0
         let heuristicPromptTokens = estimatedTextTokens(systemPrompt: systemPrompt, userPrompt: userPrompt)
         let heuristicTotal = heuristicPromptTokens + imageTokens
-        let requiresExactTokenization = Double(heuristicTotal) > Double(ctxSize) * heuristicTokenThresholdRatio
+        let requiresExactTokenization =
+            chatTransport != nil
+            || Double(heuristicTotal) > Double(ctxSize) * heuristicTokenThresholdRatio
 
-        let reserve = max(maxTokens, ctxSize / 10)
-        let allowedPromptTokens = max(0, ctxSize - reserve - maxTokens)
+        let allowedPromptTokens = allowedPromptBudget(ctxSize: ctxSize, maxTokens: maxTokens)
 
+        var exactChatPromptTokens: Int?
         let exactSystemTokens: Int?
         let exactUserTokens: Int?
         let warning: String?
 
         if requiresExactTokenization {
             do {
-                async let systemTokens = transport(
-                    PromptBudgetGuardRequest(
+                async let renderedChatTokens: Int? = chatTransport?(
+                    PromptBudgetGuardChatRequest(
                         serverPort: serverPort,
-                        content: systemPrompt,
-                        timeoutSeconds: 0.25
+                        systemPrompt: systemPrompt,
+                        userPrompt: userPrompt,
+                        thinkingEnabled: thinkingEnabled,
+                        timeoutSeconds: 1.0
                     )
                 )
                 async let userTokens = transport(
@@ -101,17 +129,30 @@ enum PromptBudgetGuard {
                         timeoutSeconds: 0.25
                     )
                 )
-                let resolvedSystemTokens = try await systemTokens
+                let resolvedChatTokens = try await renderedChatTokens
                 let resolvedUserTokens = try await userTokens
-                exactSystemTokens = resolvedSystemTokens
+                exactChatPromptTokens = resolvedChatTokens
+                if let resolvedChatTokens {
+                    exactSystemTokens = max(0, resolvedChatTokens - resolvedUserTokens)
+                } else {
+                    exactSystemTokens = try await transport(
+                        PromptBudgetGuardRequest(
+                            serverPort: serverPort,
+                            content: systemPrompt,
+                            timeoutSeconds: 0.25
+                        )
+                    )
+                }
                 exactUserTokens = resolvedUserTokens
                 warning = nil
             } catch {
+                exactChatPromptTokens = nil
                 exactSystemTokens = nil
                 exactUserTokens = nil
                 warning = "PromptBudgetGuard tokenization fallback: \(error.localizedDescription)"
             }
         } else {
+            exactChatPromptTokens = nil
             exactSystemTokens = nil
             exactUserTokens = nil
             warning = nil
@@ -119,14 +160,15 @@ enum PromptBudgetGuard {
 
         let systemTokens = exactSystemTokens ?? estimatedTextTokens(systemPrompt: systemPrompt, userPrompt: "")
         let userTokens = exactUserTokens ?? estimatedTextTokens(systemPrompt: "", userPrompt: userPrompt)
-        let currentPromptTokens = systemTokens + userTokens + imageTokens
+        let textPromptTokens = exactChatPromptTokens ?? (systemTokens + userTokens)
+        let currentPromptTokens = textPromptTokens + imageTokens
 
         guard currentPromptTokens > allowedPromptTokens else {
             return PromptBudgetGuardResult(
                 userPrompt: userPrompt,
                 wasTruncated: false,
                 warning: warning,
-                promptTokensEstimate: systemTokens + userTokens,
+                promptTokensEstimate: textPromptTokens,
                 imageTokensEstimate: imageTokens
             )
         }
@@ -135,7 +177,23 @@ enum PromptBudgetGuard {
         let truncatedPrompt: String
         let verifiedUserTokens: Int?
 
-        if allowedUserTokens == 0 || userPrompt.isEmpty {
+        // A protected tail (the new chat message) is kept verbatim; only the
+        // compressible head before it is trimmed. This is a last-resort fallback
+        // path, so the head uses cheap char-based trimming rather than another
+        // tokenization round-trip.
+        let clampedTailChars = min(max(0, protectedTailCharacters), userPrompt.count)
+        if clampedTailChars > 0 {
+            let protectedTail = String(userPrompt.suffix(clampedTailChars))
+            let trimmableHead = String(userPrompt.prefix(userPrompt.count - clampedTailChars))
+            let protectedTailTokens = estimatedTextTokens(systemPrompt: "", userPrompt: protectedTail)
+            let allowedHeadTokens = max(0, allowedUserTokens - protectedTailTokens)
+            let trimmedHead = truncatedPromptUsingHeuristic(
+                userPrompt: trimmableHead,
+                allowedUserTokens: allowedHeadTokens
+            )
+            truncatedPrompt = trimmedHead.isEmpty ? protectedTail : trimmedHead + "\n" + protectedTail
+            verifiedUserTokens = nil
+        } else if allowedUserTokens == 0 || userPrompt.isEmpty {
             truncatedPrompt = ""
             verifiedUserTokens = 0
         } else if exactUserTokens != nil {
@@ -175,11 +233,30 @@ enum PromptBudgetGuard {
             finalUserTokens = estimatedTextTokens(systemPrompt: "", userPrompt: truncatedPrompt)
         }
 
+        let verifiedPromptTokens: Int
+        if let chatTransport, truncatedPrompt != userPrompt {
+            do {
+                verifiedPromptTokens = try await chatTransport(
+                    PromptBudgetGuardChatRequest(
+                        serverPort: serverPort,
+                        systemPrompt: systemPrompt,
+                        userPrompt: truncatedPrompt,
+                        thinkingEnabled: thinkingEnabled,
+                        timeoutSeconds: 1.0
+                    )
+                )
+            } catch {
+                verifiedPromptTokens = systemTokens + finalUserTokens
+            }
+        } else {
+            verifiedPromptTokens = systemTokens + finalUserTokens
+        }
+
         return PromptBudgetGuardResult(
             userPrompt: truncatedPrompt,
             wasTruncated: truncatedPrompt != userPrompt,
             warning: warning,
-            promptTokensEstimate: systemTokens + finalUserTokens,
+            promptTokensEstimate: verifiedPromptTokens,
             imageTokensEstimate: imageTokens
         )
     }
@@ -224,6 +301,37 @@ enum PromptBudgetGuard {
         max(0, (systemPrompt.count + userPrompt.count) / 4)
     }
 
+    /// Headroom kept aside for the model's output plus slack. The single source of
+    /// truth for the budget math shared by `preflightPlan` and `guardedUserPrompt` —
+    /// keep both paths going through here so the ctx the preflight grows to and the
+    /// budget the guard enforces can never drift.
+    nonisolated static func reserveTokens(ctxSize: Int, maxTokens: Int) -> Int {
+        max(maxTokens, ctxSize / 10)
+    }
+
+    nonisolated static func allowedPromptBudget(ctxSize: Int, maxTokens: Int) -> Int {
+        max(0, ctxSize - reserveTokens(ctxSize: ctxSize, maxTokens: maxTokens) - maxTokens)
+    }
+
+    /// Smallest ctx whose `allowedPromptBudget` covers `payloadTokens`. The reserve
+    /// grows with ctx (`max(maxTokens, ctx/10)`), so this solves the fixpoint rather
+    /// than assuming a fixed reserve — otherwise a ctx sized from the base reserve
+    /// falls short once the reserve is recomputed at the grown size.
+    nonisolated static func minimumCtxToFit(payloadTokens: Int, maxTokens: Int) -> Int {
+        let payload = max(0, payloadTokens)
+        // Branch 1: reserve == maxTokens (holds while ctx <= 10*maxTokens).
+        var ctx = payload + 2 * maxTokens
+        if ctx > 10 * maxTokens {
+            // Branch 2: reserve == ctx/10  ->  ctx - ctx/10 - maxTokens >= payload.
+            ctx = Int((Double(payload + maxTokens) * 10.0 / 9.0).rounded(.up))
+        }
+        // Correct for floor-division rounding against the guard's exact integer math.
+        while allowedPromptBudget(ctxSize: ctx, maxTokens: maxTokens) < payload {
+            ctx += 1
+        }
+        return ctx
+    }
+
     nonisolated private static func estimatedImageTokens(
         imageWidth: Int,
         imageHeight: Int,
@@ -266,7 +374,6 @@ enum PromptBudgetGuard {
         promptTokens: Int,
         ctxSize: Int,
         maxTokens: Int,
-        reserve: Int,
         maxCtxGrowth: Int
     ) -> (imageMaxDimension: Int?, estimatedImageTokens: Int) {
         guard
@@ -285,7 +392,10 @@ enum PromptBudgetGuard {
                 imageHeight: height,
                 maxDimension: maxDimension
             )
-            let requiredCtx = promptTokens + imageTokens + reserve + maxTokens
+            let requiredCtx = minimumCtxToFit(
+                payloadTokens: promptTokens + imageTokens,
+                maxTokens: maxTokens
+            )
             if requiredCtx <= ctxSize + maxCtxGrowth {
                 return (maxDimension, imageTokens)
             }

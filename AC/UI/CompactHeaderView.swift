@@ -197,12 +197,13 @@ struct CompactHeaderView: View {
     private var statusSubtitle: String? {
         switch controller.state.setupStatus {
         case .ready:
-            let model = controller.activeModelShortName
-            let profile = controller.state.activeProfile.name
+            // Model name lives in the footer status line; the header subtitle is
+            // identity-only so the two don't repeat the same thing.
             if controller.state.isPaused {
-                return "Monitoring is paused · \(model)"
+                return "Monitoring is paused"
             }
-            return profile == FocusProfile.defaultDisplayName ? model : "\(profile) · \(model)"
+            let profile = controller.state.activeProfile.name
+            return profile == FocusProfile.defaultDisplayName ? nil : profile
         case .checking:
             return "Checking system setup…"
         case .needsPermissions:

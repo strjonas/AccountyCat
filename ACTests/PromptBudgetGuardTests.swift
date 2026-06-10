@@ -42,6 +42,37 @@ struct PromptBudgetGuardTests {
     }
 
     @Test
+    func truncationPreservesProtectedTail() async {
+        // The compressible head (older chat context) is huge; the protected tail is
+        // the user's actual new message. Truncation must keep the tail verbatim.
+        let systemPrompt = String(repeating: "S", count: 1_600)
+        let head = String(repeating: "H", count: 6_000)
+        let userMessage = "[New user message]\nactivate the coding profile"
+        let userPrompt = head + "\n" + userMessage
+        let ctxSize = 2_048
+        let maxTokens = 220
+
+        let result = await PromptBudgetGuard.guardedUserPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imagePath: nil,
+            ctxSize: ctxSize,
+            maxTokens: maxTokens,
+            serverPort: 8080,
+            protectedTailCharacters: userMessage.count,
+            transport: { request in
+                max(0, request.content.count / 4)
+            }
+        )
+
+        #expect(result.wasTruncated)
+        #expect(result.userPrompt.count < userPrompt.count)
+        // The user's message survived intact; the head was trimmed instead.
+        #expect(result.userPrompt.hasSuffix(userMessage))
+        #expect(result.userPrompt.contains("activate the coding profile"))
+    }
+
+    @Test
     func tokenizationFailureFallsBackToHeuristic() async {
         let result = await PromptBudgetGuard.guardedUserPrompt(
             systemPrompt: String(repeating: "S", count: 1_200),
@@ -84,6 +115,83 @@ struct PromptBudgetGuardTests {
         let calls = await counter.value
         #expect(result.wasTruncated)
         #expect(calls == 3)
+    }
+
+    @Test
+    func chatTemplateTokenizationAccountsForModelWrapperOverhead() async {
+        let systemPrompt = String(repeating: "S", count: 400)
+        let userPrompt = String(repeating: "U", count: 6_000)
+        let ctxSize = 2_048
+        let maxTokens = 220
+        let reserve = max(maxTokens, ctxSize / 10)
+        let allowedPromptTokens = ctxSize - reserve - maxTokens
+        let chatCounter = CounterBox()
+
+        let result = await PromptBudgetGuard.guardedUserPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imagePath: nil,
+            ctxSize: ctxSize,
+            maxTokens: maxTokens,
+            serverPort: 8080,
+            transport: { request in
+                max(0, request.content.count / 4)
+            },
+            chatTransport: { request in
+                await chatCounter.increment()
+                return 900 + max(0, (request.systemPrompt.count + request.userPrompt.count) / 4)
+            }
+        )
+
+        #expect(result.wasTruncated)
+        #expect(result.promptTokensEstimate <= allowedPromptTokens)
+        #expect(result.userPrompt.count < userPrompt.count)
+        #expect(await chatCounter.value >= 2)
+    }
+
+    @Test
+    func grownCtxFromPreflightLeavesPromptUntruncated() async {
+        // Regression: a prompt that overflows the base ctx but sits well under the
+        // growth cap must grow *and then survive the guard intact*. Previously the
+        // preflight sized the ctx using a reserve computed from the base ctx, while
+        // the guard recomputed a larger reserve from the grown ctx — so every such
+        // prompt was needlessly trimmed by ~ctx/10. Mirrors the local `decision`
+        // stage (base ctx 3072, maxTokens 220, growth 4096) and its CLI call shape
+        // (heuristic transport, no chatTransport).
+        let systemPrompt = String(repeating: "S", count: 1_600)   // ~400 tokens
+        let userPrompt = String(repeating: "U", count: 17_200)    // ~4300 tokens
+        let baseCtx = 3_072
+        let maxTokens = 220
+        let maxCtxGrowth = 4_096
+
+        let plan = PromptBudgetGuard.preflightPlan(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imagePath: nil,
+            ctxSize: baseCtx,
+            maxTokens: maxTokens,
+            maxCtxGrowth: maxCtxGrowth
+        )
+
+        // The prompt forces growth but stays under the cap.
+        #expect(plan.recommendedCtxSize > baseCtx)
+        #expect(plan.recommendedCtxSize <= baseCtx + maxCtxGrowth)
+        #expect(plan.exceededGrowthCap == false)
+
+        let result = await PromptBudgetGuard.guardedUserPrompt(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imagePath: nil,
+            ctxSize: plan.recommendedCtxSize,
+            maxTokens: maxTokens,
+            serverPort: 0,
+            transport: { request in
+                max(0, request.content.count / 4)
+            }
+        )
+
+        #expect(result.wasTruncated == false)
+        #expect(result.userPrompt == userPrompt)
     }
 
     @Test

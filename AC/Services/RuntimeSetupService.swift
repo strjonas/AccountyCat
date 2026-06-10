@@ -9,7 +9,13 @@ import Foundation
 
 enum RuntimeSetupService {
     nonisolated private static let runtimeRepositoryRemote = "https://github.com/ggml-org/llama.cpp.git"
-    nonisolated private static let pinnedLlamaCommit = "a279d0f0f4e746d1ef3429d8e9d02d2990b2daa7"
+    // llama.cpp tag b9571 (2026-06-09). Includes the gemma-4 "unified" multimodal
+    // fixes (#24082/#24088/#24118) and the projector loader for `gemma4uv`. Note
+    // the checkpoint-spacing flag was renamed in this range
+    // (`--checkpoint-every-n-tokens` → `--checkpoint-min-step`); AC selects the
+    // supported flag at launch (see LocalModelRuntime.checkpointSpacingArguments)
+    // so existing installs on the prior commit keep working until they rebuild.
+    nonisolated private static let pinnedLlamaCommit = "e3471b3e7306fe120dc8f38a2263c1293fc2add7"
 
     /// Minimum free disk space we require before we start pulling the runtime + model.
     /// Model alone is ~4.4GB compressed; we leave headroom for the llama.cpp build
@@ -51,9 +57,57 @@ enum RuntimeSetupService {
         defaultHuggingFaceCacheURL().path
     }
 
+    /// True when a model identifier is actually an absolute path to a `.gguf` file
+    /// the user linked from disk (e.g. a model they already downloaded via Ollama or
+    /// elsewhere), rather than a Hugging Face repo id we download and cache ourselves.
+    nonisolated static func isLocalFileModelIdentifier(_ identifier: String) -> Bool {
+        let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("/") && trimmed.lowercased().hasSuffix(".gguf")
+    }
+
+    /// Resolves a linked-on-disk `.gguf` path to its model file and, if a sibling
+    /// `*mmproj*.gguf` lives next to it, its multimodal projector. Returns nil if the
+    /// identifier isn't a file path or the file no longer exists.
+    nonisolated static func localFileModelArtifacts(for identifier: String) -> (modelURL: URL, projectorURL: URL?)? {
+        let path = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isLocalFileModelIdentifier(path), FileManager.default.fileExists(atPath: path) else {
+            return nil
+        }
+        let modelURL = URL(fileURLWithPath: path)
+        let directory = modelURL.deletingLastPathComponent()
+        let projectorURL = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ))?.first {
+            $0.pathExtension.lowercased() == "gguf"
+                && $0.lastPathComponent.lowercased().contains("mmproj")
+        }
+        return (modelURL, projectorURL)
+    }
+
     nonisolated static func inspect(runtimeOverride: String?, modelIdentifier: String) -> RuntimeDiagnostics {
         let runtimePath = normalizedRuntimePath(from: runtimeOverride)
         let runtimeDirectory = runtimeDirectoryPath(for: runtimePath)
+        let tools = ["git", "cmake", "ninja"]
+
+        // A user-linked file lives wherever they put it — there is nothing for AC to
+        // download or cache, so report it present as soon as the file exists.
+        if let fileArtifacts = localFileModelArtifacts(for: modelIdentifier) {
+            return RuntimeDiagnostics(
+                runtimePath: runtimePath,
+                runtimeDirectory: runtimeDirectory,
+                runtimePresent: FileManager.default.isExecutableFile(atPath: runtimePath),
+                modelCachePath: fileArtifacts.modelURL.deletingLastPathComponent().path,
+                managedModelCachePath: "",
+                modelCachePresent: true,
+                modelArtifactsPresent: true,
+                resolvedModelPath: fileArtifacts.modelURL.path,
+                resolvedProjectorPath: fileArtifacts.projectorURL?.path,
+                missingTools: tools.filter { !toolExists($0) }
+            )
+        }
+
         let modelCacheRoots = modelCacheRoots(
             forRuntimePath: runtimePath,
             modelIdentifier: modelIdentifier
@@ -69,7 +123,6 @@ enum RuntimeSetupService {
         let modelCachePresent = existingModelCacheRoot != nil
         let managedModelCachePath = managedModelCacheURL(for: modelIdentifier).path
         let modelArtifactsPresent = resolvedArtifacts != nil
-        let tools = ["git", "cmake", "ninja"]
         let missingTools = tools.filter { tool in
             !toolExists(tool)
         }
@@ -86,6 +139,70 @@ enum RuntimeSetupService {
             resolvedProjectorPath: resolvedArtifacts?.projectorURL?.path,
             missingTools: missingTools
         )
+    }
+
+    /// The llama.cpp commit AC currently targets. New installs build this; an
+    /// existing install that sits on a different commit is considered out of date.
+    nonisolated static var pinnedRuntimeCommit: String { pinnedLlamaCommit }
+
+    /// The commit the installed runtime was actually built from, or nil when it
+    /// can't be determined (no repo / git unavailable / shallow-detached oddities).
+    /// Best-effort and synchronous — `git rev-parse` is cheap.
+    nonisolated static func runtimeInstalledCommit(forRuntimePath runtimePath: String) -> String? {
+        let repoURL = runtimeRepositoryURL(forRuntimePath: runtimePath)
+        guard FileManager.default.fileExists(atPath: repoURL.appendingPathComponent(".git").path) else {
+            return nil
+        }
+        guard let output = gitOutput(arguments: ["rev-parse", "HEAD"], in: repoURL) else {
+            return nil
+        }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Whether the installed runtime is behind the pinned target and should be
+    /// rebuilt. Conservative: when the installed commit can't be determined we
+    /// return `false` so AC never nags about an update it can't verify.
+    nonisolated static func runtimeNeedsUpdate(forRuntimePath runtimePath: String) -> Bool {
+        runtimeNeedsUpdate(
+            installedCommit: runtimeInstalledCommit(forRuntimePath: runtimePath),
+            pinnedCommit: pinnedLlamaCommit
+        )
+    }
+
+    /// Pure comparison, split out for testing without touching git.
+    nonisolated static func runtimeNeedsUpdate(installedCommit: String?, pinnedCommit: String) -> Bool {
+        guard let installed = installedCommit?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !installed.isEmpty else {
+            return false
+        }
+        let pinned = pinnedCommit.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Git may report a full 40-char hash while the pin is also full-length;
+        // tolerate one being an abbreviation of the other.
+        if installed == pinned { return false }
+        if installed.hasPrefix(pinned) || pinned.hasPrefix(installed) { return false }
+        return true
+    }
+
+    nonisolated private static func gitOutput(arguments: [String], in directory: URL) -> String? {
+        let gitPath = resolvedToolPath("git") ?? "/usr/bin/git"
+        guard FileManager.default.isExecutableFile(atPath: gitPath) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: gitPath)
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     nonisolated static func managedModelCacheURL(for modelIdentifier: String) -> URL {
@@ -277,6 +394,17 @@ enum RuntimeSetupService {
         if removedPartials > 0 {
             await MainActor.run {
                 log("Cleaned up \(removedPartials) partial download file(s) from a previous run.")
+            }
+        }
+
+        // Repair blobs corrupted by a non-resumable interrupted download (see
+        // purgeCorruptModelBlobs): without this, an oversized/garbage blob is reused on
+        // every retry and warm-up keeps failing with no way out but a manual cache wipe.
+        let expectedFiles = await expectedModelFiles(for: modelIdentifier)
+        let repaired = purgeCorruptModelBlobs(for: modelIdentifier, expectedFiles: expectedFiles)
+        if repaired > 0 {
+            await MainActor.run {
+                log("Removed \(repaired) corrupt model file(s) from a previous download; re-downloading.")
             }
         }
 
@@ -634,18 +762,102 @@ enum RuntimeSetupService {
         return total
     }
 
+    /// Bytes on disk for *exactly* the given content blobs (`blobs/<oid>`, or its
+    /// `<oid>.downloadInProgress` partial while in flight). Because the blob filename is
+    /// the file's LFS oid, this measures the progress of one specific model's files and
+    /// ignores orphaned partials from earlier attempts or other quants in the same repo —
+    /// the honest "downloaded so far" figure for the model the user is installing.
+    nonisolated static func downloadedModelBytes(forOids oids: [String], inCacheRoot cacheRoot: URL) -> Int64 {
+        let blobsURL = cacheRoot.appendingPathComponent("blobs", isDirectory: true)
+        var total: Int64 = 0
+        for oid in oids where !oid.isEmpty {
+            let blob = blobsURL.appendingPathComponent(oid)
+            let partial = blobsURL.appendingPathComponent(oid + ".downloadInProgress")
+            total += regularFileSize(blob) ?? regularFileSize(partial) ?? 0
+        }
+        return total
+    }
+
+    /// Removes blobs whose on-disk size disagrees with the Hugging Face manifest, so the
+    /// runtime re-downloads them cleanly. llama.cpp opens the temp blob in append mode and
+    /// only seeks to a resume offset when the server advertises range support; a resume
+    /// served as a plain 200 therefore appends a *full* copy onto the existing partial,
+    /// producing an oversized blob that then gets finalized and trusted via its `.etag`.
+    /// That corrupt file loads as garbage and fails warm-up forever. We catch both a
+    /// finalized blob whose size ≠ expected and an in-progress partial that already
+    /// exceeds the expected size (a partial can only be ≤ the real file). Returns the
+    /// number of files removed.
+    @discardableResult
+    nonisolated static func purgeCorruptModelBlobs(
+        for modelIdentifier: String,
+        expectedFiles: [ExpectedModelFile]
+    ) -> Int {
+        purgeCorruptModelBlobs(
+            expectedFiles: expectedFiles,
+            inCacheRoot: managedModelCacheURL(for: modelIdentifier)
+        )
+    }
+
+    /// Testable core of `purgeCorruptModelBlobs(for:expectedFiles:)`.
+    @discardableResult
+    nonisolated static func purgeCorruptModelBlobs(
+        expectedFiles: [ExpectedModelFile],
+        inCacheRoot cacheRoot: URL
+    ) -> Int {
+        let fileManager = FileManager.default
+        let blobsURL = cacheRoot.appendingPathComponent("blobs", isDirectory: true)
+        // LFS sizes are exact byte counts; real corruption is gigabytes off. A small
+        // slack avoids ever fighting a healthy file over rounding/metadata quirks.
+        let tolerance: Int64 = 1_048_576
+        var removed = 0
+
+        for file in expectedFiles {
+            guard let oid = file.oid, !oid.isEmpty, file.size > 0 else { continue }
+
+            let blob = blobsURL.appendingPathComponent(oid)
+            if let size = regularFileSize(blob), abs(size - file.size) > tolerance {
+                if (try? fileManager.removeItem(at: blob)) != nil { removed += 1 }
+                try? fileManager.removeItem(at: blobsURL.appendingPathComponent(oid + ".etag"))
+            }
+
+            let partial = blobsURL.appendingPathComponent(oid + ".downloadInProgress")
+            if let size = regularFileSize(partial), size > file.size + tolerance {
+                if (try? fileManager.removeItem(at: partial)) != nil { removed += 1 }
+            }
+        }
+        return removed
+    }
+
+    nonisolated private static func regularFileSize(_ url: URL) -> Int64? {
+        guard
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+            values.isRegularFile == true
+        else { return nil }
+        return Int64(values.fileSize ?? 0)
+    }
+
     /// Best-effort expected download size for a model identifier, queried from the
     /// Hugging Face tree API. Returns nil on any failure so the caller can fall back
     /// to an indeterminate / downloaded-only display rather than blocking the UI.
     nonisolated static func expectedDownloadBytes(for modelIdentifier: String) async -> Int64? {
+        let total = await expectedModelFiles(for: modelIdentifier)
+            .reduce(Int64(0)) { $0 + $1.size }
+        return total > 0 ? total : nil
+    }
+
+    /// The specific files (chosen quant GGUF + optional `mmproj` projector) the runtime
+    /// will download for this model, each with its LFS `oid` (blob filename) and exact
+    /// byte size, queried from the Hugging Face tree API. Returns an empty array on any
+    /// failure so callers fall back gracefully (indeterminate progress, no purge).
+    nonisolated static func expectedModelFiles(for modelIdentifier: String) async -> [ExpectedModelFile] {
         let repo = repositoryIdentifier(for: modelIdentifier)
-        guard !repo.isEmpty else { return nil }
+        guard !repo.isEmpty else { return [] }
 
         let components = modelIdentifier.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         let quant = components.count > 1 ? String(components[1]).uppercased() : nil
 
         guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main?recursive=true") else {
-            return nil
+            return []
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
@@ -654,17 +866,19 @@ enum RuntimeSetupService {
             let (data, response) = try? await URLSession.shared.data(for: request),
             (response as? HTTPURLResponse)?.statusCode == 200,
             let entries = try? JSONDecoder().decode([HFTreeEntry].self, from: data)
-        else { return nil }
+        else { return [] }
 
         let ggufFiles = entries.filter { $0.path.lowercased().hasSuffix(".gguf") }
         let projector = ggufFiles.first { $0.path.lowercased().contains("mmproj") }
         let modelCandidates = ggufFiles.filter { !$0.path.lowercased().contains("mmproj") }
         let modelEntry = selectModelTreeEntry(from: modelCandidates, quant: quant)
 
-        let chosen = [modelEntry, projector].compactMap { $0 }
-        guard !chosen.isEmpty else { return nil }
-        let total = chosen.reduce(Int64(0)) { $0 + ($1.lfs?.size ?? $1.size ?? 0) }
-        return total > 0 ? total : nil
+        return [modelEntry, projector].compactMap { entry in
+            guard let entry else { return nil }
+            let size = entry.lfs?.size ?? entry.size ?? 0
+            guard size > 0 else { return nil }
+            return ExpectedModelFile(oid: entry.lfs?.oid, size: size)
+        }
     }
 
     nonisolated private static func selectModelTreeEntry(from candidates: [HFTreeEntry], quant: String?) -> HFTreeEntry? {
@@ -751,8 +965,18 @@ private struct HFTreeEntry: Decodable {
     let lfs: HFLFS?
 
     struct HFLFS: Decodable {
+        let oid: String?
         let size: Int64?
     }
+}
+
+/// One file the runtime is expected to download for a model, as described by the
+/// Hugging Face manifest. `oid` is the LFS sha256 — and also the on-disk blob
+/// filename (`blobs/<oid>`), which lets us measure progress and detect corruption
+/// for the *specific* files of one model rather than the whole cache directory.
+struct ExpectedModelFile: Sendable, Equatable {
+    let oid: String?
+    let size: Int64
 }
 
 private struct ResolvedModelArtifacts: Sendable {

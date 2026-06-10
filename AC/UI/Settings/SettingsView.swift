@@ -28,6 +28,10 @@ struct SettingsView: View {
             tabBar
             Divider().opacity(0.3)
 
+            if let update = controller.appUpdateAvailable {
+                appUpdateBanner(update)
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -50,12 +54,47 @@ struct SettingsView: View {
         }
         .frame(width: embeddedInPanel ? nil : ACD.popoverWidth)
         .background(embeddedInPanel ? Color.clear : Color(nsColor: .windowBackgroundColor))
-        .onReceive(NotificationCenter.default.publisher(for: .acSelectSettingsTab)) { notification in
-            if let raw = notification.object as? String,
-               let tab = SettingsTab(rawValue: raw) {
-                withAnimation(.acSnap) { selectedTab = tab }
+        // A deep-link sets `pendingSettingsTab` before this view mounts, so a
+        // notification posted at the same instant would arrive before we subscribe.
+        // Reading the controller's value on appear (and on change, when already open)
+        // catches both cases.
+        .onAppear { consumePendingSettingsTab() }
+        .onChange(of: controller.pendingSettingsTab) { _, _ in consumePendingSettingsTab() }
+    }
+
+    private func consumePendingSettingsTab() {
+        guard let tab = controller.pendingSettingsTab else { return }
+        withAnimation(.acSnap) { selectedTab = tab }
+        controller.pendingSettingsTab = nil
+    }
+
+    @ViewBuilder
+    private func appUpdateBanner(_ update: AppUpdateInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent)
+            Text("AccountyCat \(update.latestVersion) is available.")
+                .font(.ac(11))
+                .foregroundStyle(Color.acTextPrimary.opacity(0.85))
+            Spacer(minLength: 8)
+            Button("View release") {
+                NSWorkspace.shared.open(update.releaseURL)
             }
+            .buttonStyle(.link)
+            .font(.ac(11))
+            Button {
+                controller.appUpdateAvailable = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.acTextPrimary.opacity(0.5))
+            }
+            .buttonStyle(.plain)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(accent.opacity(0.08))
     }
 
     // MARK: - Header

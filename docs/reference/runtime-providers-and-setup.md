@@ -126,11 +126,95 @@ Progress is reported two ways, with byte-level data preferred:
   as a fallback, but defers to byte polling whenever a real total is known
   (`setupTotalBytes != nil`) so the two don't fight.
 
+### Pending local model downloads
+
+Settings → AI always shows the three built-in local model cards. The inline "Add a custom
+model" form lets users add named custom model cards from one of two sources; the card title
+is user-controlled and the subtitle is the model's technical identifier:
+
+- **Hugging Face** — a GGUF repo id (optionally `:QUANT`). AC downloads and caches it like a
+  built-in card.
+- **Local file** — an absolute path to a `.gguf` the user already has (e.g. an Ollama or
+  manual download), chosen via `NSOpenPanel`. The path *is* the model identifier. A
+  file-path identifier (`isLocalFileModelIdentifier` / `localFileModelArtifacts(for:)` in
+  `RuntimeSetupService`, mirrored in `LocalModelRuntime.cachedModelArtifacts`) resolves
+  straight to the file in place — no download, no second copy. A sibling `*mmproj*.gguf`
+  next to it is picked up as the vision projector. Removing such a card only drops the
+  link; the user's file is never deleted.
+
+Selection and download are separate actions. Selecting an installed card immediately updates
+the local text/image model identifiers. Pressing a card's download button persists a pending
+target plus the current fallback model and downloads/warm-ups that target while monitoring
+continues on the fallback. The card itself owns the progress bar, pause/resume control, and
+stop/delete-partial control. Installed cards show a delete button with confirmation.
+
+`pendingLocalModelAutoSelect` distinguishes two flows:
+
+- Tier changes and legacy advanced local selection queue with `autoSelectWhenReady == true`;
+  once artifacts are ready, `applyPendingLocalModelIfReady()` switches text and image local
+  identifiers to the target automatically.
+- Card download buttons queue with `autoSelectWhenReady == false`; once artifacts are ready,
+  the pending state clears and the card becomes selectable, but the active local model stays
+  on the fallback until the user selects the new card.
+
+Relaunching during a pending download restores the same card-level pending state and resumes
+the download instead of reopening first-run setup. Custom online (OpenRouter) models are a
+separate, validated card mechanism — see "Custom online models" under Online Routing below.
+
 ### Surfacing failures
 
 `setupErrorMessage` is rendered in both `OnboardingDialogView` and the `AITab`
 local-model section (with a "Try again" button). A failure after onboarding must not be
 silent — the AI tab is where post-onboarding local-model management lives.
+
+### Runtime updates (existing installs)
+
+`installRuntime` always checks out `pinnedLlamaCommit` and rebuilds, but it is
+*skipped* when a runtime binary already exists — so bumping the pin only reaches
+fresh installs unless we force a rebuild. `inspect()` reports `runtimePresent` by
+binary existence only; it does **not** compare versions.
+
+- `RuntimeSetupService.runtimeInstalledCommit(forRuntimePath:)` reads the repo's
+  `git rev-parse HEAD`; `runtimeNeedsUpdate(...)` compares it to
+  `pinnedRuntimeCommit` (conservative — an undeterminable commit never nags).
+- `AppController.refreshSystemState` computes `runtimeUpdateAvailable` once per
+  session (gated to local + present + not-installing/updating; memoized via
+  `didCheckRuntimeUpdate`) so it never spawns git on a hot path.
+- `AppController.updateRuntime()` is **deliberately separate from `installRuntime`**:
+  it does *not* touch `installingRuntime`/`setupStatus`, so the app stays `.ready`
+  and never drops back into onboarding for an update. It sets `updatingRuntime` +
+  `runtimeUpdateMessage` (an inline `AITab` banner), rebuilds in place via
+  `RuntimeSetupService.installRuntime` while the old `llama-server` keeps serving
+  its previous binary inode (monitoring + chat continue), then on success cycles the
+  shared server (`localModelRuntime.shutdown()` + re-prewarm) so the next request
+  uses the new binary — no restart. Tracked by `updateRuntimeTask`.
+
+Because the checkpoint-spacing flag name diverges across llama.cpp versions, the
+version-aware flag selection (above) is the prerequisite that makes a pin bump
+non-breaking for users who have not yet rebuilt.
+
+### App updates (GitHub releases)
+
+`AppUpdateService.checkForUpdate(...)` does a throttled (6h), fail-silent GET of
+`api.github.com/repos/strjonas/AccountyCat/releases/latest`, compares the release
+tag to `CFBundleShortVersionString` with a numeric component-wise compare
+(`isVersion(_:newerThan:)`, so `1.10 > 1.9`), and on a newer release sets
+`AppController.appUpdateAvailable`. `SettingsView` renders a dismissible "AccountyCat
+X is available — View release" banner that opens the release page (no Sparkle / no
+auto-install; the user downloads the DMG). Checked once at `bootstrap()`.
+
+### Incompatible-model guardrail
+
+A model the runtime can load but not actually run (wrong/early arch support, a
+malformed quant) degenerates into reserved/special-token spam (e.g. Gemma's
+`<unused50>` repeated, or leaked `<|channel>` markers) rather than a clean error.
+`LocalModelRuntime.looksLikeIncompatibleModelOutput(_:)` detects this at **both**
+the server and CLI return points and throws `LLMError.modelIncompatible` instead of
+streaming garbage; the server path does not fall back to the CLI for this case
+(it would reproduce the same garbage). Chat surfaces a plain message pointing at
+Settings → AI (update the runtime if offered, else pick a different model). The
+detector is high-precision: Qwen's reasoning-off `<think></think>`, JSON decision
+payloads, and `Array<String>`-style code all pass (`LocalModelRuntimeCompatibilityTests`).
 
 ## Local Runtime Request Coordination
 
@@ -151,12 +235,58 @@ When the server needs to be reconfigured (different model or capacity), `LocalMo
 
 - `-ngl 999` to offload all supported layers to Metal
 - `--threads <perf-core-count>` where the count comes from `hw.perflevel0.physicalcpu` when available, else `ProcessInfo.processInfo.activeProcessorCount`
+- `--threads-batch <perf-core-count>` for prompt processing
+- `--parallel 3` so AC can pin latency-sensitive prefixes instead of relying on automatic slot choice: slot 0 = monitoring decision, slot 1 = chat, slot 2 = auxiliary scratch for vision perception, nudge copy, chat-action executors, policy memory, memory consolidation, and safelist appeals. `--ctx-size` is the total across slots, so it is scaled by the slot count (`sharedServerTotalCtxSize`) to preserve each slot's full per-request window
+- `--reasoning off` / `--reasoning-format none` because local AC stages need short structured answers, not chain-of-thought output
+- `--reasoning-budget 0` as a second guardrail for templates that otherwise emit thinking scaffolding
 - `--cache-type-k q8_0`
 - `--cache-type-v q8_0`
+- `--ctx-checkpoints 512`
+- the checkpoint-spacing flag, **resolved per binary**: newer llama.cpp uses
+  `--checkpoint-min-step 512`, older builds use `--checkpoint-every-n-tokens 512`.
+  `LocalModelRuntime.checkpointSpacingArguments(executablePath:)` probes
+  `llama-server --help` once (cached) and passes the supported form, omitting the
+  flag entirely if neither is present. This is what lets `pinnedLlamaCommit` move
+  forward without breaking installs still on the prior commit (the flag was
+  renamed upstream between the two).
 
-Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC currently uses a single shared slot and relies on the fact that the monitoring/system prompts are prefix-stable, so no explicit slot management is needed.
+Prompt caching is enabled on every shared-server request via `cache_prompt: true`. AC also sends `id_slot` on local server requests: decision and chat use their pinned slots, while lower-priority stages use the auxiliary scratch slot. This is the release tradeoff: one extra KV slot costs memory, but it prevents memory consolidation / action executors / nudge copy from deliberately evicting the two hot prefixes.
+
+When the backend is local and the model is already installed, AC fires a best-effort, cancellable **chat prewarm** (`LocalModelRuntime.prewarm`) via `AppController.schedulePrewarmIfNeeded()`: it starts the shared server (paying the one-time model load) and primes the chat system prompt, built with the active character, in slot 1 with a 1-token request. The prewarm system prompt is built with the **same `.staged` workflow** local chat uses — otherwise the cached slot-1 prefix would not match the real chat prefix and the first chat would still pay a full cold prefill. Prewarm is chat-only so launch work does not spend local compute on monitoring before the user has interacted. A real chat message cancels any in-flight prewarm and immediately owns the chat slot; if the user never chats, monitoring warms its decision slot naturally on its first real check. Prewarm schedules a normal idle shutdown afterwards, so it never pins an unused server indefinitely.
+
+Prewarm runs at launch (`bootstrap()`) and when the backend is switched to Local (`updateMonitoringInferenceBackend`) — the switch case matters because the first chat after switching from OpenRouter would otherwise pay the full cold model-load plus prefill. The one cold cost that remains is the very first server start when no warm slot exists yet (e.g. immediately after a fresh install, before any prewarm has completed); this is the inherent model-load-and-prefill latency, not a cache miss.
+
+The shared server handle is not considered reusable until the `/health` readiness probe has succeeded. This matters because Swift actors can re-enter while prewarm is awaiting server startup: a user chat arriving during that window must wait for readiness rather than sending tokenization or chat requests to a port that has been reserved but is not yet accepting connections. User chat uses a bounded readiness wait instead of the long background-start budget, so a bad cold start fails back to the UI instead of pinning the composer for minutes.
+
+The chat panel surfaces that case as a short, non-technical local-AI startup notice while AC is proactively warming the local model or while a user message is waiting on a cold local server start. The wording must avoid promising a fixed duration because startup depends on model tier, machine, RAM pressure, and whether macOS still has model pages cached. Local chat uses a longer timeout than local monitoring so the first cold reply can complete instead of failing after it has already paid most of the model-load cost.
+
+Local priority order is user chat first, chat action resolution second, monitoring third, and memory consolidation last. `BrainService` already defers local monitoring while an interactive request is in flight, and AC's own app/Inspector are structurally excluded from monitoring. The composer unlocks as soon as the user-visible reply lands; chat action resolution continues afterward on the shared server. Profile actions are guarded by a deterministic explicit-user-intent check and common profile lifecycle commands are applied without a second LLM call. Memory consolidation cancels/defer-retries when chat starts and only runs when no local server request is already in flight.
 
 KV-cache quantization is a memory-saving tradeoff for local monitoring: q8 K/V materially lowers cache RAM pressure while keeping quality stable on the small Q4/Q5 local models AC targets for v1.0.
+
+Qwen3.5 is a hybrid/recurrent architecture. On the pinned llama.cpp build, prompt
+cache reuse can be limited by that architecture unless the server has context
+checkpoints close enough to the shared prefix. The explicit 512-token checkpoint
+settings preserve partial-prefix reuse for repeated chat/monitoring prompts while
+keeping model judgment intact. Keep local prompt payloads compact, but do not
+replace model judgment with deterministic keyword shortcuts.
+
+The shared server starts with a stable minimum capacity floor instead of the exact
+capacity of the first request. Text-only local models get at least `ctx=4096`,
+`batch=512`, `ubatch=512`; models with a multimodal projector get at least
+`ctx=6144`, `batch=512`, `ubatch=512`. This avoids a common slow path where the
+first lightweight decision starts a small server, then chat or vision forces a
+stop/restart/reload before the next user-visible response. Per-stage prompt
+budget guards still use the stage's requested context window, so this is a
+server reuse floor, not permission for prompts to grow silently. The 512-token
+batch floor is intentional: larger prompt batches make Qwen3.5 context
+checkpoints too sparse to reuse the stable prefix when the volatile tail changes.
+
+Local chat prompts keep stable instructions, profile context, memory, policy
+rules, and recent conversation before volatile app/time/context fields and the
+new user message. That ordering is semantically equivalent to the prior prompt,
+but it lets llama.cpp reuse the stable prefix instead of pre-filling the whole
+chat prompt each turn.
 
 ### Local prompt budgets
 
@@ -164,16 +294,23 @@ The default staged local runtime profile in `ACShared/ACPromptSets.swift` curren
 
 | Stage | ctxSize | batchSize | ubatchSize |
 | --- | --- | --- | --- |
-| `perception_vision` | 6144 | 2048 | 512 |
+| `perception_vision` | 6144 | 512 | 512 |
 | `perception_title` | 2048 | 512 | 256 |
 | `decision` | 3072 | 512 | 256 |
 | `online_decision` | 3072 | 512 | 256 |
 | `nudge_copy` | 2048 | 512 | 256 |
 | `appeal_review` | 2048 | 512 | 256 |
 | `policy_memory` | 3072 | 512 | 256 |
-| `safelist_appeal` | 2048 | 768 | 384 |
+| `safelist_appeal` | 2048 | 512 | 384 |
 
-The shared server therefore runs at the largest requested capacity (`ctxSize = 6144` for the vision stage) and smaller text stages reuse that server without forcing a restart.
+The shared server therefore runs at the largest requested capacity floor (`ctxSize = 6144` for the vision stage) and smaller text stages reuse that server without forcing a restart.
+
+The local title-only pipeline intentionally uses a single decision stage rather
+than a separate title-perception prepass. Qwen3.5 9B is too slow for multi-call
+text-only monitoring on Apple Silicon, and the decision prompt already carries
+the title, app, usage, memory, rules, and worked examples needed for the model to
+judge the case directly. Vision monitoring remains split because screenshot
+perception is a different modality.
 
 ### Prompt overflow guard
 
@@ -182,8 +319,10 @@ The shared server therefore runs at the largest requested capacity (`ctxSize = 6
 - estimates prompt size heuristically from text length plus vision tile count
 - prefers preserving the rendered text payload intact: when the heuristic says a request is too large, AC first grows the per-request shared-server context budget (up to a bounded ceiling) instead of immediately trimming text
 - on vision requests, progressively reduces the image max dimension before falling back to text truncation
-- optionally calls `POST /tokenize` on the local `llama-server` when the heuristic is already close to the context limit
-- only as a last resort, trims the user-prompt tail proportionally and verifies the reduced prompt once via `/tokenize`
+- for shared-server chat requests, calls `POST /apply-template` and then `POST /tokenize` so the budget is based on the model-rendered chat prompt, including GGUF template wrappers for Gemma/Qwen/Llama-style models
+- falls back to raw `POST /tokenize` and then the heuristic path if template rendering is unavailable
+- applies the same grow-before-trim heuristic to the rare `llama-cli` fallback path before launching the subprocess
+- only as a last resort, trims the user prompt and verifies the reduced prompt once via `/tokenize`. Callers may pass `protectedTailCharacters` to mark a trailing slice that must survive verbatim; the compressible head before it is trimmed instead. Local chat passes the `[New user message]` block here, so an over-budget chat prompt sheds older context rather than silently dropping the user's actual message (which previously left the model only the instructions and the persona's few-shot examples, so it parroted a canned greeting)
 - records `prompt_budget_truncated` telemetry/activity when truncation actually happens
 
 If tokenization fails or times out, AC falls back to the heuristic path and continues the request rather than blocking inference.
@@ -207,6 +346,17 @@ Model selection is split by text vs image where supported:
 - `localModelIdentifierImage`
 
 `AITier` supplies the user-facing defaults.
+
+For local onboarding recommendations (`AITier.recommendedLocalTier`): ≤16 GB → Economy
+(`Qwen3.5 4B`), ≤64 GB → Default (`Qwen3.5 9B`), >64 GB → Smartest (`Qwen3.6 27B`).
+Typical Apple-Silicon Macs — including the base M-series at 32 GB — recommend the 9B
+**Default**, not 4B. A head-to-head local eval (4B vs 9B, critical/high focus guards)
+showed 4B materially regresses judgment: it broke a false-positive guard (over-nudging a
+legitimate coding tutorial under a broad profile), under-reacted to sustained off-task
+drift, and mislabelled productive work as a break — while 9B held all of them. The 9B
+default was slow on the M4 only because of *cold* prefill; that is addressed by warming
+the runtime (prewarm + pinned cache slots, above), not by shipping a faster-but-weaker
+model. 4B stays available as a manual choice and as the recommendation for ≤16 GB Macs.
 
 ## Limited Trial Redemption
 
@@ -239,10 +389,45 @@ Current behavior:
 
 - default online path: OpenRouter
 - API keys live in macOS Keychain via `OnlineProviderCredentialStore`
-- ZDR toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`; on by default, opt-out via the AI tab's advanced section behind an explicit confirmation alert
+- ZDR toggle lives in `UserDefaults` via `OnlineProviderRoutingStore`; on by default, opt-out via the AI tab's OpenRouter privacy section behind an explicit confirmation alert
 - direct-OpenAI routing code exists in `OnlineProviderRouting` but its UI was removed from `AITab`; the toggle can be re-exposed if needed (see `docs/experiments/direct-openai-routing.md`)
 - `ConnectivityService` provides a lightweight `NWPathMonitor`-backed reachability signal used by `BrainService` to pause online monitoring quickly when the machine is offline
 - online monitoring may transiently use the online text-only pipeline after repeated vision timeouts, but this degradation lives only in `BrainService`; it does not rewrite `MonitoringConfiguration`
+
+### Custom online models
+
+Settings → AI (OpenRouter backend) shows the three built-in tier cards plus an inline
+"Add a custom model" form — the online analogue of the local custom-model cards, and a
+replacement for the old raw "Advanced mode" two-field override (now removed). Because an
+online model is split text vs. vision, a custom online model is a **pair**: a text/decision
+model id and an image/vision model id (`OnlineCustomModel` in `ACModels.swift`, stored in
+`ACState.onlineCustomModels`, keyed by a stable UUID so renames don't break selection).
+
+Adding one is **validated before it's persisted**: `OnlineModelService.validateCustomOnlineModels`
+makes a single free `GET /api/v1/models` call and checks via the pure
+`validateCatalog(_:textID:imageID:)` helper that each id exists and that the text id accepts
+`text` input and the image id accepts `image` input (`architecture.input_modalities`). A
+`:variant` suffix matches the base id; an entry with no declared modalities is treated as
+text-capable but rejected for the vision slot. Failures surface inline as an
+`OnlineModelValidationError` (`addOnlineModelError`); the form shows a spinner while
+`validatingOnlineModel` is set.
+
+Cards are selectable, renamable, and deletable (`add/rename/remove/selectOnlineCustomModel`
+in `AppController+RuntimeSetup.swift`). Selecting a custom card points
+`onlineModelIdentifierText`/`Image` at its pair without touching `state.aiTier`, so the tier
+cards deselect (a tier renders active only when no custom model matches the active pair —
+`activeOnlineCustomModel()` / `activeOnlineModelIdentifiers()`). Removing the active card
+falls back to the current tier's defaults via `applyTierToActiveBackend()`.
+
+Both the local and online add forms render through one shared `CustomModelAddCard`
+(`AC/UI/Settings/CustomModelAddCard.swift`) — collapsed/expanded chrome, name field, error,
+and Clear/Add actions — with each caller supplying only its source-specific fields (HF/file
+pills vs. text/image ids). **Draft state lives on `AppController`**, not in the view's
+`@State` (`addLocalModelExpanded` / `localModelDraft*`, `addOnlineModelExpanded` /
+`onlineModelDraft*`, consumed by `addCustomLocalModelFromDraft` /
+`addCustomOnlineModelFromDraft`). That's deliberate: a half-typed entry must survive the user
+navigating away (e.g. to chat) to copy a model id and coming back. Collapsing only hides the
+form; the draft clears only on a successful Add or the explicit Clear button.
 
 ### OpenRouter request shape
 
