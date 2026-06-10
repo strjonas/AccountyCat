@@ -655,6 +655,20 @@ struct ProfileManagementTests {
     }
 
     @Test
+    func parserBailsOnFillerOnlyProfileReference() throws {
+        // "activate the profile please" names no real profile — "the"/"please" are filler.
+        // The fast path must return nil (not invent a profile named "the") so the caller
+        // falls back to the context-aware LLM resolver, which can see what "the profile" means.
+        let deepWork = FocusProfile(id: "dw", name: "Deep Work")
+        let result = ProfileActionParser.parse(
+            action: "activate the profile please",
+            availableProfiles: [deepWork],
+            activeProfileID: PolicyRule.defaultProfileID
+        )
+        #expect(result == nil)
+    }
+
+    @Test
     func parserEndsActiveProfile() throws {
         let result = ProfileActionParser.parse(
             action: "end active profile",
@@ -693,23 +707,10 @@ struct ProfileManagementTests {
     }
 
     @Test
-    func profileLifecycleGuardRejectsTaskMentions() {
-        #expect(!AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
-            "We just can't ship junk. I need to fix local mode."
-        ))
-        #expect(AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
-            "Help me focus on coding for an hour."
-        ))
-        #expect(AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
-            "Start coding for one hour."
-        ))
-        #expect(AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(
-            "Switch back to Everyday."
-        ))
-    }
-
-    @Test
-    func chatProfileActionsNeedExplicitUserRequest() async throws {
+    func chatProfileActionAppliesWhenAcEmitsIt() async throws {
+        // AC owns the decision to act: when the chat model emits a profile action, AC applies it.
+        // No deterministic keyword gate sits behind it — the old gate dropped confirmations like
+        // "great, do it", turning an honest reply ("switching you over") into a lie.
         let controller = AppController.makeForTesting(storageService: .temporary())
         let originalState = controller.state
         let originalChatMessages = controller.chatMessages
@@ -724,21 +725,12 @@ struct ProfileManagementTests {
         controller.state = state
         controller.chatMessages = []
 
+        // A bare confirmation of a switch AC just proposed — the message itself names nothing,
+        // but AC emitted the action, so it lands.
         await controller.processChatActions(
             [CompanionChatAction(kind: .profile, instruction: "start coding for one hour")],
             workflow: .staged,
-            latestUserMessage: "We just can't ship junk. I need to fix local mode.",
-            recentMessages: [],
-            context: nil,
-            parentInteractionID: nil
-        )
-
-        #expect(controller.state.activeProfileID == PolicyRule.defaultProfileID)
-
-        await controller.processChatActions(
-            [CompanionChatAction(kind: .profile, instruction: "start coding for one hour")],
-            workflow: .staged,
-            latestUserMessage: "Help me focus on coding for an hour.",
+            latestUserMessage: "great, do it",
             recentMessages: [],
             context: nil,
             parentInteractionID: nil

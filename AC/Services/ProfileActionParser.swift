@@ -100,6 +100,16 @@ enum ProfileActionParser {
         }
     }
 
+    /// Words that are never a profile name: leading verbs, articles/possessives, and
+    /// politeness/temporal filler. Without this, "activate the profile please" captures
+    /// "the" (or "please") and the parser invents a junk profile instead of bailing to the
+    /// context-aware LLM resolver, which can see that "the profile" refers to one named earlier.
+    private static let nonProfileNameWords: Set<String> = [
+        "activate", "create", "switch", "start", "set", "setup", "begin", "and", "extend", "schedule",
+        "a", "an", "the", "my", "this", "that", "your", "our",
+        "please", "now", "today", "tonight", "again", "thanks", "ok", "okay", "it",
+    ]
+
     private static func extractProfileName(from text: String, preferVerbFallback: Bool = false) -> String? {
         let lower = text.lowercased()
 
@@ -114,8 +124,7 @@ enum ProfileActionParser {
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let nameRange = Range(match.range(at: 1), in: text) {
             let name = String(text[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if name.count >= 2,
-               !["activate", "create", "switch", "start", "set", "and"].contains(name.lowercased()) {
+            if name.count >= 2, !nonProfileNameWords.contains(name.lowercased()) {
                 return name
             }
         }
@@ -128,7 +137,7 @@ enum ProfileActionParser {
             if let first = words.first {
                 let candidate = String(first)
                     .trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!"))
-                if candidate.count >= 2 {
+                if candidate.count >= 2, !nonProfileNameWords.contains(candidate.lowercased()) {
                     return candidate
                 }
             }

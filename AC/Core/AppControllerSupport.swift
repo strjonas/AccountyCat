@@ -227,55 +227,6 @@ enum AppControllerChatSupport {
         return markers.contains { lowered.contains($0) }
     }
 
-    static func looksLikeExplicitProfileLifecycleRequest(_ text: String) -> Bool {
-        let lowered = text.cleanedSingleLine.lowercased()
-        guard !lowered.isEmpty else { return false }
-
-        let lifecycleVerbs = [
-            "start", "activate", "switch to", "create", "set up", "setup", "begin",
-            "end", "stop", "finish", "cancel", "deactivate", "extend"
-        ]
-        let lifecycleNouns = ["profile", "session", "focus mode", "mode"]
-        if lifecycleVerbs.contains(where: lowered.contains),
-           lifecycleNouns.contains(where: lowered.contains) {
-            return true
-        }
-
-        let directFocusRequests = [
-            "help me focus on",
-            "keep me focused on",
-            "keep me accountable on",
-            "let's focus on",
-            "lets focus on",
-            "start focusing on"
-        ]
-        if directFocusRequests.contains(where: lowered.contains) {
-            return true
-        }
-
-        if lowered.hasPrefix("activate ") || lowered.contains(" activate ")
-            || lowered.hasPrefix("switch to ") || lowered.contains(" switch to ") {
-            return true
-        }
-
-        let hasDuration = [" hour", " hours", " min", " minute", " minutes"].contains {
-            lowered.contains($0)
-        }
-        if hasDuration,
-           lowered.hasPrefix("start ") || lowered.contains(" start ") || lowered.hasPrefix("begin ") {
-            return true
-        }
-
-        let defaultSwitches = [
-            "back to everyday",
-            "switch back to everyday",
-            "back to normal mode",
-            "switch back to normal",
-            "back to default"
-        ]
-        return defaultSwitches.contains { lowered.contains($0) }
-    }
-
     static func makeProfileContextForChatPrompt(
         activeProfile: FocusProfile,
         availableProfiles: [FocusProfile]

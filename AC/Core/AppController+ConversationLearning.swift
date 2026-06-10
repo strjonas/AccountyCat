@@ -857,16 +857,13 @@ extension AppController {
             .suffix(MonitoringPromptContextBudget.recentUserChatCount)
             .map { $0.text.cleanedSingleLine }
 
+        // AC owns the decision to act. When the chat model emits a profile action it has already
+        // judged the request explicit (the chat contract forbids acting on loose task mentions and
+        // forbids claiming an action it didn't emit). No deterministic keyword gate sits behind it
+        // second-guessing that judgment — that gate used to silently drop valid actions, turning an
+        // honest reply ("switching you to Deep Work") into a lie.
         for action in actions {
             if action.kind == .profile {
-                guard AppControllerChatSupport.looksLikeExplicitProfileLifecycleRequest(latestUserMessage) else {
-                    logActivity(
-                        "chat-action",
-                        "Ignored profile action without explicit user request: \(latestUserMessage.cleanedSingleLine)"
-                    )
-                    continue
-                }
-
                 if applyProfileActionFastPath(action, latestUserMessage: latestUserMessage) {
                     logActivity("chat-action", "Applied fast profile action")
                     recordExplicitChatStatementSignal(for: action, context: context)
